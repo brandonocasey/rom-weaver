@@ -1,9 +1,12 @@
+mod vcdiff;
+
 use std::{path::Path, sync::Arc};
 
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result,
 };
+use vcdiff::VcdiffPatchHandler;
 
 const IPS: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
@@ -95,8 +98,8 @@ impl PatchRegistry {
                 Arc::new(StaticPatchHandler::new(&IPS)),
                 Arc::new(StaticPatchHandler::new(&BPS)),
                 Arc::new(StaticPatchHandler::new(&UPS)),
-                Arc::new(StaticPatchHandler::new(&VCDIFF)),
-                Arc::new(StaticPatchHandler::new(&XDELTA)),
+                Arc::new(VcdiffPatchHandler::new(&VCDIFF)),
+                Arc::new(VcdiffPatchHandler::new(&XDELTA)),
                 Arc::new(StaticPatchHandler::new(&APS)),
                 Arc::new(StaticPatchHandler::new(&APSGBA)),
                 Arc::new(StaticPatchHandler::new(&RUP)),

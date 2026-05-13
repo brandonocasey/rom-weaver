@@ -45,8 +45,8 @@
 | PAT-001 | patch | IPS | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
 | PAT-002 | patch | BPS | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
 | PAT-003 | patch | UPS | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
-| PAT-004 | patch | VCDIFF | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
-| PAT-005 | patch | xdelta | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
+| PAT-004 | patch | VCDIFF | done | n/a | n/a | done | todo | scan,diff,write flags | fixture-parity,cli-smoke | in-progress | Native parse/apply landed with threaded window assembly; patch creation remains. |
+| PAT-005 | patch | xdelta | done | n/a | n/a | done | todo | scan,diff,write flags | fixture-parity,cli-smoke | in-progress | Shares the VCDIFF parser, uses threaded per-window xdelta decode, and supports secondary-compressed sections; patch creation remains. |
 | PAT-006 | patch | APS | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
 | PAT-007 | patch | APSGBA | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
 | PAT-008 | patch | RUP | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
