@@ -1,4 +1,5 @@
 mod vcdiff;
+mod xdelta_ffi;
 
 use std::{path::Path, sync::Arc};
 
