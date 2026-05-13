@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+    io::{BufReader, Read, Seek, SeekFrom},
     os::raw::c_int,
     path::{Path, PathBuf},
 };
@@ -31,7 +31,6 @@ const DELTA_INST_COMP: u8 = 0x02;
 const DELTA_ADDR_COMP: u8 = 0x04;
 const DELTA_KNOWN_MASK: u8 = DELTA_DATA_COMP | DELTA_INST_COMP | DELTA_ADDR_COMP;
 
-const SAME_MODE_START: u8 = 6;
 const XD3_ADLER32_NOVER: c_int = 1 << 11;
 
 unsafe extern "C" {
@@ -76,15 +75,24 @@ impl PatchHandler for VcdiffPatchHandler {
     fn parse(&self, patch_path: &Path, _context: &OperationContext) -> Result<OperationReport> {
         let mut reader = BufReader::new(File::open(patch_path)?);
         let patch = parse_patch(&mut reader)?;
-        Ok(OperationReport::succeeded(
-            OperationFamily::Patch,
-            Some(self.descriptor.name.to_string()),
-            "parse",
+        let label = if patch.secondary_compressor_id.is_some() {
+            format!(
+                "parsed {} patch with {} window(s) and secondary compression",
+                self.descriptor.name,
+                patch.windows.len()
+            )
+        } else {
             format!(
                 "parsed {} patch with {} window(s)",
                 self.descriptor.name,
                 patch.windows.len()
-            ),
+            )
+        };
+        Ok(OperationReport::succeeded(
+            OperationFamily::Patch,
+            Some(self.descriptor.name.to_string()),
+            "parse",
+            label,
             Some(1.0),
             None,
         ))
@@ -105,8 +113,6 @@ impl PatchHandler for VcdiffPatchHandler {
         let patch_path = request.patches[0].clone();
         let mut patch_reader = BufReader::new(File::open(&patch_path)?);
         let patch = parse_patch(&mut patch_reader)?;
-        let use_xdelta_decoder = self.descriptor.name.eq_ignore_ascii_case("xdelta")
-            || patch.secondary_compressor_id.is_some();
 
         let requested_threads = patch.windows.len().max(1);
         let (execution, pool) =
@@ -126,22 +132,13 @@ impl PatchHandler for VcdiffPatchHandler {
             })
             .collect::<Vec<_>>();
         let patch_header = patch.header_bytes;
-        let secondary_compressor_id = patch.secondary_compressor_id;
         let input_path = request.input.clone();
 
         let mut decoded = pool.install(|| {
             tasks
                 .into_par_iter()
                 .map(|task| {
-                    decode_window_task(
-                        &task,
-                        &patch_path,
-                        &input_path,
-                        input_len,
-                        &patch_header,
-                        secondary_compressor_id,
-                        use_xdelta_decoder,
-                    )
+                    decode_window_task(&task, &patch_path, &input_path, input_len, &patch_header)
                 })
                 .collect::<Result<Vec<_>>>()
         })?;
@@ -284,78 +281,6 @@ struct DecodedWindow {
     output_offset: u64,
     len: u64,
     temp_path: PathBuf,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum TableInstruction {
-    NoOp,
-    Add { size: u8 },
-    Run,
-    Copy { size: u8, mode: u8 },
-}
-
-#[derive(Clone, Copy, Debug)]
-struct CodeTableEntry {
-    first: TableInstruction,
-    second: TableInstruction,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct AddressCache {
-    near: [u64; 4],
-    next_slot: usize,
-    same: [u64; 3 * 256],
-}
-
-impl Default for AddressCache {
-    fn default() -> Self {
-        Self {
-            near: [0; 4],
-            next_slot: 0,
-            same: [0; 3 * 256],
-        }
-    }
-}
-
-impl AddressCache {
-    fn decode(&mut self, encoded: u64, here: u64, mode: u8) -> Result<u64> {
-        let addr = match mode {
-            0 => encoded,
-            1 => here.checked_sub(encoded).ok_or_else(|| {
-                RomWeaverError::Validation(format!(
-                    "copy address underflow: encoded HERE address {encoded} exceeds current position {here}"
-                ))
-            })?,
-            2..=5 => {
-                let index = usize::from(mode - 2);
-                checked_add(self.near[index], encoded, "near-cache copy address")?
-            }
-            6..=8 => {
-                if encoded > u8::MAX.into() {
-                    return Err(RomWeaverError::Validation(format!(
-                        "same-cache address byte is out of range: {encoded}"
-                    )));
-                }
-                let same_index = usize::from(mode - SAME_MODE_START) * 256 + encoded as usize;
-                self.same[same_index]
-            }
-            _ => {
-                return Err(RomWeaverError::Validation(format!(
-                    "unsupported copy mode {mode}"
-                )))
-            }
-        };
-
-        self.update(addr);
-        Ok(addr)
-    }
-
-    fn update(&mut self, addr: u64) {
-        self.near[self.next_slot] = addr;
-        self.next_slot = (self.next_slot + 1) % self.near.len();
-        let same_index = (addr as usize) % self.same.len();
-        self.same[same_index] = addr;
-    }
 }
 
 fn parse_patch<R: Read + Seek>(reader: &mut R) -> Result<ParsedPatch> {
@@ -537,22 +462,11 @@ fn decode_window_task(
     input_path: &Path,
     input_len: u64,
     patch_header: &[u8],
-    secondary_compressor_id: Option<u8>,
-    use_xdelta_decoder: bool,
 ) -> Result<DecodedWindow> {
     let mut input_reader = BufReader::new(File::open(input_path)?);
     let source = task.window.source_segment(input_len, &mut input_reader)?;
-    let target = if window_requires_xdelta_fallback(
-        &task.window,
-        secondary_compressor_id,
-        use_xdelta_decoder,
-    ) {
-        let mut patch_reader = BufReader::new(File::open(patch_path)?);
-        decode_window_with_xdelta(&mut patch_reader, patch_header, &task.window, &source)?
-    } else {
-        let mut patch_reader = BufReader::new(File::open(patch_path)?);
-        decode_window(&mut patch_reader, &task.window, &source)?
-    };
+    let mut patch_reader = BufReader::new(File::open(patch_path)?);
+    let target = decode_window_with_xdelta(&mut patch_reader, patch_header, &task.window, &source)?;
 
     if let Some(parent) = task.temp_path.parent() {
         fs::create_dir_all(parent)?;
@@ -567,14 +481,6 @@ fn decode_window_task(
     })
 }
 
-fn window_requires_xdelta_fallback(
-    window: &WindowIndex,
-    secondary_compressor_id: Option<u8>,
-    use_xdelta_decoder: bool,
-) -> bool {
-    use_xdelta_decoder || (secondary_compressor_id.is_some() && window.delta_indicator != 0)
-}
-
 fn decode_window_with_xdelta<R: Read + Seek>(
     patch_reader: &mut R,
     patch_header: &[u8],
@@ -586,7 +492,7 @@ fn decode_window_with_xdelta<R: Read + Seek>(
 
     if decoded.len() as u64 != window.target_window_size {
         return Err(RomWeaverError::Validation(format!(
-            "xdelta fallback decoded {} byte(s) but expected {}",
+            "xdelta decoder produced {} byte(s) but expected {}",
             decoded.len(),
             window.target_window_size
         )));
@@ -610,16 +516,16 @@ fn decode_window_with_xdelta_memory(
     window: &WindowIndex,
 ) -> Result<Vec<u8>> {
     let patch_len = u32::try_from(patch_bytes.len()).map_err(|_| {
-        RomWeaverError::Validation("xdelta fallback patch window is too large".into())
+        RomWeaverError::Validation("xdelta decoder patch window is too large".into())
     })?;
     let source_len = u32::try_from(source_segment.len()).map_err(|_| {
-        RomWeaverError::Validation("xdelta fallback source window is too large".into())
+        RomWeaverError::Validation("xdelta decoder source window is too large".into())
     })?;
     let expected_len = u32::try_from(window.target_window_size).map_err(|_| {
-        RomWeaverError::Validation("xdelta fallback output window is too large".into())
+        RomWeaverError::Validation("xdelta decoder output window is too large".into())
     })?;
     let output_capacity = usize::try_from(expected_len).map_err(|_| {
-        RomWeaverError::Validation("xdelta fallback output window is too large".into())
+        RomWeaverError::Validation("xdelta decoder output window is too large".into())
     })?;
     let mut output = vec![0; output_capacity.max(1)];
     let mut output_len = expected_len;
@@ -638,7 +544,7 @@ fn decode_window_with_xdelta_memory(
     };
     if rc != 0 {
         return Err(RomWeaverError::Validation(format!(
-            "xdelta fallback failed to decode window at output offset {} (code {rc})",
+            "xdelta decoder failed to decode window at output offset {} (code {rc})",
             window.output_offset
         )));
     }
@@ -675,289 +581,6 @@ fn build_single_window_patch<R: Read + Seek>(
     patch.extend_from_slice(&inst);
     patch.extend_from_slice(&addr);
     Ok(patch)
-}
-
-fn decode_window<R: Read + Seek>(
-    patch_reader: &mut R,
-    window: &WindowIndex,
-    source_segment: &[u8],
-) -> Result<Vec<u8>> {
-    if window.delta_indicator != 0 {
-        return Err(RomWeaverError::Validation(
-            "native VCDIFF decoder cannot read secondary-compressed sections".into(),
-        ));
-    }
-
-    let data = read_section(patch_reader, window.data_start, window.data_len)?;
-    let inst = read_section(patch_reader, window.inst_start, window.inst_len)?;
-    let addr = read_section(patch_reader, window.addr_start, window.addr_len)?;
-
-    let mut data_offset = 0usize;
-    let mut inst_cursor = Cursor::new(inst);
-    let mut addr_cursor = Cursor::new(addr);
-    let mut output =
-        Vec::with_capacity(usize::try_from(window.target_window_size).map_err(|_| {
-            RomWeaverError::Validation(
-                "target window is too large to fit in memory on this platform".into(),
-            )
-        })?);
-    let mut cache = AddressCache::default();
-    let code_table = build_default_code_table();
-    let source_len = source_segment.len() as u64;
-
-    while inst_cursor.position() < window.inst_len {
-        let opcode = read_u8(&mut inst_cursor)?;
-        let entry = code_table[opcode as usize];
-        execute_instruction(
-            entry.first,
-            &mut inst_cursor,
-            &mut addr_cursor,
-            &data,
-            &mut data_offset,
-            source_segment,
-            source_len,
-            &mut output,
-            window.target_window_size,
-            &mut cache,
-        )?;
-        execute_instruction(
-            entry.second,
-            &mut inst_cursor,
-            &mut addr_cursor,
-            &data,
-            &mut data_offset,
-            source_segment,
-            source_len,
-            &mut output,
-            window.target_window_size,
-            &mut cache,
-        )?;
-    }
-
-    if data_offset != data.len() {
-        return Err(RomWeaverError::Validation(format!(
-            "window left {} data byte(s) unread",
-            data.len() - data_offset
-        )));
-    }
-    if addr_cursor.position() != window.addr_len {
-        return Err(RomWeaverError::Validation(format!(
-            "window left {} address byte(s) unread",
-            window.addr_len - addr_cursor.position()
-        )));
-    }
-    if output.len() as u64 != window.target_window_size {
-        return Err(RomWeaverError::Validation(format!(
-            "window decoded {} byte(s) but expected {}",
-            output.len(),
-            window.target_window_size
-        )));
-    }
-
-    if let Some(expected) = window.checksum {
-        let actual = adler32(&output);
-        if actual != expected {
-            return Err(RomWeaverError::Validation(format!(
-                "target window checksum mismatch: expected 0x{expected:08X}, got 0x{actual:08X}"
-            )));
-        }
-    }
-
-    Ok(output)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn execute_instruction(
-    instruction: TableInstruction,
-    inst_cursor: &mut Cursor<Vec<u8>>,
-    addr_cursor: &mut Cursor<Vec<u8>>,
-    data: &[u8],
-    data_offset: &mut usize,
-    source_segment: &[u8],
-    source_len: u64,
-    output: &mut Vec<u8>,
-    target_window_size: u64,
-    cache: &mut AddressCache,
-) -> Result<()> {
-    let (kind, size) = match instruction {
-        TableInstruction::NoOp => return Ok(()),
-        TableInstruction::Add { size } => ("ADD", size),
-        TableInstruction::Run => ("RUN", 0),
-        TableInstruction::Copy { size, .. } => ("COPY", size),
-    };
-
-    let len = if size == 0 && kind != "RUN" {
-        read_varint(inst_cursor)?.0
-    } else if kind == "RUN" {
-        read_varint(inst_cursor)?.0
-    } else {
-        u64::from(size)
-    };
-
-    let new_output_len = checked_add(output.len() as u64, len, "target window size")?;
-    if new_output_len > target_window_size {
-        return Err(RomWeaverError::Validation(format!(
-            "{kind} would decode past the end of the target window ({new_output_len} > {target_window_size})"
-        )));
-    }
-
-    match instruction {
-        TableInstruction::NoOp => Ok(()),
-        TableInstruction::Add { .. } => {
-            let len = usize::try_from(len).map_err(|_| {
-                RomWeaverError::Validation("ADD instruction is too large for this platform".into())
-            })?;
-            let end = data_offset.checked_add(len).ok_or_else(|| {
-                RomWeaverError::Validation("ADD instruction overflowed the data section".into())
-            })?;
-            let literal = data.get(*data_offset..end).ok_or_else(|| {
-                RomWeaverError::Validation(
-                    "ADD instruction reads past the end of the data section".into(),
-                )
-            })?;
-            output.extend_from_slice(literal);
-            *data_offset = end;
-            Ok(())
-        }
-        TableInstruction::Run => {
-            let byte = data.get(*data_offset).copied().ok_or_else(|| {
-                RomWeaverError::Validation(
-                    "RUN instruction reads past the end of the data section".into(),
-                )
-            })?;
-            *data_offset += 1;
-            output.extend(std::iter::repeat_n(
-                byte,
-                usize::try_from(len).map_err(|_| {
-                    RomWeaverError::Validation(
-                        "RUN instruction is too large for this platform".into(),
-                    )
-                })?,
-            ));
-            Ok(())
-        }
-        TableInstruction::Copy { mode, .. } => {
-            let encoded_addr = if mode >= SAME_MODE_START {
-                u64::from(read_u8(addr_cursor)?)
-            } else {
-                read_varint(addr_cursor)?.0
-            };
-            let here = checked_add(source_len, output.len() as u64, "copy HERE position")?;
-            let addr = cache.decode(encoded_addr, here, mode)?;
-            if addr >= here {
-                return Err(RomWeaverError::Validation(format!(
-                    "COPY address {addr} is not before current position {here}"
-                )));
-            }
-
-            if addr < source_len {
-                let source_end = checked_add(addr, len, "COPY source range")?;
-                if source_end > source_len {
-                    return Err(RomWeaverError::Validation(format!(
-                        "COPY range [{addr}..{source_end}) crosses from source into target"
-                    )));
-                }
-                let start = usize::try_from(addr).map_err(|_| {
-                    RomWeaverError::Validation("COPY address is too large for this platform".into())
-                })?;
-                let end = usize::try_from(source_end).map_err(|_| {
-                    RomWeaverError::Validation("COPY address is too large for this platform".into())
-                })?;
-                output.extend_from_slice(&source_segment[start..end]);
-                return Ok(());
-            }
-
-            let start = usize::try_from(addr - source_len).map_err(|_| {
-                RomWeaverError::Validation(
-                    "COPY target address is too large for this platform".into(),
-                )
-            })?;
-            let copy_len = usize::try_from(len).map_err(|_| {
-                RomWeaverError::Validation("COPY instruction is too large for this platform".into())
-            })?;
-            for offset in 0..copy_len {
-                let byte = *output.get(start + offset).ok_or_else(|| {
-                    RomWeaverError::Validation(format!(
-                        "COPY range starts outside the decoded target window at offset {}",
-                        start + offset
-                    ))
-                })?;
-                output.push(byte);
-            }
-            Ok(())
-        }
-    }
-}
-
-fn build_default_code_table() -> [CodeTableEntry; 256] {
-    let mut table = [CodeTableEntry {
-        first: TableInstruction::NoOp,
-        second: TableInstruction::NoOp,
-    }; 256];
-
-    table[0] = CodeTableEntry {
-        first: TableInstruction::Run,
-        second: TableInstruction::NoOp,
-    };
-
-    for (index, size) in (0u8..=17).enumerate() {
-        table[index + 1] = CodeTableEntry {
-            first: TableInstruction::Add { size },
-            second: TableInstruction::NoOp,
-        };
-    }
-
-    for mode in 0u8..=8 {
-        for size_index in 0u8..=15 {
-            let index = 19 + usize::from(mode) * 16 + usize::from(size_index);
-            table[index] = CodeTableEntry {
-                first: TableInstruction::Copy {
-                    size: if size_index == 0 { 0 } else { size_index + 3 },
-                    mode,
-                },
-                second: TableInstruction::NoOp,
-            };
-        }
-    }
-
-    let mut index = 163usize;
-    for add_size in 1u8..=4 {
-        for copy_mode in 0u8..=5 {
-            for copy_size in 4u8..=6 {
-                table[index] = CodeTableEntry {
-                    first: TableInstruction::Add { size: add_size },
-                    second: TableInstruction::Copy {
-                        size: copy_size,
-                        mode: copy_mode,
-                    },
-                };
-                index += 1;
-            }
-        }
-    }
-
-    for add_size in 1u8..=4 {
-        for copy_mode in 6u8..=8 {
-            table[index] = CodeTableEntry {
-                first: TableInstruction::Add { size: add_size },
-                second: TableInstruction::Copy {
-                    size: 4,
-                    mode: copy_mode,
-                },
-            };
-            index += 1;
-        }
-    }
-
-    for mode in 0u8..=8 {
-        table[index] = CodeTableEntry {
-            first: TableInstruction::Copy { size: 4, mode },
-            second: TableInstruction::Add { size: 1 },
-        };
-        index += 1;
-    }
-
-    table
 }
 
 fn read_section<R: Read + Seek>(reader: &mut R, start: u64, len: u64) -> Result<Vec<u8>> {
@@ -1564,7 +1187,7 @@ mod tests {
                 &test_context(),
             )
             .expect_err("unknown secondary compressor should fail");
-        assert!(format!("{error}").contains("xdelta fallback failed"));
+        assert!(format!("{error}").contains("xdelta decoder failed"));
     }
 
     #[test]
@@ -1594,9 +1217,7 @@ mod tests {
             )
             .expect_err("corrupted secondary stream should fail");
         let message = format!("{error}");
-        assert!(
-            message.contains("xdelta fallback failed") || message.contains("checksum mismatch")
-        );
+        assert!(message.contains("xdelta decoder failed") || message.contains("checksum mismatch"));
     }
 
     fn create_temp_dir() -> PathBuf {
