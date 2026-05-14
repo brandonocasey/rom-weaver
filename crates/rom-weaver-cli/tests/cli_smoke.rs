@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use assert_cmd::Command;
 use assert_fs::{
-    fixture::{FileWriteStr, PathChild},
     TempDir,
+    fixture::{FileWriteStr, PathChild},
 };
 use serde_json::Value;
 
@@ -246,7 +246,7 @@ fn checksum_reports_auto_thread_mode() {
             "--json",
         ])
         .assert()
-        .code(2)
+        .code(0)
         .get_output()
         .stdout
         .clone();
@@ -262,7 +262,25 @@ fn checksum_reports_auto_thread_mode() {
             .expect("requested threads")
             >= 1
     );
-    assert_eq!(json["status"], "unsupported");
+    assert!(
+        json["effective_threads"]
+            .as_u64()
+            .expect("effective threads")
+            <= 2
+    );
+    assert_eq!(
+        json["used_parallelism"]
+            .as_bool()
+            .expect("parallelism flag"),
+        json["effective_threads"]
+            .as_u64()
+            .expect("effective threads")
+            > 1
+    );
+    assert_eq!(json["status"], "succeeded");
+    let label = json["label"].as_str().expect("label");
+    assert!(label.contains("crc32="));
+    assert!(label.contains("sha1="));
 }
 
 #[test]

@@ -258,7 +258,8 @@ impl CliApp {
 
     fn run_checksum(&self, args: ChecksumCommand) -> ExitCode {
         let context = self.context(args.threads);
-        let thread_execution = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let thread_execution =
+            Some(context.plan_threads(ThreadCapability::parallel(Some(args.algo.len().max(1)))));
         if let Some(report) = self.require_existing_path(
             "checksum",
             OperationFamily::Checksum,
@@ -308,7 +309,10 @@ impl CliApp {
                 Some(self.checksum.name().to_string()),
                 "checksum",
                 error.to_string(),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                Some(
+                    context
+                        .plan_threads(ThreadCapability::parallel(Some(request.algorithms.len()))),
+                ),
             )
         });
         self.finish("checksum", report)
