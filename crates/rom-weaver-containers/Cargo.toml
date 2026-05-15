@@ -7,5 +7,8 @@ version.workspace = true
 
 [dependencies]
 nod.workspace = true
+rayon.workspace = true
 rom-weaver-chd-sys = { path = "../rom-weaver-chd-sys" }
 rom-weaver-core = { path = "../rom-weaver-core" }
+zstd.workspace = true
+zstd-seekable.workspace = true
