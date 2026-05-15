@@ -837,11 +837,7 @@ fn encode_signed_offset(delta: i128) -> Result<u64> {
 
 fn decode_signed_offset(raw: u64) -> i128 {
     let magnitude = i128::from(raw >> 1);
-    if raw & 1 != 0 {
-        -magnitude
-    } else {
-        magnitude
-    }
+    if raw & 1 != 0 { -magnitude } else { magnitude }
 }
 
 fn read_u32_le(bytes: &[u8]) -> u32 {
@@ -1142,8 +1138,8 @@ mod tests {
     use std::{
         env, fs,
         path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
         sync::Arc,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -1153,8 +1149,8 @@ mod tests {
     };
 
     use super::{
-        crc32_bytes, encode_signed_offset, parse_bps_bytes, push_varint, BpsAction,
-        BpsPatchHandler, BPS_MAGIC,
+        BPS_MAGIC, BpsAction, BpsPatchHandler, crc32_bytes, encode_signed_offset, parse_bps_bytes,
+        push_varint,
     };
     use crate::BPS;
 
@@ -1420,10 +1416,12 @@ mod tests {
             .expect("create");
 
         let patch = parse_bps_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
-        assert!(patch
-            .actions
-            .iter()
-            .any(|action| matches!(action, BpsAction::SourceCopy { .. })));
+        assert!(
+            patch
+                .actions
+                .iter()
+                .any(|action| matches!(action, BpsAction::SourceCopy { .. }))
+        );
 
         handler
             .apply(
@@ -1470,10 +1468,12 @@ mod tests {
             .expect("create");
 
         let patch = parse_bps_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
-        assert!(patch
-            .actions
-            .iter()
-            .any(|action| matches!(action, BpsAction::SourceCopy { .. })));
+        assert!(
+            patch
+                .actions
+                .iter()
+                .any(|action| matches!(action, BpsAction::SourceCopy { .. }))
+        );
 
         handler
             .apply(
