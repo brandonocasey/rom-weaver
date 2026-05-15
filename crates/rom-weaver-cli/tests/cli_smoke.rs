@@ -1,10 +1,19 @@
-use std::fs;
+use std::fs::{self, File};
+use std::io::{Seek, Write};
 use std::path::PathBuf;
 
 use assert_cmd::Command;
 use assert_fs::{
     TempDir,
     fixture::{FileWriteStr, PathChild},
+};
+use nod::{
+    common::{Compression as NodCompression, Format as NodFormat},
+    read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
+    write::{
+        DiscWriter as NodDiscWriter, FormatOptions as NodFormatOptions,
+        ProcessOptions as NodProcessOptions,
+    },
 };
 use serde_json::Value;
 
@@ -76,6 +85,43 @@ fn run_chd_round_trip(input_name: &str, source: &[u8], codec: &str, expected_ext
         fs::read(out_dir.child(expected_extract_name).path()).expect("extract bytes"),
         source
     );
+}
+
+fn build_test_gamecube_iso(payload_len: usize) -> Vec<u8> {
+    let total_len = (0x440 + payload_len).max(0x440);
+    let mut bytes = vec![0_u8; total_len];
+    bytes[..6].copy_from_slice(b"RWTEST");
+    bytes[0x1C..0x20].copy_from_slice(&[0xC2, 0x33, 0x9F, 0x3D]);
+    let title = b"rom-weaver-test\0";
+    bytes[0x20..0x20 + title.len()].copy_from_slice(title);
+    for (index, byte) in bytes[0x440..].iter_mut().enumerate() {
+        *byte = (index % 251) as u8;
+    }
+    bytes
+}
+
+fn write_rvz_fixture_from_iso(iso_path: &std::path::Path, rvz_path: &std::path::Path) {
+    let disc = NodDiscReader::new(iso_path, &NodDiscOptions::default()).expect("open iso");
+    let options = NodFormatOptions {
+        format: NodFormat::Rvz,
+        compression: NodCompression::Zstandard(5),
+        block_size: NodFormat::Rvz.default_block_size(),
+    };
+    let writer = NodDiscWriter::new(disc, &options).expect("create rvz writer");
+    let mut output = File::create(rvz_path).expect("create rvz");
+    let finalization = writer
+        .process(
+            |data, _processed, _total| output.write_all(data.as_ref()),
+            &NodProcessOptions::default(),
+        )
+        .expect("write rvz");
+    if !finalization.header.is_empty() {
+        output.rewind().expect("seek rvz");
+        output
+            .write_all(finalization.header.as_ref())
+            .expect("write rvz header");
+    }
+    output.flush().expect("flush rvz");
 }
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -642,6 +688,175 @@ fn chd_compress_and_extract_gdi_round_trip() {
     assert!(gdi.contains("2\n"));
     assert!(gdi.contains("1 0 4 2352 disc.track01.bin 0"));
     assert!(gdi.contains("2 4 4 2048 disc.track02.bin 0"));
+}
+
+#[test]
+fn rvz_inspect_reports_succeeded() {
+    let temp = setup_temp_dir();
+    let iso_bytes = build_test_gamecube_iso(0x6000);
+    fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
+    write_rvz_fixture_from_iso(temp.child("disc.iso").path(), temp.child("disc.rvz").path());
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "inspect",
+            temp.child("disc.rvz").path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "rvz");
+    assert_eq!(json["status"], "succeeded");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .to_ascii_lowercase()
+            .contains("compression")
+    );
+}
+
+#[test]
+fn rvz_compress_and_extract_round_trips() {
+    let temp = setup_temp_dir();
+    let iso_bytes = build_test_gamecube_iso(0xA000);
+    fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
+
+    let rvz_path = temp.child("disc.rvz");
+    let compress_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("disc.iso").path().to_str().expect("path"),
+            "--format",
+            "rvz",
+            "--output",
+            rvz_path.path().to_str().expect("path"),
+            "--codec",
+            "lzma",
+            "--level",
+            "6",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let compress_json = parse_single_json_line(&compress_output);
+    assert_eq!(compress_json["command"], "compress");
+    assert_eq!(compress_json["family"], "container");
+    assert_eq!(compress_json["format"], "rvz");
+    assert_eq!(compress_json["status"], "succeeded");
+
+    let out_dir = temp.child("extract");
+    let extract_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            rvz_path.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let extract_json = parse_single_json_line(&extract_output);
+    assert_eq!(extract_json["command"], "extract");
+    assert_eq!(extract_json["family"], "container");
+    assert_eq!(extract_json["format"], "rvz");
+    assert_eq!(extract_json["status"], "succeeded");
+    assert_eq!(
+        fs::read(out_dir.child("disc.iso").path()).expect("extracted iso"),
+        iso_bytes
+    );
+}
+
+#[test]
+fn rvz_compress_store_rejects_level() {
+    let temp = setup_temp_dir();
+    let iso_bytes = build_test_gamecube_iso(0x4000);
+    fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("disc.iso").path().to_str().expect("path"),
+            "--format",
+            "rvz",
+            "--output",
+            temp.child("disc.rvz").path().to_str().expect("path"),
+            "--codec",
+            "store",
+            "--level",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "compress");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "rvz");
+    assert_eq!(json["status"], "failed");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("does not accept --level")
+    );
+}
+
+#[test]
+fn rvz_extract_round_trips_to_iso() {
+    let temp = setup_temp_dir();
+    let iso_bytes = build_test_gamecube_iso(0x8000);
+    fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
+    write_rvz_fixture_from_iso(temp.child("disc.iso").path(), temp.child("disc.rvz").path());
+
+    let out_dir = temp.child("extract");
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            temp.child("disc.rvz").path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "extract");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "rvz");
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(out_dir.child("disc.iso").path()).expect("extracted iso"),
+        iso_bytes
+    );
 }
 
 #[test]

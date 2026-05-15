@@ -346,7 +346,7 @@ impl CliApp {
             );
         };
 
-        if handler.descriptor().name != "chd" {
+        if !matches!(handler.descriptor().name, "chd" | "rvz") {
             if let Some(codec) = args.codec.as_ref() {
                 if self.codecs.find_by_name(codec).is_none() {
                     return self.finish(

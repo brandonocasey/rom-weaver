@@ -5,6 +5,15 @@ use std::{
     sync::Arc,
 };
 
+use nod::{
+    common::{Compression as NodCompression, Format as NodFormat},
+    read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
+    util::buf_copy as nod_buf_copy,
+    write::{
+        DiscWriter as NodDiscWriter, FormatOptions as NodFormatOptions,
+        ProcessOptions as NodProcessOptions,
+    },
+};
 use rom_weaver_chd_sys::{
     CD_FRAME_SIZE, CDROM_TRACK_METADATA2_TAG, CHD_MAX_COMPRESSORS, CHD_METADATA_FLAG_CHECKSUM,
     ChdCodec, ChdFile, ChdMediaKind, CreateOptions, DVD_METADATA_TAG, GDROM_TRACK_METADATA_TAG,
@@ -99,7 +108,7 @@ impl ContainerRegistry {
                 Arc::new(StaticContainerHandler::new(&TAR_BZ2)),
                 Arc::new(StaticContainerHandler::new(&TAR_XZ)),
                 Arc::new(ChdContainerHandler),
-                Arc::new(StaticContainerHandler::new(&RVZ)),
+                Arc::new(RvzContainerHandler),
                 Arc::new(StaticContainerHandler::new(&Z3DS)),
             ],
         }
@@ -199,6 +208,259 @@ impl ContainerHandler for StaticContainerHandler {
             inspect: false,
             extract: false,
             create: false,
+            extract_threads: ThreadCapability::single_threaded(),
+            create_threads: ThreadCapability::single_threaded(),
+        }
+    }
+}
+
+struct RvzContainerHandler;
+
+impl RvzContainerHandler {
+    fn open_disc(&self, source: &Path) -> Result<NodDiscReader> {
+        NodDiscReader::new(source, &NodDiscOptions::default()).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "failed to open rvz source `{}`: {error}",
+                source.display()
+            ))
+        })
+    }
+
+    fn validate_rvz_meta(
+        &self,
+        source: &Path,
+        disc: &NodDiscReader,
+    ) -> Result<nod::read::DiscMeta> {
+        let meta = disc.meta();
+        if meta.format == NodFormat::Rvz {
+            Ok(meta)
+        } else {
+            Err(RomWeaverError::Validation(format!(
+                "source `{}` is not an rvz container (detected {})",
+                source.display(),
+                meta.format
+            )))
+        }
+    }
+
+    fn extract_name(&self, source: &Path) -> String {
+        let stem = source
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("output");
+        format!("{stem}.iso")
+    }
+
+    fn to_u8_level(&self, level: i32, codec: &str) -> Result<u8> {
+        if level < 0 {
+            return Err(RomWeaverError::Validation(format!(
+                "rvz codec `{codec}` requires a non-negative level"
+            )));
+        }
+        u8::try_from(level).map_err(|_| {
+            RomWeaverError::Validation(format!("rvz codec `{codec}` level `{level}` is too large"))
+        })
+    }
+
+    fn to_i8_level(&self, level: i32, codec: &str) -> Result<i8> {
+        i8::try_from(level).map_err(|_| {
+            RomWeaverError::Validation(format!(
+                "rvz codec `{codec}` level `{level}` is out of range"
+            ))
+        })
+    }
+
+    fn resolve_create_compression(
+        &self,
+        codec: Option<&str>,
+        level: Option<i32>,
+    ) -> Result<NodCompression> {
+        match codec.map(|value| value.trim().to_ascii_lowercase()) {
+            None => {
+                let mut compression = NodFormat::Rvz.default_compression();
+                if let Some(level) = level {
+                    compression = NodCompression::Zstandard(self.to_i8_level(level, "zstd")?);
+                }
+                Ok(compression)
+            }
+            Some(name) if matches!(name.as_str(), "store" | "none" | "uncompressed") => {
+                if level.is_some() {
+                    return Err(RomWeaverError::Validation(
+                        "rvz codec `store` does not accept --level".into(),
+                    ));
+                }
+                Ok(NodCompression::None)
+            }
+            Some(name) if matches!(name.as_str(), "bzip2" | "bz2") => Ok(NodCompression::Bzip2(
+                self.to_u8_level(level.unwrap_or(0), "bzip2")?,
+            )),
+            Some(name) if name == "lzma" => Ok(NodCompression::Lzma(
+                self.to_u8_level(level.unwrap_or(0), "lzma")?,
+            )),
+            Some(name) if matches!(name.as_str(), "lzma2" | "xz") => Ok(NodCompression::Lzma2(
+                self.to_u8_level(level.unwrap_or(0), "lzma2")?,
+            )),
+            Some(name) if matches!(name.as_str(), "zstd" | "zst" | "zstandard") => Ok(
+                NodCompression::Zstandard(self.to_i8_level(level.unwrap_or(0), "zstd")?),
+            ),
+            Some(name) => Err(RomWeaverError::Validation(format!(
+                "unsupported rvz codec `{name}`; supported codecs are store, zstd, bzip2, lzma, and lzma2"
+            ))),
+        }
+    }
+}
+
+impl ContainerHandler for RvzContainerHandler {
+    fn descriptor(&self) -> &'static FormatDescriptor {
+        &RVZ
+    }
+
+    fn probe(&self, _source: &Path) -> ProbeConfidence {
+        ProbeConfidence::Extension
+    }
+
+    fn inspect(
+        &self,
+        request: &ContainerInspectRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let disc = self.open_disc(&request.source)?;
+        let meta = self.validate_rvz_meta(&request.source, &disc)?;
+        let disc_size = meta.disc_size.unwrap_or_else(|| disc.disc_size());
+        let block_label = meta
+            .block_size
+            .map(|size| format!("{size} bytes"))
+            .unwrap_or_else(|| "unknown".to_string());
+        Ok(OperationReport::succeeded(
+            OperationFamily::Container,
+            Some(RVZ.name.to_string()),
+            "inspect",
+            format!(
+                "rvz: {disc_size} bytes, compression={}, block={}, lossless={}, decrypted={}, needs_hash_recovery={}",
+                meta.compression,
+                block_label,
+                meta.lossless,
+                meta.decrypted,
+                meta.needs_hash_recovery
+            ),
+            Some(100.0),
+            Some(execution),
+        ))
+    }
+
+    fn extract(
+        &self,
+        request: &ContainerExtractRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        if !request.selections.is_empty() {
+            return Err(RomWeaverError::Validation(
+                "rvz extract does not support --select yet".into(),
+            ));
+        }
+
+        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let mut disc = self.open_disc(&request.source)?;
+        let meta = self.validate_rvz_meta(&request.source, &disc)?;
+        let disc_size = meta.disc_size.unwrap_or_else(|| disc.disc_size());
+
+        fs::create_dir_all(&request.out_dir)?;
+        let output_path = request.out_dir.join(self.extract_name(&request.source));
+        let mut output = BufWriter::new(File::create(&output_path)?);
+        let bytes_written = nod_buf_copy(&mut disc, &mut output)?;
+        output.flush()?;
+
+        Ok(OperationReport::succeeded(
+            OperationFamily::Container,
+            Some(RVZ.name.to_string()),
+            "extract",
+            format!(
+                "extracted `{}` to `{}` ({} bytes written, expected {}, compression={})",
+                request.source.display(),
+                output_path.display(),
+                bytes_written,
+                disc_size,
+                meta.compression
+            ),
+            Some(100.0),
+            Some(execution),
+        ))
+    }
+
+    fn create(
+        &self,
+        request: &ContainerCreateRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        if request.inputs.len() != 1 {
+            return Err(RomWeaverError::Validation(
+                "rvz create currently requires exactly one input file".into(),
+            ));
+        }
+
+        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let input = &request.inputs[0];
+        let compression =
+            self.resolve_create_compression(request.codec.as_deref(), request.level)?;
+        let options = NodFormatOptions {
+            format: NodFormat::Rvz,
+            compression,
+            block_size: NodFormat::Rvz.default_block_size(),
+        };
+
+        if let Some(parent) = request.output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let input_disc =
+            NodDiscReader::new(input, &NodDiscOptions::default()).map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "failed to open input `{}` for rvz create: {error}",
+                    input.display()
+                ))
+            })?;
+        let writer = NodDiscWriter::new(input_disc, &options).map_err(|error| {
+            RomWeaverError::Validation(format!("failed to initialize rvz writer: {error}"))
+        })?;
+
+        let mut output = File::create(&request.output)?;
+        let finalization = writer
+            .process(
+                |data, _processed, _total| output.write_all(data.as_ref()),
+                &NodProcessOptions::default(),
+            )
+            .map_err(|error| RomWeaverError::Validation(format!("rvz create failed: {error}")))?;
+        if !finalization.header.is_empty() {
+            output.seek(SeekFrom::Start(0))?;
+            output.write_all(finalization.header.as_ref())?;
+        }
+        output.flush()?;
+        let output_bytes = fs::metadata(&request.output)?.len();
+
+        Ok(OperationReport::succeeded(
+            OperationFamily::Container,
+            Some(RVZ.name.to_string()),
+            "create",
+            format!(
+                "created rvz `{}` from `{}` (codec={}, block={} bytes, {} bytes)",
+                request.output.display(),
+                input.display(),
+                options.compression,
+                options.block_size,
+                output_bytes
+            ),
+            Some(100.0),
+            Some(execution),
+        ))
+    }
+
+    fn capabilities(&self) -> ContainerCapabilities {
+        ContainerCapabilities {
+            inspect: true,
+            extract: true,
+            create: true,
             extract_threads: ThreadCapability::single_threaded(),
             create_threads: ThreadCapability::single_threaded(),
         }
