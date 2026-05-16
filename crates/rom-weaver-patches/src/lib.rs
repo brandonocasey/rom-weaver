@@ -1,5 +1,6 @@
 mod bps;
 mod ips;
+mod ups;
 mod vcdiff;
 mod xdelta_ffi;
 
@@ -11,6 +12,7 @@ use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result,
 };
+use ups::UpsPatchHandler;
 use vcdiff::VcdiffPatchHandler;
 
 const IPS: FormatDescriptor = FormatDescriptor {
@@ -102,7 +104,7 @@ impl PatchRegistry {
             handlers: vec![
                 Arc::new(IpsPatchHandler::new(&IPS)),
                 Arc::new(BpsPatchHandler::new(&BPS)),
-                Arc::new(StaticPatchHandler::new(&UPS)),
+                Arc::new(UpsPatchHandler::new(&UPS)),
                 Arc::new(VcdiffPatchHandler::new(&VCDIFF)),
                 Arc::new(VcdiffPatchHandler::new(&XDELTA)),
                 Arc::new(StaticPatchHandler::new(&APS)),
