@@ -93,6 +93,12 @@ const PMSR: FormatDescriptor = FormatDescriptor {
     aliases: &[],
     extensions: &[".pmsr"],
 };
+const PDS: FormatDescriptor = FormatDescriptor {
+    family: OperationFamily::Patch,
+    name: "PDS",
+    aliases: &[],
+    extensions: &[".pds"],
+};
 
 pub struct PatchRegistry {
     handlers: Vec<Arc<dyn PatchHandler>>,
@@ -120,6 +126,7 @@ impl PatchRegistry {
                 Arc::new(StaticPatchHandler::new(&EBP)),
                 Arc::new(StaticPatchHandler::new(&BDF_BSDIFF40)),
                 Arc::new(StaticPatchHandler::new(&PMSR)),
+                Arc::new(StaticPatchHandler::new(&PDS)),
             ],
         }
     }
@@ -250,6 +257,7 @@ mod tests {
                 "EBP",
                 "BDF/BSDIFF40",
                 "PMSR",
+                "PDS",
             ]
         );
     }
@@ -278,5 +286,12 @@ mod tests {
             .probe(Path::new("update.apsgba"))
             .expect("apsgba probe");
         assert_eq!(handler.descriptor().name, "APSGBA");
+    }
+
+    #[test]
+    fn probe_routes_pds_extension_to_pds_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry.probe(Path::new("update.pds")).expect("pds probe");
+        assert_eq!(handler.descriptor().name, "PDS");
     }
 }
