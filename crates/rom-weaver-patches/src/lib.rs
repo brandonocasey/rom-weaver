@@ -1,12 +1,12 @@
 mod apsgba;
 mod bdf;
 mod bps;
-mod dldi;
 mod ips;
 mod pds;
 mod pmsr;
 mod ppf;
 mod rup;
+mod spatch;
 mod ups;
 mod vcdiff;
 mod xdelta_ffi;
@@ -16,7 +16,6 @@ use std::{path::Path, sync::Arc};
 use apsgba::ApsGbaPatchHandler;
 use bdf::BdfPatchHandler;
 use bps::BpsPatchHandler;
-use dldi::DldiPatchHandler;
 use ips::IpsPatchHandler;
 use pds::PdsPatchHandler;
 use pmsr::PmsrPatchHandler;
@@ -26,6 +25,7 @@ use rom_weaver_core::{
     PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result,
 };
 use rup::RupPatchHandler;
+use spatch::SpatchPatchHandler;
 use ups::UpsPatchHandler;
 use vcdiff::VcdiffPatchHandler;
 
@@ -34,6 +34,12 @@ const IPS: FormatDescriptor = FormatDescriptor {
     name: "IPS",
     aliases: &[],
     extensions: &[".ips"],
+};
+const SPATCH: FormatDescriptor = FormatDescriptor {
+    family: OperationFamily::Patch,
+    name: "SPATCH",
+    aliases: &["double-ips", "doubleips"],
+    extensions: &[".spatch"],
 };
 const BPS: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
@@ -107,12 +113,6 @@ const PDS: FormatDescriptor = FormatDescriptor {
     aliases: &[],
     extensions: &[".pds"],
 };
-const DLDI: FormatDescriptor = FormatDescriptor {
-    family: OperationFamily::Patch,
-    name: "DLDI",
-    aliases: &[],
-    extensions: &[".dldi"],
-};
 
 pub struct PatchRegistry {
     handlers: Vec<Arc<dyn PatchHandler>>,
@@ -129,6 +129,7 @@ impl PatchRegistry {
         Self {
             handlers: vec![
                 Arc::new(IpsPatchHandler::new(&IPS)),
+                Arc::new(SpatchPatchHandler::new(&SPATCH)),
                 Arc::new(BpsPatchHandler::new(&BPS)),
                 Arc::new(UpsPatchHandler::new(&UPS)),
                 Arc::new(VcdiffPatchHandler::new(&VCDIFF)),
@@ -137,11 +138,10 @@ impl PatchRegistry {
                 Arc::new(ApsGbaPatchHandler::new(&APSGBA)),
                 Arc::new(RupPatchHandler::new(&RUP)),
                 Arc::new(PpfPatchHandler::new(&PPF)),
-                Arc::new(StaticPatchHandler::new(&EBP)),
+                Arc::new(IpsPatchHandler::new_ebp(&EBP)),
                 Arc::new(BdfPatchHandler::new(&BDF_BSDIFF40)),
                 Arc::new(PmsrPatchHandler::new(&MOD)),
                 Arc::new(PdsPatchHandler::new(&PDS)),
-                Arc::new(DldiPatchHandler::new(&DLDI)),
             ],
         }
     }
@@ -261,6 +261,7 @@ mod tests {
             names,
             vec![
                 "IPS",
+                "SPATCH",
                 "BPS",
                 "UPS",
                 "VCDIFF",
@@ -273,7 +274,6 @@ mod tests {
                 "BDF/BSDIFF40",
                 "MOD",
                 "PDS",
-                "DLDI",
             ]
         );
     }
@@ -299,6 +299,16 @@ mod tests {
     }
 
     #[test]
+    fn ebp_is_wired_to_supported_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry.find_by_name("ebp").expect("ebp handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.parse);
+        assert!(capabilities.apply);
+        assert!(capabilities.create);
+    }
+
+    #[test]
     fn pds_is_wired_to_parse_supported_handler() {
         let registry = PatchRegistry::new();
         let handler = registry.find_by_name("pds").expect("pds handler");
@@ -306,16 +316,6 @@ mod tests {
         assert!(capabilities.parse);
         assert!(!capabilities.apply);
         assert!(!capabilities.create);
-    }
-
-    #[test]
-    fn dldi_is_wired_to_supported_handler() {
-        let registry = PatchRegistry::new();
-        let handler = registry.find_by_name("dldi").expect("dldi handler");
-        let capabilities = handler.capabilities();
-        assert!(capabilities.parse);
-        assert!(capabilities.apply);
-        assert!(capabilities.create);
     }
 
     #[test]
@@ -335,19 +335,19 @@ mod tests {
     }
 
     #[test]
+    fn probe_routes_spatch_extension_to_spatch_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry
+            .probe(Path::new("update.spatch"))
+            .expect("spatch probe");
+        assert_eq!(handler.descriptor().name, "SPATCH");
+    }
+
+    #[test]
     fn probe_routes_pds_extension_to_pds_handler() {
         let registry = PatchRegistry::new();
         let handler = registry.probe(Path::new("update.pds")).expect("pds probe");
         assert_eq!(handler.descriptor().name, "PDS");
-    }
-
-    #[test]
-    fn probe_routes_dldi_extension_to_dldi_handler() {
-        let registry = PatchRegistry::new();
-        let handler = registry
-            .probe(Path::new("update.dldi"))
-            .expect("dldi probe");
-        assert_eq!(handler.descriptor().name, "DLDI");
     }
 
     #[test]
@@ -380,5 +380,14 @@ mod tests {
         let registry = PatchRegistry::new();
         let handler = registry.find_by_name("pmsr").expect("pmsr alias");
         assert_eq!(handler.descriptor().name, "MOD");
+    }
+
+    #[test]
+    fn find_by_name_routes_double_ips_alias_to_spatch_handler() {
+        let registry = PatchRegistry::new();
+        for alias in ["double-ips", "doubleips"] {
+            let handler = registry.find_by_name(alias).expect("spatch alias");
+            assert_eq!(handler.descriptor().name, "SPATCH");
+        }
     }
 }

@@ -11,6 +11,7 @@ use rom_weaver_core::{
     PatchApplyRequest, PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence,
     Result, RomWeaverError, ThreadCapability,
 };
+use serde_json::{Map as JsonMap, Value as JsonValue};
 
 const IPS_MAGIC: &[u8; 5] = b"PATCH";
 const IPS_EOF: &[u8; 3] = b"EOF";
@@ -19,14 +20,32 @@ const OUTPUT_CHUNK_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_IPS_RECORD_LEN: usize = u16::MAX as usize;
 const MAX_IPS_OFFSET: u64 = 0x00FF_FFFF;
 const MIN_RLE_RECORD_LEN: usize = 4;
+const DEFAULT_EBP_METADATA_JSON: &str = r#"{"patcher":"EBPatcher","Author":"Unknown","Description":"No description","Title":"Untitled"}"#;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IpsFlavor {
+    Ips,
+    Ebp,
+}
 
 pub struct IpsPatchHandler {
     descriptor: &'static FormatDescriptor,
+    flavor: IpsFlavor,
 }
 
 impl IpsPatchHandler {
     pub const fn new(descriptor: &'static FormatDescriptor) -> Self {
-        Self { descriptor }
+        Self {
+            descriptor,
+            flavor: IpsFlavor::Ips,
+        }
+    }
+
+    pub const fn new_ebp(descriptor: &'static FormatDescriptor) -> Self {
+        Self {
+            descriptor,
+            flavor: IpsFlavor::Ebp,
+        }
     }
 }
 
@@ -40,21 +59,8 @@ impl PatchHandler for IpsPatchHandler {
     }
 
     fn parse(&self, patch_path: &Path, _context: &OperationContext) -> Result<OperationReport> {
-        let patch = parse_ips_file(patch_path)?;
-        let label = if let Some(size) = patch.truncate_size {
-            format!(
-                "parsed {} patch with {} record(s) and output size {}",
-                self.descriptor.name,
-                patch.records.len(),
-                size
-            )
-        } else {
-            format!(
-                "parsed {} patch with {} record(s)",
-                self.descriptor.name,
-                patch.records.len()
-            )
-        };
+        let patch = parse_ips_file(patch_path, self.flavor)?;
+        let label = parse_label(self.descriptor.name, &patch);
 
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
@@ -78,7 +84,7 @@ impl PatchHandler for IpsPatchHandler {
             )));
         }
 
-        let patch = parse_ips_file(&request.patches[0])?;
+        let patch = parse_ips_file(&request.patches[0], self.flavor)?;
         let input_len = fs::metadata(&request.input)?.len();
         let output_size = patch.resolved_output_size(input_len)?;
         let max_parallel_chunks = max_parallel_chunks(output_size)?;
@@ -138,6 +144,7 @@ impl PatchHandler for IpsPatchHandler {
             modified_len,
             &mut output,
             context,
+            self.flavor,
         )?;
         output.flush()?;
 
@@ -169,6 +176,7 @@ impl PatchHandler for IpsPatchHandler {
 #[derive(Debug)]
 struct ParsedIpsPatch {
     truncate_size: Option<u64>,
+    metadata: Option<JsonMap<String, JsonValue>>,
     max_written_end: u64,
     records: Vec<IpsRecord>,
 }
@@ -225,12 +233,12 @@ struct PendingDiff {
     bytes: Vec<u8>,
 }
 
-fn parse_ips_file(path: &Path) -> Result<ParsedIpsPatch> {
+fn parse_ips_file(path: &Path, flavor: IpsFlavor) -> Result<ParsedIpsPatch> {
     let bytes = fs::read(path)?;
-    parse_ips_bytes(&bytes)
+    parse_ips_bytes(&bytes, flavor)
 }
 
-fn parse_ips_bytes(bytes: &[u8]) -> Result<ParsedIpsPatch> {
+fn parse_ips_bytes(bytes: &[u8], flavor: IpsFlavor) -> Result<ParsedIpsPatch> {
     if bytes.len() < IPS_MAGIC.len() + IPS_EOF.len() {
         return Err(RomWeaverError::Validation(
             "IPS patch is too small to contain a valid header and footer".into(),
@@ -248,13 +256,17 @@ fn parse_ips_bytes(bytes: &[u8]) -> Result<ParsedIpsPatch> {
     loop {
         let marker = parser.read_exact(IPS_EOF.len())?;
         if marker == IPS_EOF {
-            let truncate_size = match parser.remaining() {
-                0 => None,
-                3 => Some(u64::from(parser.read_u24()?)),
+            let (truncate_size, metadata) = match parser.remaining() {
+                0 => (None, None),
+                3 => (Some(u64::from(parser.read_u24()?)), None),
+                _ if flavor == IpsFlavor::Ebp => {
+                    let metadata = parse_ebp_metadata(parser.read_exact(parser.remaining())?)?;
+                    (None, Some(metadata))
+                }
                 _ => {
                     return Err(RomWeaverError::Validation(
                         "IPS patch contained unexpected trailing data after EOF".into(),
-                    ));
+                    ))
                 }
             };
 
@@ -268,6 +280,7 @@ fn parse_ips_bytes(bytes: &[u8]) -> Result<ParsedIpsPatch> {
 
             return Ok(ParsedIpsPatch {
                 truncate_size,
+                metadata,
                 max_written_end,
                 records,
             });
@@ -295,6 +308,38 @@ fn parse_ips_bytes(bytes: &[u8]) -> Result<ParsedIpsPatch> {
     }
 }
 
+fn parse_label(format_name: &str, patch: &ParsedIpsPatch) -> String {
+    let mut label = format!(
+        "parsed {format_name} patch with {} record(s)",
+        patch.records.len()
+    );
+    if let Some(size) = patch.truncate_size {
+        label.push_str(&format!(" and output size {size}"));
+    }
+    if patch.metadata.is_some() {
+        label.push_str(" and metadata");
+    }
+    label
+}
+
+fn parse_ebp_metadata(bytes: &[u8]) -> Result<JsonMap<String, JsonValue>> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| RomWeaverError::Validation("EBP metadata is not valid UTF-8 JSON".into()))?;
+    let value: JsonValue = serde_json::from_str(text)
+        .map_err(|_| RomWeaverError::Validation("EBP metadata is not valid JSON".into()))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| RomWeaverError::Validation("EBP metadata must be a JSON object".into()))?;
+    for (key, value) in object {
+        if !value.is_string() {
+            return Err(RomWeaverError::Validation(format!(
+                "EBP metadata value for `{key}` must be a string"
+            )));
+        }
+    }
+    Ok(object.clone())
+}
+
 fn max_parallel_chunks(output_size: u64) -> Result<usize> {
     let chunk_count = if output_size == 0 {
         1
@@ -315,6 +360,7 @@ fn create_ips_patch_streaming(
     modified_len: u64,
     output: &mut impl Write,
     context: &OperationContext,
+    flavor: IpsFlavor,
 ) -> Result<IpsCreateResult> {
     let mut original = BufReader::new(File::open(original_path)?);
     let mut modified = BufReader::new(File::open(modified_path)?);
@@ -375,8 +421,15 @@ fn create_ips_patch_streaming(
     flush_pending_diff(&mut pending, output, &mut created)?;
     output.write_all(IPS_EOF)?;
 
-    if truncate_size_required(original_len, modified_len, created.max_written_end) {
-        write_u24(output, modified_len, "IPS truncate size")?;
+    match flavor {
+        IpsFlavor::Ips => {
+            if truncate_size_required(original_len, modified_len, created.max_written_end) {
+                write_u24(output, modified_len, "IPS truncate size")?;
+            }
+        }
+        IpsFlavor::Ebp => {
+            output.write_all(DEFAULT_EBP_METADATA_JSON.as_bytes())?;
+        }
     }
 
     Ok(created)
@@ -703,8 +756,8 @@ mod tests {
     use std::{
         env, fs,
         path::PathBuf,
-        sync::Arc,
         sync::atomic::{AtomicU64, Ordering},
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -714,10 +767,10 @@ mod tests {
     };
 
     use super::{
-        IPS_EOF, IPS_MAGIC, IpsPatchHandler, IpsRecordData, MAX_IPS_RECORD_LEN, OUTPUT_CHUNK_SIZE,
-        parse_ips_bytes,
+        parse_ips_bytes, IpsFlavor, IpsPatchHandler, IpsRecordData, JsonValue,
+        DEFAULT_EBP_METADATA_JSON, IPS_EOF, IPS_MAGIC, MAX_IPS_RECORD_LEN, OUTPUT_CHUNK_SIZE,
     };
-    use crate::IPS;
+    use crate::{EBP, IPS};
 
     static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -767,12 +820,10 @@ mod tests {
             Some(6),
         );
 
-        let error = parse_ips_bytes(&patch).expect_err("invalid patch");
-        assert!(
-            error
-                .to_string()
-                .contains("IPS record exceeded declared output size")
-        );
+        let error = parse_ips_bytes(&patch, IpsFlavor::Ips).expect_err("invalid patch");
+        assert!(error
+            .to_string()
+            .contains("IPS record exceeded declared output size"));
     }
 
     #[test]
@@ -885,7 +936,8 @@ mod tests {
         assert_eq!(execution.effective_threads, 1);
         assert!(!execution.used_parallelism);
 
-        let patch = parse_ips_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
+        let patch =
+            parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
         assert_eq!(patch.truncate_size, Some(modified.len() as u64));
         assert!(!patch.records.is_empty());
 
@@ -926,7 +978,8 @@ mod tests {
             )
             .expect("create");
 
-        let patch = parse_ips_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
+        let patch =
+            parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
         assert_eq!(patch.truncate_size, Some(32));
         assert!(patch.records.is_empty());
 
@@ -966,7 +1019,8 @@ mod tests {
             )
             .expect("create");
 
-        let patch = parse_ips_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
+        let patch =
+            parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
         assert_eq!(patch.truncate_size, None);
         assert_eq!(patch.records.len(), 1);
         assert_eq!(patch.records[0].offset, 0);
@@ -1004,7 +1058,8 @@ mod tests {
             )
             .expect("create");
 
-        let patch = parse_ips_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
+        let patch =
+            parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
         assert_eq!(patch.truncate_size, None);
         assert_eq!(patch.records.len(), 2);
         assert_eq!(patch.records[0].offset, 0);
@@ -1042,6 +1097,125 @@ mod tests {
         assert_eq!(patch, b"PATCHEOF");
     }
 
+    #[test]
+    fn parse_accepts_ebp_metadata_after_eof() {
+        let patch = build_ebp_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 1,
+                data: b"XYZ".to_vec(),
+            }],
+            r#"{"patcher":"EBPatcher","Title":"Test","Author":"Me","Description":"Demo"}"#,
+        );
+        let parsed = parse_ips_bytes(&patch, IpsFlavor::Ebp).expect("parse");
+        assert_eq!(parsed.truncate_size, None);
+        assert_eq!(parsed.records.len(), 1);
+        let metadata = parsed.metadata.expect("metadata");
+        assert_eq!(
+            metadata.get("patcher").and_then(JsonValue::as_str),
+            Some("EBPatcher")
+        );
+        assert_eq!(
+            metadata.get("Title").and_then(JsonValue::as_str),
+            Some("Test")
+        );
+    }
+
+    #[test]
+    fn parse_rejects_invalid_ebp_metadata_json() {
+        let patch = build_ebp_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 0,
+                data: b"A".to_vec(),
+            }],
+            "{invalid-json}",
+        );
+        let error = parse_ips_bytes(&patch, IpsFlavor::Ebp).expect_err("invalid metadata");
+        assert!(error.to_string().contains("EBP metadata is not valid JSON"));
+    }
+
+    #[test]
+    fn apply_round_trips_for_ebp_patch() {
+        let temp = TestDir::new();
+        let input_path = temp.child("input.bin");
+        let patch_path = temp.child("update.ebp");
+        let output_path = temp.child("output.bin");
+        fs::write(&input_path, b"abcdefgh").expect("fixture");
+        fs::write(
+            &patch_path,
+            build_ebp_patch(
+                vec![
+                    TestIpsRecord::Literal {
+                        offset: 2,
+                        data: b"XYZ".to_vec(),
+                    },
+                    TestIpsRecord::Rle {
+                        offset: 7,
+                        len: 2,
+                        value: b'!',
+                    },
+                ],
+                r#"{"patcher":"EBPatcher","Title":"Patch"}"#,
+            ),
+        )
+        .expect("fixture");
+
+        let handler = IpsPatchHandler::new_ebp(&EBP);
+        handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path,
+                    patches: vec![patch_path],
+                    output: output_path.clone(),
+                },
+                &test_context_with_threads(&temp, 4),
+            )
+            .expect("apply");
+
+        assert_eq!(fs::read(&output_path).expect("output"), b"abXYZfg!!");
+    }
+
+    #[test]
+    fn create_round_trips_and_writes_default_ebp_metadata() {
+        let temp = TestDir::new();
+        let original_path = temp.child("input.bin");
+        let modified_path = temp.child("modified.bin");
+        let patch_path = temp.child("update.ebp");
+        let output_path = temp.child("output.bin");
+        fs::write(&original_path, b"abcdefgh").expect("fixture");
+        fs::write(&modified_path, b"a1XYZf!!").expect("fixture");
+
+        let handler = IpsPatchHandler::new_ebp(&EBP);
+        handler
+            .create(
+                &PatchCreateRequest {
+                    original: original_path.clone(),
+                    modified: modified_path.clone(),
+                    output: patch_path.clone(),
+                    format: "EBP".into(),
+                },
+                &test_context_with_threads(&temp, 4),
+            )
+            .expect("create");
+
+        let patch = fs::read(&patch_path).expect("patch");
+        assert!(patch.ends_with(DEFAULT_EBP_METADATA_JSON.as_bytes()));
+        let parsed = parse_ips_bytes(&patch, IpsFlavor::Ebp).expect("parse");
+        assert_eq!(parsed.truncate_size, None);
+        assert!(parsed.metadata.is_some());
+
+        handler
+            .apply(
+                &PatchApplyRequest {
+                    input: original_path,
+                    patches: vec![patch_path],
+                    output: output_path.clone(),
+                },
+                &test_context_with_threads(&temp, 4),
+            )
+            .expect("apply");
+        assert_eq!(fs::read(&output_path).expect("output"), b"a1XYZf!!");
+    }
+
     fn build_ips_patch(records: Vec<TestIpsRecord>, truncate_size: Option<u32>) -> Vec<u8> {
         let mut bytes = IPS_MAGIC.to_vec();
         for record in records {
@@ -1064,6 +1238,12 @@ mod tests {
         if let Some(size) = truncate_size {
             write_u24(&mut bytes, size);
         }
+        bytes
+    }
+
+    fn build_ebp_patch(records: Vec<TestIpsRecord>, metadata_json: &str) -> Vec<u8> {
+        let mut bytes = build_ips_patch(records, None);
+        bytes.extend_from_slice(metadata_json.as_bytes());
         bytes
     }
 
