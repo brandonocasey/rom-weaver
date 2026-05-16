@@ -807,6 +807,45 @@ fn compress_routes_through_registered_container_format() {
     assert!(output_path.path().exists());
 }
 
+#[test]
+fn compress_rejects_invalid_codec_level_spec() {
+    let temp = setup_temp_dir();
+    temp.child("file.bin")
+        .write_str("payload")
+        .expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("file.bin").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            temp.child("out.zip").path().to_str().expect("path"),
+            "--codec",
+            "deflate:fast",
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "compress");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "zip");
+    assert_eq!(json["status"], "failed");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("not a valid integer")
+    );
+}
+
 fn run_archive_round_trip(format: &str, archive_name: &str, codec: Option<&str>) {
     let temp = setup_temp_dir();
     let payload = (0..8192)
@@ -887,16 +926,18 @@ fn run_archive_round_trip(format: &str, archive_name: &str, codec: Option<&str>)
 fn archive_container_formats_round_trip() {
     let cases = [
         ("zip", "sample.zip", None),
-        ("zipx", "sample.zipx", Some("zstd")),
+        ("zipx", "sample.zipx", Some("zstd:3")),
         ("7z", "sample.7z", Some("lzma2")),
         ("tar", "sample.tar", None),
-        ("tar.gz", "sample.tar.gz", Some("gzip")),
-        ("tar.bz2", "sample.tar.bz2", Some("bzip2")),
-        ("tar.xz", "sample.tar.xz", Some("xz")),
-        ("gz", "source.bin.gz", Some("gzip")),
-        ("bz2", "source.bin.bz2", Some("bzip2")),
-        ("xz", "source.bin.xz", Some("xz")),
-        ("zst", "source.bin.zst", Some("zstd")),
+        ("tar.gz", "sample.tar.gz", Some("gzip:6")),
+        ("tar.bz2", "sample.tar.bz2", Some("bzip2:6")),
+        ("tar.xz", "sample.tar.xz", Some("xz:6")),
+        ("tar.xz", "sample-lzma2.tar.xz", Some("lzma2:6")),
+        ("gz", "source.bin.gz", Some("gzip:6")),
+        ("bz2", "source.bin.bz2", Some("bzip2:6")),
+        ("xz", "source.bin.xz", Some("xz:6")),
+        ("xz", "source.bin.xz", Some("lzma2:6")),
+        ("zst", "source.bin.zst", Some("zstd:3")),
     ];
 
     for (format, archive_name, codec) in cases {
@@ -998,7 +1039,7 @@ fn chd_compress_and_extract_raw_round_trip() {
     let source = (0..16_384)
         .map(|index| (index % 251) as u8)
         .collect::<Vec<_>>();
-    run_chd_round_trip("disc.bin", &source, "lzma", "disc.bin");
+    run_chd_round_trip("disc.bin", &source, "lzma2", "disc.bin");
 }
 
 #[test]
@@ -1294,9 +1335,7 @@ fn rvz_compress_and_extract_round_trips() {
             "--output",
             rvz_path.path().to_str().expect("path"),
             "--codec",
-            "lzma",
-            "--level",
-            "6",
+            "lzma2:6",
             "--json",
         ])
         .assert()
@@ -1354,9 +1393,7 @@ fn rvz_compress_store_rejects_level() {
             "--output",
             temp.child("disc.rvz").path().to_str().expect("path"),
             "--codec",
-            "store",
-            "--level",
-            "1",
+            "store:1",
             "--json",
         ])
         .assert()
@@ -1431,9 +1468,7 @@ fn z3ds_compress_inspect_and_extract_round_trip() {
             "--output",
             z3ds_path.path().to_str().expect("path"),
             "--codec",
-            "zstd",
-            "--level",
-            "5",
+            "zstd:5",
             "--json",
         ])
         .assert()
@@ -1518,9 +1553,7 @@ fn z3ds_extract_reports_parallel_threads_for_large_file() {
             "--output",
             z3ds_path.path().to_str().expect("path"),
             "--codec",
-            "zstd",
-            "--level",
-            "4",
+            "zstd:4",
             "--json",
         ])
         .assert()
@@ -1578,9 +1611,7 @@ fn z3ds_compress_reports_parallel_threads_for_large_file() {
             "--output",
             z3ds_path.path().to_str().expect("path"),
             "--codec",
-            "zstd",
-            "--level",
-            "4",
+            "zstd:4",
             "--threads",
             "8",
             "--json",

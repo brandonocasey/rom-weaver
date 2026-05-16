@@ -83,8 +83,6 @@ struct CompressCommand {
     output: PathBuf,
     #[arg(long)]
     codec: Option<String>,
-    #[arg(long)]
-    level: Option<i32>,
     #[arg(long, default_value = "auto")]
     threads: ThreadBudget,
 }
@@ -343,13 +341,21 @@ impl CliApp {
     }
 
     fn run_compress(&self, args: CompressCommand) -> ExitCode {
-        let context = self.context(args.threads);
+        let CompressCommand {
+            input,
+            format,
+            output,
+            codec,
+            threads,
+        } = args;
+
+        let context = self.context(threads);
         let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
-        for input in &args.input {
+        for input in &input {
             if let Some(report) = self.require_existing_path(
                 "compress",
                 OperationFamily::Container,
-                Some(args.format.clone()),
+                Some(format.clone()),
                 input,
                 probe_threads.clone(),
             ) {
@@ -357,12 +363,28 @@ impl CliApp {
             }
         }
 
-        let Some(handler) = self.containers.find_by_name(&args.format) else {
+        let (codec, level) = match Self::resolve_codec_level(codec) {
+            Ok(value) => value,
+            Err(error) => {
+                return self.finish(
+                    "compress",
+                    OperationReport::failed(
+                        OperationFamily::Container,
+                        Some(format.clone()),
+                        "validate",
+                        error.to_string(),
+                        probe_threads,
+                    ),
+                );
+            }
+        };
+
+        let Some(handler) = self.containers.find_by_name(&format) else {
             return self.finish(
                 "compress",
                 OperationReport::failed(
                     OperationFamily::Container,
-                    Some(args.format),
+                    Some(format),
                     "probe",
                     "requested output format is not registered",
                     probe_threads,
@@ -371,11 +393,11 @@ impl CliApp {
         };
 
         let request = ContainerCreateRequest {
-            inputs: args.input,
-            output: args.output,
+            inputs: input,
+            output,
             format: handler.descriptor().name.to_string(),
-            codec: args.codec,
-            level: args.level,
+            codec,
+            level,
         };
         let report = handler.create(&request, &context).unwrap_or_else(|error| {
             OperationReport::failed(
@@ -507,6 +529,45 @@ impl CliApp {
             self.reporter.clone(),
             CancellationToken::new(),
         )
+    }
+
+    fn resolve_codec_level(codec: Option<String>) -> Result<(Option<String>, Option<i32>)> {
+        let Some(codec) = codec else {
+            return Ok((None, None));
+        };
+
+        let codec = codec.trim();
+        if codec.is_empty() {
+            return Err(RomWeaverError::Validation(
+                "--codec cannot be empty".to_string(),
+            ));
+        }
+
+        let Some((raw_codec, raw_level)) = codec.split_once(':') else {
+            return Ok((Some(codec.to_string()), None));
+        };
+
+        let codec_name = raw_codec.trim();
+        if codec_name.is_empty() {
+            return Err(RomWeaverError::Validation(
+                "codec name is missing before `:` in --codec".to_string(),
+            ));
+        }
+
+        let level_text = raw_level.trim();
+        if level_text.is_empty() {
+            return Err(RomWeaverError::Validation(
+                "codec level is missing after `:` in --codec".to_string(),
+            ));
+        }
+
+        let parsed_level = level_text.parse::<i32>().map_err(|_| {
+            RomWeaverError::Validation(format!(
+                "codec level `{level_text}` is not a valid integer in --codec"
+            ))
+        })?;
+
+        Ok((Some(codec_name.to_string()), Some(parsed_level)))
     }
 
     fn require_existing_path(
