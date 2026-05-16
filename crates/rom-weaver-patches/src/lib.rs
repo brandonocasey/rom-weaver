@@ -1,3 +1,4 @@
+mod apsgba;
 mod bps;
 mod ips;
 mod ppf;
@@ -7,6 +8,7 @@ mod xdelta_ffi;
 
 use std::{path::Path, sync::Arc};
 
+use apsgba::ApsGbaPatchHandler;
 use bps::BpsPatchHandler;
 use ips::IpsPatchHandler;
 use ppf::PpfPatchHandler;
@@ -110,7 +112,7 @@ impl PatchRegistry {
                 Arc::new(VcdiffPatchHandler::new(&VCDIFF)),
                 Arc::new(VcdiffPatchHandler::new(&XDELTA)),
                 Arc::new(StaticPatchHandler::new(&APS)),
-                Arc::new(StaticPatchHandler::new(&APSGBA)),
+                Arc::new(ApsGbaPatchHandler::new(&APSGBA)),
                 Arc::new(StaticPatchHandler::new(&RUP)),
                 Arc::new(PpfPatchHandler::new(&PPF)),
                 Arc::new(StaticPatchHandler::new(&EBP)),
