@@ -74,7 +74,7 @@
 | PAT-011 | patch | BDF/BSDIFF40 | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Registry entry exists. |
 | PAT-012 | patch | PMSR | done | n/a | n/a | done | done | scan,diff,write flags | fixture-parity,cli-smoke | done | Implemented through the MOD handler with `pmsr` alias support and `.pmsr` extension probing. |
 | PAT-013 | patch | MOD | done | n/a | n/a | done | done | scan,diff,write flags | fixture-parity,cli-smoke | done | Native parse/apply/create landed for Star Rod/Paper Mario `.mod` patches (PMSR magic), including CLI smoke and module coverage; create currently rejects shrinking outputs. |
-| PAT-014 | patch | BSPATCH alias | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Accept `.bspatch` extension as BSDIFF40-compatible probe path. |
+| PAT-014 | patch | BSPATCH alias | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | done | Accept `.bspatch` and `.bspatch40` extensions plus `bspatch`/`bspatch40` format aliases as BSDIFF40-compatible probe paths. |
 | PAT-015 | patch | DLDI | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Nintendo DS homebrew patching compatibility target. |
 | PAT-016 | patch | PDS | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Nintendo DS patch ecosystem target; prioritize fixture/spec discovery first. |
 | PAT-017 | patch | SPATCH (Double IPS) | probe-only | n/a | n/a | todo | todo | scan,diff,write flags | fixture-parity,cli-smoke | todo | Legacy double-IPS compatibility target for older ROM hacks. |
