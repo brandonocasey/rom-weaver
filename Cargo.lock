@@ -1568,6 +1568,7 @@ name = "rom-weaver-patches"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "md-5",
  "rayon",
  "rom-weaver-core",
  "xdelta3",

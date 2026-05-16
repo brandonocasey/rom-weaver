@@ -1765,6 +1765,103 @@ fn patch_create_succeeds_for_ups_and_round_trips() {
 }
 
 #[test]
+fn patch_create_succeeds_for_rup_and_round_trips() {
+    let temp = setup_temp_dir();
+    let original = temp.child("old.bin");
+    let modified = temp.child("new.bin");
+    let patch = temp.child("update.rup");
+    let output = temp.child("output.bin");
+    let reverse = temp.child("reverse.bin");
+    fs::write(original.path(), b"hello old world").expect("fixture");
+    fs::write(modified.path(), b"hello new world + tail").expect("fixture");
+
+    let create_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified.path().to_str().expect("path"),
+            "--format",
+            "rup",
+            "--output",
+            patch.path().to_str().expect("path"),
+            "--threads",
+            "8",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let create_json = parse_single_json_line(&create_output);
+    assert_eq!(create_json["command"], "patch-create");
+    assert_eq!(create_json["family"], "patch");
+    assert_eq!(create_json["format"], "RUP");
+    assert_eq!(create_json["requested_threads"], 8);
+    assert_eq!(create_json["effective_threads"], 1);
+    assert_eq!(create_json["used_parallelism"], false);
+    assert_eq!(create_json["status"], "succeeded");
+
+    let apply_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-apply",
+            "--input",
+            original.path().to_str().expect("path"),
+            "--patch",
+            patch.path().to_str().expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let apply_json = parse_single_json_line(&apply_output);
+    assert_eq!(apply_json["command"], "patch-apply");
+    assert_eq!(apply_json["format"], "RUP");
+    assert_eq!(apply_json["status"], "succeeded");
+    assert_eq!(
+        fs::read(output.path()).expect("output"),
+        fs::read(modified.path()).expect("modified")
+    );
+
+    let reverse_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-apply",
+            "--input",
+            output.path().to_str().expect("path"),
+            "--patch",
+            patch.path().to_str().expect("path"),
+            "--output",
+            reverse.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let reverse_json = parse_single_json_line(&reverse_output);
+    assert_eq!(reverse_json["command"], "patch-apply");
+    assert_eq!(reverse_json["format"], "RUP");
+    assert_eq!(reverse_json["status"], "succeeded");
+    assert_eq!(
+        fs::read(reverse.path()).expect("reverse"),
+        fs::read(original.path()).expect("original")
+    );
+}
+
+#[test]
 fn patch_create_succeeds_for_ppf_and_round_trips() {
     let temp = setup_temp_dir();
     let original = temp.child("old.bin");

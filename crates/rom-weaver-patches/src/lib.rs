@@ -2,6 +2,7 @@ mod apsgba;
 mod bps;
 mod ips;
 mod ppf;
+mod rup;
 mod ups;
 mod vcdiff;
 mod xdelta_ffi;
@@ -16,6 +17,7 @@ use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result,
 };
+use rup::RupPatchHandler;
 use ups::UpsPatchHandler;
 use vcdiff::VcdiffPatchHandler;
 
@@ -113,7 +115,7 @@ impl PatchRegistry {
                 Arc::new(VcdiffPatchHandler::new(&XDELTA)),
                 Arc::new(ApsGbaPatchHandler::new(&APS)),
                 Arc::new(ApsGbaPatchHandler::new(&APSGBA)),
-                Arc::new(StaticPatchHandler::new(&RUP)),
+                Arc::new(RupPatchHandler::new(&RUP)),
                 Arc::new(PpfPatchHandler::new(&PPF)),
                 Arc::new(StaticPatchHandler::new(&EBP)),
                 Arc::new(StaticPatchHandler::new(&BDF_BSDIFF40)),
