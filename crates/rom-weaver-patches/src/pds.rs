@@ -1,14 +1,33 @@
-use std::{fs::File, io::Read, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File},
+    io::{Cursor, Read, Write},
+    path::Path,
+};
 
+use crc32fast::Hasher;
+use qbsdiff::{Bsdiff, Bspatch, ParallelScheme};
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
     ThreadCapability,
 };
-use zip::ZipArchive;
+use zip::{CompressionMethod, ZipArchive, ZipWriter, write::FileOptions};
 
 const PDS_MANIFEST_NAME: &str = "patch.dat";
+const PDS_DEFAULT_PAYLOAD_NAME: &str = "patch.bdf";
+const PDS_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
+
+const MANIFEST_KEY_VERSION: &str = "version";
+const MANIFEST_KEY_FORMAT: &str = "format";
+const MANIFEST_KEY_PAYLOAD: &str = "payload";
+const MANIFEST_KEY_SOURCE_SIZE: &str = "source_size";
+const MANIFEST_KEY_TARGET_SIZE: &str = "target_size";
+const MANIFEST_KEY_SOURCE_CRC32: &str = "source_crc32";
+const MANIFEST_KEY_TARGET_CRC32: &str = "target_crc32";
+
+const BDF_FORMAT_ALIASES: &[&str] = &["bdf", "bsdiff", "bsdiff40", "bspatch", "bspatch40"];
 
 pub struct PdsPatchHandler {
     descriptor: &'static FormatDescriptor,
@@ -31,19 +50,28 @@ impl PatchHandler for PdsPatchHandler {
 
     fn parse(&self, patch_path: &Path, _context: &OperationContext) -> Result<OperationReport> {
         let parsed = parse_pds_archive(patch_path)?;
+        let mut label = format!(
+            "parsed PDS archive with {} {} ({} payload {}; manifest `{}` {} byte(s))",
+            parsed.entry_count,
+            pluralize(parsed.entry_count, "entry", "entries"),
+            parsed.payload_count,
+            pluralize(parsed.payload_count, "entry", "entries"),
+            parsed.manifest_path,
+            parsed.manifest_size
+        );
+
+        if let Some(format) = &parsed.manifest.format {
+            label.push_str(&format!("; declared format `{format}`"));
+        }
+        if let Some(payload) = &parsed.manifest.payload {
+            label.push_str(&format!("; declared payload `{payload}`"));
+        }
+
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "parse",
-            format!(
-                "parsed PDS archive with {} {} ({} payload {}; manifest `{}` {} byte(s))",
-                parsed.entry_count,
-                pluralize(parsed.entry_count, "entry", "entries"),
-                parsed.payload_count,
-                pluralize(parsed.payload_count, "entry", "entries"),
-                parsed.manifest_path,
-                parsed.manifest_size
-            ),
+            label,
             Some(1.0),
             None,
         ))
@@ -60,33 +88,97 @@ impl PatchHandler for PdsPatchHandler {
                 self.descriptor.name
             )));
         }
+
         let parsed = parse_pds_archive(&request.patches[0])?;
+        let payload_name = resolve_payload_name(&parsed)?;
+        let format_name = resolve_payload_format(&parsed.manifest, &payload_name)?;
+        if !is_bdf_alias(&format_name) {
+            return Err(RomWeaverError::Validation(format!(
+                "PDS manifest requested unsupported payload format `{format_name}`; only BSDIFF40-compatible payloads are currently supported"
+            )));
+        }
+
+        let payload = read_named_payload(&request.patches[0], &payload_name)?;
+        let input = fs::read(&request.input)?;
+        validate_source_expectations(&parsed.manifest, &input)?;
+        let output = apply_bdf_payload(&input, &payload)?;
+        validate_target_expectations(&parsed.manifest, &output)?;
+
+        if let Some(parent) = request.output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&request.output, &output)?;
+
         let execution = context.plan_threads(ThreadCapability::single_threaded());
-        Ok(OperationReport::unsupported(
+        Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
-            format!(
-                "apply is not implemented yet for PDS (manifest `{}` with {} payload {})",
-                parsed.manifest_path,
-                parsed.payload_count,
-                pluralize(parsed.payload_count, "entry", "entries")
-            ),
+            format!("applied PDS patch payload `{payload_name}` (format `{format_name}`)"),
+            Some(1.0),
             Some(execution),
         ))
     }
 
     fn create(
         &self,
-        _request: &PatchCreateRequest,
+        request: &PatchCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let execution = context.plan_threads(ThreadCapability::single_threaded());
-        Ok(OperationReport::unsupported(
+        let source = fs::read(&request.original)?;
+        if source.len() > qbsdiff::bsdiff::MAX_LENGTH {
+            return Err(RomWeaverError::Validation(format!(
+                "PDS source exceeds maximum supported size of {} byte(s)",
+                qbsdiff::bsdiff::MAX_LENGTH
+            )));
+        }
+        let target = fs::read(&request.modified)?;
+
+        let mut payload = Vec::new();
+        Bsdiff::new(&source, &target)
+            .parallel_scheme(ParallelScheme::Never)
+            .compare(Cursor::new(&mut payload))?;
+
+        let manifest = build_manifest(&source, &target, PDS_DEFAULT_PAYLOAD_NAME);
+
+        if let Some(parent) = request.output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let file = File::create(&request.output)?;
+        let mut archive = ZipWriter::new(file);
+        let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+        archive
+            .start_file(PDS_MANIFEST_NAME, options)
+            .map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "PDS archive could not write `{PDS_MANIFEST_NAME}`: {error}"
+                ))
+            })?;
+        archive.write_all(manifest.as_bytes())?;
+        archive
+            .start_file(PDS_DEFAULT_PAYLOAD_NAME, options)
+            .map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "PDS archive could not write `{PDS_DEFAULT_PAYLOAD_NAME}`: {error}"
+                ))
+            })?;
+        archive.write_all(&payload)?;
+        archive.finish().map_err(|error| {
+            RomWeaverError::Validation(format!("PDS archive could not be finalized: {error}"))
+        })?;
+
+        Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "create",
-            "create is not implemented yet for PDS (PatcheRL-compatible patch.dat authoring is pending)",
+            format!(
+                "created PDS patch with BSDIFF40 payload `{}` ({} byte(s))",
+                PDS_DEFAULT_PAYLOAD_NAME,
+                payload.len()
+            ),
+            Some(1.0),
             Some(execution),
         ))
     }
@@ -94,8 +186,8 @@ impl PatchHandler for PdsPatchHandler {
     fn capabilities(&self) -> PatchCapabilities {
         PatchCapabilities {
             parse: true,
-            apply: false,
-            create: false,
+            apply: true,
+            create: true,
             threaded_scan: false,
             threaded_diff: false,
             threaded_output: false,
@@ -109,6 +201,24 @@ struct ParsedPdsPatch {
     payload_count: usize,
     manifest_path: String,
     manifest_size: usize,
+    manifest: PdsManifest,
+    payloads: Vec<PdsPayloadEntry>,
+}
+
+#[derive(Debug)]
+struct PdsPayloadEntry {
+    path: String,
+}
+
+#[derive(Debug, Default)]
+struct PdsManifest {
+    version: Option<u32>,
+    format: Option<String>,
+    payload: Option<String>,
+    source_size: Option<u64>,
+    target_size: Option<u64>,
+    source_crc32: Option<u32>,
+    target_crc32: Option<u32>,
 }
 
 fn parse_pds_archive(path: &Path) -> Result<ParsedPdsPatch> {
@@ -122,7 +232,8 @@ fn parse_pds_archive(path: &Path) -> Result<ParsedPdsPatch> {
     let mut entry_count = 0usize;
     let mut payload_count = 0usize;
     let mut manifest_path: Option<String> = None;
-    let mut manifest_size = 0usize;
+    let mut manifest_bytes = Vec::new();
+    let mut payloads = Vec::new();
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| {
@@ -133,10 +244,12 @@ fn parse_pds_archive(path: &Path) -> Result<ParsedPdsPatch> {
         if entry.is_dir() {
             continue;
         }
+
         entry_count = entry_count
             .checked_add(1)
             .ok_or_else(|| RomWeaverError::Validation("PDS entry count overflowed".into()))?;
-        let entry_name = entry.name().to_string();
+
+        let entry_name = normalize_entry_name(entry.name());
         if is_manifest_entry(&entry_name) {
             if manifest_path.is_some() {
                 return Err(RomWeaverError::Validation(
@@ -151,7 +264,8 @@ fn parse_pds_archive(path: &Path) -> Result<ParsedPdsPatch> {
                     "PDS manifest exceeded max supported size of {MAX_MANIFEST_BYTES} byte(s)"
                 )));
             }
-            let mut manifest_bytes = Vec::with_capacity(declared_size);
+
+            manifest_bytes = Vec::with_capacity(declared_size);
             entry.read_to_end(&mut manifest_bytes).map_err(|error| {
                 RomWeaverError::Validation(format!(
                     "PDS manifest `{entry_name}` could not be read: {error}"
@@ -162,13 +276,14 @@ fn parse_pds_archive(path: &Path) -> Result<ParsedPdsPatch> {
                     "PDS manifest `patch.dat` is empty".into(),
                 ));
             }
-            manifest_size = manifest_bytes.len();
             manifest_path = Some(entry_name);
-        } else {
-            payload_count = payload_count.checked_add(1).ok_or_else(|| {
-                RomWeaverError::Validation("PDS payload entry count overflowed".into())
-            })?;
+            continue;
         }
+
+        payload_count = payload_count.checked_add(1).ok_or_else(|| {
+            RomWeaverError::Validation("PDS payload entry count overflowed".into())
+        })?;
+        payloads.push(PdsPayloadEntry { path: entry_name });
     }
 
     if entry_count == 0 {
@@ -183,12 +298,272 @@ fn parse_pds_archive(path: &Path) -> Result<ParsedPdsPatch> {
         ));
     };
 
+    let manifest = parse_manifest(&manifest_bytes)?;
+
     Ok(ParsedPdsPatch {
         entry_count,
         payload_count,
+        manifest_size: manifest_bytes.len(),
         manifest_path,
-        manifest_size,
+        manifest,
+        payloads,
     })
+}
+
+fn parse_manifest(bytes: &[u8]) -> Result<PdsManifest> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| RomWeaverError::Validation("PDS manifest is not valid UTF-8".into()))?;
+
+    let mut fields = BTreeMap::<String, String>::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        let value = value.trim().to_string();
+        if !key.is_empty() {
+            fields.insert(key, value);
+        }
+    }
+
+    let version = parse_u32_field(&fields, MANIFEST_KEY_VERSION)?;
+    let format = parse_string_field(&fields, MANIFEST_KEY_FORMAT);
+    let payload = parse_string_field(&fields, MANIFEST_KEY_PAYLOAD)
+        .as_deref()
+        .map(normalize_entry_name);
+    let source_size = parse_u64_field(&fields, MANIFEST_KEY_SOURCE_SIZE)?;
+    let target_size = parse_u64_field(&fields, MANIFEST_KEY_TARGET_SIZE)?;
+    let source_crc32 = parse_crc32_field(&fields, MANIFEST_KEY_SOURCE_CRC32)?;
+    let target_crc32 = parse_crc32_field(&fields, MANIFEST_KEY_TARGET_CRC32)?;
+
+    Ok(PdsManifest {
+        version,
+        format,
+        payload,
+        source_size,
+        target_size,
+        source_crc32,
+        target_crc32,
+    })
+}
+
+fn parse_string_field(fields: &BTreeMap<String, String>, key: &str) -> Option<String> {
+    fields.get(key).map(|value| value.to_string())
+}
+
+fn parse_u32_field(fields: &BTreeMap<String, String>, key: &str) -> Result<Option<u32>> {
+    let Some(value) = fields.get(key) else {
+        return Ok(None);
+    };
+    let parsed = value.parse::<u32>().map_err(|_| {
+        RomWeaverError::Validation(format!("PDS manifest field `{key}` is not a valid u32"))
+    })?;
+    Ok(Some(parsed))
+}
+
+fn parse_u64_field(fields: &BTreeMap<String, String>, key: &str) -> Result<Option<u64>> {
+    let Some(value) = fields.get(key) else {
+        return Ok(None);
+    };
+    let parsed = value.parse::<u64>().map_err(|_| {
+        RomWeaverError::Validation(format!("PDS manifest field `{key}` is not a valid u64"))
+    })?;
+    Ok(Some(parsed))
+}
+
+fn parse_crc32_field(fields: &BTreeMap<String, String>, key: &str) -> Result<Option<u32>> {
+    let Some(value) = fields.get(key) else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    let value = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    let parsed = u32::from_str_radix(value, 16).map_err(|_| {
+        RomWeaverError::Validation(format!(
+            "PDS manifest field `{key}` is not a valid crc32 hex string"
+        ))
+    })?;
+    Ok(Some(parsed))
+}
+
+fn build_manifest(source: &[u8], target: &[u8], payload: &str) -> String {
+    format!(
+        "# rom-weaver PDS manifest\nversion={PDS_VERSION}\nformat=bdf\npayload={}\nsource_size={}\ntarget_size={}\nsource_crc32={}\ntarget_crc32={}\n",
+        normalize_entry_name(payload),
+        source.len(),
+        target.len(),
+        format!("{:08x}", crc32(source)),
+        format!("{:08x}", crc32(target)),
+    )
+}
+
+fn resolve_payload_name(parsed: &ParsedPdsPatch) -> Result<String> {
+    if let Some(payload) = &parsed.manifest.payload {
+        return Ok(payload.clone());
+    }
+
+    if parsed.payloads.len() == 1 {
+        return Ok(parsed.payloads[0].path.clone());
+    }
+
+    Err(RomWeaverError::Validation(
+        "PDS manifest did not declare `payload=...` and archive did not contain exactly one payload entry"
+            .into(),
+    ))
+}
+
+fn resolve_payload_format(manifest: &PdsManifest, payload_name: &str) -> Result<String> {
+    if let Some(format) = &manifest.format {
+        return Ok(format.trim().to_ascii_lowercase());
+    }
+
+    infer_format_from_payload(payload_name).ok_or_else(|| {
+        RomWeaverError::Validation(
+            "PDS manifest did not declare `format=...` and payload extension was not recognized"
+                .into(),
+        )
+    })
+}
+
+fn infer_format_from_payload(payload_name: &str) -> Option<String> {
+    let lower = payload_name.to_ascii_lowercase();
+    if BDF_FORMAT_ALIASES
+        .iter()
+        .any(|suffix| lower.ends_with(&format!(".{suffix}")))
+    {
+        return Some("bdf".to_string());
+    }
+    None
+}
+
+fn is_bdf_alias(name: &str) -> bool {
+    BDF_FORMAT_ALIASES
+        .iter()
+        .any(|alias| alias.eq_ignore_ascii_case(name))
+}
+
+fn validate_source_expectations(manifest: &PdsManifest, source: &[u8]) -> Result<()> {
+    if let Some(expected_size) = manifest.source_size {
+        let actual_size = u64::try_from(source.len()).expect("usize fits u64");
+        if expected_size != actual_size {
+            return Err(RomWeaverError::Validation(format!(
+                "PDS source size mismatch: expected {expected_size}, actual {actual_size}"
+            )));
+        }
+    }
+
+    if let Some(expected_crc) = manifest.source_crc32 {
+        let actual_crc = crc32(source);
+        if expected_crc != actual_crc {
+            return Err(RomWeaverError::Validation(format!(
+                "PDS source checksum mismatch: expected {:08x}, actual {:08x}",
+                expected_crc, actual_crc
+            )));
+        }
+    }
+
+    if let Some(version) = manifest.version {
+        if version != PDS_VERSION {
+            return Err(RomWeaverError::Validation(format!(
+                "PDS manifest version `{version}` is not supported (expected {PDS_VERSION})"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_target_expectations(manifest: &PdsManifest, target: &[u8]) -> Result<()> {
+    if let Some(expected_size) = manifest.target_size {
+        let actual_size = u64::try_from(target.len()).expect("usize fits u64");
+        if expected_size != actual_size {
+            return Err(RomWeaverError::Validation(format!(
+                "PDS target size mismatch: expected {expected_size}, actual {actual_size}"
+            )));
+        }
+    }
+
+    if let Some(expected_crc) = manifest.target_crc32 {
+        let actual_crc = crc32(target);
+        if expected_crc != actual_crc {
+            return Err(RomWeaverError::Validation(format!(
+                "PDS target checksum mismatch: expected {:08x}, actual {:08x}",
+                expected_crc, actual_crc
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn read_named_payload(path: &Path, payload_name: &str) -> Result<Vec<u8>> {
+    let normalized_payload = normalize_entry_name(payload_name);
+    let mut archive = open_archive(path)?;
+    let mut matched_payload: Option<Vec<u8>> = None;
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "PDS payload entry #{index} could not be read: {error}"
+            ))
+        })?;
+
+        if entry.is_dir() {
+            continue;
+        }
+
+        let entry_name = normalize_entry_name(entry.name());
+        if !entry_name.eq_ignore_ascii_case(&normalized_payload) {
+            continue;
+        }
+
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "PDS payload `{entry_name}` could not be read: {error}"
+            ))
+        })?;
+
+        if matched_payload.is_some() {
+            return Err(RomWeaverError::Validation(format!(
+                "PDS archive contains duplicate payload entries for `{normalized_payload}`"
+            )));
+        }
+        matched_payload = Some(bytes);
+    }
+
+    matched_payload.ok_or_else(|| {
+        RomWeaverError::Validation(format!(
+            "PDS payload `{normalized_payload}` was not found in archive"
+        ))
+    })
+}
+
+fn apply_bdf_payload(input: &[u8], payload: &[u8]) -> Result<Vec<u8>> {
+    let patcher = Bspatch::new(payload).map_err(|error| {
+        RomWeaverError::Validation(format!(
+            "PDS payload patch is not a valid BSDIFF40 stream: {error}"
+        ))
+    })?;
+
+    let output_capacity = usize::try_from(patcher.hint_target_size()).map_err(|_| {
+        RomWeaverError::Validation("PDS output size exceeded addressable memory".into())
+    })?;
+    let mut output = Vec::with_capacity(output_capacity);
+    patcher.apply(input, Cursor::new(&mut output))?;
+    Ok(output)
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut hasher = Hasher::new();
+    hasher.update(bytes);
+    hasher.finalize()
 }
 
 fn open_archive(path: &Path) -> Result<ZipArchive<File>> {
@@ -205,6 +580,13 @@ fn is_manifest_entry(entry_name: &str) -> bool {
     file_name.is_some_and(|name| name.eq_ignore_ascii_case(PDS_MANIFEST_NAME))
 }
 
+fn normalize_entry_name(name: &str) -> String {
+    name.trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string()
+}
+
 fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
     if count == 1 { singular } else { plural }
 }
@@ -213,7 +595,7 @@ fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'st
 mod tests {
     use std::{
         env, fs,
-        io::Write,
+        io::{Read, Write},
         path::{Path, PathBuf},
         sync::Arc,
         sync::atomic::{AtomicU64, Ordering},
@@ -224,9 +606,9 @@ mod tests {
         CancellationToken, NoopProgressSink, OperationContext, OperationStatus, PatchApplyRequest,
         PatchCreateRequest, PatchHandler, ThreadBudget,
     };
-    use zip::{CompressionMethod, ZipWriter, write::FileOptions};
+    use zip::{CompressionMethod, ZipArchive, ZipWriter, write::FileOptions};
 
-    use super::PdsPatchHandler;
+    use super::{PDS_DEFAULT_PAYLOAD_NAME, PDS_MANIFEST_NAME, PdsPatchHandler};
     use crate::PDS;
 
     static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
@@ -308,53 +690,137 @@ mod tests {
     }
 
     #[test]
-    fn apply_reports_unsupported_for_parsed_pds_archives() {
+    fn create_and_apply_round_trip() {
         let temp = TestDir::new();
-        let input_path = temp.child("input.nds");
-        let patch_path = temp.child("update.pds");
-        let output_path = temp.child("output.nds");
-        fs::write(&input_path, b"input").expect("fixture");
-        write_archive(
-            &patch_path,
-            &[
-                ("patch.dat", b"source_crc=1234".as_slice()),
-                ("arm9.bin", b"patched"),
-            ],
-        );
+        let original = temp.child("old.bin");
+        let modified = temp.child("new.bin");
+        let patch = temp.child("update.pds");
+        let output = temp.child("out.bin");
+
+        fs::write(&original, b"The quick brown fox jumps over the lazy dog.").expect("fixture");
+        fs::write(&modified, b"The quick brown cat jumps over two lazy dogs!").expect("fixture");
 
         let handler = PdsPatchHandler::new(&PDS);
-        let report = handler
-            .apply(
-                &PatchApplyRequest {
-                    input: input_path,
-                    patches: vec![patch_path],
-                    output: output_path,
+        let create = handler
+            .create(
+                &PatchCreateRequest {
+                    original: original.clone(),
+                    modified: modified.clone(),
+                    output: patch.clone(),
+                    format: "pds".into(),
                 },
                 &test_context_with_threads(&temp, 8),
             )
-            .expect("apply report");
-        assert_eq!(report.status, OperationStatus::Unsupported);
-        assert_eq!(report.stage, "apply");
-        assert!(report.label.contains("not implemented yet for PDS"));
+            .expect("create");
+
+        assert_eq!(create.status, OperationStatus::Succeeded);
+        assert!(create.label.contains("BSDIFF40 payload"));
+
+        let apply = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: original,
+                    patches: vec![patch],
+                    output: output.clone(),
+                },
+                &test_context_with_threads(&temp, 4),
+            )
+            .expect("apply");
+
+        assert_eq!(apply.status, OperationStatus::Succeeded);
+        assert_eq!(
+            fs::read(output).expect("output"),
+            fs::read(modified).expect("modified")
+        );
     }
 
     #[test]
-    fn create_reports_unsupported() {
+    fn apply_rejects_source_checksum_mismatch() {
         let temp = TestDir::new();
+        let original = temp.child("old.bin");
+        let modified = temp.child("new.bin");
+        let patch = temp.child("update.pds");
+        let output = temp.child("out.bin");
+
+        fs::write(&original, b"hello old world").expect("fixture");
+        fs::write(&modified, b"hello new world").expect("fixture");
+
         let handler = PdsPatchHandler::new(&PDS);
-        let report = handler
+        handler
             .create(
                 &PatchCreateRequest {
-                    original: temp.child("source.nds"),
-                    modified: temp.child("target.nds"),
-                    output: temp.child("update.pds"),
-                    format: "PDS".into(),
+                    original: original.clone(),
+                    modified,
+                    output: patch.clone(),
+                    format: "pds".into(),
                 },
-                &test_context_with_threads(&temp, 2),
+                &test_context_with_threads(&temp, 1),
             )
-            .expect("create report");
-        assert_eq!(report.status, OperationStatus::Unsupported);
-        assert_eq!(report.stage, "create");
+            .expect("create");
+
+        fs::write(&original, b"hello old wurld").expect("corrupt");
+        let error = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: original,
+                    patches: vec![patch],
+                    output,
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect_err("apply should fail");
+
+        assert!(error.to_string().contains("source checksum mismatch"));
+    }
+
+    #[test]
+    fn create_writes_manifest_and_payload_entries() {
+        let temp = TestDir::new();
+        let original = temp.child("old.bin");
+        let modified = temp.child("new.bin");
+        let patch = temp.child("update.pds");
+
+        fs::write(&original, b"hello old world").expect("fixture");
+        fs::write(&modified, b"hello new world").expect("fixture");
+
+        let handler = PdsPatchHandler::new(&PDS);
+        handler
+            .create(
+                &PatchCreateRequest {
+                    original,
+                    modified,
+                    output: patch.clone(),
+                    format: "pds".into(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect("create");
+
+        let file = fs::File::open(&patch).expect("patch");
+        let mut archive = ZipArchive::new(file).expect("zip");
+        let mut names = Vec::new();
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index).expect("entry");
+            if !entry.is_dir() {
+                names.push(entry.name().to_string());
+            }
+        }
+
+        assert!(names.iter().any(|name| name.ends_with(PDS_MANIFEST_NAME)));
+        assert!(
+            names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(PDS_DEFAULT_PAYLOAD_NAME))
+        );
+
+        let mut manifest = String::new();
+        archive
+            .by_name(PDS_MANIFEST_NAME)
+            .expect("manifest")
+            .read_to_string(&mut manifest)
+            .expect("manifest text");
+        assert!(manifest.contains("format=bdf"));
+        assert!(manifest.contains("payload=patch.bdf"));
     }
 
     fn write_archive(path: &Path, entries: &[(&str, &[u8])]) {

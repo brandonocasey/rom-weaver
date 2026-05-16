@@ -5,7 +5,7 @@
 ## Recent Updates (2026-05-16)
 
 - `6fd45bc`: BSPATCH alias probe support landed (`.bspatch`/`.bspatch40`, `bspatch`/`bspatch40` alias routing to BSDIFF40 compatibility paths).
-- `uncommitted`: PDS parse/apply/create landed with `patch.dat` manifest validation and embedded BSDIFF40 payload round-trip support.
+- `this commit`: PDS parse/apply/create landed with `patch.dat` manifest validation and embedded BSDIFF40 payload round-trip support.
 - `b9b66a5`: MOD/PMSR parse/apply/create support landed (`.mod`/`.pmsr`, `pmsr` alias) with module + CLI smoke coverage.
 - `6e2e7d1`: Standalone stream container support landed for `gz`, `bz2`, `xz`, and `zst` (`inspect`/`extract`/`create`).
 - `e4442c2`: PDS probe-only patch registration landed (`.pds` routing now reserved while apply/create remain pending).
