@@ -50,10 +50,9 @@ use xdvdfs::{
 };
 use zip::{
     CompressionMethod as ZipCompressionMethod, ZipArchive as ZipFileArchive,
-    ZipWriter as ZipFileWriter, write::FileOptions as ZipFileOptions,
+    ZipWriter as ZipFileWriter, write::SimpleFileOptions as ZipFileOptions,
 };
 use zstd::bulk::compress as zstd_compress;
-use zstd::stream::Decoder as ZstdDecoder;
 #[cfg(not(target_family = "wasm"))]
 use zstd_seekable::Seekable;
 
@@ -605,7 +604,7 @@ impl ZipContainerHandler {
     fn build_options(&self, method: ZipCompressionMethod, level: Option<i32>) -> ZipFileOptions {
         ZipFileOptions::default()
             .compression_method(method)
-            .compression_level(level)
+            .compression_level(level.map(i64::from))
     }
 
     fn open_archive(&self, source: &Path) -> Result<ZipFileArchive<BufReader<File>>> {
@@ -1401,17 +1400,6 @@ impl StreamContainerHandler {
         }
     }
 
-    fn open_reader(&self, source: &Path) -> Result<Box<dyn Read>> {
-        let file = File::open(source)?;
-        let reader: Box<dyn Read> = match self.compression {
-            StreamCompression::Gzip => Box::new(GzDecoder::new(BufReader::new(file))),
-            StreamCompression::Bzip2 => Box::new(Bzip2Decoder::new(BufReader::new(file))),
-            StreamCompression::Xz => Box::new(XzDecoder::new(BufReader::new(file))),
-            StreamCompression::Zstd => Box::new(ZstdDecoder::new(BufReader::new(file))?),
-        };
-        Ok(reader)
-    }
-
     fn matches_signature(&self, source: &Path) -> bool {
         match self.compression {
             StreamCompression::Gzip => file_starts_with(source, &GZIP_SIGNATURE),
@@ -1438,11 +1426,26 @@ impl ContainerHandler for StreamContainerHandler {
     fn inspect(
         &self,
         request: &ContainerInspectRequest,
-        _context: &OperationContext,
+        context: &OperationContext,
     ) -> Result<OperationReport> {
         let compressed_bytes = fs::metadata(&request.source)?.len();
-        let mut reader = self.open_reader(&request.source)?;
-        let logical_bytes = io::copy(&mut reader, &mut io::sink())?;
+        let backend = self.codec_backend()?;
+        let decoded = context
+            .temp_paths()
+            .next_path(&format!("{}-inspect", self.descriptor.name), Some("bin"));
+        let decode_report = backend.decode(
+            &CodecOperationRequest {
+                input: request.source.clone(),
+                output: decoded.clone(),
+                level: None,
+            },
+            context,
+        )?;
+        if decode_report.status != OperationStatus::Succeeded {
+            return Err(RomWeaverError::Unsupported(decode_report.label));
+        }
+        let logical_bytes = fs::metadata(&decoded)?.len();
+        let _ = fs::remove_file(&decoded);
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
