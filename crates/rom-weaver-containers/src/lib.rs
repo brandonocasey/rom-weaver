@@ -134,7 +134,7 @@ const Z3DS: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Container,
     name: "z3ds",
     aliases: &["3ds"],
-    extensions: &[".z3ds"],
+    extensions: &[".z3ds", ".zcci", ".zcxi", ".zcia", ".z3dsx"],
 };
 
 pub struct ContainerRegistry {
@@ -2428,13 +2428,28 @@ impl Z3dsContainerHandler {
         }
     }
 
+    fn decompressed_extension_for_source(&self, source: &Path) -> &'static str {
+        let source_name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase);
+        match source_name.as_deref() {
+            Some(name) if name.ends_with(".zcci") => ".cci",
+            Some(name) if name.ends_with(".zcxi") => ".cxi",
+            Some(name) if name.ends_with(".zcia") => ".cia",
+            Some(name) if name.ends_with(".z3dsx") => ".3dsx",
+            Some(name) if name.ends_with(".z3ds") => ".3ds",
+            _ => ".3ds",
+        }
+    }
+
     fn extract_name(&self, source: &Path) -> String {
         let stem = source
             .file_stem()
             .and_then(|value| value.to_str())
             .filter(|value| !value.is_empty())
             .unwrap_or("output");
-        format!("{stem}.3ds")
+        format!("{stem}{}", self.decompressed_extension_for_source(source))
     }
 
     fn map_zstd_error(&self, stage: &str, error: zstd_seekable::Error) -> RomWeaverError {
@@ -5329,7 +5344,9 @@ impl ContainerHandler for ChdContainerHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::ContainerRegistry;
+    use std::path::Path;
+
+    use super::{ContainerRegistry, Z3dsContainerHandler};
 
     #[test]
     fn registry_contains_planned_formats() {
@@ -5345,6 +5362,45 @@ mod tests {
                 "zip", "zipx", "7z", "rar", "tar", "tar.gz", "tar.bz2", "tar.xz", "gz", "bz2",
                 "xz", "zst", "chd", "rvz", "z3ds"
             ]
+        );
+    }
+
+    #[test]
+    fn z3ds_registers_azahar_extensions() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("z3ds").expect("z3ds handler");
+        assert_eq!(
+            handler.descriptor().extensions,
+            [".z3ds", ".zcci", ".zcxi", ".zcia", ".z3dsx"]
+        );
+    }
+
+    #[test]
+    fn z3ds_extract_name_maps_to_matching_uncompressed_extension() {
+        let handler = Z3dsContainerHandler;
+        assert_eq!(
+            handler.extract_name(Path::new("rom.z3ds")),
+            "rom.3ds".to_string()
+        );
+        assert_eq!(
+            handler.extract_name(Path::new("rom.zcci")),
+            "rom.cci".to_string()
+        );
+        assert_eq!(
+            handler.extract_name(Path::new("rom.zcxi")),
+            "rom.cxi".to_string()
+        );
+        assert_eq!(
+            handler.extract_name(Path::new("rom.zcia")),
+            "rom.cia".to_string()
+        );
+        assert_eq!(
+            handler.extract_name(Path::new("rom.z3dsx")),
+            "rom.3dsx".to_string()
+        );
+        assert_eq!(
+            handler.extract_name(Path::new("ROM.ZCCI")),
+            "ROM.cci".to_string()
         );
     }
 }
