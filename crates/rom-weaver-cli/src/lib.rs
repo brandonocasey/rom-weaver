@@ -10,7 +10,7 @@ use std::{
 };
 
 use clap::{ArgAction, Args, Parser, Subcommand};
-use rom_weaver_checksum::{NativeChecksumEngine, supported_algorithms};
+use rom_weaver_checksum::{NativeChecksumEngine, checksum_file_values, supported_algorithms};
 use rom_weaver_containers::{CompressFormatRecommendation, ContainerRegistry};
 use rom_weaver_core::{
     CancellationToken, ChecksumEngine, ChecksumRequest, ContainerCreateRequest,
@@ -172,6 +172,12 @@ struct PatchApplyCommand {
     #[arg(long)]
     output: PathBuf,
     #[arg(
+        long = "input-checksum",
+        value_name = "ALGO=HEX",
+        help = "Validate effective patch input checksum before apply; repeat for multiple algorithms (for example: --input-checksum crc32=1234abcd)"
+    )]
+    input_checksums: Vec<String>,
+    #[arg(
         long,
         help = "Remove a detected ROM header before patch apply (A78/LNX/NES/FDS/SMC; falls back to 512-byte copier header)"
     )]
@@ -188,7 +194,7 @@ struct PatchApplyCommand {
     repair_checksum: bool,
     #[arg(
         long,
-        help = "Skip patch-provided checksum validation for source/target compatibility checks"
+        help = "Skip patch-provided checksum validation during patch apply (source, target, and patch-level checks when supported)"
     )]
     ignore_checksum_validation: bool,
     #[arg(long, default_value = "auto")]
@@ -1338,6 +1344,7 @@ impl CliApp {
             input,
             patches,
             output,
+            input_checksums,
             strip_header,
             add_header,
             repair_checksum,
@@ -1352,6 +1359,24 @@ impl CliApp {
                     PatchChecksumValidation::Strict
                 });
         let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let expected_input_checksums = match Self::parse_patch_apply_expected_checksums(
+            &input_checksums,
+            "--input-checksum",
+        ) {
+            Ok(values) => values,
+            Err(error) => {
+                return self.finish(
+                    "patch-apply",
+                    OperationReport::failed(
+                        OperationFamily::Patch,
+                        None,
+                        "validate",
+                        error.to_string(),
+                        probe_threads.clone(),
+                    ),
+                );
+            }
+        };
         if let Some(report) = self.require_existing_path(
             "patch-apply",
             OperationFamily::Patch,
@@ -1387,6 +1412,7 @@ impl CliApp {
 
             let mut stripped_header = None;
             let mut stripped_header_match = None;
+            let mut checksum_verification_labels = Vec::new();
             let apply_input = if strip_header {
                 self.emit_running(
                     "patch-apply",
@@ -1420,6 +1446,37 @@ impl CliApp {
             } else {
                 input.clone()
             };
+            if !expected_input_checksums.is_empty() {
+                self.emit_running(
+                    "patch-apply",
+                    OperationFamily::Patch,
+                    None,
+                    "validate",
+                    format!(
+                        "validating {} requested input checksum(s)",
+                        expected_input_checksums.len()
+                    ),
+                    None,
+                    Some(context.plan_threads(ThreadCapability::single_threaded())),
+                );
+                match Self::validate_patch_apply_expected_checksums(
+                    &apply_input,
+                    &expected_input_checksums,
+                    "input",
+                    &context,
+                ) {
+                    Ok(label) => checksum_verification_labels.push(label),
+                    Err(error) => {
+                        return OperationReport::failed(
+                            OperationFamily::Patch,
+                            None,
+                            "validate",
+                            error.to_string(),
+                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                        );
+                    }
+                }
+            }
 
             let patch_count = patches.len();
             let needs_postprocess = add_header || repair_checksum || patch_count > 1;
@@ -1572,7 +1629,6 @@ impl CliApp {
                     }
                 }
             }
-
             if patch_count > 1 {
                 report.label = format!(
                     "applied {patch_count} patches sequentially ({}); {}",
@@ -1594,6 +1650,13 @@ impl CliApp {
                         report.label, ROM_HEADER_BYTES
                     );
                 }
+            }
+            if !checksum_verification_labels.is_empty() {
+                report.label = format!(
+                    "{}; {}",
+                    report.label,
+                    checksum_verification_labels.join("; ")
+                );
             }
 
             report
@@ -1665,6 +1728,129 @@ impl CliApp {
             )
         });
         self.finish("patch-create", report)
+    }
+
+    fn parse_patch_apply_expected_checksums(
+        values: &[String],
+        flag_name: &str,
+    ) -> Result<BTreeMap<String, String>> {
+        let mut parsed = BTreeMap::new();
+        for raw in values {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(RomWeaverError::Validation(format!(
+                    "{flag_name} value cannot be empty; expected ALGO=HEX"
+                )));
+            }
+            let (algorithm_raw, checksum_raw) = trimmed.split_once('=').ok_or_else(|| {
+                RomWeaverError::Validation(format!(
+                    "{flag_name} value `{trimmed}` is invalid; expected ALGO=HEX"
+                ))
+            })?;
+
+            let algorithm = algorithm_raw.trim().to_ascii_lowercase();
+            if algorithm.is_empty() {
+                return Err(RomWeaverError::Validation(format!(
+                    "{flag_name} value `{trimmed}` is invalid; checksum algorithm is missing before `=`"
+                )));
+            }
+            if !supported_algorithms()
+                .iter()
+                .any(|supported| supported.eq_ignore_ascii_case(&algorithm))
+            {
+                return Err(RomWeaverError::Validation(format!(
+                    "{flag_name} uses unsupported checksum algorithm `{}`",
+                    algorithm_raw.trim()
+                )));
+            }
+
+            let checksum = checksum_raw.trim();
+            if checksum.is_empty() {
+                return Err(RomWeaverError::Validation(format!(
+                    "{flag_name} value `{trimmed}` is invalid; checksum value is missing after `=`"
+                )));
+            }
+            let checksum = checksum
+                .strip_prefix("0x")
+                .or_else(|| checksum.strip_prefix("0X"))
+                .unwrap_or(checksum)
+                .to_ascii_lowercase();
+            if !checksum.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(RomWeaverError::Validation(format!(
+                    "{flag_name} value `{trimmed}` is invalid; checksum must be hexadecimal"
+                )));
+            }
+            let Some(expected_hex_len) = Self::checksum_hex_len(&algorithm) else {
+                return Err(RomWeaverError::Validation(format!(
+                    "{flag_name} uses unsupported checksum algorithm `{}`",
+                    algorithm_raw.trim()
+                )));
+            };
+            if checksum.len() != expected_hex_len {
+                return Err(RomWeaverError::Validation(format!(
+                    "{flag_name} value `{trimmed}` is invalid; `{}` expects {expected_hex_len} hex characters, got {}",
+                    algorithm,
+                    checksum.len()
+                )));
+            }
+
+            match parsed.get(&algorithm) {
+                Some(existing) if existing != &checksum => {
+                    return Err(RomWeaverError::Validation(format!(
+                        "{flag_name} provides conflicting values for `{algorithm}`"
+                    )));
+                }
+                Some(_) => {}
+                None => {
+                    parsed.insert(algorithm, checksum);
+                }
+            }
+        }
+        Ok(parsed)
+    }
+
+    fn validate_patch_apply_expected_checksums(
+        source: &Path,
+        expected: &BTreeMap<String, String>,
+        scope: &str,
+        context: &OperationContext,
+    ) -> Result<String> {
+        if expected.is_empty() {
+            return Ok(String::new());
+        }
+
+        let algorithms = expected.keys().map(String::as_str).collect::<Vec<&str>>();
+        let actual = checksum_file_values(source, &algorithms, context)?;
+        for (algorithm, expected_value) in expected {
+            let Some(actual_value) = actual.get(algorithm) else {
+                return Err(RomWeaverError::Validation(format!(
+                    "checksum engine did not return `{algorithm}` while validating {scope} checksums"
+                )));
+            };
+            if actual_value != expected_value {
+                return Err(RomWeaverError::Validation(format!(
+                    "{scope} checksum mismatch for {algorithm}; expected {expected_value}, actual {actual_value}"
+                )));
+            }
+        }
+
+        let rendered = expected
+            .iter()
+            .map(|(algorithm, value)| format!("{algorithm}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(format!("{scope} checksum(s) verified ({rendered})"))
+    }
+
+    fn checksum_hex_len(algorithm: &str) -> Option<usize> {
+        match algorithm {
+            "crc16" => Some(4),
+            "crc32" | "crc32c" | "adler32" => Some(8),
+            "md5" => Some(32),
+            "sha1" => Some(40),
+            "sha256" | "blake3" => Some(64),
+            _ => None,
+        }
     }
 
     fn emit_running(

@@ -70,9 +70,10 @@ impl PatchHandler for BpsPatchHandler {
             )));
         }
 
-        let patch = parse_bps_file(&request.patches[0])?;
         let validate_checksums =
             context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let patch =
+            parse_bps_file_with_checksum_validation(&request.patches[0], validate_checksums)?;
         let mut source = File::open(&request.input)?;
         validate_input_file(
             &request.input,
@@ -208,11 +209,26 @@ struct ResyncCandidate {
 }
 
 fn parse_bps_file(path: &Path) -> Result<ParsedBpsPatch> {
-    let bytes = fs::read(path)?;
-    parse_bps_bytes(&bytes)
+    parse_bps_file_with_checksum_validation(path, true)
 }
 
+fn parse_bps_file_with_checksum_validation(
+    path: &Path,
+    validate_patch_checksum: bool,
+) -> Result<ParsedBpsPatch> {
+    let bytes = fs::read(path)?;
+    parse_bps_bytes_with_checksum_validation(&bytes, validate_patch_checksum)
+}
+
+#[cfg(test)]
 fn parse_bps_bytes(bytes: &[u8]) -> Result<ParsedBpsPatch> {
+    parse_bps_bytes_with_checksum_validation(bytes, true)
+}
+
+fn parse_bps_bytes_with_checksum_validation(
+    bytes: &[u8],
+    validate_patch_checksum: bool,
+) -> Result<ParsedBpsPatch> {
     if bytes.len() < BPS_MAGIC.len() + BPS_FOOTER_SIZE {
         return Err(RomWeaverError::Validation(
             "BPS patch is too small to contain a valid header and footer".into(),
@@ -283,11 +299,13 @@ fn parse_bps_bytes(bytes: &[u8]) -> Result<ParsedBpsPatch> {
     let source_checksum = read_u32_le(&footer[0..4]);
     let target_checksum = read_u32_le(&footer[4..8]);
     let patch_checksum = read_u32_le(&footer[8..12]);
-    let actual_patch_checksum = crc32_bytes(&bytes[..bytes.len() - 4]);
-    if actual_patch_checksum != patch_checksum {
-        return Err(RomWeaverError::Validation(format!(
-            "Patch checksum invalid; expected: {patch_checksum:x}, Actual: {actual_patch_checksum:x}"
-        )));
+    if validate_patch_checksum {
+        let actual_patch_checksum = crc32_bytes(&bytes[..bytes.len() - 4]);
+        if actual_patch_checksum != patch_checksum {
+            return Err(RomWeaverError::Validation(format!(
+                "Patch checksum invalid; expected: {patch_checksum:x}, Actual: {actual_patch_checksum:x}"
+            )));
+        }
     }
 
     Ok(ParsedBpsPatch {
@@ -1179,7 +1197,7 @@ mod tests {
 
     use rom_weaver_core::{
         CancellationToken, NoopProgressSink, OperationContext, PatchApplyRequest,
-        PatchCreateRequest, PatchHandler, ThreadBudget,
+        PatchChecksumValidation, PatchCreateRequest, PatchHandler, ThreadBudget,
     };
 
     use super::{
@@ -1370,6 +1388,54 @@ mod tests {
             error.to_string().contains("Input size invalid")
                 || error.to_string().contains("Input checksum invalid")
         );
+    }
+
+    #[test]
+    fn apply_can_ignore_patch_checksum_mismatch() {
+        let temp = TestDir::new();
+        let input_path = temp.child("input.bin");
+        let patch_path = temp.child("update.bps");
+        let output_path = temp.child("output.bin");
+        let source = b"hello old world";
+        let target = b"hello new world";
+        fs::write(&input_path, source).expect("fixture");
+
+        let mut patch = build_bps_patch(
+            source,
+            target,
+            vec![TestAction::TargetRead(target.to_vec())],
+        );
+        let footer_index = patch.len().checked_sub(1).expect("patch footer");
+        patch[footer_index] ^= 0x01;
+        fs::write(&patch_path, patch).expect("fixture");
+
+        let handler = BpsPatchHandler::new(&BPS);
+
+        let strict_error = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path.clone(),
+                    patches: vec![patch_path.clone()],
+                    output: output_path.clone(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect_err("strict patch checksum validation should fail");
+        assert!(strict_error.to_string().contains("Patch checksum invalid"));
+
+        handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path,
+                    patches: vec![patch_path],
+                    output: output_path.clone(),
+                },
+                &test_context_with_threads(&temp, 1)
+                    .with_patch_checksum_validation(PatchChecksumValidation::Ignore),
+            )
+            .expect("ignore checksum validation should apply patch");
+
+        assert_eq!(fs::read(output_path).expect("output"), target);
     }
 
     #[test]

@@ -66,9 +66,10 @@ impl PatchHandler for UpsPatchHandler {
             )));
         }
 
-        let patch = parse_ups_file(&request.patches[0])?;
         let validate_checksums =
             context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let patch =
+            parse_ups_file_with_checksum_validation(&request.patches[0], validate_checksums)?;
         let input_len = fs::metadata(&request.input)?.len();
         let input_checksum = crc32_path_cached(&request.input, context)?;
         let (output_size, output_checksum) =
@@ -178,11 +179,26 @@ struct CreatedUpsPatch {
 }
 
 fn parse_ups_file(path: &Path) -> Result<ParsedUpsPatch> {
-    let bytes = fs::read(path)?;
-    parse_ups_bytes(&bytes)
+    parse_ups_file_with_checksum_validation(path, true)
 }
 
+fn parse_ups_file_with_checksum_validation(
+    path: &Path,
+    validate_patch_checksum: bool,
+) -> Result<ParsedUpsPatch> {
+    let bytes = fs::read(path)?;
+    parse_ups_bytes_with_checksum_validation(&bytes, validate_patch_checksum)
+}
+
+#[cfg(test)]
 fn parse_ups_bytes(bytes: &[u8]) -> Result<ParsedUpsPatch> {
+    parse_ups_bytes_with_checksum_validation(bytes, true)
+}
+
+fn parse_ups_bytes_with_checksum_validation(
+    bytes: &[u8],
+    validate_patch_checksum: bool,
+) -> Result<ParsedUpsPatch> {
     if bytes.len() < UPS_MAGIC.len() + UPS_FOOTER_SIZE {
         return Err(RomWeaverError::Validation(
             "UPS patch is too small to contain a valid header and footer".into(),
@@ -232,11 +248,13 @@ fn parse_ups_bytes(bytes: &[u8]) -> Result<ParsedUpsPatch> {
     let source_checksum = read_u32_le(&footer[0..4]);
     let target_checksum = read_u32_le(&footer[4..8]);
     let patch_checksum = read_u32_le(&footer[8..12]);
-    let actual_patch_checksum = crc32_bytes(&bytes[..bytes.len() - 4]);
-    if actual_patch_checksum != patch_checksum {
-        return Err(RomWeaverError::Validation(format!(
-            "Patch checksum invalid; expected: {patch_checksum:08x}, Actual: {actual_patch_checksum:08x}"
-        )));
+    if validate_patch_checksum {
+        let actual_patch_checksum = crc32_bytes(&bytes[..bytes.len() - 4]);
+        if actual_patch_checksum != patch_checksum {
+            return Err(RomWeaverError::Validation(format!(
+                "Patch checksum invalid; expected: {patch_checksum:08x}, Actual: {actual_patch_checksum:08x}"
+            )));
+        }
     }
 
     Ok(ParsedUpsPatch {
@@ -661,7 +679,7 @@ mod tests {
 
     use rom_weaver_core::{
         CancellationToken, NoopProgressSink, OperationContext, PatchApplyRequest,
-        PatchCreateRequest, PatchHandler, ThreadBudget,
+        PatchChecksumValidation, PatchCreateRequest, PatchHandler, ThreadBudget,
     };
 
     use super::{UpsPatchHandler, create_ups_patch_bytes, parse_ups_bytes};
@@ -807,6 +825,64 @@ mod tests {
             .expect_err("apply should fail");
 
         assert!(error.to_string().contains("UPS input validation failed"));
+    }
+
+    #[test]
+    fn apply_can_ignore_patch_checksum_mismatch() {
+        let temp = TestDir::new();
+        let source_path = temp.child("source.bin");
+        let target_path = temp.child("target.bin");
+        let patch_path = temp.child("update.ups");
+        let output_path = temp.child("output.bin");
+        fs::write(&source_path, b"hello old world").expect("fixture");
+        fs::write(&target_path, b"hello new world").expect("fixture");
+
+        let handler = UpsPatchHandler::new(&UPS);
+        handler
+            .create(
+                &PatchCreateRequest {
+                    original: source_path.clone(),
+                    modified: target_path.clone(),
+                    output: patch_path.clone(),
+                    format: "UPS".into(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect("create");
+
+        let mut patch_bytes = fs::read(&patch_path).expect("patch bytes");
+        let footer_index = patch_bytes.len().checked_sub(1).expect("patch footer");
+        patch_bytes[footer_index] ^= 0x01;
+        fs::write(&patch_path, patch_bytes).expect("patch bytes");
+
+        let strict_error = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: source_path.clone(),
+                    patches: vec![patch_path.clone()],
+                    output: output_path.clone(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect_err("strict patch checksum validation should fail");
+        assert!(strict_error.to_string().contains("Patch checksum invalid"));
+
+        handler
+            .apply(
+                &PatchApplyRequest {
+                    input: source_path,
+                    patches: vec![patch_path],
+                    output: output_path.clone(),
+                },
+                &test_context_with_threads(&temp, 1)
+                    .with_patch_checksum_validation(PatchChecksumValidation::Ignore),
+            )
+            .expect("ignore checksum validation should apply patch");
+
+        assert_eq!(
+            fs::read(output_path).expect("output"),
+            fs::read(target_path).expect("target")
+        );
     }
 
     fn test_context_with_threads(temp: &TestDir, threads: usize) -> OperationContext {

@@ -1534,6 +1534,46 @@ mod tests {
     }
 
     #[test]
+    fn apply_can_ignore_checksum_mismatch() {
+        let input = b"abcabcabcabc";
+        let patch_bytes = build_patch(TestPatch {
+            windows: vec![TestWindow {
+                win_indicator: WIN_SOURCE | WIN_CHECKSUM,
+                source_segment_size: Some(input.len() as u64),
+                source_segment_position: Some(0),
+                target_window_size: 6,
+                checksum: Some(0xDEADBEEF),
+                data: Vec::new(),
+                inst: vec![22],
+                addr: encode_all_varints(&[0]),
+            }],
+            ..Default::default()
+        });
+
+        let temp = create_temp_dir();
+        let input_path = temp.join("input.bin");
+        let patch_path = temp.join("update.xdelta");
+        let output_path = temp.join("output.bin");
+        fs::write(&input_path, input).expect("write input");
+        fs::write(&patch_path, patch_bytes).expect("write patch");
+
+        let handler = VcdiffPatchHandler::new(&crate::XDELTA);
+        let report = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path,
+                    patches: vec![patch_path],
+                    output: output_path.clone(),
+                },
+                &test_context().with_patch_checksum_validation(PatchChecksumValidation::Ignore),
+            )
+            .expect("checksum validation ignored");
+
+        assert!(report.label.contains("checksum validation skipped"));
+        assert_eq!(fs::read(output_path).expect("read output"), b"abcabc");
+    }
+
+    #[test]
     fn apply_rejects_multiple_patch_files() {
         let handler = VcdiffPatchHandler::new(&crate::VCDIFF);
         let error = handler
