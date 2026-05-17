@@ -26,12 +26,13 @@ use rom_weaver_chd_sys::{
     HARD_DISK_METADATA_TAG, build_info, make_tag,
 };
 use rom_weaver_codecs::{
-    CanonicalCodec, RequestedCodec, normalize_codec_label, parse_requested_codec,
+    CanonicalCodec, CodecRegistry, RequestedCodec, normalize_codec_label, parse_requested_codec,
 };
 use rom_weaver_core::{
-    ContainerCapabilities, ContainerCreateRequest, ContainerExtractRequest, ContainerHandler,
-    ContainerInspectRequest, FormatDescriptor, OperationContext, OperationFamily, OperationReport,
-    ProbeConfidence, Result, RomWeaverError, ThreadCapability,
+    CodecBackend, CodecOperationRequest, ContainerCapabilities, ContainerCreateRequest,
+    ContainerExtractRequest, ContainerHandler, ContainerInspectRequest, FormatDescriptor,
+    OperationContext, OperationFamily, OperationReport, OperationStatus, ProbeConfidence, Result,
+    RomWeaverError, ThreadCapability,
 };
 use sevenz_rust::{
     Password as SevenZPassword, SevenZArchiveEntry, SevenZMethod, SevenZMethodConfiguration,
@@ -45,7 +46,7 @@ use zip::{
     ZipWriter as ZipFileWriter, write::FileOptions as ZipFileOptions,
 };
 use zstd::bulk::compress as zstd_compress;
-use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
+use zstd::stream::Decoder as ZstdDecoder;
 use zstd_seekable::Seekable;
 
 const ZIP: FormatDescriptor = FormatDescriptor {
@@ -1272,6 +1273,25 @@ impl StreamContainerHandler {
         }
     }
 
+    fn backend_codec_name(&self) -> &'static str {
+        match self.compression {
+            StreamCompression::Gzip => "deflate",
+            StreamCompression::Bzip2 => "bzip2",
+            StreamCompression::Xz => "lzma2",
+            StreamCompression::Zstd => "zstd",
+        }
+    }
+
+    fn codec_backend(&self) -> Result<Arc<dyn CodecBackend>> {
+        let codec = self.backend_codec_name();
+        CodecRegistry::new().find_by_name(codec).ok_or_else(|| {
+            RomWeaverError::Unsupported(format!(
+                "codec backend `{codec}` is not registered for {}",
+                self.descriptor.name
+            ))
+        })
+    }
+
     fn output_name(&self, source: &Path) -> String {
         let file_name = source
             .file_name()
@@ -1385,10 +1405,19 @@ impl ContainerHandler for StreamContainerHandler {
         }
 
         let output_path = request.out_dir.join(&output_name);
-        let mut reader = self.open_reader(&request.source)?;
-        let mut output = BufWriter::new(File::create(&output_path)?);
-        let written = io::copy(&mut reader, &mut output)?;
-        output.flush()?;
+        let backend = self.codec_backend()?;
+        let decode_report = backend.decode(
+            &CodecOperationRequest {
+                input: request.source.clone(),
+                output: output_path.clone(),
+                level: None,
+            },
+            context,
+        )?;
+        if decode_report.status != OperationStatus::Succeeded {
+            return Err(RomWeaverError::Unsupported(decode_report.label));
+        }
+        let written = fs::metadata(&output_path)?.len();
         selections.ensure_all_matched()?;
 
         Ok(OperationReport::succeeded(
@@ -1435,36 +1464,17 @@ impl ContainerHandler for StreamContainerHandler {
             fs::create_dir_all(parent)?;
         }
 
-        let mut source = BufReader::new(File::open(input)?);
-        match self.compression {
-            StreamCompression::Gzip => {
-                let output = BufWriter::new(File::create(&request.output)?);
-                let mut encoder = GzEncoder::new(output, GzipCompression::new(level as u32));
-                io::copy(&mut source, &mut encoder)?;
-                let mut output = encoder.finish()?;
-                output.flush()?;
-            }
-            StreamCompression::Bzip2 => {
-                let output = BufWriter::new(File::create(&request.output)?);
-                let mut encoder = BzEncoder::new(output, Bzip2Compression::new(level as u32));
-                io::copy(&mut source, &mut encoder)?;
-                let mut output = encoder.finish()?;
-                output.flush()?;
-            }
-            StreamCompression::Xz => {
-                let output = BufWriter::new(File::create(&request.output)?);
-                let mut encoder = XzEncoder::new(output, level as u32);
-                io::copy(&mut source, &mut encoder)?;
-                let mut output = encoder.finish()?;
-                output.flush()?;
-            }
-            StreamCompression::Zstd => {
-                let output = BufWriter::new(File::create(&request.output)?);
-                let mut encoder = ZstdEncoder::new(output, level)?;
-                io::copy(&mut source, &mut encoder)?;
-                let mut output = encoder.finish()?;
-                output.flush()?;
-            }
+        let backend = self.codec_backend()?;
+        let encode_report = backend.encode(
+            &CodecOperationRequest {
+                input: input.clone(),
+                output: request.output.clone(),
+                level: Some(level),
+            },
+            context,
+        )?;
+        if encode_report.status != OperationStatus::Succeeded {
+            return Err(RomWeaverError::Unsupported(encode_report.label));
         }
 
         Ok(OperationReport::succeeded(

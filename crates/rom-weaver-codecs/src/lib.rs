@@ -1,9 +1,18 @@
-use std::sync::Arc;
+use std::{
+    fs::{self, File},
+    io::{self, BufReader, BufWriter, Write},
+    path::Path,
+    sync::Arc,
+};
 
+use bzip2::{Compression as Bzip2Compression, read::BzDecoder, write::BzEncoder};
+use flate2::{Compression as DeflateCompression, read::GzDecoder, write::GzEncoder};
+use liblzma::{read::XzDecoder, write::XzEncoder};
 use rom_weaver_core::{
     CodecBackend, CodecCapabilities, CodecDescriptor, CodecOperationRequest, FormatDescriptor,
-    OperationContext, OperationFamily, OperationReport, Result, ThreadCapability,
+    OperationContext, OperationFamily, OperationReport, Result, RomWeaverError, ThreadCapability,
 };
+use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
 
 const STORE: CodecDescriptor = FormatDescriptor {
     family: OperationFamily::Codec,
@@ -14,7 +23,7 @@ const STORE: CodecDescriptor = FormatDescriptor {
 const DEFLATE: CodecDescriptor = FormatDescriptor {
     family: OperationFamily::Codec,
     name: "deflate",
-    aliases: &["zlib"],
+    aliases: &["zlib", "gzip", "gz"],
     extensions: &[],
 };
 const ZSTD: CodecDescriptor = FormatDescriptor {
@@ -122,11 +131,11 @@ impl CodecRegistry {
     pub fn new() -> Self {
         Self {
             backends: vec![
-                Arc::new(StaticCodecBackend::new(&STORE)),
-                Arc::new(StaticCodecBackend::new(&DEFLATE)),
-                Arc::new(StaticCodecBackend::new(&ZSTD)),
-                Arc::new(StaticCodecBackend::new(&LZMA2)),
-                Arc::new(StaticCodecBackend::new(&BZIP2)),
+                Arc::new(NativeCodecBackend::new(&STORE, NativeCodecKind::Store)),
+                Arc::new(NativeCodecBackend::new(&DEFLATE, NativeCodecKind::Deflate)),
+                Arc::new(NativeCodecBackend::new(&ZSTD, NativeCodecKind::Zstd)),
+                Arc::new(NativeCodecBackend::new(&LZMA2, NativeCodecKind::Lzma2)),
+                Arc::new(NativeCodecBackend::new(&BZIP2, NativeCodecKind::Bzip2)),
             ],
         }
     }
@@ -143,62 +152,252 @@ impl CodecRegistry {
     }
 }
 
-struct StaticCodecBackend {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCodecKind {
+    Store,
+    Deflate,
+    Zstd,
+    Lzma2,
+    Bzip2,
+}
+
+struct NativeCodecBackend {
     descriptor: &'static CodecDescriptor,
+    kind: NativeCodecKind,
 }
 
-impl StaticCodecBackend {
-    const fn new(descriptor: &'static CodecDescriptor) -> Self {
-        Self { descriptor }
+impl NativeCodecBackend {
+    const fn new(descriptor: &'static CodecDescriptor, kind: NativeCodecKind) -> Self {
+        Self { descriptor, kind }
     }
 
-    fn unsupported_label(&self, operation: &str) -> String {
-        format!(
-            "{operation} is not implemented yet for {}",
-            self.descriptor.name
-        )
+    fn ensure_output_parent(path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
+
+    fn validate_decode_level(&self, request: &CodecOperationRequest) -> Result<()> {
+        if request.level.is_some() {
+            return Err(RomWeaverError::Validation(format!(
+                "{} decode does not accept a compression level",
+                self.descriptor.name
+            )));
+        }
+        Ok(())
+    }
+
+    fn resolve_encode_level(&self, request: &CodecOperationRequest) -> Result<Option<i32>> {
+        let resolved = match self.kind {
+            NativeCodecKind::Store => {
+                if request.level.is_some() {
+                    return Err(RomWeaverError::Validation(
+                        "store codec does not accept a compression level".to_string(),
+                    ));
+                }
+                None
+            }
+            NativeCodecKind::Deflate => Some(match request.level {
+                None => 6,
+                Some(value) if (0..=9).contains(&value) => value,
+                Some(value) => {
+                    return Err(RomWeaverError::Validation(format!(
+                        "deflate level `{value}` is out of range (0..=9)"
+                    )));
+                }
+            }),
+            NativeCodecKind::Zstd => Some(match request.level {
+                None => 3,
+                Some(value) if (-7..=22).contains(&value) => value,
+                Some(value) => {
+                    return Err(RomWeaverError::Validation(format!(
+                        "zstd level `{value}` is out of range (-7..=22)"
+                    )));
+                }
+            }),
+            NativeCodecKind::Lzma2 => Some(match request.level {
+                None => 6,
+                Some(value) if (0..=9).contains(&value) => value,
+                Some(value) => {
+                    return Err(RomWeaverError::Validation(format!(
+                        "lzma2 level `{value}` is out of range (0..=9)"
+                    )));
+                }
+            }),
+            NativeCodecKind::Bzip2 => Some(match request.level {
+                None => 6,
+                Some(value) if (1..=9).contains(&value) => value,
+                Some(value) => {
+                    return Err(RomWeaverError::Validation(format!(
+                        "bzip2 level `{value}` is out of range (1..=9)"
+                    )));
+                }
+            }),
+        };
+        Ok(resolved)
+    }
+
+    fn encode_impl(&self, request: &CodecOperationRequest, level: Option<i32>) -> Result<u64> {
+        let bytes = match self.kind {
+            NativeCodecKind::Store => fs::copy(&request.input, &request.output)?,
+            NativeCodecKind::Deflate => {
+                let mut source = BufReader::new(File::open(&request.input)?);
+                let output = BufWriter::new(File::create(&request.output)?);
+                let mut encoder =
+                    GzEncoder::new(output, DeflateCompression::new(level.unwrap_or(6) as u32));
+                let copied = io::copy(&mut source, &mut encoder)?;
+                let mut output = encoder.finish()?;
+                output.flush()?;
+                copied
+            }
+            NativeCodecKind::Zstd => {
+                let mut source = BufReader::new(File::open(&request.input)?);
+                let output = BufWriter::new(File::create(&request.output)?);
+                let mut encoder = ZstdEncoder::new(output, level.unwrap_or(3))?;
+                let copied = io::copy(&mut source, &mut encoder)?;
+                let mut output = encoder.finish()?;
+                output.flush()?;
+                copied
+            }
+            NativeCodecKind::Lzma2 => {
+                let mut source = BufReader::new(File::open(&request.input)?);
+                let output = BufWriter::new(File::create(&request.output)?);
+                let mut encoder = XzEncoder::new(output, level.unwrap_or(6) as u32);
+                let copied = io::copy(&mut source, &mut encoder)?;
+                let mut output = encoder.finish()?;
+                output.flush()?;
+                copied
+            }
+            NativeCodecKind::Bzip2 => {
+                let mut source = BufReader::new(File::open(&request.input)?);
+                let output = BufWriter::new(File::create(&request.output)?);
+                let mut encoder =
+                    BzEncoder::new(output, Bzip2Compression::new(level.unwrap_or(6) as u32));
+                let copied = io::copy(&mut source, &mut encoder)?;
+                let mut output = encoder.finish()?;
+                output.flush()?;
+                copied
+            }
+        };
+        Ok(bytes)
+    }
+
+    fn decode_impl(&self, request: &CodecOperationRequest) -> Result<u64> {
+        let bytes = match self.kind {
+            NativeCodecKind::Store => fs::copy(&request.input, &request.output)?,
+            NativeCodecKind::Deflate => {
+                let source = BufReader::new(File::open(&request.input)?);
+                let mut decoder = GzDecoder::new(source);
+                let mut output = BufWriter::new(File::create(&request.output)?);
+                let copied = io::copy(&mut decoder, &mut output)?;
+                output.flush()?;
+                copied
+            }
+            NativeCodecKind::Zstd => {
+                let source = BufReader::new(File::open(&request.input)?);
+                let mut decoder = ZstdDecoder::new(source)?;
+                let mut output = BufWriter::new(File::create(&request.output)?);
+                let copied = io::copy(&mut decoder, &mut output)?;
+                output.flush()?;
+                copied
+            }
+            NativeCodecKind::Lzma2 => {
+                let source = BufReader::new(File::open(&request.input)?);
+                let mut decoder = XzDecoder::new(source);
+                let mut output = BufWriter::new(File::create(&request.output)?);
+                let copied = io::copy(&mut decoder, &mut output)?;
+                output.flush()?;
+                copied
+            }
+            NativeCodecKind::Bzip2 => {
+                let source = BufReader::new(File::open(&request.input)?);
+                let mut decoder = BzDecoder::new(source);
+                let mut output = BufWriter::new(File::create(&request.output)?);
+                let copied = io::copy(&mut decoder, &mut output)?;
+                output.flush()?;
+                copied
+            }
+        };
+        Ok(bytes)
+    }
+
+    fn run_encode(
+        &self,
+        request: &CodecOperationRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let level = self.resolve_encode_level(request)?;
+        Self::ensure_output_parent(&request.output)?;
+        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let bytes = self.encode_impl(request, level)?;
+        Ok(OperationReport::succeeded(
+            OperationFamily::Codec,
+            Some(self.descriptor.name.to_string()),
+            "encode",
+            format!(
+                "encoded `{}` to `{}` using {} ({} bytes)",
+                request.input.display(),
+                request.output.display(),
+                self.descriptor.name,
+                bytes
+            ),
+            Some(1.0),
+            Some(execution),
+        ))
+    }
+
+    fn run_decode(
+        &self,
+        request: &CodecOperationRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        self.validate_decode_level(request)?;
+        Self::ensure_output_parent(&request.output)?;
+        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let bytes = self.decode_impl(request)?;
+        Ok(OperationReport::succeeded(
+            OperationFamily::Codec,
+            Some(self.descriptor.name.to_string()),
+            "decode",
+            format!(
+                "decoded `{}` to `{}` using {} ({} bytes)",
+                request.input.display(),
+                request.output.display(),
+                self.descriptor.name,
+                bytes
+            ),
+            Some(1.0),
+            Some(execution),
+        ))
     }
 }
 
-impl CodecBackend for StaticCodecBackend {
+impl CodecBackend for NativeCodecBackend {
     fn descriptor(&self) -> &'static CodecDescriptor {
         self.descriptor
     }
 
     fn encode(
         &self,
-        _request: &CodecOperationRequest,
+        request: &CodecOperationRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
-        Ok(OperationReport::unsupported(
-            OperationFamily::Codec,
-            Some(self.descriptor.name.to_string()),
-            "encode",
-            self.unsupported_label("encode"),
-            Some(execution),
-        ))
+        self.run_encode(request, context)
     }
 
     fn decode(
         &self,
-        _request: &CodecOperationRequest,
+        request: &CodecOperationRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
-        Ok(OperationReport::unsupported(
-            OperationFamily::Codec,
-            Some(self.descriptor.name.to_string()),
-            "decode",
-            self.unsupported_label("decode"),
-            Some(execution),
-        ))
+        self.run_decode(request, context)
     }
 
     fn capabilities(&self) -> CodecCapabilities {
         CodecCapabilities {
-            encode: false,
-            decode: false,
+            encode: true,
+            decode: true,
             threads: ThreadCapability::single_threaded(),
         }
     }
@@ -206,9 +405,128 @@ impl CodecBackend for StaticCodecBackend {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::Arc,
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use rom_weaver_core::{
+        CancellationToken, CodecOperationRequest, NoopProgressSink, OperationContext,
+        OperationStatus, ThreadBudget,
+    };
+
     use super::{
         CanonicalCodec, CodecRegistry, RequestedCodec, normalize_codec_label, parse_requested_codec,
     };
+
+    static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+            let sequence = TEST_DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let path = std::env::temp_dir().join(format!(
+                "rom-weaver-codecs-tests-{}-{unique}-{sequence}",
+                std::process::id(),
+            ));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn codec_context(root: &Path) -> OperationContext {
+        OperationContext::new(
+            ThreadBudget::Fixed(8),
+            root.join("op"),
+            Arc::new(NoopProgressSink),
+            CancellationToken::new(),
+        )
+    }
+
+    fn codec_round_trip(codec: &str, level: Option<i32>) {
+        let temp = TestDir::new();
+        let source = temp.path().join("source.bin");
+        let encoded = temp.path().join("encoded.bin");
+        let decoded = temp.path().join("decoded.bin");
+        let bytes = (0..32_768)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        fs::write(&source, &bytes).expect("write source");
+
+        let registry = CodecRegistry::new();
+        let backend = registry.find_by_name(codec).expect("codec backend");
+        let context = codec_context(temp.path());
+
+        let encode = backend
+            .encode(
+                &CodecOperationRequest {
+                    input: source,
+                    output: encoded.clone(),
+                    level,
+                },
+                &context,
+            )
+            .expect("encode");
+        assert_eq!(encode.status, OperationStatus::Succeeded);
+
+        let decode = backend
+            .decode(
+                &CodecOperationRequest {
+                    input: encoded,
+                    output: decoded.clone(),
+                    level: None,
+                },
+                &context,
+            )
+            .expect("decode");
+        assert_eq!(decode.status, OperationStatus::Succeeded);
+
+        let decoded_bytes = fs::read(decoded).expect("read decoded");
+        assert_eq!(decoded_bytes, bytes);
+    }
+
+    fn codec_rejects_level(codec: &str, level: i32, expected_message: &str) {
+        let temp = TestDir::new();
+        let source = temp.path().join("source.bin");
+        let encoded = temp.path().join("encoded.bin");
+        fs::write(&source, b"abc").expect("write source");
+
+        let registry = CodecRegistry::new();
+        let backend = registry.find_by_name(codec).expect("codec backend");
+        let context = codec_context(temp.path());
+
+        let error = backend
+            .encode(
+                &CodecOperationRequest {
+                    input: source,
+                    output: encoded,
+                    level: Some(level),
+                },
+                &context,
+            )
+            .expect_err("level should fail");
+        assert!(error.to_string().contains(expected_message));
+    }
 
     #[test]
     fn registry_contains_planned_backends() {
@@ -255,5 +573,91 @@ mod tests {
         assert_eq!(normalize_codec_label("xz(9)"), "lzma2(9)");
         assert_eq!(normalize_codec_label("Zstandard level=3"), "zstd level=3");
         assert_eq!(normalize_codec_label("mystery-codec"), "mystery-codec");
+    }
+
+    #[test]
+    fn codec_backends_round_trip_supported_formats() {
+        codec_round_trip("store", None);
+        codec_round_trip("deflate", Some(6));
+        codec_round_trip("zstd", Some(3));
+        codec_round_trip("lzma2", Some(6));
+        codec_round_trip("bzip2", Some(6));
+    }
+
+    #[test]
+    fn codec_backends_apply_default_levels() {
+        codec_round_trip("deflate", None);
+        codec_round_trip("zstd", None);
+        codec_round_trip("lzma2", None);
+        codec_round_trip("bzip2", None);
+    }
+
+    #[test]
+    fn store_backend_rejects_levels() {
+        codec_rejects_level(
+            "store",
+            1,
+            "store codec does not accept a compression level",
+        );
+    }
+
+    #[test]
+    fn deflate_backend_rejects_invalid_level() {
+        codec_rejects_level("deflate", 10, "deflate level `10` is out of range (0..=9)");
+    }
+
+    #[test]
+    fn zstd_backend_rejects_invalid_level() {
+        codec_rejects_level("zstd", 23, "zstd level `23` is out of range (-7..=22)");
+    }
+
+    #[test]
+    fn lzma2_backend_rejects_invalid_level() {
+        codec_rejects_level("lzma2", 10, "lzma2 level `10` is out of range (0..=9)");
+    }
+
+    #[test]
+    fn bzip2_backend_rejects_invalid_level() {
+        codec_rejects_level("bzip2", 0, "bzip2 level `0` is out of range (1..=9)");
+    }
+
+    #[test]
+    fn decode_rejects_level_parameter() {
+        let temp = TestDir::new();
+        let source = temp.path().join("source.bin");
+        let encoded = temp.path().join("encoded.bin");
+        let decoded = temp.path().join("decoded.bin");
+        fs::write(&source, b"hello").expect("write source");
+
+        let registry = CodecRegistry::new();
+        let backend = registry.find_by_name("deflate").expect("deflate backend");
+        let context = codec_context(temp.path());
+
+        backend
+            .encode(
+                &CodecOperationRequest {
+                    input: source,
+                    output: encoded.clone(),
+                    level: Some(6),
+                },
+                &context,
+            )
+            .expect("encode");
+
+        let error = backend
+            .decode(
+                &CodecOperationRequest {
+                    input: encoded,
+                    output: decoded,
+                    level: Some(6),
+                },
+                &context,
+            )
+            .expect_err("decode level should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("deflate decode does not accept a compression level")
+        );
     }
 }

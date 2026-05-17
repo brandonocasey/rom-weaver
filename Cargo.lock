@@ -1634,7 +1634,11 @@ dependencies = [
 name = "rom-weaver-codecs"
 version = "0.1.0"
 dependencies = [
+ "bzip2 0.6.1",
+ "flate2",
+ "liblzma",
  "rom-weaver-core",
+ "zstd 0.13.3",
 ]
 
 [[package]]
