@@ -3,8 +3,8 @@ use std::{cmp::min, fs, path::Path};
 use md5::{Digest, Md5};
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
+    Result, RomWeaverError, ThreadCapability,
 };
 
 const RUP_MAGIC: &[u8; 6] = b"NINJA2";
@@ -48,17 +48,26 @@ impl PatchHandler for RupPatchHandler {
             .iter()
             .map(|file| file.records.len())
             .sum::<usize>();
+        let mut label = format!(
+            "parsed {} patch with {} file variant(s) and {} record(s)",
+            self.descriptor.name,
+            patch.files.len(),
+            record_count
+        );
+        if patch.files.len() == 1 {
+            let file = &patch.files[0];
+            label.push_str(&format!(
+                "; source md5 {}; target md5 {}",
+                format_md5_hex(file.source_md5),
+                format_md5_hex(file.target_md5)
+            ));
+        }
 
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "parse",
-            format!(
-                "parsed {} patch with {} file variant(s) and {} record(s)",
-                self.descriptor.name,
-                patch.files.len(),
-                record_count
-            ),
+            label,
             Some(1.0),
             None,
         ))
@@ -77,15 +86,28 @@ impl PatchHandler for RupPatchHandler {
         }
 
         let patch = parse_rup_file(&request.patches[0])?;
+        let validate_checksums =
+            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
         let input = fs::read(&request.input)?;
         let input_md5 = md5_bytes(&input);
 
-        let (file, undo) = select_matching_file(&patch, input_md5).ok_or_else(|| {
-            RomWeaverError::Validation(format!(
+        let (file, undo) = if let Some(selected) = select_matching_file(&patch, input_md5) {
+            selected
+        } else if !validate_checksums {
+            match patch.files.as_slice() {
+                [single] => (single, false),
+                _ => {
+                    return Err(RomWeaverError::Validation(
+                        "RUP checksum validation is disabled, but patch has multiple file variants so input direction is ambiguous".into(),
+                    ));
+                }
+            }
+        } else {
+            return Err(RomWeaverError::Validation(format!(
                 "RUP input validation failed; no file entry matched input MD5 {}",
                 format_md5_hex(input_md5)
-            ))
-        })?;
+            )));
+        };
 
         let output_size = if undo {
             file.source_file_size
@@ -102,18 +124,20 @@ impl PatchHandler for RupPatchHandler {
         apply_xor_records(file, &mut output)?;
         apply_overflow(file, undo, &mut output)?;
 
-        let expected_md5 = if undo {
-            file.source_md5
-        } else {
-            file.target_md5
-        };
-        let actual_md5 = md5_bytes(&output);
-        if actual_md5 != expected_md5 {
-            return Err(RomWeaverError::Validation(format!(
-                "RUP target checksum mismatch; expected {}, got {}",
-                format_md5_hex(expected_md5),
-                format_md5_hex(actual_md5)
-            )));
+        if validate_checksums {
+            let expected_md5 = if undo {
+                file.source_md5
+            } else {
+                file.target_md5
+            };
+            let actual_md5 = md5_bytes(&output);
+            if actual_md5 != expected_md5 {
+                return Err(RomWeaverError::Validation(format!(
+                    "RUP target checksum mismatch; expected {}, got {}",
+                    format_md5_hex(expected_md5),
+                    format_md5_hex(actual_md5)
+                )));
+            }
         }
 
         if let Some(parent) = request.output.parent() {
@@ -122,15 +146,21 @@ impl PatchHandler for RupPatchHandler {
         fs::write(&request.output, output)?;
 
         let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let checksum_suffix = if validate_checksums {
+            String::new()
+        } else {
+            "; checksum validation skipped".to_string()
+        };
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
             format!(
-                "applied {} patch ({}) with {} record(s)",
+                "applied {} patch ({}) with {} record(s){}",
                 self.descriptor.name,
                 if undo { "undo" } else { "forward" },
-                file.records.len()
+                file.records.len(),
+                checksum_suffix
             ),
             Some(1.0),
             Some(execution),

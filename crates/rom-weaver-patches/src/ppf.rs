@@ -6,8 +6,8 @@ use std::{
 
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
+    Result, RomWeaverError, ThreadCapability,
 };
 
 const PPF_HEADER_MIN_SIZE: usize = 56;
@@ -45,16 +45,20 @@ impl PatchHandler for PpfPatchHandler {
 
     fn parse(&self, patch_path: &Path, _context: &OperationContext) -> Result<OperationReport> {
         let parsed = parse_ppf_file(patch_path)?;
+        let mut label = format!(
+            "parsed {} patch ({}) with {} record(s)",
+            self.descriptor.name,
+            parsed.version.label(),
+            parsed.records.len()
+        );
+        if parsed.blockcheck.is_some() {
+            label.push_str("; includes blockcheck validation bytes");
+        }
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "parse",
-            format!(
-                "parsed {} patch ({}) with {} record(s)",
-                self.descriptor.name,
-                parsed.version.label(),
-                parsed.records.len()
-            ),
+            label,
             Some(1.0),
             None,
         ))
@@ -73,6 +77,8 @@ impl PatchHandler for PpfPatchHandler {
         }
 
         let parsed = parse_ppf_file(&request.patches[0])?;
+        let validate_checksums =
+            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
         let input_len = fs::metadata(&request.input)?.len();
 
         if let Some(expected_len) = parsed.expected_input_len {
@@ -83,8 +89,10 @@ impl PatchHandler for PpfPatchHandler {
             }
         }
 
-        if let Some(blockcheck) = &parsed.blockcheck {
-            validate_blockcheck(&request.input, blockcheck)?;
+        if validate_checksums {
+            if let Some(blockcheck) = &parsed.blockcheck {
+                validate_blockcheck(&request.input, blockcheck)?;
+            }
         }
 
         if let Some(parent) = request.output.parent() {
@@ -100,15 +108,21 @@ impl PatchHandler for PpfPatchHandler {
         output.flush()?;
 
         let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let checksum_suffix = if validate_checksums {
+            String::new()
+        } else {
+            "; checksum validation skipped".to_string()
+        };
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
             format!(
-                "applied {} patch ({}) with {} record(s)",
+                "applied {} patch ({}) with {} record(s){}",
                 self.descriptor.name,
                 parsed.version.label(),
-                parsed.records.len()
+                parsed.records.len(),
+                checksum_suffix
             ),
             Some(1.0),
             Some(execution),

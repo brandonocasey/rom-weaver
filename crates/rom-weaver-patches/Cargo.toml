@@ -9,6 +9,7 @@ version.workspace = true
 crc32fast = "1.5.0"
 md-5 = "0.11.0"
 qbsdiff.workspace = true
+rom-weaver-checksum = { path = "../rom-weaver-checksum" }
 rom-weaver-core = { path = "../rom-weaver-core" }
 rayon.workspace = true
 serde_json.workspace = true

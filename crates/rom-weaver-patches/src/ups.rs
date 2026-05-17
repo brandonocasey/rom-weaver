@@ -1,20 +1,15 @@
-use std::{
-    cmp::max,
-    fs::{self, File},
-    io::{self, BufReader, Read},
-    path::Path,
-};
+use std::{cmp::max, fs, path::Path};
 
 use crc32fast::Hasher;
+use rom_weaver_checksum::checksum_file_values;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
+    Result, RomWeaverError, ThreadCapability,
 };
 
 const UPS_MAGIC: &[u8; 4] = b"UPS1";
 const UPS_FOOTER_SIZE: usize = 12;
-const COPY_BUFFER_SIZE: usize = 32 * 1024;
 
 pub struct UpsPatchHandler {
     descriptor: &'static FormatDescriptor,
@@ -42,9 +37,11 @@ impl PatchHandler for UpsPatchHandler {
             Some(self.descriptor.name.to_string()),
             "parse",
             format!(
-                "parsed {} patch with {} record(s)",
+                "parsed {} patch with {} record(s); source crc32 {:08x}; target crc32 {:08x}",
                 self.descriptor.name,
-                patch.changes.len()
+                patch.changes.len(),
+                patch.source_checksum,
+                patch.target_checksum
             ),
             Some(1.0),
             None,
@@ -64,10 +61,12 @@ impl PatchHandler for UpsPatchHandler {
         }
 
         let patch = parse_ups_file(&request.patches[0])?;
+        let validate_checksums =
+            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
         let input_len = fs::metadata(&request.input)?.len();
-        let input_checksum = crc32_path(&request.input)?;
+        let input_checksum = crc32_path_cached(&request.input, context)?;
         let (output_size, output_checksum) =
-            resolve_apply_target(&patch, input_len, input_checksum)?;
+            resolve_apply_target(&patch, input_len, input_checksum, validate_checksums)?;
 
         let input = fs::read(&request.input)?;
         let mut output = apply_changes(&patch, &input)?;
@@ -81,24 +80,32 @@ impl PatchHandler for UpsPatchHandler {
         }
         output.truncate(output_len);
 
-        let actual_output_checksum = crc32_bytes(&output);
-        if actual_output_checksum != output_checksum {
-            return Err(RomWeaverError::Validation(format!(
-                "Output checksum invalid; expected: {output_checksum:08x}, Actual: {actual_output_checksum:08x}"
-            )));
+        if validate_checksums {
+            let actual_output_checksum = crc32_bytes(&output);
+            if actual_output_checksum != output_checksum {
+                return Err(RomWeaverError::Validation(format!(
+                    "Output checksum invalid; expected: {output_checksum:08x}, Actual: {actual_output_checksum:08x}"
+                )));
+            }
         }
 
         fs::write(&request.output, &output)?;
 
         let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let checksum_suffix = if validate_checksums {
+            String::new()
+        } else {
+            "; checksum validation skipped".to_string()
+        };
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
             format!(
-                "applied {} patch with {} record(s)",
+                "applied {} patch with {} record(s){}",
                 self.descriptor.name,
-                patch.changes.len()
+                patch.changes.len(),
+                checksum_suffix
             ),
             Some(1.0),
             Some(execution),
@@ -242,6 +249,7 @@ fn resolve_apply_target(
     patch: &ParsedUpsPatch,
     input_len: u64,
     input_checksum: u32,
+    validate_checksums: bool,
 ) -> Result<(u64, u32)> {
     let matches_source = input_len == patch.source_size && input_checksum == patch.source_checksum;
     let matches_target = input_len == patch.target_size && input_checksum == patch.target_checksum;
@@ -251,6 +259,18 @@ fn resolve_apply_target(
     }
     if matches_target {
         return Ok((patch.source_size, patch.source_checksum));
+    }
+
+    if !validate_checksums {
+        if input_len == patch.source_size {
+            return Ok((patch.target_size, patch.target_checksum));
+        }
+        if input_len == patch.target_size {
+            return Ok((patch.source_size, patch.source_checksum));
+        }
+        if patch.source_size == patch.target_size {
+            return Ok((patch.target_size, patch.target_checksum));
+        }
     }
 
     Err(RomWeaverError::Validation(format!(
@@ -417,22 +437,18 @@ fn crc32_bytes(bytes: &[u8]) -> u32 {
     hasher.finalize()
 }
 
-fn crc32_reader(reader: &mut impl Read) -> io::Result<u32> {
-    let mut hasher = Hasher::new();
-    let mut buffer = [0u8; COPY_BUFFER_SIZE];
-    loop {
-        let bytes_read = reader.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..bytes_read]);
-    }
-    Ok(hasher.finalize())
-}
-
-fn crc32_path(path: &Path) -> io::Result<u32> {
-    let mut reader = BufReader::new(File::open(path)?);
-    crc32_reader(&mut reader)
+fn crc32_path_cached(path: &Path, context: &OperationContext) -> Result<u32> {
+    let results = checksum_file_values(path, &["crc32"], context)?;
+    let Some(value) = results.get("crc32") else {
+        return Err(RomWeaverError::Validation(
+            "native checksum engine did not return crc32 result".into(),
+        ));
+    };
+    u32::from_str_radix(value, 16).map_err(|error| {
+        RomWeaverError::Validation(format!(
+            "native checksum engine returned invalid crc32: {error}"
+        ))
+    })
 }
 
 struct UpsParser<'a> {

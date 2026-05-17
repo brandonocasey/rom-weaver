@@ -1664,6 +1664,7 @@ dependencies = [
  "md-5",
  "qbsdiff",
  "rayon",
+ "rom-weaver-checksum",
  "rom-weaver-core",
  "serde_json",
  "xdelta3",

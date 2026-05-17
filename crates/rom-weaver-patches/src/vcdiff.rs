@@ -9,8 +9,8 @@ use std::{
 use rayon::prelude::*;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
+    Result, RomWeaverError, ThreadCapability,
 };
 use xdelta3 as _;
 
@@ -59,7 +59,12 @@ impl PatchHandler for VcdiffPatchHandler {
     fn parse(&self, patch_path: &Path, _context: &OperationContext) -> Result<OperationReport> {
         let mut reader = BufReader::new(File::open(patch_path)?);
         let patch = parse_patch(&mut reader)?;
-        let label = if patch.secondary_compressor_id.is_some() {
+        let checksum_windows = patch
+            .windows
+            .iter()
+            .filter(|window| window.checksum.is_some())
+            .count();
+        let mut label = if patch.secondary_compressor_id.is_some() {
             format!(
                 "parsed {} patch with {} window(s) and secondary compression",
                 self.descriptor.name,
@@ -72,6 +77,12 @@ impl PatchHandler for VcdiffPatchHandler {
                 patch.windows.len()
             )
         };
+        if checksum_windows > 0 {
+            label.push_str(&format!(
+                "; {} window checksum(s) declared",
+                checksum_windows
+            ));
+        }
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
@@ -97,6 +108,8 @@ impl PatchHandler for VcdiffPatchHandler {
         let patch_path = request.patches[0].clone();
         let mut patch_reader = BufReader::new(File::open(&patch_path)?);
         let patch = parse_patch(&mut patch_reader)?;
+        let validate_checksums =
+            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
         let input_len = std::fs::metadata(&request.input)?.len();
 
         if patch
@@ -110,17 +123,24 @@ impl PatchHandler for VcdiffPatchHandler {
                 &request.input,
                 &request.output,
                 input_len,
+                validate_checksums,
             )?;
 
             let execution = context.plan_threads(ThreadCapability::single_threaded());
+            let checksum_suffix = if validate_checksums {
+                String::new()
+            } else {
+                "; checksum validation skipped".to_string()
+            };
             return Ok(OperationReport::succeeded(
                 OperationFamily::Patch,
                 Some(self.descriptor.name.to_string()),
                 "apply",
                 format!(
-                    "applied {} patch with {} window(s)",
+                    "applied {} patch with {} window(s){}",
                     self.descriptor.name,
-                    patch.windows.len()
+                    patch.windows.len(),
+                    checksum_suffix
                 ),
                 Some(1.0),
                 Some(execution),
@@ -145,12 +165,20 @@ impl PatchHandler for VcdiffPatchHandler {
             .collect::<Vec<_>>();
         let patch_header = patch.header_bytes;
         let input_path = request.input.clone();
+        let validate_checksums_for_tasks = validate_checksums;
 
         let mut decoded = pool.install(|| {
             tasks
                 .into_par_iter()
                 .map(|task| {
-                    decode_window_task(&task, &patch_path, &input_path, input_len, &patch_header)
+                    decode_window_task(
+                        &task,
+                        &patch_path,
+                        &input_path,
+                        input_len,
+                        &patch_header,
+                        validate_checksums_for_tasks,
+                    )
                 })
                 .collect::<Result<Vec<_>>>()
         })?;
@@ -173,14 +201,20 @@ impl PatchHandler for VcdiffPatchHandler {
             let _ = fs::remove_file(&window.temp_path);
         }
 
+        let checksum_suffix = if validate_checksums {
+            String::new()
+        } else {
+            "; checksum validation skipped".to_string()
+        };
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
             format!(
-                "applied {} patch with {} window(s)",
+                "applied {} patch with {} window(s){}",
                 self.descriptor.name,
-                patch.windows.len()
+                patch.windows.len(),
+                checksum_suffix
             ),
             Some(1.0),
             Some(execution),
@@ -538,6 +572,7 @@ fn decode_window_task(
     input_path: &Path,
     input_len: u64,
     patch_header: &[u8],
+    validate_checksums: bool,
 ) -> Result<DecodedWindow> {
     let mut input_reader = BufReader::new(File::open(input_path)?);
     let source = match task.window.source_kind {
@@ -556,7 +591,13 @@ fn decode_window_task(
         )?,
     };
     let mut patch_reader = BufReader::new(File::open(patch_path)?);
-    let target = decode_window_with_xdelta(&mut patch_reader, patch_header, &task.window, &source)?;
+    let target = decode_window_with_xdelta(
+        &mut patch_reader,
+        patch_header,
+        &task.window,
+        &source,
+        validate_checksums,
+    )?;
 
     if let Some(parent) = task.temp_path.parent() {
         fs::create_dir_all(parent)?;
@@ -577,6 +618,7 @@ fn apply_windows_with_target_sources(
     input_path: &Path,
     output_path: &Path,
     input_len: u64,
+    validate_checksums: bool,
 ) -> Result<()> {
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)?;
@@ -618,8 +660,13 @@ fn apply_windows_with_target_sources(
         };
 
         let mut patch_reader = BufReader::new(File::open(patch_path)?);
-        let target =
-            decode_window_with_xdelta(&mut patch_reader, &patch.header_bytes, window, &source)?;
+        let target = decode_window_with_xdelta(
+            &mut patch_reader,
+            &patch.header_bytes,
+            window,
+            &source,
+            validate_checksums,
+        )?;
         output.seek(SeekFrom::Start(assembled_output_size))?;
         output.write_all(&target)?;
         assembled_output_size = checked_add(
@@ -972,6 +1019,7 @@ fn decode_window_with_xdelta<R: Read + Seek>(
     patch_header: &[u8],
     window: &WindowIndex,
     source_segment: &[u8],
+    validate_checksums: bool,
 ) -> Result<Vec<u8>> {
     let patch_bytes = build_single_window_patch(patch_reader, patch_header, window)?;
     let decoded = decode_window_with_xdelta_memory(&patch_bytes, source_segment, window)?;
@@ -984,12 +1032,14 @@ fn decode_window_with_xdelta<R: Read + Seek>(
         )));
     }
 
-    if let Some(expected) = window.checksum {
-        let actual = adler32(&decoded);
-        if actual != expected {
-            return Err(RomWeaverError::Validation(format!(
-                "target window checksum mismatch: expected 0x{expected:08X}, got 0x{actual:08X}"
-            )));
+    if validate_checksums {
+        if let Some(expected) = window.checksum {
+            let actual = adler32(&decoded);
+            if actual != expected {
+                return Err(RomWeaverError::Validation(format!(
+                    "target window checksum mismatch: expected 0x{expected:08X}, got 0x{actual:08X}"
+                )));
+            }
         }
     }
 

@@ -39,6 +39,13 @@ const CRC32_PARALLEL_MAX_THREADS: usize = 4;
 
 pub struct NativeChecksumEngine;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChecksumValues {
+    pub execution: ThreadExecution,
+    pub cached_count: usize,
+    pub values: BTreeMap<String, String>,
+}
+
 impl Default for NativeChecksumEngine {
     fn default() -> Self {
         Self
@@ -80,6 +87,14 @@ impl ChecksumEngine for NativeChecksumEngine {
 }
 
 impl NativeChecksumEngine {
+    pub fn checksum_values(
+        &self,
+        request: &ChecksumRequest,
+        context: &OperationContext,
+    ) -> Result<ChecksumValues> {
+        compute_checksum_values(request, context)
+    }
+
     fn run_checksum(
         &self,
         request: &ChecksumRequest,
@@ -88,37 +103,34 @@ impl NativeChecksumEngine {
     ) -> Result<OperationReport> {
         let algorithms = resolve_algorithms(&request.algorithms)?;
         let range = ResolvedRange::from_request(&request.source, request.start, request.length)?;
-        let fingerprint = SourceFingerprint::from_path(&request.source)?;
-        let cache = ChecksumCache::new(context.temp_root());
-
-        let mut cached_results = cache.load(&fingerprint, &range).unwrap_or_default();
-        let missing_algorithms = algorithms
-            .iter()
-            .copied()
-            .filter(|algorithm| !cached_results.contains_key(algorithm.name()))
-            .collect::<Vec<_>>();
-
-        let cached_count = algorithms.len().saturating_sub(missing_algorithms.len());
-        let execution = if missing_algorithms.is_empty() {
-            cache_hit_execution(context.thread_budget())
-        } else {
-            let plan = plan_checksum(&missing_algorithms, &range);
-            let (execution, computed) =
-                execute_plan(&request.source, &range, &missing_algorithms, context, &plan)?;
-            cached_results.extend(computed);
-            let _ = cache.store(&fingerprint, &range, &cached_results);
-            execution
-        };
+        let computed = compute_checksum_values(request, context)?;
 
         Ok(OperationReport::succeeded(
             OperationFamily::Checksum,
             Some(self.name().to_string()),
             stage,
-            render_label(&algorithms, &cached_results, &range, cached_count),
+            render_label(&algorithms, &computed.values, &range, computed.cached_count),
             Some(100.0),
-            Some(execution),
+            Some(computed.execution),
         ))
     }
+}
+
+pub fn checksum_file_values(
+    source: &Path,
+    algorithms: &[&str],
+    context: &OperationContext,
+) -> Result<BTreeMap<String, String>> {
+    let request = ChecksumRequest {
+        source: source.to_path_buf(),
+        algorithms: algorithms
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        start: None,
+        length: None,
+    };
+    Ok(compute_checksum_values(&request, context)?.values)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -454,6 +466,41 @@ fn resolve_algorithms(values: &[String]) -> Result<Vec<Algorithm>> {
         }
     }
     Ok(algorithms)
+}
+
+fn compute_checksum_values(
+    request: &ChecksumRequest,
+    context: &OperationContext,
+) -> Result<ChecksumValues> {
+    let algorithms = resolve_algorithms(&request.algorithms)?;
+    let range = ResolvedRange::from_request(&request.source, request.start, request.length)?;
+    let fingerprint = SourceFingerprint::from_path(&request.source)?;
+    let cache = ChecksumCache::new(context.temp_root());
+
+    let mut cached_results = cache.load(&fingerprint, &range).unwrap_or_default();
+    let missing_algorithms = algorithms
+        .iter()
+        .copied()
+        .filter(|algorithm| !cached_results.contains_key(algorithm.name()))
+        .collect::<Vec<_>>();
+
+    let cached_count = algorithms.len().saturating_sub(missing_algorithms.len());
+    let execution = if missing_algorithms.is_empty() {
+        cache_hit_execution(context.thread_budget())
+    } else {
+        let plan = plan_checksum(&missing_algorithms, &range);
+        let (execution, computed) =
+            execute_plan(&request.source, &range, &missing_algorithms, context, &plan)?;
+        cached_results.extend(computed);
+        let _ = cache.store(&fingerprint, &range, &cached_results);
+        execution
+    };
+
+    Ok(ChecksumValues {
+        execution,
+        cached_count,
+        values: cached_results,
+    })
 }
 
 fn plan_checksum(algorithms: &[Algorithm], range: &ResolvedRange) -> ChecksumPlan {

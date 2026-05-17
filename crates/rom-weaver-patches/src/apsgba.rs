@@ -2,8 +2,8 @@ use std::{fs, path::Path};
 
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
+    Result, RomWeaverError, ThreadCapability,
 };
 
 const APS_GBA_MAGIC: &[u8; 4] = b"APS1";
@@ -38,9 +38,11 @@ impl PatchHandler for ApsGbaPatchHandler {
             Some(self.descriptor.name.to_string()),
             "parse",
             format!(
-                "parsed {} patch with {} record(s)",
+                "parsed {} patch with {} record(s); source size {}; target size {}; per-block source/target crc16 present",
                 self.descriptor.name,
-                patch.records.len()
+                patch.records.len(),
+                patch.source_size,
+                patch.target_size
             ),
             Some(1.0),
             None,
@@ -60,6 +62,8 @@ impl PatchHandler for ApsGbaPatchHandler {
         }
 
         let patch = parse_apsgba_file(&request.patches[0])?;
+        let validate_checksums =
+            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
         let source = fs::read(&request.input)?;
         let expected_input_size = usize::try_from(patch.source_size).expect("u32 fits usize");
         if source.len() != expected_input_size {
@@ -69,21 +73,27 @@ impl PatchHandler for ApsGbaPatchHandler {
             )));
         }
 
-        let output = apply_apsgba_patch(&patch, &source)?;
+        let output = apply_apsgba_patch(&patch, &source, validate_checksums)?;
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(&request.output, output)?;
 
         let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let checksum_suffix = if validate_checksums {
+            String::new()
+        } else {
+            "; checksum validation skipped".to_string()
+        };
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
             format!(
-                "applied {} patch with {} record(s)",
+                "applied {} patch with {} record(s){}",
                 self.descriptor.name,
-                patch.records.len()
+                patch.records.len(),
+                checksum_suffix
             ),
             Some(1.0),
             Some(execution),
@@ -216,7 +226,11 @@ fn parse_apsgba_bytes(bytes: &[u8]) -> Result<ParsedApsGbaPatch> {
     })
 }
 
-fn apply_apsgba_patch(patch: &ParsedApsGbaPatch, source: &[u8]) -> Result<Vec<u8>> {
+fn apply_apsgba_patch(
+    patch: &ParsedApsGbaPatch,
+    source: &[u8],
+    validate_checksums: bool,
+) -> Result<Vec<u8>> {
     let target_len = usize::try_from(patch.target_size).expect("u32 fits usize");
     let mut output = vec![0u8; target_len];
     let copy_len = source.len().min(target_len);
@@ -225,12 +239,14 @@ fn apply_apsgba_patch(patch: &ParsedApsGbaPatch, source: &[u8]) -> Result<Vec<u8
     for record in &patch.records {
         let offset = usize::try_from(record.offset).expect("u32 fits usize");
 
-        let actual_source_crc16 = crc16_range(source, offset, APS_GBA_BLOCK_SIZE);
-        if actual_source_crc16 != record.source_crc16 {
-            return Err(RomWeaverError::Validation(format!(
-                "Source checksum invalid at offset {offset}; expected: {:04x}, Actual: {:04x}",
-                record.source_crc16, actual_source_crc16
-            )));
+        if validate_checksums {
+            let actual_source_crc16 = crc16_range(source, offset, APS_GBA_BLOCK_SIZE);
+            if actual_source_crc16 != record.source_crc16 {
+                return Err(RomWeaverError::Validation(format!(
+                    "Source checksum invalid at offset {offset}; expected: {:04x}, Actual: {:04x}",
+                    record.source_crc16, actual_source_crc16
+                )));
+            }
         }
 
         let write_len = output.len().saturating_sub(offset).min(APS_GBA_BLOCK_SIZE);
@@ -239,12 +255,14 @@ fn apply_apsgba_patch(patch: &ParsedApsGbaPatch, source: &[u8]) -> Result<Vec<u8
             output[offset + index] = source_byte ^ record.xor_bytes[index];
         }
 
-        let actual_target_crc16 = crc16_range(&output, offset, APS_GBA_BLOCK_SIZE);
-        if actual_target_crc16 != record.target_crc16 {
-            return Err(RomWeaverError::Validation(format!(
-                "Target checksum invalid at offset {offset}; expected: {:04x}, Actual: {:04x}",
-                record.target_crc16, actual_target_crc16
-            )));
+        if validate_checksums {
+            let actual_target_crc16 = crc16_range(&output, offset, APS_GBA_BLOCK_SIZE);
+            if actual_target_crc16 != record.target_crc16 {
+                return Err(RomWeaverError::Validation(format!(
+                    "Target checksum invalid at offset {offset}; expected: {:04x}, Actual: {:04x}",
+                    record.target_crc16, actual_target_crc16
+                )));
+            }
         }
     }
 

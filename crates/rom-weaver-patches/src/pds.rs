@@ -9,8 +9,8 @@ use crc32fast::Hasher;
 use qbsdiff::{Bsdiff, Bspatch, ParallelScheme};
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
+    Result, RomWeaverError, ThreadCapability,
 };
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::FileOptions};
 
@@ -66,6 +66,12 @@ impl PatchHandler for PdsPatchHandler {
         if let Some(payload) = &parsed.manifest.payload {
             label.push_str(&format!("; declared payload `{payload}`"));
         }
+        if let Some(source_crc32) = parsed.manifest.source_crc32 {
+            label.push_str(&format!("; source crc32 {:08x}", source_crc32));
+        }
+        if let Some(target_crc32) = parsed.manifest.target_crc32 {
+            label.push_str(&format!("; target crc32 {:08x}", target_crc32));
+        }
 
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
@@ -97,12 +103,14 @@ impl PatchHandler for PdsPatchHandler {
                 "PDS manifest requested unsupported payload format `{format_name}`; only BSDIFF40-compatible payloads are currently supported"
             )));
         }
+        let validate_checksums =
+            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
 
         let payload = read_named_payload(&request.patches[0], &payload_name)?;
         let input = fs::read(&request.input)?;
-        validate_source_expectations(&parsed.manifest, &input)?;
+        validate_source_expectations(&parsed.manifest, &input, validate_checksums)?;
         let output = apply_bdf_payload(&input, &payload)?;
-        validate_target_expectations(&parsed.manifest, &output)?;
+        validate_target_expectations(&parsed.manifest, &output, validate_checksums)?;
 
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
@@ -110,11 +118,19 @@ impl PatchHandler for PdsPatchHandler {
         fs::write(&request.output, &output)?;
 
         let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let checksum_suffix = if validate_checksums {
+            String::new()
+        } else {
+            "; checksum validation skipped".to_string()
+        };
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
-            format!("applied PDS patch payload `{payload_name}` (format `{format_name}`)"),
+            format!(
+                "applied PDS patch payload `{payload_name}` (format `{format_name}`){}",
+                checksum_suffix
+            ),
             Some(1.0),
             Some(execution),
         ))
@@ -448,7 +464,11 @@ fn is_bdf_alias(name: &str) -> bool {
         .any(|alias| alias.eq_ignore_ascii_case(name))
 }
 
-fn validate_source_expectations(manifest: &PdsManifest, source: &[u8]) -> Result<()> {
+fn validate_source_expectations(
+    manifest: &PdsManifest,
+    source: &[u8],
+    validate_checksums: bool,
+) -> Result<()> {
     if let Some(expected_size) = manifest.source_size {
         let actual_size = u64::try_from(source.len()).expect("usize fits u64");
         if expected_size != actual_size {
@@ -458,13 +478,15 @@ fn validate_source_expectations(manifest: &PdsManifest, source: &[u8]) -> Result
         }
     }
 
-    if let Some(expected_crc) = manifest.source_crc32 {
-        let actual_crc = crc32(source);
-        if expected_crc != actual_crc {
-            return Err(RomWeaverError::Validation(format!(
-                "PDS source checksum mismatch: expected {:08x}, actual {:08x}",
-                expected_crc, actual_crc
-            )));
+    if validate_checksums {
+        if let Some(expected_crc) = manifest.source_crc32 {
+            let actual_crc = crc32(source);
+            if expected_crc != actual_crc {
+                return Err(RomWeaverError::Validation(format!(
+                    "PDS source checksum mismatch: expected {:08x}, actual {:08x}",
+                    expected_crc, actual_crc
+                )));
+            }
         }
     }
 
@@ -479,7 +501,11 @@ fn validate_source_expectations(manifest: &PdsManifest, source: &[u8]) -> Result
     Ok(())
 }
 
-fn validate_target_expectations(manifest: &PdsManifest, target: &[u8]) -> Result<()> {
+fn validate_target_expectations(
+    manifest: &PdsManifest,
+    target: &[u8],
+    validate_checksums: bool,
+) -> Result<()> {
     if let Some(expected_size) = manifest.target_size {
         let actual_size = u64::try_from(target.len()).expect("usize fits u64");
         if expected_size != actual_size {
@@ -489,13 +515,15 @@ fn validate_target_expectations(manifest: &PdsManifest, target: &[u8]) -> Result
         }
     }
 
-    if let Some(expected_crc) = manifest.target_crc32 {
-        let actual_crc = crc32(target);
-        if expected_crc != actual_crc {
-            return Err(RomWeaverError::Validation(format!(
-                "PDS target checksum mismatch: expected {:08x}, actual {:08x}",
-                expected_crc, actual_crc
-            )));
+    if validate_checksums {
+        if let Some(expected_crc) = manifest.target_crc32 {
+            let actual_crc = crc32(target);
+            if expected_crc != actual_crc {
+                return Err(RomWeaverError::Validation(format!(
+                    "PDS target checksum mismatch: expected {:08x}, actual {:08x}",
+                    expected_crc, actual_crc
+                )));
+            }
         }
     }
 

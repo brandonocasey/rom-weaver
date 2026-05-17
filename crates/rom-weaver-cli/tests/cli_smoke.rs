@@ -3374,6 +3374,145 @@ fn patch_create_succeeds_for_bps_and_round_trips() {
 }
 
 #[test]
+fn patch_apply_can_ignore_checksum_validation_for_bps() {
+    let temp = setup_temp_dir();
+    let original = temp.child("old.bin");
+    let modified = temp.child("new.bin");
+    let mismatched_input = temp.child("old-mismatch.bin");
+    let patch = temp.child("update.bps");
+    let output = temp.child("output.bin");
+    fs::write(original.path(), b"hello old world").expect("fixture");
+    fs::write(modified.path(), b"hello new world").expect("fixture");
+    fs::write(mismatched_input.path(), b"hello zld world").expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified.path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            patch.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let strict_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-apply",
+            "--input",
+            mismatched_input.path().to_str().expect("path"),
+            "--patch",
+            patch.path().to_str().expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let strict_json = parse_single_json_line(&strict_output);
+    assert_eq!(strict_json["command"], "patch-apply");
+    assert_eq!(strict_json["family"], "patch");
+    assert_eq!(strict_json["format"], "BPS");
+    assert_eq!(strict_json["status"], "failed");
+    assert!(
+        strict_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("Input checksum invalid")
+    );
+
+    let ignored_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-apply",
+            "--input",
+            mismatched_input.path().to_str().expect("path"),
+            "--patch",
+            patch.path().to_str().expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--ignore-checksum-validation",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let ignored_json = parse_single_json_line(&ignored_output);
+    assert_eq!(ignored_json["command"], "patch-apply");
+    assert_eq!(ignored_json["family"], "patch");
+    assert_eq!(ignored_json["format"], "BPS");
+    assert_eq!(ignored_json["status"], "succeeded");
+    assert!(
+        ignored_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("checksum validation skipped")
+    );
+}
+
+#[test]
+fn inspect_patch_reports_expected_checksums_for_bps() {
+    let temp = setup_temp_dir();
+    let original = temp.child("old.bin");
+    let modified = temp.child("new.bin");
+    let patch = temp.child("update.bps");
+    fs::write(original.path(), b"hello old world").expect("fixture");
+    fs::write(modified.path(), b"hello new world").expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified.path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            patch.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let inspect_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["inspect", patch.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let inspect_json = parse_single_json_line(&inspect_output);
+    assert_eq!(inspect_json["command"], "inspect");
+    assert_eq!(inspect_json["family"], "patch");
+    assert_eq!(inspect_json["format"], "BPS");
+    assert_eq!(inspect_json["status"], "succeeded");
+    assert!(
+        inspect_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("source crc32")
+    );
+}
+
+#[test]
 fn patch_create_succeeds_for_bdf_and_round_trips() {
     let temp = setup_temp_dir();
     let original = temp.child("old.bin");

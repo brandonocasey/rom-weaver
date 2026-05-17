@@ -7,7 +7,7 @@ mod registry;
 mod threads;
 
 pub use cancel::CancellationToken;
-pub use context::OperationContext;
+pub use context::{OperationContext, PatchChecksumValidation};
 pub use error::{Result, RomWeaverError};
 pub use io::{ChunkPlanner, FileChunk, TempPathAllocator};
 pub use progress::{

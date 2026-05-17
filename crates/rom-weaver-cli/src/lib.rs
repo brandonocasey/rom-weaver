@@ -14,8 +14,9 @@ use rom_weaver_containers::ContainerRegistry;
 use rom_weaver_core::{
     CancellationToken, ChecksumEngine, ChecksumRequest, ContainerCreateRequest,
     ContainerExtractRequest, ContainerInspectRequest, OperationContext, OperationFamily,
-    OperationReport, OperationStatus, PatchApplyRequest, PatchCreateRequest, ProgressEvent,
-    ProgressSink, Result, RomWeaverError, ThreadBudget, ThreadCapability,
+    OperationReport, OperationStatus, PatchApplyRequest, PatchChecksumValidation,
+    PatchCreateRequest, ProgressEvent, ProgressSink, Result, RomWeaverError, ThreadBudget,
+    ThreadCapability,
 };
 use rom_weaver_patches::PatchRegistry;
 
@@ -116,6 +117,11 @@ struct PatchApplyCommand {
         help = "Repair supported ROM header checksums after patch apply (auto-detect)"
     )]
     repair_checksum: bool,
+    #[arg(
+        long,
+        help = "Skip patch-provided checksum validation for source/target compatibility checks"
+    )]
+    ignore_checksum_validation: bool,
     #[arg(long, default_value = "auto")]
     threads: ThreadBudget,
 }
@@ -511,9 +517,16 @@ impl CliApp {
             strip_header,
             add_header,
             repair_checksum,
+            ignore_checksum_validation,
             threads,
         } = args;
-        let context = self.context(threads);
+        let context =
+            self.context(threads)
+                .with_patch_checksum_validation(if ignore_checksum_validation {
+                    PatchChecksumValidation::Ignore
+                } else {
+                    PatchChecksumValidation::Strict
+                });
         let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
         if let Some(report) = self.require_existing_path(
             "patch-apply",

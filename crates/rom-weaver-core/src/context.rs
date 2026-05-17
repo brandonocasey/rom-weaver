@@ -5,12 +5,19 @@ use crate::{
     ThreadBudget, ThreadCapability, ThreadExecution,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PatchChecksumValidation {
+    Strict,
+    Ignore,
+}
+
 #[derive(Clone)]
 pub struct OperationContext {
     thread_budget: ThreadBudget,
     temp_paths: Arc<TempPathAllocator>,
     progress: Arc<dyn ProgressSink>,
     cancel: CancellationToken,
+    patch_checksum_validation: PatchChecksumValidation,
 }
 
 impl OperationContext {
@@ -25,6 +32,7 @@ impl OperationContext {
             temp_paths: Arc::new(TempPathAllocator::new(temp_root)),
             progress,
             cancel,
+            patch_checksum_validation: PatchChecksumValidation::Strict,
         }
     }
 
@@ -42,6 +50,17 @@ impl OperationContext {
 
     pub fn cancel(&self) -> &CancellationToken {
         &self.cancel
+    }
+
+    pub fn patch_checksum_validation(&self) -> PatchChecksumValidation {
+        self.patch_checksum_validation
+    }
+
+    pub fn with_patch_checksum_validation(self, validation: PatchChecksumValidation) -> Self {
+        Self {
+            patch_checksum_validation: validation,
+            ..self
+        }
     }
 
     pub fn emit(&self, event: ProgressEvent) {

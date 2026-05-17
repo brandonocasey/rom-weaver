@@ -7,8 +7,8 @@ use std::{
 use md5::{Digest, Md5};
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
+    Result, RomWeaverError, ThreadCapability,
 };
 
 const SOLID_MAGIC: &[u8; 2] = b"SP";
@@ -75,6 +75,10 @@ impl PatchHandler for SolidPatchHandler {
                 label.push_str(&format!("; truncate output to {size} byte(s)"));
             }
         }
+        label.push_str(&format!(
+            "; source md5 {}",
+            format_md5_hex(parsed.source_md5)
+        ));
 
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
@@ -100,8 +104,12 @@ impl PatchHandler for SolidPatchHandler {
 
         let patch = fs::read(&request.patches[0])?;
         let parsed = parse_solid_patch_bytes(&patch)?;
+        let validate_checksums =
+            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
         let input = fs::read(&request.input)?;
-        validate_source_checksum(parsed.source_md5, &input)?;
+        if validate_checksums {
+            validate_source_checksum(parsed.source_md5, &input)?;
+        }
         let output = apply_parsed_patch(&parsed, &input)?;
 
         if let Some(parent) = request.output.parent() {
@@ -110,15 +118,21 @@ impl PatchHandler for SolidPatchHandler {
         fs::write(&request.output, output)?;
 
         let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let checksum_suffix = if validate_checksums {
+            String::new()
+        } else {
+            "; checksum validation skipped".to_string()
+        };
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
             format!(
-                "applied {} patch with {} {}",
+                "applied {} patch with {} {}{}",
                 self.descriptor.name,
                 parsed.primitives.len(),
-                pluralize(parsed.primitives.len(), "primitive", "primitives")
+                pluralize(parsed.primitives.len(), "primitive", "primitives"),
+                checksum_suffix
             ),
             Some(1.0),
             Some(execution),
