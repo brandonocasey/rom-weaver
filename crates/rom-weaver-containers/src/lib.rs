@@ -41,6 +41,10 @@ use sevenz_rust::{
 use sha2::{Digest as Sha2Digest, Sha256};
 use tar::{Archive as TarArchive, Builder as TarBuilder};
 use unrar_ng::Archive as RarArchive;
+use xdvdfs::{
+    blockdev::OffsetWrapper as XdvdfsOffsetWrapper,
+    write::{fs::XDVDFSFilesystem as XdvdfsFilesystem, img::create_xdvdfs_image},
+};
 use zip::{
     CompressionMethod as ZipCompressionMethod, ZipArchive as ZipFileArchive,
     ZipWriter as ZipFileWriter, write::FileOptions as ZipFileOptions,
@@ -145,6 +149,12 @@ const WUA: FormatDescriptor = FormatDescriptor {
     aliases: &["zar", "zarchive"],
     extensions: &[".wua", ".zar"],
 };
+const XISO: FormatDescriptor = FormatDescriptor {
+    family: OperationFamily::Container,
+    name: "xiso",
+    aliases: &[],
+    extensions: &[".xiso", ".xiso.iso"],
+};
 
 pub struct ContainerRegistry {
     handlers: Vec<Arc<dyn ContainerHandler>>,
@@ -182,6 +192,7 @@ impl ContainerRegistry {
                 Arc::new(WuaContainerHandler),
                 Arc::new(RvzContainerHandler),
                 Arc::new(Z3dsContainerHandler),
+                Arc::new(XisoContainerHandler),
             ],
         }
     }
@@ -3262,6 +3273,134 @@ impl ContainerHandler for WuaContainerHandler {
         ContainerCapabilities {
             inspect: true,
             extract: true,
+            create: true,
+            extract_threads: ThreadCapability::single_threaded(),
+            create_threads: ThreadCapability::single_threaded(),
+        }
+    }
+}
+
+type XisoSourceDevice = XdvdfsOffsetWrapper<BufReader<File>, io::Error>;
+type XisoSourceFilesystem = XdvdfsFilesystem<io::Error, XisoSourceDevice>;
+
+struct XisoContainerHandler;
+
+impl XisoContainerHandler {
+    fn open_source_filesystem(&self, source_path: &Path) -> Result<XisoSourceFilesystem> {
+        let source_file = File::options()
+            .read(true)
+            .open(source_path)
+            .map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "failed to open xiso source `{}`: {error}",
+                    source_path.display()
+                ))
+            })?;
+        let source_reader = BufReader::new(source_file);
+        let source_device = XdvdfsOffsetWrapper::new(source_reader).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "source `{}` is not an Xbox XDVDFS image (raw/XGD probe failed: {error})",
+                source_path.display()
+            ))
+        })?;
+        XdvdfsFilesystem::new(source_device).ok_or_else(|| {
+            RomWeaverError::Validation(format!(
+                "source `{}` could not be read as an XDVDFS filesystem",
+                source_path.display()
+            ))
+        })
+    }
+}
+
+impl ContainerHandler for XisoContainerHandler {
+    fn descriptor(&self) -> &'static FormatDescriptor {
+        &XISO
+    }
+
+    fn probe(&self, source: &Path) -> ProbeConfidence {
+        if self.open_source_filesystem(source).is_ok() {
+            ProbeConfidence::Signature
+        } else {
+            ProbeConfidence::Extension
+        }
+    }
+
+    fn inspect(
+        &self,
+        _request: &ContainerInspectRequest,
+        _context: &OperationContext,
+    ) -> Result<OperationReport> {
+        Err(RomWeaverError::Validation(
+            "xiso inspect is not supported yet".into(),
+        ))
+    }
+
+    fn extract(
+        &self,
+        _request: &ContainerExtractRequest,
+        _context: &OperationContext,
+    ) -> Result<OperationReport> {
+        Err(RomWeaverError::Validation(
+            "xiso extract is not supported yet".into(),
+        ))
+    }
+
+    fn create(
+        &self,
+        request: &ContainerCreateRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        if request.inputs.len() != 1 {
+            return Err(RomWeaverError::Validation(
+                "xiso create currently requires exactly one input file".into(),
+            ));
+        }
+
+        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let input = &request.inputs[0];
+        let input_metadata = fs::metadata(input)?;
+        if !input_metadata.is_file() {
+            return Err(RomWeaverError::Validation(format!(
+                "xiso create input must be a file: `{}`",
+                input.display()
+            )));
+        }
+
+        if let Some(parent) = request.output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut source_fs = self.open_source_filesystem(input)?;
+        let output_file = File::create(&request.output)?;
+        let mut output = BufWriter::new(output_file);
+        create_xdvdfs_image(&mut source_fs, &mut output, |_| {}).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "xiso create failed while rebuilding `{}`: {error}",
+                input.display()
+            ))
+        })?;
+        output.flush()?;
+
+        let output_bytes = fs::metadata(&request.output)?.len();
+        Ok(OperationReport::succeeded(
+            OperationFamily::Container,
+            Some(XISO.name.to_string()),
+            "create",
+            format!(
+                "created xiso `{}` from `{}` ({} bytes)",
+                request.output.display(),
+                input.display(),
+                output_bytes
+            ),
+            Some(100.0),
+            Some(execution),
+        ))
+    }
+
+    fn capabilities(&self) -> ContainerCapabilities {
+        ContainerCapabilities {
+            inspect: false,
+            extract: false,
             create: true,
             extract_threads: ThreadCapability::single_threaded(),
             create_threads: ThreadCapability::single_threaded(),
@@ -6809,14 +6948,17 @@ mod tests {
     use std::{
         env, fs,
         path::{Path, PathBuf},
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        ContainerRegistry, WUA_FOOTER_MAGIC, WUA_FOOTER_SIZE, WUA_FOOTER_VERSION,
-        Z3dsContainerHandler,
+        ContainerCreateRequest, ContainerRegistry, WUA_FOOTER_MAGIC, WUA_FOOTER_SIZE,
+        WUA_FOOTER_VERSION, Z3dsContainerHandler,
     };
-    use rom_weaver_core::ThreadCapability;
+    use rom_weaver_core::{
+        CancellationToken, NoopProgressSink, OperationContext, ThreadBudget, ThreadCapability,
+    };
 
     fn temp_file_path_with_extension(label: &str, extension: &str) -> PathBuf {
         let timestamp = SystemTime::now()
@@ -6827,6 +6969,26 @@ mod tests {
             "rom-weaver-containers-probe-{label}-{}-{timestamp}.{extension}",
             std::process::id(),
         ))
+    }
+
+    fn temp_dir_path(label: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        env::temp_dir().join(format!(
+            "rom-weaver-containers-tests-{label}-{}-{timestamp}",
+            std::process::id(),
+        ))
+    }
+
+    fn test_context(temp_root: &Path, threads: usize) -> OperationContext {
+        OperationContext::new(
+            ThreadBudget::Fixed(threads),
+            temp_root.to_path_buf(),
+            Arc::new(NoopProgressSink),
+            CancellationToken::new(),
+        )
     }
 
     fn build_test_gamecube_iso(payload_len: usize) -> Vec<u8> {
@@ -6854,7 +7016,7 @@ mod tests {
             names,
             vec![
                 "zip", "zipx", "7z", "rar", "tar", "tar.gz", "tar.bz2", "tar.xz", "gz", "bz2",
-                "xz", "zst", "chd", "wua", "rvz", "z3ds"
+                "xz", "zst", "chd", "wua", "rvz", "z3ds", "xiso"
             ]
         );
     }
@@ -6911,6 +7073,94 @@ mod tests {
             capabilities.create_threads,
             ThreadCapability::parallel(None)
         );
+    }
+
+    #[test]
+    fn xiso_capabilities_are_create_only() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("xiso").expect("xiso handler");
+        let capabilities = handler.capabilities();
+        assert!(!capabilities.inspect);
+        assert!(!capabilities.extract);
+        assert!(capabilities.create);
+        assert_eq!(
+            capabilities.extract_threads,
+            ThreadCapability::single_threaded()
+        );
+        assert_eq!(
+            capabilities.create_threads,
+            ThreadCapability::single_threaded()
+        );
+    }
+
+    #[test]
+    fn rvz_create_runtime_threads_match_capability() {
+        let temp_dir = temp_dir_path("rvz-thread-parity");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let input_path = temp_dir.join("disc.iso");
+        let output_path = temp_dir.join("disc.rvz");
+        fs::write(&input_path, build_test_gamecube_iso(0xA000)).expect("fixture");
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("rvz").expect("rvz handler");
+        let capabilities = handler.capabilities();
+        let report = handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![input_path.clone()],
+                    output: output_path.clone(),
+                    format: "rvz".to_string(),
+                    codec: None,
+                    level: None,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("rvz create");
+
+        let execution = report.thread_execution.expect("thread execution");
+        assert!(capabilities.create_threads.supports_execution(&execution));
+        assert_eq!(execution.requested_threads, 8);
+        assert!(execution.used_parallelism);
+        assert!(output_path.exists());
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn z3ds_create_runtime_threads_match_capability_with_single_chunk_input() {
+        let temp_dir = temp_dir_path("z3ds-thread-parity");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let input_path = temp_dir.join("disc.3ds");
+        let output_path = temp_dir.join("disc.z3ds");
+        let source = (0..65_536)
+            .map(|index| (index % 223) as u8)
+            .collect::<Vec<_>>();
+        fs::write(&input_path, source).expect("fixture");
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("z3ds").expect("z3ds handler");
+        let capabilities = handler.capabilities();
+        let report = handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![input_path],
+                    output: output_path.clone(),
+                    format: "z3ds".to_string(),
+                    codec: None,
+                    level: None,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("z3ds create");
+
+        let execution = report.thread_execution.expect("thread execution");
+        assert!(capabilities.create_threads.supports_execution(&execution));
+        assert_eq!(execution.requested_threads, 8);
+        assert_eq!(execution.effective_threads, 1);
+        assert!(!execution.used_parallelism);
+        assert!(output_path.exists());
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]

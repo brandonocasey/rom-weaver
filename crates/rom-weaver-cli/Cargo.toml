@@ -20,6 +20,7 @@ assert_fs.workspace = true
 nod.workspace = true
 predicates.workspace = true
 serde_json.workspace = true
+xdvdfs.workspace = true
 
 [[bin]]
 name = "rom-weaver"

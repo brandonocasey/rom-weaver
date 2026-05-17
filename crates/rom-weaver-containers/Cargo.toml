@@ -19,6 +19,7 @@ sevenz-rust.workspace = true
 sha2.workspace = true
 tar.workspace = true
 unrar-ng.workspace = true
+xdvdfs.workspace = true
 zip.workspace = true
 zstd.workspace = true
 zstd-seekable.workspace = true
