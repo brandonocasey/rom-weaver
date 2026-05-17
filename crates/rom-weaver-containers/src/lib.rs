@@ -4374,7 +4374,7 @@ impl ContainerHandler for Z3dsContainerHandler {
             extract: true,
             create: true,
             extract_threads: ThreadCapability::parallel(None),
-            create_threads: ThreadCapability::single_threaded(),
+            create_threads: ThreadCapability::parallel(None),
         }
     }
 }
@@ -6754,6 +6754,7 @@ mod tests {
         ContainerRegistry, WUA_FOOTER_MAGIC, WUA_FOOTER_SIZE, WUA_FOOTER_VERSION,
         Z3dsContainerHandler,
     };
+    use rom_weaver_core::ThreadCapability;
 
     fn temp_file_path_with_extension(label: &str, extension: &str) -> PathBuf {
         let timestamp = SystemTime::now()
@@ -6819,6 +6820,21 @@ mod tests {
         assert_eq!(
             handler.extract_name(Path::new("ROM.ZCCI")),
             "ROM.cci".to_string()
+        );
+    }
+
+    #[test]
+    fn z3ds_capabilities_report_parallel_create_threads() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("z3ds").expect("z3ds handler");
+        let capabilities = handler.capabilities();
+        assert_eq!(
+            capabilities.extract_threads,
+            ThreadCapability::parallel(None)
+        );
+        assert_eq!(
+            capabilities.create_threads,
+            ThreadCapability::parallel(None)
         );
     }
 
