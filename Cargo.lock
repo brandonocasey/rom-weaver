@@ -1809,6 +1809,7 @@ version = "0.1.0"
 dependencies = [
  "bzip2 0.6.1",
  "chd",
+ "ciso",
  "flate2",
  "liblzma",
  "nod",

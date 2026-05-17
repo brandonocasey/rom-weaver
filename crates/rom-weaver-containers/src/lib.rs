@@ -8,6 +8,7 @@ use std::{
 };
 
 use bzip2::{Compression as Bzip2Compression, read::BzDecoder as Bzip2Decoder, write::BzEncoder};
+use ciso::{read::CSOReader as CsoReader, split::SplitFileReader};
 use flate2::{Compression as GzipCompression, read::GzDecoder, write::GzEncoder};
 use liblzma::{read::XzDecoder, write::XzEncoder};
 use nod::{
@@ -125,6 +126,12 @@ const ZST: FormatDescriptor = FormatDescriptor {
     aliases: &["zstd", "zstandard"],
     extensions: &[".zst"],
 };
+const CSO: FormatDescriptor = FormatDescriptor {
+    family: OperationFamily::Container,
+    name: "cso",
+    aliases: &["ciso"],
+    extensions: &[".cso", ".ciso"],
+};
 const CHD: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Container,
     name: "chd",
@@ -188,6 +195,7 @@ impl ContainerRegistry {
                 Arc::new(StreamContainerHandler::new(&BZ2, StreamCompression::Bzip2)),
                 Arc::new(StreamContainerHandler::new(&XZ, StreamCompression::Xz)),
                 Arc::new(StreamContainerHandler::new(&ZST, StreamCompression::Zstd)),
+                Arc::new(CsoContainerHandler::new(&CSO)),
                 Arc::new(ChdContainerHandler),
                 Arc::new(WuaContainerHandler),
                 Arc::new(RvzContainerHandler),
@@ -258,6 +266,7 @@ const GZIP_SIGNATURE: [u8; 2] = [0x1F, 0x8B];
 const BZIP2_SIGNATURE: [u8; 3] = [b'B', b'Z', b'h'];
 const XZ_SIGNATURE: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 const ZSTD_SIGNATURE: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+const CSO_SIGNATURE: [u8; 4] = [b'C', b'I', b'S', b'O'];
 const CHD_SIGNATURE: [u8; 8] = *b"MComprHD";
 
 fn file_starts_with(source: &Path, signature: &[u8]) -> bool {
@@ -1508,6 +1517,278 @@ impl ContainerHandler for StreamContainerHandler {
             inspect: true,
             extract: true,
             create: true,
+            extract_threads: ThreadCapability::single_threaded(),
+            create_threads: ThreadCapability::single_threaded(),
+        }
+    }
+}
+
+const CSO_DEFAULT_BLOCK_BYTES: usize = 2 * 1024;
+
+struct ExactCsoFileReader {
+    file: File,
+}
+
+impl ExactCsoFileReader {
+    fn open(path: &Path) -> std::result::Result<Self, io::Error> {
+        Ok(Self {
+            file: File::open(path)?,
+        })
+    }
+}
+
+impl ciso::read::Read<io::Error> for ExactCsoFileReader {
+    fn size(&mut self) -> std::result::Result<u64, io::Error> {
+        self.file.seek(SeekFrom::End(0))
+    }
+
+    fn read(&mut self, pos: u64, buf: &mut [u8]) -> std::result::Result<(), io::Error> {
+        self.file.seek(SeekFrom::Start(pos))?;
+        self.file.read_exact(buf)?;
+        Ok(())
+    }
+}
+
+enum CsoSourceReader {
+    Single(ExactCsoFileReader),
+    Split(SplitFileReader<io::Error, ExactCsoFileReader>),
+}
+
+impl ciso::read::Read<io::Error> for CsoSourceReader {
+    fn size(&mut self) -> std::result::Result<u64, io::Error> {
+        match self {
+            Self::Single(reader) => ciso::read::Read::size(reader),
+            Self::Split(reader) => ciso::read::Read::size(reader),
+        }
+    }
+
+    fn read(&mut self, pos: u64, buf: &mut [u8]) -> std::result::Result<(), io::Error> {
+        match self {
+            Self::Single(reader) => ciso::read::Read::read(reader, pos, buf),
+            Self::Split(reader) => ciso::read::Read::read(reader, pos, buf),
+        }
+    }
+}
+
+type CsoImageReader = CsoReader<io::Error, CsoSourceReader>;
+
+struct CsoContainerHandler {
+    descriptor: &'static FormatDescriptor,
+}
+
+impl CsoContainerHandler {
+    const fn new(descriptor: &'static FormatDescriptor) -> Self {
+        Self { descriptor }
+    }
+
+    fn open_split_source(&self, source: &Path) -> Result<Option<CsoSourceReader>> {
+        let file_extension = source.extension().and_then(|value| value.to_str());
+        let Some(file_extension) = file_extension else {
+            return Ok(None);
+        };
+        if !file_extension.eq_ignore_ascii_case("cso") {
+            return Ok(None);
+        }
+
+        let source_base = source.with_extension("");
+        let split_root = source_base
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value == "1");
+        if !split_root {
+            return Ok(None);
+        }
+
+        let mut parts = Vec::new();
+        for index in 1.. {
+            let part_path = source_base.with_extension(format!("{index}.{file_extension}"));
+            if !part_path.exists() {
+                break;
+            }
+            parts.push(ExactCsoFileReader::open(&part_path).map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "failed to open cso split part `{}`: {error}",
+                    part_path.display()
+                ))
+            })?);
+        }
+
+        if parts.is_empty() {
+            return Ok(None);
+        }
+
+        let split_reader = SplitFileReader::new(parts).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "failed to open split cso source `{}`: {error}",
+                source.display()
+            ))
+        })?;
+        Ok(Some(CsoSourceReader::Split(split_reader)))
+    }
+
+    fn open_source(&self, source: &Path) -> Result<CsoSourceReader> {
+        if let Some(split_reader) = self.open_split_source(source)? {
+            return Ok(split_reader);
+        }
+        let file = ExactCsoFileReader::open(source).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "failed to open cso source `{}`: {error}",
+                source.display()
+            ))
+        })?;
+        Ok(CsoSourceReader::Single(file))
+    }
+
+    fn open_reader(&self, source: &Path) -> Result<CsoImageReader> {
+        CsoReader::new(self.open_source(source)?).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "cso source `{}` is invalid: {error}",
+                source.display()
+            ))
+        })
+    }
+
+    fn output_name(&self, source: &Path) -> String {
+        let file_name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(self.descriptor.name);
+        let file_name_lower = file_name.to_ascii_lowercase();
+
+        let mut trimmed = if file_name_lower.ends_with(".cso") {
+            file_name[..file_name.len() - ".cso".len()].to_string()
+        } else if file_name_lower.ends_with(".ciso") {
+            file_name[..file_name.len() - ".ciso".len()].to_string()
+        } else {
+            Path::new(file_name)
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or(file_name)
+                .to_string()
+        };
+        if let Some(without_split_suffix) = trimmed.strip_suffix(".1") {
+            trimmed = without_split_suffix.to_string();
+        }
+
+        let normalized = trimmed.trim().trim_matches('.');
+        if normalized.is_empty() {
+            "cso.iso".to_string()
+        } else {
+            format!("{normalized}.iso")
+        }
+    }
+}
+
+impl ContainerHandler for CsoContainerHandler {
+    fn descriptor(&self) -> &'static FormatDescriptor {
+        self.descriptor
+    }
+
+    fn probe(&self, source: &Path) -> ProbeConfidence {
+        if file_starts_with(source, &CSO_SIGNATURE) {
+            ProbeConfidence::Signature
+        } else {
+            ProbeConfidence::Extension
+        }
+    }
+
+    fn inspect(
+        &self,
+        request: &ContainerInspectRequest,
+        _context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let compressed_bytes = fs::metadata(&request.source)?.len();
+        let reader = self.open_reader(&request.source)?;
+        let logical_bytes = reader.file_size();
+        Ok(OperationReport::succeeded(
+            OperationFamily::Container,
+            Some(self.descriptor.name.to_string()),
+            "inspect",
+            format!(
+                "{}: {} bytes compressed, {} bytes uncompressed",
+                self.descriptor.name, compressed_bytes, logical_bytes
+            ),
+            Some(100.0),
+            None,
+        ))
+    }
+
+    fn list_entries(
+        &self,
+        request: &ContainerInspectRequest,
+        _context: &OperationContext,
+    ) -> Result<Vec<String>> {
+        Ok(vec![self.output_name(&request.source)])
+    }
+
+    fn extract(
+        &self,
+        request: &ContainerExtractRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        fs::create_dir_all(&request.out_dir)?;
+
+        let output_name = self.output_name(&request.source);
+        let mut selections = SelectionMatcher::new(&request.selections);
+        if !selections.matches(&output_name) {
+            selections.ensure_all_matched()?;
+        }
+        selections.ensure_all_matched()?;
+
+        let output_path = request.out_dir.join(&output_name);
+        let mut output = BufWriter::new(File::create(&output_path)?);
+        let mut reader = self.open_reader(&request.source)?;
+        let logical_bytes = reader.file_size();
+        let mut cursor = 0u64;
+        let mut buffer = vec![0_u8; CSO_DEFAULT_BLOCK_BYTES];
+
+        while cursor < logical_bytes {
+            let remaining = logical_bytes - cursor;
+            let chunk_len = remaining.min(buffer.len() as u64) as usize;
+            reader
+                .read_offset(cursor, &mut buffer[..chunk_len])
+                .map_err(|error| {
+                    RomWeaverError::Validation(format!(
+                        "cso extract failed while reading `{}`: {error}",
+                        request.source.display()
+                    ))
+                })?;
+            output.write_all(&buffer[..chunk_len])?;
+            cursor += chunk_len as u64;
+        }
+        output.flush()?;
+
+        Ok(OperationReport::succeeded(
+            OperationFamily::Container,
+            Some(self.descriptor.name.to_string()),
+            "extract",
+            format!(
+                "extracted `{}` to `{}` (1 file, {} bytes written)",
+                request.source.display(),
+                output_path.display(),
+                logical_bytes
+            ),
+            Some(100.0),
+            Some(execution),
+        ))
+    }
+
+    fn create(
+        &self,
+        _request: &ContainerCreateRequest,
+        _context: &OperationContext,
+    ) -> Result<OperationReport> {
+        Err(RomWeaverError::Validation(
+            "cso compression is not supported; cso can only be decompressed with `extract`".into(),
+        ))
+    }
+
+    fn capabilities(&self) -> ContainerCapabilities {
+        ContainerCapabilities {
+            inspect: true,
+            extract: true,
+            create: false,
             extract_threads: ThreadCapability::single_threaded(),
             create_threads: ThreadCapability::single_threaded(),
         }
@@ -7016,7 +7297,7 @@ mod tests {
             names,
             vec![
                 "zip", "zipx", "7z", "rar", "tar", "tar.gz", "tar.bz2", "tar.xz", "gz", "bz2",
-                "xz", "zst", "chd", "wua", "rvz", "z3ds", "xiso"
+                "xz", "zst", "cso", "chd", "wua", "rvz", "z3ds", "xiso"
             ]
         );
     }

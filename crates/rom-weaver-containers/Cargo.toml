@@ -7,6 +7,7 @@ version.workspace = true
 
 [dependencies]
 bzip2.workspace = true
+ciso.workspace = true
 chd.workspace = true
 flate2.workspace = true
 liblzma.workspace = true
