@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{BufWriter, Cursor, Read, Write},
+    io::{BufWriter, Read, Write},
     path::Path,
 };
 
@@ -482,43 +482,6 @@ fn is_bdf_alias(name: &str) -> bool {
         .any(|alias| alias.eq_ignore_ascii_case(name))
 }
 
-fn validate_source_expectations(
-    manifest: &PdsManifest,
-    source: &[u8],
-    validate_checksums: bool,
-) -> Result<()> {
-    if let Some(expected_size) = manifest.source_size {
-        let actual_size = u64::try_from(source.len()).expect("usize fits u64");
-        if expected_size != actual_size {
-            return Err(RomWeaverError::Validation(format!(
-                "PDS source size mismatch: expected {expected_size}, actual {actual_size}"
-            )));
-        }
-    }
-
-    if validate_checksums {
-        if let Some(expected_crc) = manifest.source_crc32 {
-            let actual_crc = crc32(source);
-            if expected_crc != actual_crc {
-                return Err(RomWeaverError::Validation(format!(
-                    "PDS source checksum mismatch: expected {:08x}, actual {:08x}",
-                    expected_crc, actual_crc
-                )));
-            }
-        }
-    }
-
-    if let Some(version) = manifest.version {
-        if version != PDS_VERSION {
-            return Err(RomWeaverError::Validation(format!(
-                "PDS manifest version `{version}` is not supported (expected {PDS_VERSION})"
-            )));
-        }
-    }
-
-    Ok(())
-}
-
 fn validate_source_expectations_path(
     manifest: &PdsManifest,
     source_path: &Path,
@@ -550,35 +513,6 @@ fn validate_source_expectations_path(
             return Err(RomWeaverError::Validation(format!(
                 "PDS manifest version `{version}` is not supported (expected {PDS_VERSION})"
             )));
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_target_expectations(
-    manifest: &PdsManifest,
-    target: &[u8],
-    validate_checksums: bool,
-) -> Result<()> {
-    if let Some(expected_size) = manifest.target_size {
-        let actual_size = u64::try_from(target.len()).expect("usize fits u64");
-        if expected_size != actual_size {
-            return Err(RomWeaverError::Validation(format!(
-                "PDS target size mismatch: expected {expected_size}, actual {actual_size}"
-            )));
-        }
-    }
-
-    if validate_checksums {
-        if let Some(expected_crc) = manifest.target_crc32 {
-            let actual_crc = crc32(target);
-            if expected_crc != actual_crc {
-                return Err(RomWeaverError::Validation(format!(
-                    "PDS target checksum mismatch: expected {:08x}, actual {:08x}",
-                    expected_crc, actual_crc
-                )));
-            }
         }
     }
 
@@ -655,21 +589,6 @@ fn read_named_payload(path: &Path, payload_name: &str) -> Result<Vec<u8>> {
             "PDS payload `{normalized_payload}` was not found in archive"
         ))
     })
-}
-
-fn apply_bdf_payload(input: &[u8], payload: &[u8]) -> Result<Vec<u8>> {
-    let patcher = Bspatch::new(payload).map_err(|error| {
-        RomWeaverError::Validation(format!(
-            "PDS payload patch is not a valid BSDIFF40 stream: {error}"
-        ))
-    })?;
-
-    let output_capacity = usize::try_from(patcher.hint_target_size()).map_err(|_| {
-        RomWeaverError::Validation("PDS output size exceeded addressable memory".into())
-    })?;
-    let mut output = Vec::with_capacity(output_capacity);
-    patcher.apply(input, Cursor::new(&mut output))?;
-    Ok(output)
 }
 
 fn apply_bdf_payload_to_writer(

@@ -287,36 +287,6 @@ fn resolve_apply_target(
     )))
 }
 
-fn apply_changes(patch: &ParsedUpsPatch, input: &[u8]) -> Result<Vec<u8>> {
-    let working_len = max(patch.source_size, patch.target_size);
-    let working_len = usize::try_from(working_len).map_err(|_| {
-        RomWeaverError::Validation("UPS output size exceeded addressable memory".into())
-    })?;
-
-    let mut output = input.to_vec();
-    output.resize(working_len, 0);
-
-    for change in &patch.changes {
-        let start = usize::try_from(change.offset).map_err(|_| {
-            RomWeaverError::Validation("UPS change offset exceeded addressable memory".into())
-        })?;
-        let end = start
-            .checked_add(change.xor_bytes.len())
-            .ok_or_else(|| RomWeaverError::Validation("UPS change end overflowed".into()))?;
-        if end > output.len() {
-            return Err(RomWeaverError::Validation(
-                "UPS change exceeds declared patch file bounds".into(),
-            ));
-        }
-
-        for (index, xor_byte) in change.xor_bytes.iter().copied().enumerate() {
-            output[start + index] ^= xor_byte;
-        }
-    }
-
-    Ok(output)
-}
-
 fn apply_changes_in_place(
     patch: &ParsedUpsPatch,
     output_len: u64,

@@ -11,7 +11,9 @@ mod rup;
 mod solid;
 mod spatch;
 mod ups;
+#[cfg(not(target_family = "wasm"))]
 mod vcdiff;
+#[cfg(not(target_family = "wasm"))]
 mod xdelta_ffi;
 
 use std::{fs, io::Read, path::Path, sync::Arc};
@@ -25,14 +27,12 @@ use ips::IpsPatchHandler;
 use pds::PdsPatchHandler;
 use pmsr::PmsrPatchHandler;
 use ppf::PpfPatchHandler;
-use rom_weaver_core::{
-    FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result,
-};
+use rom_weaver_core::{FormatDescriptor, OperationFamily, PatchHandler};
 use rup::RupPatchHandler;
 use solid::SolidPatchHandler;
 use spatch::SpatchPatchHandler;
 use ups::UpsPatchHandler;
+#[cfg(not(target_family = "wasm"))]
 use vcdiff::VcdiffPatchHandler;
 
 const IPS: FormatDescriptor = FormatDescriptor {
@@ -71,12 +71,14 @@ const UPS: FormatDescriptor = FormatDescriptor {
     aliases: &[],
     extensions: &[".ups"],
 };
+#[cfg(not(target_family = "wasm"))]
 const VCDIFF: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
     name: "VCDIFF",
     aliases: &["vcdiff"],
     extensions: &[".vcdiff"],
 };
+#[cfg(not(target_family = "wasm"))]
 const XDELTA: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
     name: "xdelta",
@@ -146,6 +148,7 @@ const PDS: FormatDescriptor = FormatDescriptor {
 
 const BPS_SIGNATURE: &[u8] = b"BPS1";
 const UPS_SIGNATURE: &[u8] = b"UPS1";
+#[cfg(not(target_family = "wasm"))]
 const VCDIFF_SIGNATURE: [u8; 3] = [0xD6, 0xC3, 0xC4];
 const APS_SIGNATURE: &[u8] = b"APS1";
 const RUP_SIGNATURE: &[u8] = b"NINJA2";
@@ -173,28 +176,30 @@ impl Default for PatchRegistry {
 
 impl PatchRegistry {
     pub fn new() -> Self {
-        Self {
-            handlers: vec![
-                Arc::new(IpsPatchHandler::new(&IPS)),
-                Arc::new(IpsPatchHandler::new_ips32(&IPS32)),
-                Arc::new(SpatchPatchHandler::new(&SPATCH)),
-                Arc::new(SolidPatchHandler::new(&SOLID)),
-                Arc::new(BpsPatchHandler::new(&BPS)),
-                Arc::new(UpsPatchHandler::new(&UPS)),
-                Arc::new(VcdiffPatchHandler::new(&VCDIFF)),
-                Arc::new(VcdiffPatchHandler::new(&XDELTA)),
-                Arc::new(ApsGbaPatchHandler::new(&APS)),
-                Arc::new(ApsGbaPatchHandler::new(&APSGBA)),
-                Arc::new(RupPatchHandler::new(&RUP)),
-                Arc::new(PpfPatchHandler::new(&PPF)),
-                Arc::new(IpsPatchHandler::new_ebp(&EBP)),
-                Arc::new(BdfPatchHandler::new(&BDF_BSDIFF40)),
-                Arc::new(PmsrPatchHandler::new(&MOD)),
-                Arc::new(DldiPatchHandler::new(&DLDI)),
-                Arc::new(DpsPatchHandler::new(&DPS)),
-                Arc::new(PdsPatchHandler::new(&PDS)),
-            ],
+        let mut handlers: Vec<Arc<dyn PatchHandler>> = vec![
+            Arc::new(IpsPatchHandler::new(&IPS)),
+            Arc::new(IpsPatchHandler::new_ips32(&IPS32)),
+            Arc::new(SpatchPatchHandler::new(&SPATCH)),
+            Arc::new(SolidPatchHandler::new(&SOLID)),
+            Arc::new(BpsPatchHandler::new(&BPS)),
+            Arc::new(UpsPatchHandler::new(&UPS)),
+        ];
+        #[cfg(not(target_family = "wasm"))]
+        {
+            handlers.push(Arc::new(VcdiffPatchHandler::new(&VCDIFF)));
+            handlers.push(Arc::new(VcdiffPatchHandler::new(&XDELTA)));
         }
+        handlers.push(Arc::new(ApsGbaPatchHandler::new(&APS)));
+        handlers.push(Arc::new(ApsGbaPatchHandler::new(&APSGBA)));
+        handlers.push(Arc::new(RupPatchHandler::new(&RUP)));
+        handlers.push(Arc::new(PpfPatchHandler::new(&PPF)));
+        handlers.push(Arc::new(IpsPatchHandler::new_ebp(&EBP)));
+        handlers.push(Arc::new(BdfPatchHandler::new(&BDF_BSDIFF40)));
+        handlers.push(Arc::new(PmsrPatchHandler::new(&MOD)));
+        handlers.push(Arc::new(DldiPatchHandler::new(&DLDI)));
+        handlers.push(Arc::new(DpsPatchHandler::new(&DPS)));
+        handlers.push(Arc::new(PdsPatchHandler::new(&PDS)));
+        Self { handlers }
     }
 
     pub fn handlers(&self) -> &[Arc<dyn PatchHandler>] {
@@ -203,11 +208,19 @@ impl PatchRegistry {
 
     pub fn probe(&self, path: &Path) -> Option<Arc<dyn PatchHandler>> {
         let ips_extension = is_ips_extension(path);
+        let ebp_extension = is_ebp_extension(path);
+        #[cfg(not(target_family = "wasm"))]
+        let xdelta_extension = is_xdelta_extension(path);
         if ips_extension && let Some(resolved) = self.probe_ambiguous_ips_by_signature(path) {
             return Some(resolved);
         }
 
-        if let Some(signature_match) = self.probe_by_signature(path, ips_extension) {
+        #[cfg(target_family = "wasm")]
+        let signature_match = self.probe_by_signature(path, ips_extension, ebp_extension);
+        #[cfg(not(target_family = "wasm"))]
+        let signature_match =
+            self.probe_by_signature(path, ips_extension, ebp_extension, xdelta_extension);
+        if let Some(signature_match) = signature_match {
             return Some(signature_match);
         }
 
@@ -242,6 +255,8 @@ impl PatchRegistry {
         &self,
         path: &Path,
         ips_extension: bool,
+        ebp_extension: bool,
+        #[cfg(not(target_family = "wasm"))] xdelta_extension: bool,
     ) -> Option<Arc<dyn PatchHandler>> {
         let prefix = read_signature_prefix(path, DLDI_SIGNATURE.len())?;
 
@@ -251,7 +266,11 @@ impl PatchRegistry {
         if prefix.starts_with(UPS_SIGNATURE) {
             return self.find_by_name("ups");
         }
+        #[cfg(not(target_family = "wasm"))]
         if prefix.starts_with(&VCDIFF_SIGNATURE) {
+            if xdelta_extension {
+                return self.find_by_name("xdelta");
+            }
             return self.find_by_name("vcdiff");
         }
         if prefix.starts_with(APS_SIGNATURE) {
@@ -272,6 +291,9 @@ impl PatchRegistry {
         if prefix.starts_with(IPS_SIGNATURE) {
             if ips_extension {
                 return self.find_by_name("ips");
+            }
+            if ebp_extension {
+                return self.find_by_name("ebp");
             }
             let bytes = fs::read(path).ok()?;
             if spatch::is_double_ips_stream(&bytes) {
@@ -302,90 +324,24 @@ fn is_ips_extension(path: &Path) -> bool {
         .is_some_and(|name| name.to_ascii_lowercase().ends_with(".ips"))
 }
 
+fn is_ebp_extension(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| name.to_ascii_lowercase().ends_with(".ebp"))
+}
+
+fn is_xdelta_extension(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| name.to_ascii_lowercase().ends_with(".xdelta"))
+}
+
 fn read_signature_prefix(path: &Path, max_len: usize) -> Option<Vec<u8>> {
     let mut bytes = vec![0u8; max_len];
     let mut file = fs::File::open(path).ok()?;
     let read = file.read(&mut bytes).ok()?;
     bytes.truncate(read);
     Some(bytes)
-}
-
-struct StaticPatchHandler {
-    descriptor: &'static FormatDescriptor,
-}
-
-impl StaticPatchHandler {
-    const fn new(descriptor: &'static FormatDescriptor) -> Self {
-        Self { descriptor }
-    }
-
-    fn unsupported_label(&self, operation: &str) -> String {
-        format!(
-            "{operation} is not implemented yet for {}",
-            self.descriptor.name
-        )
-    }
-}
-
-impl PatchHandler for StaticPatchHandler {
-    fn descriptor(&self) -> &'static FormatDescriptor {
-        self.descriptor
-    }
-
-    fn probe(&self, _patch_path: &Path) -> ProbeConfidence {
-        ProbeConfidence::Extension
-    }
-
-    fn parse(&self, _patch_path: &Path, _context: &OperationContext) -> Result<OperationReport> {
-        Ok(OperationReport::unsupported(
-            OperationFamily::Patch,
-            Some(self.descriptor.name.to_string()),
-            "parse",
-            self.unsupported_label("parse"),
-            None,
-        ))
-    }
-
-    fn apply(
-        &self,
-        _request: &PatchApplyRequest,
-        context: &OperationContext,
-    ) -> Result<OperationReport> {
-        let execution = context.plan_threads(rom_weaver_core::ThreadCapability::single_threaded());
-        Ok(OperationReport::unsupported(
-            OperationFamily::Patch,
-            Some(self.descriptor.name.to_string()),
-            "apply",
-            self.unsupported_label("apply"),
-            Some(execution),
-        ))
-    }
-
-    fn create(
-        &self,
-        _request: &PatchCreateRequest,
-        context: &OperationContext,
-    ) -> Result<OperationReport> {
-        let execution = context.plan_threads(rom_weaver_core::ThreadCapability::single_threaded());
-        Ok(OperationReport::unsupported(
-            OperationFamily::Patch,
-            Some(self.descriptor.name.to_string()),
-            "create",
-            self.unsupported_label("create"),
-            Some(execution),
-        ))
-    }
-
-    fn capabilities(&self) -> PatchCapabilities {
-        PatchCapabilities {
-            parse: false,
-            apply: false,
-            create: false,
-            threaded_scan: false,
-            threaded_diff: false,
-            threaded_output: false,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -421,29 +377,24 @@ mod tests {
             .iter()
             .map(|handler| handler.descriptor().name)
             .collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            vec![
-                "IPS",
-                "IPS32",
-                "SPATCH",
-                "SOLID",
-                "BPS",
-                "UPS",
-                "VCDIFF",
-                "xdelta",
-                "APS",
-                "APSGBA",
-                "RUP",
-                "PPF",
-                "EBP",
-                "BDF/BSDIFF40",
-                "MOD",
-                "DLDI",
-                "DPS",
-                "PDS",
-            ]
-        );
+        let mut expected = vec!["IPS", "IPS32", "SPATCH", "SOLID", "BPS", "UPS"];
+        #[cfg(not(target_family = "wasm"))]
+        {
+            expected.extend(["VCDIFF", "xdelta"]);
+        }
+        expected.extend([
+            "APS",
+            "APSGBA",
+            "RUP",
+            "PPF",
+            "EBP",
+            "BDF/BSDIFF40",
+            "MOD",
+            "DLDI",
+            "DPS",
+            "PDS",
+        ]);
+        assert_eq!(names, expected);
     }
 
     #[test]

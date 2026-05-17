@@ -400,51 +400,6 @@ fn parse_dps_bytes(bytes: &[u8]) -> Result<ParsedDpsPatch> {
     })
 }
 
-fn create_dps_records(source: &[u8], target: &[u8]) -> Result<Vec<DpsRecord>> {
-    if target.len() > u32::MAX as usize {
-        return Err(RomWeaverError::Validation(format!(
-            "DPS create does not support targets larger than {} byte(s)",
-            u32::MAX
-        )));
-    }
-
-    let mut records = Vec::new();
-    let mut index = 0usize;
-    while index < target.len() {
-        if source.get(index).copied() == Some(target[index]) {
-            let start = index;
-            while index < target.len() && source.get(index).copied() == Some(target[index]) {
-                index += 1;
-            }
-
-            let output_offset = usize_to_u32(start, "DPS copy output offset")?;
-            let source_offset = usize_to_u32(start, "DPS copy source offset")?;
-            let length = usize_to_u32(index - start, "DPS copy length")?;
-            records.push(DpsRecord::CopyFromSource {
-                output_offset,
-                source_offset,
-                length,
-            });
-            continue;
-        }
-
-        let start = index;
-        let mut data = Vec::new();
-        while index < target.len() && source.get(index).copied() != Some(target[index]) {
-            data.push(target[index]);
-            index += 1;
-        }
-
-        let output_offset = usize_to_u32(start, "DPS data output offset")?;
-        records.push(DpsRecord::EmbeddedData {
-            output_offset,
-            data,
-        });
-    }
-
-    Ok(records)
-}
-
 fn create_dps_records_streaming(source_path: &Path, target_path: &Path) -> Result<Vec<DpsRecord>> {
     let source_len = fs::metadata(source_path)?.len();
     let target_len = fs::metadata(target_path)?.len();
@@ -685,11 +640,6 @@ fn checked_range(start: u32, len: u32, limit: usize, label: &str) -> Result<(usi
         )));
     }
     Ok((start, end))
-}
-
-fn usize_to_u32(value: usize, label: &str) -> Result<u32> {
-    u32::try_from(value)
-        .map_err(|_| RomWeaverError::Validation(format!("{label} exceeded 32-bit range")))
 }
 
 #[cfg(test)]

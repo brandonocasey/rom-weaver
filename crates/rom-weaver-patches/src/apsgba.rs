@@ -235,49 +235,6 @@ fn parse_apsgba_bytes(bytes: &[u8]) -> Result<ParsedApsGbaPatch> {
     })
 }
 
-fn apply_apsgba_patch(
-    patch: &ParsedApsGbaPatch,
-    source: &[u8],
-    validate_checksums: bool,
-) -> Result<Vec<u8>> {
-    let target_len = usize::try_from(patch.target_size).expect("u32 fits usize");
-    let mut output = vec![0u8; target_len];
-    let copy_len = source.len().min(target_len);
-    output[..copy_len].copy_from_slice(&source[..copy_len]);
-
-    for record in &patch.records {
-        let offset = usize::try_from(record.offset).expect("u32 fits usize");
-
-        if validate_checksums {
-            let actual_source_crc16 = crc16_range(source, offset, APS_GBA_BLOCK_SIZE);
-            if actual_source_crc16 != record.source_crc16 {
-                return Err(RomWeaverError::Validation(format!(
-                    "Source checksum invalid at offset {offset}; expected: {:04x}, Actual: {:04x}",
-                    record.source_crc16, actual_source_crc16
-                )));
-            }
-        }
-
-        let write_len = output.len().saturating_sub(offset).min(APS_GBA_BLOCK_SIZE);
-        for index in 0..write_len {
-            let source_byte = source.get(offset + index).copied().unwrap_or(0);
-            output[offset + index] = source_byte ^ record.xor_bytes[index];
-        }
-
-        if validate_checksums {
-            let actual_target_crc16 = crc16_range(&output, offset, APS_GBA_BLOCK_SIZE);
-            if actual_target_crc16 != record.target_crc16 {
-                return Err(RomWeaverError::Validation(format!(
-                    "Target checksum invalid at offset {offset}; expected: {:04x}, Actual: {:04x}",
-                    record.target_crc16, actual_target_crc16
-                )));
-            }
-        }
-    }
-
-    Ok(output)
-}
-
 fn create_apsgba_patch_bytes(source: &[u8], target: &[u8]) -> Result<CreatedApsGbaPatch> {
     let source_size = u32::try_from(source.len()).map_err(|_| {
         RomWeaverError::Validation("APSGBA source size exceeded 32-bit header range".into())

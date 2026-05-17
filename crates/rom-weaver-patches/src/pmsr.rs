@@ -197,36 +197,6 @@ fn parse_pmsr_bytes(bytes: &[u8]) -> Result<ParsedPmsrPatch> {
     })
 }
 
-fn apply_pmsr_patch(patch: &ParsedPmsrPatch, source: &[u8]) -> Result<Vec<u8>> {
-    let source_len = u64::try_from(source.len())
-        .map_err(|_| RomWeaverError::Validation("MOD input length exceeded u64".into()))?;
-    let output_len_u64 = patch.min_target_size.max(source_len);
-    let output_len = usize::try_from(output_len_u64).map_err(|_| {
-        RomWeaverError::Validation("MOD output size exceeded addressable memory".into())
-    })?;
-
-    let mut output = vec![0u8; output_len];
-    let copy_len = source.len().min(output_len);
-    output[..copy_len].copy_from_slice(&source[..copy_len]);
-
-    for record in &patch.records {
-        let offset = usize::try_from(record.offset).map_err(|_| {
-            RomWeaverError::Validation("MOD record offset exceeded addressable memory".into())
-        })?;
-        let end = offset.checked_add(record.data.len()).ok_or_else(|| {
-            RomWeaverError::Validation("MOD record range overflowed addressable memory".into())
-        })?;
-        if end > output.len() {
-            return Err(RomWeaverError::Validation(
-                "MOD record exceeded declared output size".into(),
-            ));
-        }
-        output[offset..end].copy_from_slice(&record.data);
-    }
-
-    Ok(output)
-}
-
 fn create_pmsr_patch_bytes(original: &[u8], modified: &[u8]) -> Result<CreatedPmsrPatch> {
     if modified.len() < original.len() {
         return Err(RomWeaverError::Validation(format!(

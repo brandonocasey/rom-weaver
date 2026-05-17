@@ -393,62 +393,6 @@ fn select_matching_file(patch: &ParsedRupPatch, input_md5: [u8; 16]) -> Option<(
     None
 }
 
-fn apply_xor_records(file: &RupFile, output: &mut [u8]) -> Result<()> {
-    for record in &file.records {
-        let start = usize_from_u64(record.offset, "RUP record offset")?;
-        let end = start
-            .checked_add(record.xor.len())
-            .ok_or_else(|| RomWeaverError::Validation("RUP record length overflowed".into()))?;
-
-        if end > output.len() {
-            return Err(RomWeaverError::Validation(
-                "RUP record exceeded declared output size".into(),
-            ));
-        }
-
-        for (index, xor_byte) in record.xor.iter().copied().enumerate() {
-            output[start + index] ^= xor_byte;
-        }
-    }
-    Ok(())
-}
-
-fn apply_overflow(file: &RupFile, undo: bool, output: &mut [u8]) -> Result<()> {
-    let Some(mode) = file.overflow_mode else {
-        return Ok(());
-    };
-
-    let should_apply = match mode {
-        RupOverflowMode::Append => !undo,
-        RupOverflowMode::Minify => undo,
-    };
-
-    if !should_apply {
-        return Ok(());
-    }
-
-    let start_offset = match mode {
-        RupOverflowMode::Append => file.source_file_size,
-        RupOverflowMode::Minify => file.target_file_size,
-    };
-    let start = usize_from_u64(start_offset, "RUP overflow start offset")?;
-    let end = start
-        .checked_add(file.overflow_data.len())
-        .ok_or_else(|| RomWeaverError::Validation("RUP overflow length overflowed".into()))?;
-
-    if end > output.len() {
-        return Err(RomWeaverError::Validation(
-            "RUP overflow data exceeded declared output size".into(),
-        ));
-    }
-
-    for (index, byte) in file.overflow_data.iter().copied().enumerate() {
-        output[start + index] = byte ^ 0xff;
-    }
-
-    Ok(())
-}
-
 fn apply_xor_records_in_place(file: &RupFile, output_len: usize, output: &mut File) -> Result<()> {
     let mut buffer = vec![0u8; RUP_IO_BUFFER_SIZE];
     for record in &file.records {
