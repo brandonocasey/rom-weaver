@@ -1,14 +1,14 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     fs,
     fs::File,
-    io::{self, BufReader, BufWriter, Read, Write},
+    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
 };
 
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand};
 use rom_weaver_checksum::{NativeChecksumEngine, supported_algorithms};
 use rom_weaver_containers::{CompressFormatRecommendation, ContainerRegistry};
 use rom_weaver_core::{
@@ -24,7 +24,7 @@ use rom_weaver_patches::PatchRegistry;
 #[command(
     name = "rom-weaver",
     version,
-    about = "Native CLI groundwork for ROM inspection, extraction, checksums, compression, and patching."
+    about = "Native CLI groundwork for ROM inspection, extraction, checksums, compression, trimming, and patching."
 )]
 struct Cli {
     #[arg(
@@ -43,6 +43,7 @@ enum Commands {
     Extract(ExtractCommand),
     Checksum(ChecksumCommand),
     Compress(CompressCommand),
+    Trim(TrimCommand),
     PatchApply(PatchApplyCommand),
     PatchCreate(PatchCreateCommand),
 }
@@ -93,6 +94,54 @@ struct CompressCommand {
     output: PathBuf,
     #[arg(long)]
     codec: Option<String>,
+    #[arg(long, default_value = "auto")]
+    threads: ThreadBudget,
+}
+
+#[derive(Debug, Args)]
+struct TrimCommand {
+    #[arg(required = true)]
+    source: Vec<PathBuf>,
+    #[arg(
+        long,
+        conflicts_with = "in_place",
+        help = "Destination file for trimmed output (single trim-eligible source only)"
+    )]
+    output: Option<PathBuf>,
+    #[arg(
+        short = 'e',
+        long,
+        help = "Output extension for side-by-side output (supports `{ext}` placeholder, for example `trim.{ext}`)"
+    )]
+    extension: Option<String>,
+    #[arg(
+        short = 'i',
+        long = "in-place",
+        alias = "inplace",
+        help = "Trim the source file in place instead of writing a new file"
+    )]
+    in_place: bool,
+    #[arg(
+        short = 's',
+        long = "simulate",
+        alias = "dry-run",
+        help = "Simulate trim operations without writing output files"
+    )]
+    dry_run: bool,
+    #[arg(
+        long,
+        alias = "untrim",
+        alias = "restore",
+        help = "Revert trimmed files by padding back to the nearest power-of-two size"
+    )]
+    revert: bool,
+    #[arg(
+        long = "no-recursive",
+        action = ArgAction::SetFalse,
+        default_value_t = true,
+        help = "Do not recursively scan subdirectories when input sources include folders"
+    )]
+    recursive: bool,
     #[arg(long, default_value = "auto")]
     threads: ThreadBudget,
 }
@@ -162,11 +211,109 @@ struct CliApp {
 const MAX_NESTED_EXTRACT_DEPTH: usize = 8;
 const MAX_NESTED_EXTRACT_ARCHIVES: usize = 256;
 const ROM_HEADER_BYTES: usize = 512;
+const NDS_HEADER_TOTAL_BYTES: usize = 0x1000;
+const NDS_HEADER_UNIT_CODE_OFFSET: usize = 0x12;
+const NDS_HEADER_NTR_ROM_SIZE_OFFSET: usize = 0x80;
+const NDS_HEADER_HEADER_SIZE_OFFSET: usize = 0x84;
+const NDS_HEADER_LOGO_OFFSET: usize = 0x0C0;
+const NDS_HEADER_LOGO_LENGTH: usize = 156;
+const NDS_HEADER_LOGO_CRC_OFFSET: usize = 0x15C;
+const NDS_HEADER_CRC_OFFSET: usize = 0x15E;
+const NDS_HEADER_NTR_TWL_ROM_SIZE_OFFSET: usize = 0x210;
+const NDS_DOWNLOAD_PLAY_CERT_MAGIC: [u8; 2] = [0x61, 0x63];
+const NDS_DOWNLOAD_PLAY_CERT_SIZE_BYTES: u64 = 0x88;
+const TRIM_BINARY_SCAN_CHUNK_BYTES: usize = 128 * 1024;
 const GAME_BOY_NINTENDO_LOGO: [u8; 48] = [
     0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
     0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
     0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
 ];
+
+struct NdsTrimPlan {
+    trimmed_size: u64,
+    dsi_mode: bool,
+    preserved_download_play_cert: bool,
+}
+
+struct NdsTrimOutcome {
+    original_size: u64,
+    result_size: u64,
+    output_path: PathBuf,
+    mode: &'static str,
+    preserved_download_play_cert: bool,
+    already_target_size: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrimOperation {
+    Trim,
+    Revert,
+}
+
+impl TrimOperation {
+    const fn stage(self) -> &'static str {
+        "trim"
+    }
+
+    const fn running_label(self, dry_run: bool) -> &'static str {
+        match (self, dry_run) {
+            (Self::Trim, false) => "trimming",
+            (Self::Trim, true) => "simulating trim for",
+            (Self::Revert, false) => "reverting trim for",
+            (Self::Revert, true) => "simulating trim revert for",
+        }
+    }
+
+    const fn summary_label(self, dry_run: bool) -> &'static str {
+        match (self, dry_run) {
+            (Self::Trim, false) => "trim complete",
+            (Self::Trim, true) => "trim simulation complete",
+            (Self::Revert, false) => "trim revert complete",
+            (Self::Revert, true) => "trim revert simulation complete",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrimInputKind {
+    NdsFamily,
+    Gba,
+    ThreeDs,
+}
+
+impl TrimInputKind {
+    fn from_path(path: &Path) -> Option<Self> {
+        let extension = path.extension()?.to_str()?;
+        if extension.eq_ignore_ascii_case("nds")
+            || extension.eq_ignore_ascii_case("dsi")
+            || extension.eq_ignore_ascii_case("srl")
+        {
+            return Some(Self::NdsFamily);
+        }
+        if extension.eq_ignore_ascii_case("gba") {
+            return Some(Self::Gba);
+        }
+        if extension.eq_ignore_ascii_case("3ds") {
+            return Some(Self::ThreeDs);
+        }
+        None
+    }
+
+    const fn mode_label(self) -> &'static str {
+        match self {
+            Self::NdsFamily => "nds",
+            Self::Gba => "gba",
+            Self::ThreeDs => "3ds",
+        }
+    }
+
+    const fn default_padding_byte(self) -> u8 {
+        match self {
+            Self::ThreeDs => 0xFF,
+            Self::NdsFamily | Self::Gba => 0x00,
+        }
+    }
+}
 
 impl CliApp {
     fn new(reporter: Arc<dyn ProgressSink>, emit_progress_events: bool) -> Self {
@@ -185,6 +332,7 @@ impl CliApp {
             Commands::Extract(args) => self.run_extract(args),
             Commands::Checksum(args) => self.run_checksum(args),
             Commands::Compress(args) => self.run_compress(args),
+            Commands::Trim(args) => self.run_trim(args),
             Commands::PatchApply(args) => self.run_patch_apply(args),
             Commands::PatchCreate(args) => self.run_patch_create(args),
         }
@@ -674,6 +822,235 @@ impl CliApp {
         self.finish("compress", report)
     }
 
+    fn run_trim(&self, args: TrimCommand) -> ExitCode {
+        let TrimCommand {
+            source,
+            output,
+            extension,
+            in_place,
+            dry_run,
+            revert,
+            recursive,
+            threads,
+        } = args;
+        let operation = if revert {
+            TrimOperation::Revert
+        } else {
+            TrimOperation::Trim
+        };
+        let context = self.context(threads);
+        let thread_execution = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let extension = extension
+            .unwrap_or_else(|| Self::default_trim_extension_pattern(operation).to_string());
+        let extension = match Self::normalize_trim_extension(&extension) {
+            Ok(value) => value,
+            Err(error) => {
+                return self.finish(
+                    "trim",
+                    OperationReport::failed(
+                        OperationFamily::Command,
+                        Some("nds".to_string()),
+                        "validate",
+                        error.to_string(),
+                        thread_execution,
+                    ),
+                );
+            }
+        };
+
+        let mut skipped_non_nds = 0usize;
+        let trim_sources =
+            match Self::collect_trim_input_files(&source, recursive, &mut skipped_non_nds) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    return self.finish(
+                        "trim",
+                        OperationReport::failed(
+                            OperationFamily::Command,
+                            Some("nds".to_string()),
+                            "validate",
+                            error.to_string(),
+                            thread_execution,
+                        ),
+                    );
+                }
+            };
+
+        if trim_sources.is_empty() {
+            return self.finish(
+                "trim",
+                OperationReport::succeeded(
+                    OperationFamily::Command,
+                    Some("nds".to_string()),
+                    "trim",
+                    format!("no trim-eligible inputs found; skipped_non_nds={skipped_non_nds}"),
+                    Some(100.0),
+                    thread_execution,
+                ),
+            );
+        }
+
+        if output.is_some() && trim_sources.len() != 1 {
+            return self.finish(
+                "trim",
+                OperationReport::failed(
+                    OperationFamily::Command,
+                    Some("nds".to_string()),
+                    "validate",
+                    "--output requires exactly one trim-eligible source file",
+                    thread_execution,
+                ),
+            );
+        }
+
+        let mut trimmed_count = 0usize;
+        let mut already_trimmed_count = 0usize;
+        let mut failed_count = 0usize;
+        let mut first_error = None;
+        let mut mode_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut single_detail = None;
+
+        for trim_source in &trim_sources {
+            let output_path = if in_place {
+                trim_source.clone()
+            } else if let Some(explicit_output) = output.as_ref() {
+                explicit_output.clone()
+            } else {
+                Self::default_trim_output_path(trim_source, &extension)
+            };
+            let output_label = if in_place {
+                "in-place".to_string()
+            } else {
+                output_path.display().to_string()
+            };
+
+            self.emit_running(
+                "trim",
+                OperationFamily::Command,
+                Some("nds"),
+                operation.stage(),
+                format!(
+                    "{} `{}` -> `{output_label}`",
+                    operation.running_label(dry_run),
+                    trim_source.display()
+                ),
+                Some(0.0),
+                thread_execution.clone(),
+            );
+
+            match Self::trim_file(trim_source, &output_path, in_place, dry_run, operation) {
+                Ok(outcome) => {
+                    let mode_count = mode_counts.entry(outcome.mode).or_insert(0);
+                    *mode_count = mode_count.saturating_add(1);
+                    if outcome.already_target_size {
+                        already_trimmed_count = already_trimmed_count.saturating_add(1);
+                    } else {
+                        trimmed_count = trimmed_count.saturating_add(1);
+                    }
+                    if trim_sources.len() == 1 {
+                        let status = if outcome.already_target_size {
+                            if operation == TrimOperation::Trim {
+                                "already-trimmed"
+                            } else {
+                                "already-untrimmed"
+                            }
+                        } else if operation == TrimOperation::Trim {
+                            "trimmed"
+                        } else {
+                            "reverted"
+                        };
+                        let result_size_label = if operation == TrimOperation::Trim {
+                            "trimmed_size"
+                        } else {
+                            "reverted_size"
+                        };
+                        single_detail = Some(format!(
+                            "{status} mode={} original_size={} {result_size_label}={} preserved_download_play_cert={} output={}",
+                            outcome.mode,
+                            outcome.original_size,
+                            outcome.result_size,
+                            outcome.preserved_download_play_cert,
+                            outcome.output_path.display()
+                        ));
+                    }
+                }
+                Err(error) => {
+                    failed_count = failed_count.saturating_add(1);
+                    if first_error.is_none() {
+                        first_error = Some(format!("{}: {error}", trim_source.display()));
+                    }
+                }
+            }
+        }
+
+        if failed_count > 0 {
+            return self.finish(
+                "trim",
+                OperationReport::failed(
+                    OperationFamily::Command,
+                    Some("nds".to_string()),
+                    "trim",
+                    format!(
+                        "{} completed with failures; processed={} trimmed={} already_trimmed={} failed={} skipped_non_nds={}; first_error={}",
+                        if dry_run {
+                            if operation == TrimOperation::Trim {
+                                "trim simulation"
+                            } else {
+                                "trim revert simulation"
+                            }
+                        } else if operation == TrimOperation::Trim {
+                            "trim"
+                        } else {
+                            "trim revert"
+                        },
+                        trim_sources.len(),
+                        trimmed_count,
+                        already_trimmed_count,
+                        failed_count,
+                        skipped_non_nds,
+                        first_error.unwrap_or_else(|| "(none)".to_string()),
+                    ),
+                    thread_execution,
+                ),
+            );
+        }
+
+        self.finish(
+            "trim",
+            OperationReport::succeeded(
+                OperationFamily::Command,
+                Some("nds".to_string()),
+                "trim",
+                match single_detail {
+                    Some(single_detail) => format!(
+                        "{single_detail}; {}; processed={} trimmed={} already_trimmed={} changed={} already_target={} skipped_non_nds={} mode_counts={}",
+                        operation.summary_label(dry_run),
+                        trim_sources.len(),
+                        trimmed_count,
+                        already_trimmed_count,
+                        trimmed_count,
+                        already_trimmed_count,
+                        skipped_non_nds,
+                        Self::format_mode_counts(&mode_counts),
+                    ),
+                    None => format!(
+                        "{}; processed={} trimmed={} already_trimmed={} changed={} already_target={} skipped_non_nds={} mode_counts={}",
+                        operation.summary_label(dry_run),
+                        trim_sources.len(),
+                        trimmed_count,
+                        already_trimmed_count,
+                        trimmed_count,
+                        already_trimmed_count,
+                        skipped_non_nds,
+                        Self::format_mode_counts(&mode_counts),
+                    ),
+                },
+                Some(100.0),
+                thread_execution,
+            ),
+        )
+    }
+
     fn run_patch_apply(&self, args: PatchApplyCommand) -> ExitCode {
         let PatchApplyCommand {
             input,
@@ -978,6 +1355,507 @@ impl CliApp {
         })?;
 
         Ok((Some(codec_name.to_string()), Some(parsed_level)))
+    }
+
+    fn normalize_trim_extension(extension: &str) -> Result<String> {
+        let extension = extension.trim();
+        if extension.is_empty() {
+            return Err(RomWeaverError::Validation(
+                "--extension cannot be empty".to_string(),
+            ));
+        }
+        if extension.contains('/') || extension.contains('\\') {
+            return Err(RomWeaverError::Validation(
+                "--extension cannot contain path separators".to_string(),
+            ));
+        }
+        Ok(extension.to_string())
+    }
+
+    const fn default_trim_extension_pattern(operation: TrimOperation) -> &'static str {
+        match operation {
+            TrimOperation::Trim => "trim.{ext}",
+            TrimOperation::Revert => "untrim.{ext}",
+        }
+    }
+
+    fn format_mode_counts(mode_counts: &BTreeMap<&'static str, usize>) -> String {
+        if mode_counts.is_empty() {
+            return "none".to_string();
+        }
+
+        mode_counts
+            .iter()
+            .map(|(mode, count)| format!("{mode}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn trim_eligible_extension(path: &Path) -> bool {
+        TrimInputKind::from_path(path).is_some()
+    }
+
+    fn collect_trim_input_files(
+        sources: &[PathBuf],
+        recursive: bool,
+        skipped_non_nds: &mut usize,
+    ) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        for source in sources {
+            let metadata = fs::metadata(source).map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "input path is not accessible: `{}` ({error})",
+                    source.display()
+                ))
+            })?;
+            if metadata.is_file() {
+                if Self::trim_eligible_extension(source) {
+                    files.push(source.clone());
+                } else {
+                    *skipped_non_nds = skipped_non_nds.saturating_add(1);
+                }
+                continue;
+            }
+            if metadata.is_dir() {
+                Self::collect_trim_directory_files(source, recursive, &mut files, skipped_non_nds)?;
+                continue;
+            }
+
+            *skipped_non_nds = skipped_non_nds.saturating_add(1);
+        }
+
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
+    fn collect_trim_directory_files(
+        root: &Path,
+        recursive: bool,
+        files: &mut Vec<PathBuf>,
+        skipped_non_nds: &mut usize,
+    ) -> Result<()> {
+        let mut directories = vec![root.to_path_buf()];
+        while let Some(directory) = directories.pop() {
+            let mut entries =
+                fs::read_dir(&directory)?.collect::<std::result::Result<Vec<_>, _>>()?;
+            entries.sort_by_key(|entry| entry.path());
+
+            for entry in entries {
+                let path = entry.path();
+                let file_type = entry.file_type()?;
+                if file_type.is_dir() {
+                    if recursive {
+                        directories.push(path);
+                    }
+                    continue;
+                }
+                if !file_type.is_file() {
+                    *skipped_non_nds = skipped_non_nds.saturating_add(1);
+                    continue;
+                }
+                if Self::trim_eligible_extension(&path) {
+                    files.push(path);
+                } else {
+                    *skipped_non_nds = skipped_non_nds.saturating_add(1);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn default_trim_output_path(source: &Path, extension: &str) -> PathBuf {
+        let source_extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bin");
+        let extension = extension.replace("{ext}", source_extension);
+        let mut output = source.to_path_buf();
+        output.set_extension(extension);
+        output
+    }
+
+    fn trim_file(
+        source: &Path,
+        destination: &Path,
+        in_place: bool,
+        dry_run: bool,
+        operation: TrimOperation,
+    ) -> Result<NdsTrimOutcome> {
+        let Some(kind) = TrimInputKind::from_path(source) else {
+            return Err(RomWeaverError::Validation(format!(
+                "unsupported trim input extension: `{}`",
+                source.display()
+            )));
+        };
+        match kind {
+            TrimInputKind::NdsFamily => {
+                Self::trim_nds_file(source, destination, in_place, dry_run, operation)
+            }
+            TrimInputKind::Gba | TrimInputKind::ThreeDs => Self::trim_power_of_two_file(
+                source,
+                destination,
+                in_place,
+                dry_run,
+                operation,
+                kind,
+            ),
+        }
+    }
+
+    fn trim_nds_file(
+        source: &Path,
+        destination: &Path,
+        in_place: bool,
+        dry_run: bool,
+        operation: TrimOperation,
+    ) -> Result<NdsTrimOutcome> {
+        let mutate_source = in_place || source == destination;
+        let mut input = File::options()
+            .read(true)
+            .write(mutate_source && !dry_run)
+            .open(source)?;
+        let original_size = input.metadata()?.len();
+        if original_size < NDS_HEADER_TOTAL_BYTES as u64 {
+            return Err(RomWeaverError::Validation(format!(
+                "input is too small to contain a valid NDS/DSi header: `{}`",
+                source.display()
+            )));
+        }
+
+        let plan = Self::read_nds_trim_plan(
+            &mut input,
+            original_size,
+            operation == TrimOperation::Revert,
+        )?;
+        let (target_size, already_target_size, fill_byte) = match operation {
+            TrimOperation::Trim => (
+                original_size.min(plan.trimmed_size),
+                original_size <= plan.trimmed_size,
+                0x00_u8,
+            ),
+            TrimOperation::Revert => {
+                let mut revert_size = Self::power_of_two_target_size_for_revert(original_size)?;
+                if revert_size < plan.trimmed_size {
+                    revert_size = plan.trimmed_size;
+                }
+                (revert_size, original_size == revert_size, 0x00_u8)
+            }
+        };
+
+        if dry_run {
+            return Ok(NdsTrimOutcome {
+                original_size,
+                result_size: target_size,
+                output_path: if in_place {
+                    source.to_path_buf()
+                } else {
+                    destination.to_path_buf()
+                },
+                mode: if plan.dsi_mode { "dsi" } else { "ds" },
+                preserved_download_play_cert: plan.preserved_download_play_cert,
+                already_target_size,
+            });
+        }
+
+        Self::apply_file_size_target(
+            source,
+            destination,
+            in_place,
+            original_size,
+            target_size,
+            fill_byte,
+        )?;
+
+        Ok(NdsTrimOutcome {
+            original_size,
+            result_size: target_size,
+            output_path: if in_place {
+                source.to_path_buf()
+            } else {
+                destination.to_path_buf()
+            },
+            mode: if plan.dsi_mode { "dsi" } else { "ds" },
+            preserved_download_play_cert: plan.preserved_download_play_cert,
+            already_target_size,
+        })
+    }
+
+    fn trim_power_of_two_file(
+        source: &Path,
+        destination: &Path,
+        in_place: bool,
+        dry_run: bool,
+        operation: TrimOperation,
+        kind: TrimInputKind,
+    ) -> Result<NdsTrimOutcome> {
+        let original_size = fs::metadata(source)?.len();
+        if original_size == 0 {
+            return Err(RomWeaverError::Validation(format!(
+                "input is empty and cannot be processed: `{}`",
+                source.display()
+            )));
+        }
+
+        let fill_byte = kind.default_padding_byte();
+        let (target_size, already_target_size) = match operation {
+            TrimOperation::Trim => {
+                let trimmed_size =
+                    Self::scan_trimmed_size_from_trailing_padding(source, fill_byte)?;
+                (trimmed_size, trimmed_size == original_size)
+            }
+            TrimOperation::Revert => {
+                let revert_size = Self::power_of_two_target_size_for_revert(original_size)?;
+                (revert_size, revert_size == original_size)
+            }
+        };
+
+        if dry_run {
+            return Ok(NdsTrimOutcome {
+                original_size,
+                result_size: target_size,
+                output_path: if in_place {
+                    source.to_path_buf()
+                } else {
+                    destination.to_path_buf()
+                },
+                mode: kind.mode_label(),
+                preserved_download_play_cert: false,
+                already_target_size,
+            });
+        }
+
+        Self::apply_file_size_target(
+            source,
+            destination,
+            in_place,
+            original_size,
+            target_size,
+            fill_byte,
+        )?;
+
+        Ok(NdsTrimOutcome {
+            original_size,
+            result_size: target_size,
+            output_path: if in_place {
+                source.to_path_buf()
+            } else {
+                destination.to_path_buf()
+            },
+            mode: kind.mode_label(),
+            preserved_download_play_cert: false,
+            already_target_size,
+        })
+    }
+
+    fn apply_file_size_target(
+        source: &Path,
+        destination: &Path,
+        in_place: bool,
+        original_size: u64,
+        target_size: u64,
+        fill_byte: u8,
+    ) -> Result<()> {
+        if in_place || source == destination {
+            let mut input = File::options().read(true).write(true).open(source)?;
+            if target_size < original_size {
+                input.set_len(target_size)?;
+            } else if target_size > original_size {
+                input.seek(SeekFrom::Start(original_size))?;
+                Self::write_padding_bytes(&mut input, target_size - original_size, fill_byte)?;
+            }
+            return Ok(());
+        }
+
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut input = BufReader::new(File::open(source)?);
+        let mut output = BufWriter::new(File::create(destination)?);
+        let copy_len = original_size.min(target_size);
+        io::copy(
+            &mut std::io::Read::by_ref(&mut input).take(copy_len),
+            &mut output,
+        )?;
+        if target_size > copy_len {
+            Self::write_padding_bytes(&mut output, target_size - copy_len, fill_byte)?;
+        }
+        output.flush()?;
+        Ok(())
+    }
+
+    fn write_padding_bytes(writer: &mut dyn Write, length: u64, fill_byte: u8) -> io::Result<()> {
+        if length == 0 {
+            return Ok(());
+        }
+
+        let chunk = [fill_byte; 8192];
+        let mut remaining = length;
+        while remaining > 0 {
+            let write_len =
+                usize::try_from(remaining.min(chunk.len() as u64)).unwrap_or(chunk.len());
+            writer.write_all(&chunk[..write_len])?;
+            remaining -= write_len as u64;
+        }
+        Ok(())
+    }
+
+    fn scan_trimmed_size_from_trailing_padding(path: &Path, fill_byte: u8) -> Result<u64> {
+        let mut input = File::open(path)?;
+        let file_size = input.metadata()?.len();
+        if file_size == 0 {
+            return Ok(0);
+        }
+
+        let mut cursor = file_size;
+        let mut buffer = vec![0_u8; TRIM_BINARY_SCAN_CHUNK_BYTES];
+        while cursor > 0 {
+            let read_len = usize::try_from(cursor.min(TRIM_BINARY_SCAN_CHUNK_BYTES as u64))
+                .unwrap_or(TRIM_BINARY_SCAN_CHUNK_BYTES);
+            cursor -= read_len as u64;
+            input.seek(SeekFrom::Start(cursor))?;
+            input.read_exact(&mut buffer[..read_len])?;
+            for (offset, byte) in buffer[..read_len].iter().enumerate().rev() {
+                if *byte != fill_byte {
+                    return Ok(cursor + offset as u64 + 1);
+                }
+            }
+        }
+
+        Ok(1)
+    }
+
+    fn power_of_two_target_size_for_revert(size: u64) -> Result<u64> {
+        if size == 0 {
+            return Err(RomWeaverError::Validation(
+                "cannot revert an empty file".to_string(),
+            ));
+        }
+        size.checked_next_power_of_two().ok_or_else(|| {
+            RomWeaverError::Validation("file is too large to revert safely".to_string())
+        })
+    }
+
+    fn read_nds_trim_plan(
+        input: &mut File,
+        file_size: u64,
+        allow_boundary_past_eof: bool,
+    ) -> Result<NdsTrimPlan> {
+        let mut header = vec![0_u8; NDS_HEADER_TOTAL_BYTES];
+        input.seek(SeekFrom::Start(0))?;
+        input.read_exact(&mut header)?;
+        Self::validate_nds_header(&header)?;
+
+        let unit_code = header[NDS_HEADER_UNIT_CODE_OFFSET];
+        let dsi_mode = unit_code != 0x00;
+        let ntr_rom_size = u64::from(Self::read_u32_le(
+            &header,
+            NDS_HEADER_NTR_ROM_SIZE_OFFSET,
+            "NTR ROM size",
+        )?);
+        let ntr_twl_rom_size = u64::from(Self::read_u32_le(
+            &header,
+            NDS_HEADER_NTR_TWL_ROM_SIZE_OFFSET,
+            "NTR+TWL ROM size",
+        )?);
+
+        let mut trimmed_size = if dsi_mode {
+            ntr_twl_rom_size
+        } else {
+            ntr_rom_size
+        };
+        if trimmed_size == 0 {
+            return Err(RomWeaverError::Validation(
+                "NDS header reported a zero trim boundary".into(),
+            ));
+        }
+
+        let mut preserved_download_play_cert = false;
+        if !dsi_mode && trimmed_size + 2 <= file_size {
+            input.seek(SeekFrom::Start(trimmed_size))?;
+            let mut cert_magic = [0_u8; 2];
+            input.read_exact(&mut cert_magic)?;
+            if cert_magic == NDS_DOWNLOAD_PLAY_CERT_MAGIC {
+                trimmed_size = trimmed_size.saturating_add(NDS_DOWNLOAD_PLAY_CERT_SIZE_BYTES);
+                preserved_download_play_cert = true;
+            }
+        }
+
+        if trimmed_size > file_size && !allow_boundary_past_eof {
+            return Err(RomWeaverError::Validation(format!(
+                "trim boundary ({trimmed_size} byte(s)) exceeds input size ({file_size} byte(s)); input may already be incorrectly trimmed or corrupt"
+            )));
+        }
+
+        Ok(NdsTrimPlan {
+            trimmed_size,
+            dsi_mode,
+            preserved_download_play_cert,
+        })
+    }
+
+    fn validate_nds_header(header: &[u8]) -> Result<()> {
+        if header.len() < NDS_HEADER_TOTAL_BYTES {
+            return Err(RomWeaverError::Validation(
+                "NDS header buffer is truncated".into(),
+            ));
+        }
+
+        let header_size = Self::read_u32_le(header, NDS_HEADER_HEADER_SIZE_OFFSET, "header size")?;
+        if header_size < 0x160 {
+            return Err(RomWeaverError::Validation(format!(
+                "invalid NDS header size {header_size:#X}; expected at least 0x160"
+            )));
+        }
+
+        let logo = &header[NDS_HEADER_LOGO_OFFSET..NDS_HEADER_LOGO_OFFSET + NDS_HEADER_LOGO_LENGTH];
+        let expected_logo_crc = Self::read_u16_le(header, NDS_HEADER_LOGO_CRC_OFFSET, "logo CRC")?;
+        let calculated_logo_crc = Self::nds_crc16(logo);
+        if expected_logo_crc != calculated_logo_crc {
+            return Err(RomWeaverError::Validation(format!(
+                "NDS logo CRC mismatch: expected {expected_logo_crc:04X}, got {calculated_logo_crc:04X}"
+            )));
+        }
+
+        let expected_header_crc = Self::read_u16_le(header, NDS_HEADER_CRC_OFFSET, "header CRC")?;
+        let calculated_header_crc = Self::nds_crc16(&header[..NDS_HEADER_CRC_OFFSET]);
+        if expected_header_crc != calculated_header_crc {
+            return Err(RomWeaverError::Validation(format!(
+                "NDS header CRC mismatch: expected {expected_header_crc:04X}, got {calculated_header_crc:04X}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn nds_crc16(bytes: &[u8]) -> u16 {
+        let mut crc = 0xFFFF_u16;
+        for byte in bytes {
+            crc ^= u16::from(*byte);
+            for _ in 0..8 {
+                let carry = (crc & 1) != 0;
+                crc >>= 1;
+                if carry {
+                    crc ^= 0xA001;
+                }
+            }
+        }
+        crc
+    }
+
+    fn read_u16_le(buffer: &[u8], offset: usize, label: &str) -> Result<u16> {
+        let bytes = buffer.get(offset..offset + 2).ok_or_else(|| {
+            RomWeaverError::Validation(format!("missing {label} bytes at offset 0x{offset:X}"))
+        })?;
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    fn read_u32_le(buffer: &[u8], offset: usize, label: &str) -> Result<u32> {
+        let bytes = buffer.get(offset..offset + 4).ok_or_else(|| {
+            RomWeaverError::Validation(format!("missing {label} bytes at offset 0x{offset:X}"))
+        })?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
     fn append_entry_list_label(base: &str, entries: &[String]) -> String {

@@ -585,6 +585,113 @@ fn build_nds_with_dldi_slot(
     file
 }
 
+fn nds_crc16(bytes: &[u8]) -> u16 {
+    let mut crc = 0xFFFF_u16;
+    for byte in bytes {
+        crc ^= u16::from(*byte);
+        for _ in 0..8 {
+            let carry = (crc & 0x1) != 0;
+            crc >>= 1;
+            if carry {
+                crc ^= 0xA001;
+            }
+        }
+    }
+    crc
+}
+
+fn build_test_nds_header(unit_code: u8, ntr_rom_size: u32, ntr_twl_rom_size: u32) -> Vec<u8> {
+    const HEADER_BYTES: usize = 0x1000;
+    const UNIT_CODE_OFFSET: usize = 0x12;
+    const NTR_ROM_SIZE_OFFSET: usize = 0x80;
+    const HEADER_SIZE_OFFSET: usize = 0x84;
+    const LOGO_OFFSET: usize = 0x0C0;
+    const LOGO_LENGTH: usize = 156;
+    const LOGO_CRC_OFFSET: usize = 0x15C;
+    const HEADER_CRC_OFFSET: usize = 0x15E;
+    const NTR_TWL_ROM_SIZE_OFFSET: usize = 0x210;
+
+    let mut header = vec![0_u8; HEADER_BYTES];
+    header[..12].copy_from_slice(b"RW-TRIM-TEST");
+    header[UNIT_CODE_OFFSET] = unit_code;
+    header[NTR_ROM_SIZE_OFFSET..NTR_ROM_SIZE_OFFSET + 4]
+        .copy_from_slice(&ntr_rom_size.to_le_bytes());
+    header[HEADER_SIZE_OFFSET..HEADER_SIZE_OFFSET + 4]
+        .copy_from_slice(&(HEADER_BYTES as u32).to_le_bytes());
+    header[NTR_TWL_ROM_SIZE_OFFSET..NTR_TWL_ROM_SIZE_OFFSET + 4]
+        .copy_from_slice(&ntr_twl_rom_size.to_le_bytes());
+    for (index, byte) in header[LOGO_OFFSET..LOGO_OFFSET + LOGO_LENGTH]
+        .iter_mut()
+        .enumerate()
+    {
+        *byte = ((index * 37 + 11) % 251) as u8;
+    }
+
+    let logo_crc = nds_crc16(&header[LOGO_OFFSET..LOGO_OFFSET + LOGO_LENGTH]);
+    header[LOGO_CRC_OFFSET..LOGO_CRC_OFFSET + 2].copy_from_slice(&logo_crc.to_le_bytes());
+    let header_crc = nds_crc16(&header[..HEADER_CRC_OFFSET]);
+    header[HEADER_CRC_OFFSET..HEADER_CRC_OFFSET + 2].copy_from_slice(&header_crc.to_le_bytes());
+    header
+}
+
+fn build_test_nds_rom(
+    unit_code: u8,
+    ntr_rom_size: u32,
+    ntr_twl_rom_size: u32,
+    file_size: usize,
+    include_download_play_cert: bool,
+) -> Vec<u8> {
+    const HEADER_BYTES: usize = 0x1000;
+
+    assert!(
+        file_size >= HEADER_BYTES,
+        "test NDS ROM must fit the full header"
+    );
+    let mut rom = vec![0_u8; file_size];
+    let header = build_test_nds_header(unit_code, ntr_rom_size, ntr_twl_rom_size);
+    rom[..HEADER_BYTES].copy_from_slice(&header);
+
+    for (index, byte) in rom.iter_mut().enumerate().skip(HEADER_BYTES) {
+        *byte = ((index * 13 + 5) % 251) as u8;
+    }
+
+    if include_download_play_cert {
+        let cert_offset = usize::try_from(ntr_rom_size).expect("ntr size fits usize");
+        assert!(
+            cert_offset + 0x88 <= rom.len(),
+            "test NDS ROM must have room for download play cert"
+        );
+        rom[cert_offset] = 0x61;
+        rom[cert_offset + 1] = 0x63;
+        for byte in &mut rom[cert_offset + 2..cert_offset + 0x88] {
+            *byte = 0xA5;
+        }
+    }
+
+    rom
+}
+
+fn build_test_padded_rom(payload_size: usize, full_size: usize, pad_byte: u8) -> Vec<u8> {
+    assert!(payload_size > 0, "payload size must be non-zero");
+    assert!(
+        full_size > payload_size,
+        "full ROM size must exceed payload size"
+    );
+
+    let mut rom = vec![pad_byte; full_size];
+    for (index, byte) in rom[..payload_size].iter_mut().enumerate() {
+        let mut value = ((index * 17 + 3) % 253 + 1) as u8;
+        if value == pad_byte {
+            value = value.wrapping_sub(1);
+            if value == pad_byte {
+                value = value.wrapping_add(2);
+            }
+        }
+        *byte = value;
+    }
+    rom
+}
+
 #[test]
 fn json_mode_emits_running_progress_before_terminal_status() {
     let temp = setup_temp_dir();
@@ -730,6 +837,607 @@ fn terminal_progress_percent_uses_100_scale_for_core_commands() {
     assert_eq!(patch_apply_terminal["command"], "patch-apply");
     assert_eq!(patch_apply_terminal["status"], "succeeded");
     assert_eq!(patch_apply_terminal["percent"], 100.0);
+}
+
+#[test]
+fn trim_reports_percent_100_in_json() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.nds");
+    let output = temp.child("sample.trim.nds");
+    let rom = build_test_nds_rom(0x00, 0x3000, 0x3000, 0x5000, false);
+    fs::write(source.path(), &rom).expect("fixture");
+
+    let trim_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_json_lines(&trim_output)
+        .into_iter()
+        .last()
+        .expect("trim terminal event");
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["family"], "command");
+    assert_eq!(terminal["format"], "nds");
+    assert_eq!(terminal["status"], "succeeded");
+    assert_eq!(terminal["percent"], 100.0);
+}
+
+#[test]
+fn trim_nds_preserves_download_play_certificate_boundary() {
+    let temp = setup_temp_dir();
+    let source = temp.child("downloadplay.nds");
+    let rom = build_test_nds_rom(0x00, 0x3200, 0x3200, 0x6000, true);
+    fs::write(source.path(), &rom).expect("fixture");
+
+    let trim_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["trim", source.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&trim_output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["family"], "command");
+    assert_eq!(terminal["format"], "nds");
+    assert_eq!(terminal["status"], "succeeded");
+
+    let label = terminal["label"].as_str().expect("label");
+    assert!(label.contains("mode=ds"));
+    assert!(label.contains("preserved_download_play_cert=true"));
+    assert!(label.contains("trimmed_size=12936"));
+
+    let trimmed_path = source.path().with_extension("trim.nds");
+    let trimmed = fs::read(&trimmed_path).expect("trimmed output");
+    assert_eq!(trimmed.len(), 0x3200 + 0x88);
+    assert_eq!(&trimmed[..trimmed.len()], &rom[..trimmed.len()]);
+}
+
+#[test]
+fn trim_dsi_uses_ntr_twl_size_boundary() {
+    let temp = setup_temp_dir();
+    let source = temp.child("enhanced.nds");
+    let output = temp.child("enhanced.out.nds");
+    let rom = build_test_nds_rom(0x02, 0x2800, 0x3A00, 0x7000, false);
+    fs::write(source.path(), &rom).expect("fixture");
+
+    let trim_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&trim_output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    let label = terminal["label"].as_str().expect("label");
+    assert!(label.contains("mode=dsi"));
+    assert!(label.contains("trimmed_size=14848"));
+    assert!(label.contains("preserved_download_play_cert=false"));
+
+    let trimmed = fs::read(output.path()).expect("trimmed output");
+    assert_eq!(trimmed.len(), 0x3A00);
+    assert_eq!(&trimmed[..], &rom[..0x3A00]);
+}
+
+#[test]
+fn trim_rejects_invalid_header_crc() {
+    let temp = setup_temp_dir();
+    let source = temp.child("bad.nds");
+    let mut rom = build_test_nds_rom(0x00, 0x3000, 0x3000, 0x5000, false);
+    rom[0x15E] ^= 0x01;
+    fs::write(source.path(), &rom).expect("fixture");
+
+    let trim_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["trim", source.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&trim_output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["family"], "command");
+    assert_eq!(terminal["format"], "nds");
+    assert_eq!(terminal["status"], "failed");
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("header CRC mismatch")
+    );
+}
+
+#[test]
+fn trim_supports_batch_inputs_with_custom_extension() {
+    let temp = setup_temp_dir();
+    let source_a = temp.child("a.nds");
+    let source_b = temp.child("b.nds");
+    fs::write(
+        source_a.path(),
+        build_test_nds_rom(0x00, 0x3000, 0x3000, 0x5000, false),
+    )
+    .expect("fixture");
+    fs::write(
+        source_b.path(),
+        build_test_nds_rom(0x00, 0x3200, 0x3200, 0x5800, true),
+    )
+    .expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source_a.path().to_str().expect("path"),
+            source_b.path().to_str().expect("path"),
+            "--extension",
+            "tokyo.nds",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    let label = terminal["label"].as_str().expect("label");
+    assert!(label.contains("processed=2"));
+    assert!(label.contains("trimmed=2"));
+
+    let trimmed_a = source_a.path().with_extension("tokyo.nds");
+    let trimmed_b = source_b.path().with_extension("tokyo.nds");
+    assert_eq!(fs::read(trimmed_a).expect("trimmed a").len(), 0x3000);
+    assert_eq!(fs::read(trimmed_b).expect("trimmed b").len(), 0x3200 + 0x88);
+}
+
+#[test]
+fn trim_recursively_scans_directories_by_default() {
+    let temp = setup_temp_dir();
+    let root = temp.child("input");
+    fs::create_dir_all(root.child("nested").path()).expect("mkdir");
+
+    let top_level = root.child("top.nds");
+    let nested = root.child("nested/deep.nds");
+    fs::write(
+        top_level.path(),
+        build_test_nds_rom(0x00, 0x3000, 0x3000, 0x5000, false),
+    )
+    .expect("fixture");
+    fs::write(
+        nested.path(),
+        build_test_nds_rom(0x00, 0x3200, 0x3200, 0x6000, true),
+    )
+    .expect("fixture");
+    fs::write(root.child("readme.txt").path(), b"ignore me").expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["trim", root.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    let label = terminal["label"].as_str().expect("label");
+    assert!(label.contains("processed=2"));
+    assert!(label.contains("skipped_non_nds=1"));
+    assert!(top_level.path().with_extension("trim.nds").exists());
+    assert!(nested.path().with_extension("trim.nds").exists());
+}
+
+#[test]
+fn trim_no_recursive_only_processes_top_level() {
+    let temp = setup_temp_dir();
+    let root = temp.child("input");
+    fs::create_dir_all(root.child("nested").path()).expect("mkdir");
+
+    let top_level = root.child("top.nds");
+    let nested = root.child("nested/deep.nds");
+    fs::write(
+        top_level.path(),
+        build_test_nds_rom(0x00, 0x3000, 0x3000, 0x5000, false),
+    )
+    .expect("fixture");
+    fs::write(
+        nested.path(),
+        build_test_nds_rom(0x00, 0x3200, 0x3200, 0x6000, true),
+    )
+    .expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            root.path().to_str().expect("path"),
+            "--no-recursive",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    let label = terminal["label"].as_str().expect("label");
+    assert!(label.contains("processed=1"));
+    assert!(top_level.path().with_extension("trim.nds").exists());
+    assert!(!nested.path().with_extension("trim.nds").exists());
+}
+
+#[test]
+fn trim_dry_run_does_not_write_outputs() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.nds");
+    fs::write(
+        source.path(),
+        build_test_nds_rom(0x00, 0x3000, 0x3000, 0x5000, false),
+    )
+    .expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "--dry-run",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("trim simulation complete")
+    );
+    assert!(!source.path().with_extension("trim.nds").exists());
+}
+
+#[test]
+fn trim_simulate_alias_does_not_write_outputs() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.nds");
+    fs::write(
+        source.path(),
+        build_test_nds_rom(0x00, 0x3000, 0x3000, 0x5000, false),
+    )
+    .expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "--simulate",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("trim simulation complete")
+    );
+    assert!(!source.path().with_extension("trim.nds").exists());
+}
+
+#[test]
+fn trim_short_inplace_flag_trims_source_file() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.nds");
+    let rom = build_test_nds_rom(0x00, 0x3000, 0x3000, 0x5000, true);
+    fs::write(source.path(), &rom).expect("fixture");
+    let original_len = fs::metadata(source.path()).expect("metadata").len();
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "-i",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("output=")
+    );
+    let trimmed_len = fs::metadata(source.path()).expect("trimmed metadata").len();
+    assert!(trimmed_len < original_len);
+    assert_eq!(trimmed_len, 0x3000 + 0x88);
+}
+
+#[test]
+fn trim_gba_uses_zero_padding_boundary() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.gba");
+    fs::write(source.path(), build_test_padded_rom(0x3456, 0x4000, 0x00)).expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["trim", source.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    let label = terminal["label"].as_str().expect("label");
+    assert!(label.contains("mode=gba"));
+    assert!(label.contains("trimmed_size=13398"));
+
+    let trimmed = source.path().with_extension("trim.gba");
+    assert_eq!(fs::read(trimmed).expect("trimmed gba").len(), 0x3456);
+}
+
+#[test]
+fn trim_3ds_uses_ff_padding_boundary() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.3ds");
+    fs::write(source.path(), build_test_padded_rom(0x4567, 0x8000, 0xFF)).expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["trim", source.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    let label = terminal["label"].as_str().expect("label");
+    assert!(label.contains("mode=3ds"));
+    assert!(label.contains("trimmed_size=17767"));
+
+    let trimmed = source.path().with_extension("trim.3ds");
+    assert_eq!(fs::read(trimmed).expect("trimmed 3ds").len(), 0x4567);
+}
+
+#[test]
+fn trim_revert_restores_gba_to_next_power_of_two() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.gba");
+    fs::write(source.path(), build_test_padded_rom(0x3456, 0x4000, 0x00)).expect("fixture");
+
+    let trim_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["trim", source.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let trim_terminal = parse_single_json_line(&trim_output);
+    assert_eq!(trim_terminal["status"], "succeeded");
+
+    let trimmed = source.path().with_extension("trim.gba");
+    assert_eq!(fs::read(&trimmed).expect("trimmed gba").len(), 0x3456);
+
+    let revert_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            trimmed.to_str().expect("path"),
+            "--revert",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let revert_terminal = parse_single_json_line(&revert_output);
+    assert_eq!(revert_terminal["command"], "trim");
+    assert_eq!(revert_terminal["status"], "succeeded");
+    assert!(
+        revert_terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("reverted_size=16384")
+    );
+    assert!(
+        revert_terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("mode=gba")
+    );
+
+    let reverted = trimmed.with_extension("untrim.gba");
+    assert_eq!(fs::read(reverted).expect("reverted gba").len(), 0x4000);
+}
+
+#[test]
+fn trim_revert_restores_3ds_to_next_power_of_two() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.3ds");
+    fs::write(source.path(), build_test_padded_rom(0x4567, 0x8000, 0xFF)).expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["trim", source.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0);
+
+    let trimmed = source.path().with_extension("trim.3ds");
+    assert_eq!(fs::read(&trimmed).expect("trimmed 3ds").len(), 0x4567);
+
+    let revert_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            trimmed.to_str().expect("path"),
+            "--untrim",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let revert_terminal = parse_single_json_line(&revert_output);
+    assert_eq!(revert_terminal["command"], "trim");
+    assert_eq!(revert_terminal["status"], "succeeded");
+    assert!(
+        revert_terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("reverted_size=32768")
+    );
+    assert!(
+        revert_terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("mode=3ds")
+    );
+
+    let reverted = trimmed.with_extension("untrim.3ds");
+    assert_eq!(fs::read(reverted).expect("reverted 3ds").len(), 0x8000);
+}
+
+#[test]
+fn trim_revert_restores_nds_to_power_of_two() {
+    let temp = setup_temp_dir();
+    let source = temp.child("sample.nds");
+    let rom = build_test_nds_rom(0x00, 0x3000, 0x3000, 0x8000, false);
+    fs::write(source.path(), &rom).expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "-i",
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    assert_eq!(fs::read(source.path()).expect("trimmed nds").len(), 0x3000);
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "--revert",
+            "-i",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("mode=ds")
+    );
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("reverted_size=16384")
+    );
+    assert_eq!(fs::read(source.path()).expect("reverted nds").len(), 0x4000);
+}
+
+#[test]
+fn trim_skips_non_nds_inputs() {
+    let temp = setup_temp_dir();
+    let source = temp.child("notes.txt");
+    fs::write(source.path(), b"not an nds file").expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["trim", source.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "trim");
+    assert_eq!(terminal["status"], "succeeded");
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("no trim-eligible inputs found; skipped_non_nds=1")
+    );
 }
 
 #[test]
