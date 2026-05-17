@@ -81,6 +81,11 @@ struct ChecksumCommand {
     algo: Vec<String>,
     #[arg(long, help = "Remove a 512-byte copier header before checksum")]
     strip_header: bool,
+    #[arg(
+        long,
+        help = "Disable automatic trim-boundary checksum fixes for trim-eligible ROMs"
+    )]
+    no_trim_fix: bool,
     #[arg(long)]
     start: Option<u64>,
     #[arg(long)]
@@ -241,6 +246,12 @@ type XisoTrimSourceFilesystem = XdvdfsFilesystem<io::Error, XisoTrimSourceDevice
 struct NdsTrimPlan {
     trimmed_size: u64,
     dsi_mode: bool,
+    preserved_download_play_cert: bool,
+}
+
+struct ChecksumTrimPlan {
+    trimmed_size: u64,
+    mode: &'static str,
     preserved_download_play_cert: bool,
 }
 
@@ -581,6 +592,7 @@ impl CliApp {
             source,
             algo,
             strip_header,
+            no_trim_fix,
             start,
             length,
             threads,
@@ -637,9 +649,13 @@ impl CliApp {
                 None,
                 thread_execution.clone(),
             );
+            let stripped_extension = source
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("bin");
             let stripped_path = context
                 .temp_paths()
-                .next_path("checksum-input-noheader", Some("bin"));
+                .next_path("checksum-input-noheader", Some(stripped_extension));
             match Self::strip_header_to_temp(&source, &stripped_path) {
                 Ok(_) => {
                     temp_paths.push(stripped_path.clone());
@@ -661,6 +677,26 @@ impl CliApp {
         } else {
             source.clone()
         };
+        let mut trimmed_plan = None;
+        let mut start = start;
+        let mut length = length;
+        let should_auto_trim_fix = !no_trim_fix && start.is_none() && length.is_none();
+        if should_auto_trim_fix {
+            self.emit_running(
+                "checksum",
+                OperationFamily::Checksum,
+                Some(self.checksum.name()),
+                "prepare",
+                "resolving trim boundary before checksum",
+                None,
+                thread_execution.clone(),
+            );
+            if let Ok(plan) = self.read_checksum_trim_plan(&checksum_source) {
+                start = Some(0);
+                length = Some(plan.trimmed_size);
+                trimmed_plan = Some(plan);
+            }
+        }
         let request = ChecksumRequest {
             source: checksum_source,
             algorithms: algo
@@ -687,8 +723,16 @@ impl CliApp {
                 ),
             )
         });
-        if report.status == OperationStatus::Succeeded && strip_header {
-            report.label = format!("{}; input header stripped (512 bytes)", report.label);
+        if report.status == OperationStatus::Succeeded {
+            if strip_header {
+                report.label = format!("{}; input header stripped (512 bytes)", report.label);
+            }
+            if let Some(plan) = trimmed_plan {
+                report.label = format!(
+                    "{}; trimmed_input_bytes={} mode={} preserved_download_play_cert={}",
+                    report.label, plan.trimmed_size, plan.mode, plan.preserved_download_play_cert
+                );
+            }
         }
         for temp_path in temp_paths {
             let _ = fs::remove_file(temp_path);
@@ -1449,6 +1493,63 @@ impl CliApp {
         }
 
         None
+    }
+
+    fn read_checksum_trim_plan(&self, source: &Path) -> Result<ChecksumTrimPlan> {
+        let Some(kind) = self.trim_eligible_kind_for_path(source) else {
+            return Err(RomWeaverError::Validation(format!(
+                "trim-fix unavailable for non-trim-eligible input: `{}`",
+                source.display()
+            )));
+        };
+        let file_size = fs::metadata(source)?.len();
+        if file_size == 0 {
+            return Err(RomWeaverError::Validation(format!(
+                "input is empty and cannot be processed: `{}`",
+                source.display()
+            )));
+        }
+        match kind {
+            TrimInputKind::NdsFamily => {
+                if file_size < NDS_HEADER_TOTAL_BYTES as u64 {
+                    return Err(RomWeaverError::Validation(format!(
+                        "input is too small to contain a valid NDS/DSi header: `{}`",
+                        source.display()
+                    )));
+                }
+                let mut input = File::open(source)?;
+                let plan = Self::read_nds_trim_plan(&mut input, file_size, false)?;
+                Ok(ChecksumTrimPlan {
+                    trimmed_size: plan.trimmed_size.min(file_size),
+                    mode: if plan.dsi_mode { "dsi" } else { "ds" },
+                    preserved_download_play_cert: plan.preserved_download_play_cert,
+                })
+            }
+            TrimInputKind::Gba | TrimInputKind::ThreeDs => {
+                let trimmed_size = Self::scan_trimmed_size_from_trailing_padding(
+                    source,
+                    kind.default_padding_byte(),
+                )?;
+                Ok(ChecksumTrimPlan {
+                    trimmed_size,
+                    mode: kind.mode_label(),
+                    preserved_download_play_cert: false,
+                })
+            }
+            TrimInputKind::Xiso => {
+                let trimmed_size = Self::measure_trimmed_xiso_size(source).map_err(|error| {
+                    RomWeaverError::Validation(format!(
+                        "checksum trim-fix failed while evaluating xiso `{}`: {error}",
+                        source.display()
+                    ))
+                })?;
+                Ok(ChecksumTrimPlan {
+                    trimmed_size,
+                    mode: kind.mode_label(),
+                    preserved_download_play_cert: false,
+                })
+            }
+        }
     }
 
     fn collect_trim_input_files(

@@ -1991,6 +1991,230 @@ fn checksum_strip_header_rejects_small_input() {
 }
 
 #[test]
+fn checksum_auto_trim_fix_nds_matches_explicitly_trimmed_output() {
+    let temp = setup_temp_dir();
+    let source = temp.child("downloadplay.nds");
+    let trimmed = temp.child("downloadplay-trimmed.nds");
+    let rom = build_test_nds_rom(0x00, 0x3200, 0x3200, 0x6000, true);
+    fs::write(source.path(), &rom).expect("fixture");
+    fs::write(trimmed.path(), &rom[..0x3200 + 0x88]).expect("trimmed fixture");
+
+    let trimmed_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            source.path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--algo",
+            "sha1",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let explicit_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            trimmed.path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--algo",
+            "sha1",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let trimmed_json = parse_single_json_line(&trimmed_output);
+    let explicit_json = parse_single_json_line(&explicit_output);
+    assert_eq!(trimmed_json["status"], "succeeded");
+    assert_eq!(explicit_json["status"], "succeeded");
+
+    let trimmed_label = trimmed_json["label"].as_str().expect("trimmed label");
+    let explicit_label = explicit_json["label"].as_str().expect("explicit label");
+    assert_eq!(
+        label_digest_value(trimmed_label, "crc32"),
+        label_digest_value(explicit_label, "crc32")
+    );
+    assert_eq!(
+        label_digest_value(trimmed_label, "sha1"),
+        label_digest_value(explicit_label, "sha1")
+    );
+    assert!(trimmed_label.contains("range=0..12936"));
+    assert!(trimmed_label.contains("trimmed_input_bytes=12936"));
+    assert!(trimmed_label.contains("mode=ds"));
+    assert!(trimmed_label.contains("preserved_download_play_cert=true"));
+}
+
+#[test]
+fn checksum_auto_trim_fix_supports_strip_header() {
+    let temp = setup_temp_dir();
+    let source = temp.child("base.nds");
+    let headered = temp.child("base-headered.nds");
+    let rom = build_test_nds_rom(0x02, 0x2800, 0x3A00, 0x7000, false);
+    fs::write(source.path(), &rom).expect("fixture");
+    fs::write(headered.path(), with_header(&rom)).expect("fixture");
+
+    let source_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            source.path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let headered_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            headered.path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--strip-header",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let source_json = parse_single_json_line(&source_output);
+    let headered_json = parse_single_json_line(&headered_output);
+    assert_eq!(source_json["status"], "succeeded");
+    assert_eq!(headered_json["status"], "succeeded");
+
+    let source_label = source_json["label"].as_str().expect("source label");
+    let headered_label = headered_json["label"].as_str().expect("headered label");
+    assert_eq!(
+        label_digest_value(source_label, "crc32"),
+        label_digest_value(headered_label, "crc32")
+    );
+    assert!(headered_label.contains("input header stripped (512 bytes)"));
+    assert!(headered_label.contains("trimmed_input_bytes=14848"));
+    assert!(headered_label.contains("mode=dsi"));
+}
+
+#[test]
+fn checksum_no_trim_fix_disables_trimmed_boundary_fix() {
+    let temp = setup_temp_dir();
+    let source = temp.child("downloadplay.nds");
+    let rom = build_test_nds_rom(0x00, 0x3200, 0x3200, 0x6000, true);
+    fs::write(source.path(), &rom).expect("fixture");
+
+    let auto_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            source.path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let no_fix_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            source.path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--no-trim-fix",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let auto_json = parse_single_json_line(&auto_output);
+    let no_fix_json = parse_single_json_line(&no_fix_output);
+    assert_eq!(auto_json["status"], "succeeded");
+    assert_eq!(no_fix_json["status"], "succeeded");
+
+    let auto_label = auto_json["label"].as_str().expect("auto label");
+    let no_fix_label = no_fix_json["label"].as_str().expect("no-fix label");
+    assert!(auto_label.contains("trimmed_input_bytes=12936"));
+    assert!(!no_fix_label.contains("trimmed_input_bytes="));
+    assert_ne!(
+        label_digest_value(auto_label, "crc32"),
+        label_digest_value(no_fix_label, "crc32")
+    );
+}
+
+#[test]
+fn checksum_auto_trim_fix_ignores_non_trim_eligible_extensions() {
+    let temp = setup_temp_dir();
+    fs::write(temp.child("sample.bin").path(), b"hello").expect("fixture");
+
+    let auto_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            temp.child("sample.bin").path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let no_fix_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            temp.child("sample.bin").path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--no-trim-fix",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let auto_json = parse_single_json_line(&auto_output);
+    let no_fix_json = parse_single_json_line(&no_fix_output);
+    assert_eq!(auto_json["command"], "checksum");
+    assert_eq!(auto_json["family"], "checksum");
+    assert_eq!(auto_json["status"], "succeeded");
+    assert_eq!(no_fix_json["status"], "succeeded");
+    let auto_label = auto_json["label"].as_str().expect("auto label");
+    let no_fix_label = no_fix_json["label"].as_str().expect("no-fix label");
+    assert!(!auto_label.contains("trimmed_input_bytes="));
+    assert_eq!(
+        label_digest_value(auto_label, "crc32"),
+        label_digest_value(no_fix_label, "crc32")
+    );
+}
+
+#[test]
 fn compress_routes_through_registered_container_format() {
     let temp = setup_temp_dir();
     temp.child("file.bin")
