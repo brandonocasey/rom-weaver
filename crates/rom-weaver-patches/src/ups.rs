@@ -328,7 +328,9 @@ fn apply_changes_in_place(
 fn create_ups_patch_streaming(source_path: &Path, target_path: &Path) -> Result<CreatedUpsPatch> {
     let source_size = fs::metadata(source_path)?.len();
     let target_size = fs::metadata(target_path)?.len();
-    let max_size = max(source_size, target_size);
+    // Match RomPatcher.js/UPS encoder behavior: scan only through target bytes.
+    // When target is shorter, truncation is represented by target_size alone.
+    let scan_size = target_size;
 
     let mut source = BufReader::new(File::open(source_path)?);
     let mut target = BufReader::new(File::open(target_path)?);
@@ -344,8 +346,8 @@ fn create_ups_patch_streaming(source_path: &Path, target_path: &Path) -> Result<
     let mut pending_start: Option<u64> = None;
     let mut pending_xor = Vec::<u8>::new();
 
-    while offset < max_size {
-        let chunk_len = usize::try_from((max_size - offset).min(UPS_IO_BUFFER_SIZE as u64))
+    while offset < scan_size {
+        let chunk_len = usize::try_from((scan_size - offset).min(UPS_IO_BUFFER_SIZE as u64))
             .map_err(|_| RomWeaverError::Validation("UPS chunk length exceeded usize".into()))?;
         let source_chunk_len =
             usize::try_from(source_remaining.min(chunk_len as u64)).map_err(|_| {
@@ -397,6 +399,26 @@ fn create_ups_patch_streaming(source_path: &Path, target_path: &Path) -> Result<
         target_remaining = target_remaining.saturating_sub(target_chunk_len as u64);
     }
 
+    // Finish hashing any unread suffix bytes (for source > target truncation cases).
+    while source_remaining > 0 {
+        let chunk_len =
+            usize::try_from(source_remaining.min(UPS_IO_BUFFER_SIZE as u64)).map_err(|_| {
+                RomWeaverError::Validation("UPS source chunk length exceeded usize".into())
+            })?;
+        source.read_exact(&mut source_buffer[..chunk_len])?;
+        source_checksum.update(&source_buffer[..chunk_len]);
+        source_remaining = source_remaining.saturating_sub(chunk_len as u64);
+    }
+    while target_remaining > 0 {
+        let chunk_len =
+            usize::try_from(target_remaining.min(UPS_IO_BUFFER_SIZE as u64)).map_err(|_| {
+                RomWeaverError::Validation("UPS target chunk length exceeded usize".into())
+            })?;
+        target.read_exact(&mut target_buffer[..chunk_len])?;
+        target_checksum.update(&target_buffer[..chunk_len]);
+        target_remaining = target_remaining.saturating_sub(chunk_len as u64);
+    }
+
     if !pending_xor.is_empty() {
         let start = pending_start.expect("pending start exists");
         changes.push(UpsChange {
@@ -436,11 +458,11 @@ fn create_ups_patch_bytes(source: &[u8], target: &[u8]) -> Result<CreatedUpsPatc
 
 #[allow(dead_code)]
 fn build_changes(source: &[u8], target: &[u8]) -> Result<Vec<UpsChange>> {
-    let max_size = max(source.len(), target.len());
+    let target_size = target.len();
     let mut changes = Vec::new();
 
     let mut index = 0usize;
-    while index < max_size {
+    while index < target_size {
         let source_byte = source.get(index).copied().unwrap_or(0);
         let target_byte = target.get(index).copied().unwrap_or(0);
 
@@ -449,7 +471,7 @@ fn build_changes(source: &[u8], target: &[u8]) -> Result<Vec<UpsChange>> {
                 .map_err(|_| RomWeaverError::Validation("UPS offset exceeded u64".into()))?;
             let mut xor_bytes = Vec::new();
 
-            while index < max_size {
+            while index < target_size {
                 let source_byte = source.get(index).copied().unwrap_or(0);
                 let target_byte = target.get(index).copied().unwrap_or(0);
                 if source_byte == target_byte {
@@ -461,10 +483,6 @@ fn build_changes(source: &[u8], target: &[u8]) -> Result<Vec<UpsChange>> {
             }
 
             changes.push(UpsChange { offset, xor_bytes });
-        }
-
-        if index == max_size {
-            break;
         }
 
         index = checked_add_usize(index, 1, "UPS scan index")?;
@@ -843,5 +861,17 @@ mod tests {
             fs::read(output_path).expect("output"),
             fs::read(target_path).expect("target")
         );
+    }
+
+    #[test]
+    fn create_omits_redundant_truncation_records() {
+        let source = b"\xff\xee\xdd\xcc\xbb\xaa\x99\x88\x77\x66\x55\x44\x33\x22\x11\x00";
+        let target = b"\xff\xee\xdd\xcc\xbb\xaa\x99";
+
+        let created = create_ups_patch_bytes(source, target).expect("patch");
+        let parsed = parse_ups_bytes(&created.bytes).expect("parse");
+
+        assert_eq!(created.record_count, 0);
+        assert!(parsed.changes.is_empty());
     }
 }
