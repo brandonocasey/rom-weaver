@@ -86,10 +86,27 @@ build_target() {
 
 postprocess_artifact() {
   local artifact="$1"
+  local artifact_kind="${2:-non-threaded}"
 
   if [[ "$SKIP_WASM_OPT" != "1" ]] && command -v wasm-opt >/dev/null 2>&1; then
     local optimized="${artifact}.opt"
-    wasm-opt -O3 --strip-debug --strip-dwarf -o "$optimized" "$artifact"
+    local -a wasm_opt_flags=(
+      --enable-bulk-memory
+      --enable-bulk-memory-opt
+      --enable-mutable-globals
+      --enable-sign-ext
+      --enable-reference-types
+    )
+    if [[ "$artifact_kind" == "threaded" ]]; then
+      wasm_opt_flags+=(--enable-threads)
+    fi
+    wasm-opt \
+      -O3 \
+      --strip-debug \
+      --strip-dwarf \
+      "${wasm_opt_flags[@]}" \
+      -o "$optimized" \
+      "$artifact"
     mv "$optimized" "$artifact"
   fi
 
@@ -100,8 +117,8 @@ postprocess_artifact() {
 build_target "wasm32-wasip1" "rom-weaver-cli.wasm" "$NON_THREADED_RUSTFLAGS"
 build_target "wasm32-wasip1-threads" "rom-weaver-cli-threaded.wasm" "$THREADED_RUSTFLAGS"
 
-postprocess_artifact "$OUT_DIR/rom-weaver-cli.wasm"
-postprocess_artifact "$OUT_DIR/rom-weaver-cli-threaded.wasm"
+postprocess_artifact "$OUT_DIR/rom-weaver-cli.wasm" "non-threaded"
+postprocess_artifact "$OUT_DIR/rom-weaver-cli-threaded.wasm" "threaded"
 
 if [[ -f "$JS_API_SOURCE" ]]; then
   cp "$JS_API_SOURCE" "$OUT_DIR/rom-weaver-wasi-api.mjs"
