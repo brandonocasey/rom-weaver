@@ -117,36 +117,17 @@ impl PatchHandler for UpsPatchHandler {
         request: &PatchCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
-        if let Some(parent) = request.output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
         let created = create_ups_patch_streaming(&request.original, &request.modified)?;
-        fs::write(&request.output, created.bytes)?;
-
-        Ok(OperationReport::succeeded(
-            OperationFamily::Patch,
-            Some(self.descriptor.name.to_string()),
-            "create",
-            format!(
-                "created {} patch with {} record(s)",
-                self.descriptor.name, created.record_count
-            ),
-            Some(100.0),
-            Some(execution),
-        ))
+        crate::finalize_single_threaded_patch_create(
+            self.descriptor,
+            request,
+            context,
+            crate::CreatedPatchFile::new(created.bytes, created.record_count),
+        )
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        PatchCapabilities {
-            parse: true,
-            apply: true,
-            create: true,
-            threaded_scan: false,
-            threaded_diff: false,
-            threaded_output: false,
-        }
+        crate::default_patch_capabilities()
     }
 }
 

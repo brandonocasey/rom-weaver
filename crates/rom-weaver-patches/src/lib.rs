@@ -184,6 +184,56 @@ pub(crate) fn require_single_patch_file<'a>(
     Ok(&patches[0])
 }
 
+pub(crate) struct CreatedPatchFile {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) record_count: usize,
+}
+
+impl CreatedPatchFile {
+    pub(crate) fn new(bytes: Vec<u8>, record_count: usize) -> Self {
+        Self {
+            bytes,
+            record_count,
+        }
+    }
+}
+
+pub(crate) fn finalize_single_threaded_patch_create(
+    descriptor: &'static FormatDescriptor,
+    request: &rom_weaver_core::PatchCreateRequest,
+    context: &rom_weaver_core::OperationContext,
+    created_patch: CreatedPatchFile,
+) -> Result<rom_weaver_core::OperationReport> {
+    let execution = context.plan_threads(rom_weaver_core::ThreadCapability::single_threaded());
+    if let Some(parent) = request.output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&request.output, created_patch.bytes)?;
+
+    Ok(rom_weaver_core::OperationReport::succeeded(
+        OperationFamily::Patch,
+        Some(descriptor.name.to_string()),
+        "create",
+        format!(
+            "created {} patch with {} record(s)",
+            descriptor.name, created_patch.record_count
+        ),
+        Some(100.0),
+        Some(execution),
+    ))
+}
+
+pub(crate) fn default_patch_capabilities() -> rom_weaver_core::PatchCapabilities {
+    rom_weaver_core::PatchCapabilities {
+        parse: true,
+        apply: true,
+        create: true,
+        threaded_scan: false,
+        threaded_diff: false,
+        threaded_output: false,
+    }
+}
+
 pub struct PatchRegistry {
     handlers: Vec<Arc<dyn PatchHandler>>,
 }

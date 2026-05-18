@@ -111,36 +111,17 @@ impl PatchHandler for ApsGbaPatchHandler {
         request: &PatchCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
-        if let Some(parent) = request.output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
         let created = create_apsgba_patch_streaming(&request.original, &request.modified)?;
-        fs::write(&request.output, created.bytes)?;
-
-        Ok(OperationReport::succeeded(
-            OperationFamily::Patch,
-            Some(self.descriptor.name.to_string()),
-            "create",
-            format!(
-                "created {} patch with {} record(s)",
-                self.descriptor.name, created.record_count
-            ),
-            Some(100.0),
-            Some(execution),
-        ))
+        crate::finalize_single_threaded_patch_create(
+            self.descriptor,
+            request,
+            context,
+            crate::CreatedPatchFile::new(created.bytes, created.record_count),
+        )
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        PatchCapabilities {
-            parse: true,
-            apply: true,
-            create: true,
-            threaded_scan: false,
-            threaded_diff: false,
-            threaded_output: false,
-        }
+        crate::default_patch_capabilities()
     }
 }
 
@@ -269,31 +250,11 @@ fn create_apsgba_patch_bytes(source: &[u8], target: &[u8]) -> Result<CreatedApsG
         }
     }
 
-    if records.is_empty() {
-        records.push(ApsGbaRecord {
-            offset: 0,
-            source_crc16: crc16_bytes(&[]),
-            target_crc16: crc16_bytes(&[]),
-            xor_bytes: vec![0u8; APS_GBA_BLOCK_SIZE],
-        });
-    }
-
-    let mut bytes = Vec::with_capacity(APS_GBA_HEADER_SIZE + records.len() * APS_GBA_RECORD_SIZE);
-    bytes.extend_from_slice(APS_GBA_MAGIC);
-    bytes.extend_from_slice(&source_size.to_le_bytes());
-    bytes.extend_from_slice(&target_size.to_le_bytes());
-
-    for record in &records {
-        bytes.extend_from_slice(&record.offset.to_le_bytes());
-        bytes.extend_from_slice(&record.source_crc16.to_le_bytes());
-        bytes.extend_from_slice(&record.target_crc16.to_le_bytes());
-        bytes.extend_from_slice(&record.xor_bytes);
-    }
-
-    Ok(CreatedApsGbaPatch {
-        bytes,
-        record_count: records.len(),
-    })
+    Ok(finalize_created_apsgba_patch(
+        source_size,
+        target_size,
+        records,
+    ))
 }
 
 fn apply_apsgba_patch_in_place(
@@ -426,13 +387,20 @@ fn create_apsgba_patch_streaming(
         target_remaining = target_remaining.saturating_sub(target_chunk_len as u64);
     }
 
+    Ok(finalize_created_apsgba_patch(
+        source_size,
+        target_size,
+        records,
+    ))
+}
+
+fn finalize_created_apsgba_patch(
+    source_size: u32,
+    target_size: u32,
+    mut records: Vec<ApsGbaRecord>,
+) -> CreatedApsGbaPatch {
     if records.is_empty() {
-        records.push(ApsGbaRecord {
-            offset: 0,
-            source_crc16: crc16_bytes(&[]),
-            target_crc16: crc16_bytes(&[]),
-            xor_bytes: vec![0u8; APS_GBA_BLOCK_SIZE],
-        });
+        records.push(empty_apsgba_record());
     }
 
     let mut bytes = Vec::with_capacity(APS_GBA_HEADER_SIZE + records.len() * APS_GBA_RECORD_SIZE);
@@ -447,10 +415,19 @@ fn create_apsgba_patch_streaming(
         bytes.extend_from_slice(&record.xor_bytes);
     }
 
-    Ok(CreatedApsGbaPatch {
+    CreatedApsGbaPatch {
         bytes,
         record_count: records.len(),
-    })
+    }
+}
+
+fn empty_apsgba_record() -> ApsGbaRecord {
+    ApsGbaRecord {
+        offset: 0,
+        source_crc16: crc16_bytes(&[]),
+        target_crc16: crc16_bytes(&[]),
+        xor_bytes: vec![0u8; APS_GBA_BLOCK_SIZE],
+    }
 }
 
 fn read_at_most(file: &mut File, offset: u64, buffer: &mut [u8]) -> Result<usize> {
