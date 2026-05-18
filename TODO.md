@@ -36,6 +36,8 @@
 | CMD-005 | command | patch-apply | n/a | n/a | n/a | done | n/a | context-plumbed | cli-smoke,json-contract | done | Patch apply routes through handler probing, emits thread-aware reports, supports compatibility flags `--strip-header`, `--add-header`, and `--repair-checksum`, auto-resolves container payload inputs by default with `--no-extract`/`--select`/`--no-ignore`, and now compresses output by default (with `--no-compress`, `--compress-format`, and `--compress-codec` controls); `--strip-header` is Igir-style profile-aware for `.a78/.lnx/.nes/.fds/.smc`, while checksum repair remains auto-detected for Sega Genesis/Game Boy targets. |
 | CMD-006 | command | patch-create | n/a | n/a | n/a | n/a | done | context-plumbed | cli-smoke,json-contract | done | Patch create routes by format name through registered handlers. |
 | CMD-007 | command | trim | n/a | n/a | done | n/a | n/a | context-plumbed | cli-smoke,json-contract,thread-model | done | Dedicated image/file trimming workflow landed with NDSTokyoTrim-compatible NDS/DSi boundaries plus GBA, 3DS, and XISO trim handling (XISO revert intentionally unsupported). |
+| CMD-008 | command | extract-chd-splitbin | n/a | todo | n/a | n/a | n/a | context-plumbed | fixture-roundtrip,cli-smoke,json-contract | todo | Add CHD extract mode parity for `chdman extractcd -ob` style split BIN output (BIN chunks + CUE metadata), including deterministic naming and JSON reporting for emitted files. |
+| CMD-009 | command | patch-apply-splitbin-target | n/a | n/a | n/a | todo | n/a | context-plumbed | fixture-roundtrip,cli-smoke,json-contract | todo | When the extracted image is split into multiple BIN files, allow patch-apply to target a specific BIN (explicit selector) and fail clearly on ambiguous targets. |
 
 ## Threading Groundwork
 
@@ -71,6 +73,7 @@
 | CTR-017 | container | rvz-threading-parity | done | done | done | n/a | n/a | per-block,codec-mapped | fixture-roundtrip,cli-smoke,json-contract | done | RVZ extract/create now negotiate parallel capability and forward thread budgets into `nod` preloader/processor options so `thread_execution` reporting matches runtime behavior. |
 | CTR-018 | container | z3ds-create-thread-capability | done | done | done | n/a | n/a | per-block | fixture-roundtrip,cli-smoke,json-contract | done | Z3DS create capability metadata now reports parallel threading, matching the existing parallel create runtime behavior and JSON thread reporting. |
 | CTR-019 | container | wua | done | done | done | n/a | n/a | block,zstd | fixture-roundtrip,cli-smoke | done | Native Wii U archive (`.wua`) support landed using ZArchive-compatible 64KiB block compression, footer metadata, and directory tree traversal. |
+| CTR-020 | container | pbp | n/a | todo | n/a | n/a | n/a | per-file | fixture-roundtrip,cli-smoke | todo | Add PSP/PS1 `EBOOT.PBP` payload extraction support; behavior target reference: PSXPackager PSP docs (`https://www.gamebrew.org/wiki/PSXPackager_PSP`). |
 
 ## Patch Formats
 
