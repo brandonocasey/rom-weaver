@@ -1857,6 +1857,7 @@ dependencies = [
  "assert_cmd",
  "assert_fs",
  "clap 4.6.1",
+ "flate2",
  "globset",
  "nod",
  "predicates",

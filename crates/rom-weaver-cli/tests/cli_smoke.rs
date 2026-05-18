@@ -7,6 +7,7 @@ use assert_fs::{
     TempDir,
     fixture::{FileWriteStr, PathChild},
 };
+use flate2::{Compression as DeflateCompression, write::DeflateEncoder};
 use nod::{
     common::{Compression as NodCompression, Format as NodFormat},
     read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
@@ -234,6 +235,175 @@ fn write_xiso_fixture_from_directory(source_dir: &std::path::Path, xiso_path: &s
     let mut output = std::io::BufWriter::new(output);
     create_xdvdfs_image(&mut source_fs, &mut output, |_| {}).expect("build xiso");
     output.flush().expect("flush xiso");
+}
+
+const TEST_PBP_SECTOR_BYTES: usize = 0x930;
+const TEST_PBP_BLOCK_BYTES: usize = TEST_PBP_SECTOR_BYTES * 16;
+const TEST_PBP_PSAR_INDEX_OFFSET: usize = 0x4000;
+const TEST_PBP_PSAR_ISO_OFFSET: usize = 0x100000;
+
+fn encode_bcd(value: u8) -> u8 {
+    ((value / 10) << 4) | (value % 10)
+}
+
+fn frames_to_msf(frames: u32) -> (u8, u8, u8) {
+    let minutes = frames / (60 * 75);
+    let seconds = (frames / 75) % 60;
+    let frame = frames % 75;
+    (minutes as u8, seconds as u8, frame as u8)
+}
+
+fn write_u32_le(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn build_test_pbp_iso(sector_count: u32, seed: u8) -> Vec<u8> {
+    let mut bytes =
+        vec![0u8; usize::try_from(sector_count).expect("sector count") * TEST_PBP_SECTOR_BYTES];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = seed.wrapping_add((index % 239) as u8);
+    }
+    assert!(
+        bytes.len() >= TEST_PBP_BLOCK_BYTES * 2 + 108,
+        "test iso must be large enough for popstation size metadata"
+    );
+    bytes[TEST_PBP_BLOCK_BYTES + 104..TEST_PBP_BLOCK_BYTES + 108]
+        .copy_from_slice(&sector_count.to_le_bytes());
+    bytes
+}
+
+fn compress_block_raw_deflate(block: &[u8]) -> Vec<u8> {
+    let mut encoder = DeflateEncoder::new(Vec::new(), DeflateCompression::new(6));
+    encoder.write_all(block).expect("deflate encode");
+    encoder.finish().expect("deflate finish")
+}
+
+fn build_test_pbp_disc_psar(
+    disc_id: &str,
+    iso_data: &[u8],
+    compress_alternate_blocks: bool,
+) -> Vec<u8> {
+    assert_eq!(disc_id.len(), 9, "disc id must be 9 chars");
+    assert_eq!(
+        iso_data.len() % TEST_PBP_SECTOR_BYTES,
+        0,
+        "iso data must align to 2352-byte sectors"
+    );
+    let mut padded_iso = iso_data.to_vec();
+    if padded_iso.len() % TEST_PBP_BLOCK_BYTES != 0 {
+        let padded_len = padded_iso.len().div_ceil(TEST_PBP_BLOCK_BYTES) * TEST_PBP_BLOCK_BYTES;
+        padded_iso.resize(padded_len, 0);
+    }
+    let block_count = padded_iso.len() / TEST_PBP_BLOCK_BYTES;
+    let mut psar = vec![0u8; TEST_PBP_PSAR_ISO_OFFSET];
+    psar[..12].copy_from_slice(b"PSISOIMG0000");
+    write_u32_le(
+        &mut psar,
+        12,
+        u32::try_from(TEST_PBP_PSAR_ISO_OFFSET + padded_iso.len()).expect("disc span"),
+    );
+
+    let disc_id_bytes = disc_id.as_bytes();
+    psar[0x400] = b'_';
+    psar[0x401..0x405].copy_from_slice(&disc_id_bytes[..4]);
+    psar[0x405] = b'_';
+    psar[0x406..0x40B].copy_from_slice(&disc_id_bytes[4..9]);
+
+    let sector_count = u32::try_from(iso_data.len() / TEST_PBP_SECTOR_BYTES).expect("sectors");
+    let leadout_frames = 150u32 + sector_count;
+    let (leadout_m, leadout_s, leadout_f) = frames_to_msf(leadout_frames);
+    psar[0x800 + 2] = 0xA0;
+    psar[0x800 + 7] = encode_bcd(1);
+    psar[0x80A + 2] = 0xA1;
+    psar[0x80A + 7] = encode_bcd(1);
+    psar[0x814 + 2] = 0xA2;
+    psar[0x814 + 7] = encode_bcd(leadout_m);
+    psar[0x814 + 8] = encode_bcd(leadout_s);
+    psar[0x814 + 9] = encode_bcd(leadout_f);
+    psar[0x81E] = 0x41;
+    psar[0x81E + 2] = encode_bcd(1);
+    psar[0x81E + 3] = encode_bcd(0);
+    psar[0x81E + 4] = encode_bcd(2);
+    psar[0x81E + 5] = encode_bcd(0);
+
+    let mut block_bytes = Vec::new();
+    for block_index in 0..block_count {
+        let start = block_index * TEST_PBP_BLOCK_BYTES;
+        let end = start + TEST_PBP_BLOCK_BYTES;
+        let raw_block = &padded_iso[start..end];
+        let mut payload = raw_block.to_vec();
+        if compress_alternate_blocks && block_index % 2 == 1 {
+            let compressed = compress_block_raw_deflate(raw_block);
+            if compressed.len() < raw_block.len() {
+                payload = compressed;
+            }
+        }
+        let entry_offset = TEST_PBP_PSAR_INDEX_OFFSET + (block_index * 0x20);
+        write_u32_le(
+            &mut psar,
+            entry_offset,
+            u32::try_from(block_bytes.len()).expect("index offset"),
+        );
+        write_u32_le(
+            &mut psar,
+            entry_offset + 4,
+            u32::try_from(payload.len()).expect("index length"),
+        );
+        block_bytes.extend_from_slice(&payload);
+    }
+    psar.extend_from_slice(&block_bytes);
+    psar
+}
+
+fn build_test_pbp_fixture(discs: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
+    assert!(!discs.is_empty(), "at least one disc is required");
+    let psar_offset = 0x100u32;
+    let disc_payloads = discs
+        .iter()
+        .enumerate()
+        .map(|(index, (disc_id, iso))| build_test_pbp_disc_psar(disc_id, iso, index % 2 == 0))
+        .collect::<Vec<_>>();
+
+    let psar = if disc_payloads.len() == 1 {
+        disc_payloads[0].clone()
+    } else {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"PSTITLEIMG000000");
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&0x2CC9_C5BCu32.to_le_bytes());
+        data.extend_from_slice(&0x33B5_A90Fu32.to_le_bytes());
+        data.extend_from_slice(&0x06F6_B4B3u32.to_le_bytes());
+        data.extend_from_slice(&0xB259_45BAu32.to_le_bytes());
+        data.resize(0x200, 0);
+        let position_table_offset = data.len();
+        data.resize(position_table_offset + (5 * 4), 0);
+        let mut cursor = 0x800usize;
+        for (index, disc) in disc_payloads.iter().enumerate() {
+            if data.len() < cursor {
+                data.resize(cursor, 0);
+            }
+            write_u32_le(
+                &mut data,
+                position_table_offset + (index * 4),
+                u32::try_from(cursor).expect("disc relative offset"),
+            );
+            data.extend_from_slice(disc);
+            cursor = data.len();
+        }
+        data
+    };
+
+    let total_len = usize::try_from(psar_offset).expect("psar offset") + psar.len();
+    let mut pbp = vec![0u8; total_len];
+    pbp[..4].copy_from_slice(&[0x00, b'P', b'B', b'P']);
+    write_u32_le(&mut pbp, 4, 0x0001_0000);
+    for section in 0..8 {
+        write_u32_le(&mut pbp, 8 + (section * 4), psar_offset);
+    }
+    let psar_start = usize::try_from(psar_offset).expect("psar offset usize");
+    pbp[psar_start..psar_start + psar.len()].copy_from_slice(&psar);
+    pbp
 }
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -1815,6 +1985,84 @@ fn inspect_list_rejects_patch_inputs() {
 }
 
 #[test]
+fn inspect_list_reports_pbp_multi_disc_selectable_outputs() {
+    let temp = setup_temp_dir();
+    let disc1 = build_test_pbp_iso(72, 13);
+    let disc2 = build_test_pbp_iso(80, 29);
+    let pbp = build_test_pbp_fixture(vec![("SLUS00001", disc1), ("SLUS00002", disc2)]);
+    let source = temp.child("multi.pbp");
+    fs::write(source.path(), pbp).expect("pbp fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "inspect",
+            source.path().to_str().expect("path"),
+            "--list",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "pbp");
+    assert_eq!(json["status"], "succeeded");
+    let label = json["label"].as_str().expect("label");
+    assert!(label.contains("multi.disc01.cue"));
+    assert!(label.contains("multi.disc01.bin"));
+    assert!(label.contains("multi.disc02.cue"));
+    assert!(label.contains("multi.disc02.bin"));
+}
+
+#[test]
+fn extract_pbp_without_select_emits_all_discs() {
+    let temp = setup_temp_dir();
+    let disc1 = build_test_pbp_iso(72, 7);
+    let disc2 = build_test_pbp_iso(80, 23);
+    let pbp = build_test_pbp_fixture(vec![
+        ("SLUS00001", disc1.clone()),
+        ("SLUS00002", disc2.clone()),
+    ]);
+    let source = temp.child("multi.pbp");
+    fs::write(source.path(), pbp).expect("pbp fixture");
+    let out_dir = temp.child("all");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            source.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["format"], "pbp");
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(out_dir.child("multi.disc01.bin").path()).expect("disc01"),
+        disc1
+    );
+    assert_eq!(
+        fs::read(out_dir.child("multi.disc02.bin").path()).expect("disc02"),
+        disc2
+    );
+    assert!(out_dir.child("multi.disc01.cue").path().exists());
+    assert!(out_dir.child("multi.disc02.cue").path().exists());
+}
+
+#[test]
 fn extract_reports_thread_fallback_in_json() {
     let temp = setup_temp_dir();
     let expected = b"zip payload for extract test".to_vec();
@@ -1957,6 +2205,84 @@ fn extract_select_glob_reports_missing_match() {
         .clone();
     let json = parse_single_json_line(&output);
     assert_eq!(json["format"], "zip");
+    assert_eq!(json["status"], "failed");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested selections were not found")
+    );
+}
+
+#[test]
+fn extract_pbp_select_cue_emits_matching_bin_pair() {
+    let temp = setup_temp_dir();
+    let disc1 = build_test_pbp_iso(72, 41);
+    let disc2 = build_test_pbp_iso(80, 73);
+    let pbp = build_test_pbp_fixture(vec![("SLUS00001", disc1), ("SLUS00002", disc2.clone())]);
+    let source = temp.child("multi.pbp");
+    fs::write(source.path(), pbp).expect("pbp fixture");
+    let out_dir = temp.child("selected");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            source.path().to_str().expect("path"),
+            "--select",
+            "multi.disc02.cue",
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["format"], "pbp");
+    assert_eq!(json["status"], "succeeded");
+    assert!(out_dir.child("multi.disc02.cue").path().exists());
+    assert!(out_dir.child("multi.disc02.bin").path().exists());
+    assert!(!out_dir.child("multi.disc01.cue").path().exists());
+    assert!(!out_dir.child("multi.disc01.bin").path().exists());
+    assert_eq!(
+        fs::read(out_dir.child("multi.disc02.bin").path()).expect("disc2 bin"),
+        disc2
+    );
+}
+
+#[test]
+fn extract_pbp_select_missing_target_reports_not_found() {
+    let temp = setup_temp_dir();
+    let disc1 = build_test_pbp_iso(72, 5);
+    let disc2 = build_test_pbp_iso(80, 9);
+    let pbp = build_test_pbp_fixture(vec![("SLUS00001", disc1), ("SLUS00002", disc2)]);
+    let source = temp.child("multi.pbp");
+    fs::write(source.path(), pbp).expect("pbp fixture");
+    let out_dir = temp.child("selected");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            source.path().to_str().expect("path"),
+            "--select",
+            "multi.disc09.bin",
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["format"], "pbp");
     assert_eq!(json["status"], "failed");
     assert!(
         json["label"]
@@ -2300,6 +2626,39 @@ fn checksum_auto_extract_ambiguity_requires_select() {
     assert!(label.contains("ambiguous"));
     assert!(label.contains("alpha.bin"));
     assert!(label.contains("beta.bin"));
+    assert!(label.contains("--select"));
+}
+
+#[test]
+fn checksum_auto_extract_pbp_multi_disc_requires_select() {
+    let temp = setup_temp_dir();
+    let disc1 = build_test_pbp_iso(72, 31);
+    let disc2 = build_test_pbp_iso(80, 47);
+    let pbp = build_test_pbp_fixture(vec![("SLUS00001", disc1), ("SLUS00002", disc2)]);
+    let source = temp.child("multi.pbp");
+    fs::write(source.path(), pbp).expect("pbp fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            source.path().to_str().expect("path"),
+            "--algo",
+            "sha1",
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "checksum");
+    assert_eq!(json["status"], "failed");
+    let label = json["label"].as_str().expect("label");
+    assert!(label.contains("ambiguous"));
+    assert!(label.contains("multi.disc01.bin"));
     assert!(label.contains("--select"));
 }
 
@@ -6622,6 +6981,69 @@ fn patch_apply_auto_extract_ambiguity_requires_select() {
     assert!(label.contains("ambiguous"));
     assert!(label.contains("alpha.bin"));
     assert!(label.contains("beta.bin"));
+    assert!(label.contains("--select"));
+}
+
+#[test]
+fn patch_apply_auto_extract_pbp_multi_disc_requires_select() {
+    let temp = setup_temp_dir();
+    let disc1 = build_test_pbp_iso(72, 53);
+    let mut disc1_modified = disc1.clone();
+    disc1_modified[2048..2065].copy_from_slice(b"patched-disc1-rom");
+    let disc2 = build_test_pbp_iso(80, 71);
+    let patch_source = temp.child("disc1.bin");
+    let patch_target = temp.child("disc1-modified.bin");
+    fs::write(patch_source.path(), &disc1).expect("disc1");
+    fs::write(patch_target.path(), &disc1_modified).expect("disc1 modified");
+
+    let pbp = build_test_pbp_fixture(vec![("SLUS00001", disc1), ("SLUS00002", disc2)]);
+    let source = temp.child("multi.pbp");
+    fs::write(source.path(), pbp).expect("pbp fixture");
+
+    let patch = temp.child("update.bps");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            patch_source.path().to_str().expect("path"),
+            "--modified",
+            patch_target.path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            patch.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let output = temp.child("output.bin");
+    let apply_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-apply",
+            "--input",
+            source.path().to_str().expect("path"),
+            "--patch",
+            patch.path().to_str().expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let apply_json = parse_single_json_line(&apply_output);
+    assert_eq!(apply_json["command"], "patch-apply");
+    assert_eq!(apply_json["status"], "failed");
+    let label = apply_json["label"].as_str().expect("label");
+    assert!(label.contains("ambiguous"));
+    assert!(label.contains("multi.disc01.bin"));
     assert!(label.contains("--select"));
 }
 

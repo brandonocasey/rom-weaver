@@ -19,6 +19,7 @@ xdvdfs.workspace = true
 [dev-dependencies]
 assert_cmd.workspace = true
 assert_fs.workspace = true
+flate2.workspace = true
 nod.workspace = true
 predicates.workspace = true
 serde_json.workspace = true

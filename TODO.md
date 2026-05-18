@@ -73,7 +73,7 @@
 | CTR-017 | container | rvz-threading-parity | done | done | done | n/a | n/a | per-block,codec-mapped | fixture-roundtrip,cli-smoke,json-contract | done | RVZ extract/create now negotiate parallel capability and forward thread budgets into `nod` preloader/processor options so `thread_execution` reporting matches runtime behavior. |
 | CTR-018 | container | z3ds-create-thread-capability | done | done | done | n/a | n/a | per-block | fixture-roundtrip,cli-smoke,json-contract | done | Z3DS create capability metadata now reports parallel threading, matching the existing parallel create runtime behavior and JSON thread reporting. |
 | CTR-019 | container | wua | done | done | done | n/a | n/a | block,zstd | fixture-roundtrip,cli-smoke | done | Native Wii U archive (`.wua`) support landed using ZArchive-compatible 64KiB block compression, footer metadata, and directory tree traversal. |
-| CTR-020 | container | pbp | n/a | todo | n/a | n/a | n/a | per-file | fixture-roundtrip,cli-smoke | todo | Add PSP/PS1 `EBOOT.PBP` payload extraction support; behavior target reference: PSXPackager PSP docs (`https://www.gamebrew.org/wiki/PSXPackager_PSP`). |
+| CTR-020 | container | pbp | done | done | n/a | n/a | n/a | per-file | fixture-roundtrip,cli-smoke | done | Native PS1 `EBOOT.PBP` inspect/extract landed with deterministic outputs (`<stem>.cue/.bin` for single-disc, `<stem>.discNN.cue/.bin` for multi-disc). `--select` remains the only targeting surface (exact/prefix/glob), and selecting a disc CUE automatically extracts its paired BIN. |
 
 ## Patch Formats
 

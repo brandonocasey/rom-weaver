@@ -67,7 +67,10 @@ struct InspectCommand {
 #[derive(Debug, Args)]
 struct ExtractCommand {
     source: PathBuf,
-    #[arg(long = "select")]
+    #[arg(
+        long = "select",
+        help = "Select extracted entries by exact name, prefix, or glob (repeatable). Examples: --select game.disc02.cue --select 'game.disc0?.bin'"
+    )]
     select: Vec<String>,
     #[arg(long)]
     out_dir: PathBuf,
