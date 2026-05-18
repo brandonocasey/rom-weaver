@@ -4151,6 +4151,60 @@ fn gcz_extract_round_trips_to_iso() {
 }
 
 #[test]
+fn gcz_extract_supports_single_output_selection() {
+    let temp = setup_temp_dir();
+    let iso_bytes = build_test_gamecube_iso(0x8000);
+    fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
+    write_gcz_fixture_from_iso(temp.child("disc.iso").path(), temp.child("disc.gcz").path());
+
+    let selected_out = temp.child("selected");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            temp.child("disc.gcz").path().to_str().expect("path"),
+            "--select",
+            "disc.iso",
+            "--out-dir",
+            selected_out.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        fs::read(selected_out.child("disc.iso").path()).expect("extracted iso"),
+        iso_bytes
+    );
+
+    let missing_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            temp.child("disc.gcz").path().to_str().expect("path"),
+            "--select",
+            "missing.iso",
+            "--out-dir",
+            selected_out.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let missing_json = parse_single_json_line(&missing_output);
+    assert_eq!(missing_json["format"], "gcz");
+    assert_eq!(missing_json["status"], "failed");
+    assert!(
+        missing_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested selections were not found")
+    );
+}
+
+#[test]
 fn rvz_inspect_reports_succeeded() {
     let temp = setup_temp_dir();
     let iso_bytes = build_test_gamecube_iso(0x6000);

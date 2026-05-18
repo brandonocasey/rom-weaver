@@ -3903,12 +3903,6 @@ impl ContainerHandler for GczContainerHandler {
         request: &ContainerExtractRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        if !request.selections.is_empty() {
-            return Err(RomWeaverError::Validation(
-                "gcz extract does not support --select yet".into(),
-            ));
-        }
-
         let execution = context.plan_threads(ThreadCapability::parallel(None));
         let preloader_threads =
             self.negotiated_threads(execution.used_parallelism, execution.effective_threads);
@@ -3924,7 +3918,13 @@ impl ContainerHandler for GczContainerHandler {
         let compression_label = normalize_codec_label(&meta.compression.to_string());
 
         fs::create_dir_all(&request.out_dir)?;
-        let output_path = request.out_dir.join(self.extract_name(&request.source));
+        let output_name = self.extract_name(&request.source);
+        let mut selections = SelectionMatcher::new(&request.selections);
+        if !selections.matches(&output_name) {
+            selections.ensure_all_matched()?;
+        }
+        selections.ensure_all_matched()?;
+        let output_path = request.out_dir.join(&output_name);
         let mut output = BufWriter::new(File::create(&output_path)?);
         let bytes_written = nod_buf_copy(&mut disc, &mut output)?;
         output.flush()?;

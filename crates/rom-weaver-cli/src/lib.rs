@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     fs,
     fs::File,
-    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, IsTerminal, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::ExitCode,
     sync::{Arc, OnceLock},
@@ -15,8 +15,8 @@ use rom_weaver_checksum::{NativeChecksumEngine, checksum_file_values, supported_
 use rom_weaver_containers::{CompressFormatRecommendation, ContainerRegistry};
 use rom_weaver_core::{
     CancellationToken, ChecksumEngine, ChecksumRequest, ContainerCreateRequest,
-    ContainerExtractRequest, ContainerInspectRequest, OperationContext, OperationFamily,
-    OperationReport, OperationStatus, PatchApplyRequest, PatchChecksumValidation,
+    ContainerExtractRequest, ContainerHandler, ContainerInspectRequest, OperationContext,
+    OperationFamily, OperationReport, OperationStatus, PatchApplyRequest, PatchChecksumValidation,
     PatchCreateRequest, ProbeConfidence, ProgressEvent, ProgressSink, Result, RomWeaverError,
     ThreadBudget, ThreadCapability, ThreadExecution,
 };
@@ -262,13 +262,16 @@ pub fn main_entry() -> ExitCode {
     } else {
         Arc::new(StdoutReporter::text())
     };
-    let app = CliApp::new(reporter, cli.json);
+    let interactive_selection_enabled =
+        !cli.json && io::stdin().is_terminal() && io::stderr().is_terminal();
+    let app = CliApp::new(reporter, cli.json, interactive_selection_enabled);
     app.run(cli.command)
 }
 
 struct CliApp {
     reporter: Arc<dyn ProgressSink>,
     emit_progress_events: bool,
+    interactive_selection_enabled: bool,
     containers: ContainerRegistry,
     patches: PatchRegistry,
     checksum: NativeChecksumEngine,
@@ -557,11 +560,24 @@ struct AutoExtractResolutionLabels<'a> {
     temp_prefix: &'a str,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ChecksumExtractCandidate {
     source: PathBuf,
     display_name: String,
     ignored: bool,
+}
+
+#[derive(Clone, Debug)]
+struct SelectionPromptCandidate {
+    value: String,
+    label: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParsedSelectionInput {
+    Cancelled,
+    Selected(usize),
+    Invalid,
 }
 
 #[derive(Clone, Debug)]
@@ -584,10 +600,15 @@ struct PatchApplyCompressionPlan {
 }
 
 impl CliApp {
-    fn new(reporter: Arc<dyn ProgressSink>, emit_progress_events: bool) -> Self {
+    fn new(
+        reporter: Arc<dyn ProgressSink>,
+        emit_progress_events: bool,
+        interactive_selection_enabled: bool,
+    ) -> Self {
         Self {
             reporter,
             emit_progress_events,
+            interactive_selection_enabled,
             containers: ContainerRegistry::new(),
             patches: PatchRegistry::new(),
             checksum: NativeChecksumEngine,
@@ -802,6 +823,7 @@ impl CliApp {
 
         let source = args.source;
         let out_dir = args.out_dir;
+        let selections = args.select;
         let extract_threads = Some(context.plan_threads(handler.capabilities().extract_threads));
         self.emit_running(
             "extract",
@@ -812,20 +834,24 @@ impl CliApp {
             Some(0.0),
             extract_threads.clone(),
         );
-        let request = ContainerExtractRequest {
-            source: source.clone(),
-            selections: args.select,
-            out_dir: out_dir.clone(),
-        };
-        let mut report = handler.extract(&request, &context).unwrap_or_else(|error| {
-            OperationReport::failed(
-                OperationFamily::Container,
-                Some(handler.descriptor().name.to_string()),
-                "extract",
-                error.to_string(),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+        let mut report = self
+            .extract_with_selection_fallback(
+                handler.as_ref(),
+                &source,
+                &out_dir,
+                &selections,
+                "extract input",
+                &context,
             )
-        });
+            .unwrap_or_else(|error| {
+                OperationReport::failed(
+                    OperationFamily::Container,
+                    Some(handler.descriptor().name.to_string()),
+                    "extract",
+                    error.to_string(),
+                    Some(context.plan_threads(ThreadCapability::single_threaded())),
+                )
+            });
         if report.status == OperationStatus::Succeeded {
             self.emit_running(
                 "extract",
@@ -1135,12 +1161,15 @@ impl CliApp {
 
             let out_dir = context.temp_paths().next_path(labels.temp_prefix, None);
             fs::create_dir_all(&out_dir)?;
-            let request = ContainerExtractRequest {
-                source: current_source.clone(),
-                selections: select.to_vec(),
-                out_dir: out_dir.clone(),
-            };
-            handler.extract(&request, context).map_err(|error| {
+            self.extract_with_selection_fallback(
+                handler.as_ref(),
+                &current_source,
+                &out_dir,
+                select,
+                labels.source_label,
+                context,
+            )
+            .map_err(|error| {
                 RomWeaverError::Validation(format!(
                     "{} payload extraction failed for `{}` ({}): {error}",
                     labels.source_label,
@@ -1152,22 +1181,39 @@ impl CliApp {
             extracted_archives = extracted_archives.saturating_add(1);
             depth = next_depth;
 
-            let candidates = self.collect_checksum_extract_candidates(&out_dir)?;
-            if candidates.is_empty() {
+            let all_candidates = self.collect_checksum_extract_candidates(&out_dir)?;
+            if all_candidates.is_empty() {
                 return Err(RomWeaverError::Validation(format!(
                     "{} payload extraction produced no files for `{}`",
                     labels.source_label,
                     current_source.display()
                 )));
             }
+
             let candidates = if no_ignore {
-                candidates
+                all_candidates.clone()
             } else {
-                let non_ignored = candidates
-                    .into_iter()
+                let non_ignored = all_candidates
+                    .iter()
                     .filter(|candidate| !candidate.ignored)
+                    .cloned()
                     .collect::<Vec<_>>();
                 if non_ignored.is_empty() {
+                    if self.interactive_selection_enabled {
+                        if let Some(selected) = self.prompt_for_checksum_candidate(
+                            &current_source,
+                            &all_candidates,
+                            labels.source_label,
+                            true,
+                        )? {
+                            current_source = selected.source;
+                            continue;
+                        }
+                        return Err(RomWeaverError::Validation(format!(
+                            "interactive selection was cancelled for `{}`",
+                            current_source.display()
+                        )));
+                    }
                     return Err(RomWeaverError::Validation(format!(
                         "all extracted {} candidates from `{}` were ignored by default filters; rerun with --no-ignore or pass --select <pattern>",
                         labels.source_label,
@@ -1177,6 +1223,21 @@ impl CliApp {
                 non_ignored
             };
             if candidates.len() > 1 {
+                if self.interactive_selection_enabled {
+                    if let Some(selected) = self.prompt_for_checksum_candidate(
+                        &current_source,
+                        &candidates,
+                        labels.source_label,
+                        false,
+                    )? {
+                        current_source = selected.source;
+                        continue;
+                    }
+                    return Err(RomWeaverError::Validation(format!(
+                        "interactive selection was cancelled for `{}`",
+                        current_source.display()
+                    )));
+                }
                 let choices = candidates
                     .iter()
                     .map(|candidate| format!("`{}`", candidate.display_name))
@@ -1201,6 +1262,207 @@ impl CliApp {
             extracted_archives,
             cleanup_paths,
         })
+    }
+
+    fn extract_with_selection_fallback(
+        &self,
+        handler: &dyn ContainerHandler,
+        source: &Path,
+        out_dir: &Path,
+        selections: &[String],
+        source_label: &str,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let request = ContainerExtractRequest {
+            source: source.to_path_buf(),
+            selections: selections.to_vec(),
+            out_dir: out_dir.to_path_buf(),
+        };
+        match handler.extract(&request, context) {
+            Ok(report) => Ok(report),
+            Err(error) => {
+                if !self.interactive_selection_enabled
+                    || !Self::is_selection_resolution_error(&error.to_string())
+                {
+                    return Err(error);
+                }
+
+                let Some(selected_entry) =
+                    self.prompt_for_container_selection(handler, source, source_label, context)?
+                else {
+                    return Err(RomWeaverError::Validation(format!(
+                        "interactive selection was cancelled for `{}`",
+                        source.display()
+                    )));
+                };
+
+                let retry_request = ContainerExtractRequest {
+                    source: source.to_path_buf(),
+                    selections: vec![selected_entry],
+                    out_dir: out_dir.to_path_buf(),
+                };
+                handler.extract(&retry_request, context)
+            }
+        }
+    }
+
+    fn is_selection_resolution_error(label: &str) -> bool {
+        let lower = label.to_ascii_lowercase();
+        lower.contains("requested selections were not found")
+            || lower.contains("requested selections resolved to no extractable")
+            || lower.contains("does not support --select")
+    }
+
+    fn prompt_for_container_selection(
+        &self,
+        handler: &dyn ContainerHandler,
+        source: &Path,
+        source_label: &str,
+        context: &OperationContext,
+    ) -> Result<Option<String>> {
+        let entries = handler
+            .list_entries(
+                &ContainerInspectRequest {
+                    source: source.to_path_buf(),
+                },
+                context,
+            )
+            .map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "interactive selection could not list entries for `{}` ({}): {error}",
+                    source.display(),
+                    handler.descriptor().name
+                ))
+            })?;
+
+        let mut unique_entries = Vec::new();
+        let mut seen = HashSet::new();
+        for entry in entries {
+            let normalized = Self::normalize_selection_entry_name(&entry);
+            if normalized.is_empty() || !seen.insert(normalized.clone()) {
+                continue;
+            }
+            unique_entries.push(normalized);
+        }
+        if unique_entries.is_empty() {
+            return Err(RomWeaverError::Validation(format!(
+                "interactive selection could not list selectable entries for `{}` ({})",
+                source.display(),
+                handler.descriptor().name
+            )));
+        }
+
+        let prompt_candidates = unique_entries
+            .iter()
+            .map(|entry| SelectionPromptCandidate {
+                value: entry.clone(),
+                label: entry.clone(),
+            })
+            .collect::<Vec<_>>();
+        let heading = format!(
+            "{source_label} selection for `{}` did not resolve. Choose one entry:",
+            source.display()
+        );
+        let selected_index = self.prompt_for_selection(&heading, &prompt_candidates)?;
+        Ok(selected_index.map(|index| prompt_candidates[index].value.clone()))
+    }
+
+    fn prompt_for_checksum_candidate(
+        &self,
+        source: &Path,
+        candidates: &[ChecksumExtractCandidate],
+        source_label: &str,
+        ignored_only: bool,
+    ) -> Result<Option<ChecksumExtractCandidate>> {
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let heading = if ignored_only {
+            format!(
+                "{source_label} payload candidates for `{}` were ignored by default filters. Choose one entry to continue:",
+                source.display()
+            )
+        } else {
+            format!(
+                "{source_label} payload selection for `{}` is ambiguous. Choose one entry:",
+                source.display()
+            )
+        };
+        let prompt_candidates = candidates
+            .iter()
+            .map(|candidate| SelectionPromptCandidate {
+                value: candidate.display_name.clone(),
+                label: if ignored_only && candidate.ignored {
+                    format!("{} [ignored by default]", candidate.display_name)
+                } else {
+                    candidate.display_name.clone()
+                },
+            })
+            .collect::<Vec<_>>();
+        let selected_index = self.prompt_for_selection(&heading, &prompt_candidates)?;
+        Ok(selected_index.map(|index| candidates[index].clone()))
+    }
+
+    fn normalize_selection_entry_name(name: &str) -> String {
+        name.trim()
+            .replace('\\', "/")
+            .trim_start_matches("./")
+            .trim_matches('/')
+            .to_string()
+    }
+
+    fn parse_selection_input(input: &str, candidate_count: usize) -> ParsedSelectionInput {
+        let trimmed = input.trim();
+        if trimmed.eq_ignore_ascii_case("q")
+            || trimmed.eq_ignore_ascii_case("quit")
+            || trimmed.eq_ignore_ascii_case("exit")
+        {
+            return ParsedSelectionInput::Cancelled;
+        }
+        if let Ok(parsed) = trimmed.parse::<usize>()
+            && (1..=candidate_count).contains(&parsed)
+        {
+            return ParsedSelectionInput::Selected(parsed - 1);
+        }
+        ParsedSelectionInput::Invalid
+    }
+
+    fn prompt_for_selection(
+        &self,
+        heading: &str,
+        candidates: &[SelectionPromptCandidate],
+    ) -> Result<Option<usize>> {
+        if !self.interactive_selection_enabled || candidates.is_empty() {
+            return Ok(None);
+        }
+        eprintln!("{heading}");
+        for (index, candidate) in candidates.iter().enumerate() {
+            eprintln!("  {}. {}", index + 1, candidate.label);
+        }
+        eprintln!(
+            "Enter a number between 1 and {}, or `q` to cancel.",
+            candidates.len()
+        );
+
+        loop {
+            eprint!("selection> ");
+            io::stderr().flush()?;
+            let mut input = String::new();
+            let bytes_read = io::stdin().read_line(&mut input)?;
+            if bytes_read == 0 {
+                return Ok(None);
+            }
+            let trimmed = input.trim();
+            match Self::parse_selection_input(trimmed, candidates.len()) {
+                ParsedSelectionInput::Cancelled => return Ok(None),
+                ParsedSelectionInput::Selected(index) => return Ok(Some(index)),
+                ParsedSelectionInput::Invalid => {}
+            }
+            eprintln!(
+                "invalid selection `{trimmed}`. Enter 1..{} or `q`.",
+                candidates.len()
+            );
+        }
     }
 
     fn cleanup_temp_paths(temp_paths: Vec<PathBuf>) {
@@ -3969,5 +4231,62 @@ impl ProgressSink for StdoutReporter {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CliApp, ParsedSelectionInput};
+
+    #[test]
+    fn parse_selection_input_accepts_valid_indexes() {
+        assert_eq!(
+            CliApp::parse_selection_input("1", 3),
+            ParsedSelectionInput::Selected(0)
+        );
+        assert_eq!(
+            CliApp::parse_selection_input("3", 3),
+            ParsedSelectionInput::Selected(2)
+        );
+    }
+
+    #[test]
+    fn parse_selection_input_handles_cancel_and_invalid_values() {
+        assert_eq!(
+            CliApp::parse_selection_input("q", 4),
+            ParsedSelectionInput::Cancelled
+        );
+        assert_eq!(
+            CliApp::parse_selection_input("  quit ", 4),
+            ParsedSelectionInput::Cancelled
+        );
+        assert_eq!(
+            CliApp::parse_selection_input("0", 4),
+            ParsedSelectionInput::Invalid
+        );
+        assert_eq!(
+            CliApp::parse_selection_input("5", 4),
+            ParsedSelectionInput::Invalid
+        );
+        assert_eq!(
+            CliApp::parse_selection_input("abc", 4),
+            ParsedSelectionInput::Invalid
+        );
+    }
+
+    #[test]
+    fn selection_error_detection_matches_known_selection_failures() {
+        assert!(CliApp::is_selection_resolution_error(
+            "validation failed: requested selections were not found: missing.iso"
+        ));
+        assert!(CliApp::is_selection_resolution_error(
+            "validation failed: requested selections resolved to no extractable cd outputs"
+        ));
+        assert!(CliApp::is_selection_resolution_error(
+            "validation failed: gcz extract does not support --select yet"
+        ));
+        assert!(!CliApp::is_selection_resolution_error(
+            "validation failed: no registered handler matched `sample.bin`"
+        ));
     }
 }
