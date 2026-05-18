@@ -35,7 +35,7 @@
 | CMD-004 | command | compress | n/a | n/a | done | n/a | n/a | context-plumbed | cli-smoke,json-contract | done | Container create/compress routing is wired through registered handlers (`--format`, optional `--codec`/`--level`). |
 | CMD-005 | command | patch-apply | n/a | n/a | n/a | done | n/a | context-plumbed | cli-smoke,json-contract | done | Patch apply routes through handler probing, emits thread-aware reports, and supports compatibility flags `--strip-header`, `--add-header`, and `--repair-checksum`; `--strip-header` is Igir-style profile-aware for `.a78/.lnx/.nes/.fds/.smc`, while checksum repair remains auto-detected for Sega Genesis/Game Boy targets. |
 | CMD-006 | command | patch-create | n/a | n/a | n/a | n/a | done | context-plumbed | cli-smoke,json-contract | done | Patch create routes by format name through registered handlers. |
-| CMD-007 | command | trim | n/a | n/a | scaffolded | n/a | n/a | context-plumbed | cli-smoke,json-contract,thread-model | todo | Dedicated image/file trimming workflow; target NDSTokyoTrim-compatible behavior for NDS/DSi trim boundaries and safety checks. |
+| CMD-007 | command | trim | n/a | n/a | done | n/a | n/a | context-plumbed | cli-smoke,json-contract,thread-model | done | Dedicated image/file trimming workflow landed with NDSTokyoTrim-compatible NDS/DSi boundaries plus GBA, 3DS, and XISO trim handling (XISO revert intentionally unsupported). |
 
 ## Threading Groundwork
 
@@ -46,7 +46,7 @@
 | TG-003 | threading | thread-capability-reporting | n/a | n/a | n/a | n/a | n/a | requested vs effective threads | unit,json-contract | done | Reports fallback vs actual parallelism consistently. |
 | TG-004 | threading | json-reporting | n/a | n/a | n/a | n/a | n/a | stable event schema | cli-smoke,json-contract | done | All commands can emit progress-compatible JSON records. |
 | TG-005 | threading | temp-file-concurrency-safety | n/a | n/a | n/a | n/a | n/a | unique temp paths | unit | done | Temp path allocator namespaces per operation context. |
-| TG-006 | threading | capability-runtime-parity | n/a | n/a | n/a | n/a | n/a | capability assertions vs real execution paths | unit,json-contract | todo | Added `ThreadCapability::supports_execution` validation and patch-handler parity assertions; RVZ/Z3DS create-path runtime parity checks are still pending. |
+| TG-006 | threading | capability-runtime-parity | n/a | n/a | n/a | n/a | n/a | capability assertions vs real execution paths | unit,json-contract | done | Added `ThreadCapability::supports_execution` validation and parity assertions, including RVZ/Z3DS create-path runtime capability checks. |
 
 ## Containers
 
@@ -67,7 +67,7 @@
 | CTR-013 | container | bz2 | done | done | done | n/a | n/a | stream | fixture-roundtrip,cli-smoke | done | Standalone bzip2 stream support (non-tar) landed. |
 | CTR-014 | container | xz | done | done | done | n/a | n/a | stream | fixture-roundtrip,cli-smoke | done | Standalone xz stream support (non-tar) landed. |
 | CTR-015 | container | zst | done | done | done | n/a | n/a | stream | fixture-roundtrip,cli-smoke | done | Standalone zstd stream support (non-tar) landed. |
-| CTR-016 | container | xiso | todo | todo | todo | n/a | n/a | per-file | fixture-roundtrip,cli-smoke | todo | Original Xbox XISO support; prioritize inspect/extract first, then rebuild/create. |
+| CTR-016 | container | xiso | n/a | n/a | n/a | n/a | n/a | per-file | fixture-roundtrip,cli-smoke | done | XISO is trim-only in this phase: container inspect/extract/create remain intentionally unsupported, and XISO operations are handled via the `trim` command. |
 | CTR-017 | container | rvz-threading-parity | done | done | done | n/a | n/a | per-block,codec-mapped | fixture-roundtrip,cli-smoke,json-contract | done | RVZ extract/create now negotiate parallel capability and forward thread budgets into `nod` preloader/processor options so `thread_execution` reporting matches runtime behavior. |
 | CTR-018 | container | z3ds-create-thread-capability | done | done | done | n/a | n/a | per-block | fixture-roundtrip,cli-smoke,json-contract | done | Z3DS create capability metadata now reports parallel threading, matching the existing parallel create runtime behavior and JSON thread reporting. |
 | CTR-019 | container | wua | done | done | done | n/a | n/a | block,zstd | fixture-roundtrip,cli-smoke | done | Native Wii U archive (`.wua`) support landed using ZArchive-compatible 64KiB block compression, footer metadata, and directory tree traversal. |
