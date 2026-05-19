@@ -21,6 +21,19 @@ export const DEFAULT_PREOPENS = {
   '/tmp': tmpdir(),
 };
 
+export function createWasmEnvImports() {
+  return {
+    __cxa_allocate_exception() {
+      return 0;
+    },
+    __cxa_throw(pointer, typeInfo) {
+      throw new Error(
+        `rom-weaver wasm raised a C++ exception (pointer=${pointer}, type=${typeInfo})`,
+      );
+    },
+  };
+}
+
 export class RomWeaverWasiRunner {
   constructor(options = {}) {
     const useDefaultPreopens = options.useDefaultPreopens ?? true;
@@ -78,6 +91,7 @@ export class RomWeaverWasiRunner {
 
       const instance = await WebAssembly.instantiate(module, {
         wasi_snapshot_preview1: wasi.wasiImport,
+        env: createWasmEnvImports(),
       });
 
       exitCode = wasi.start(instance);
