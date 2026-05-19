@@ -2,13 +2,13 @@ mod aps_n64;
 mod apsgba;
 mod bdf;
 mod bps;
+#[cfg(feature = "bsp-js")]
 mod bsp;
 mod dldi;
 mod dps;
 mod gdiff;
 mod ips;
 mod pat;
-mod pds;
 mod pmsr;
 mod ppf;
 mod qbsdiff_support;
@@ -17,9 +17,7 @@ mod solid;
 #[cfg(test)]
 mod test_support;
 mod ups;
-#[cfg(not(target_family = "wasm"))]
 mod vcdiff;
-#[cfg(not(target_family = "wasm"))]
 mod xdelta_ffi;
 
 use std::{
@@ -33,13 +31,13 @@ use aps_n64::ApsN64PatchHandler;
 use apsgba::ApsGbaPatchHandler;
 use bdf::BdfPatchHandler;
 use bps::BpsPatchHandler;
+#[cfg(feature = "bsp-js")]
 use bsp::BspPatchHandler;
 use dldi::DldiPatchHandler;
 use dps::DpsPatchHandler;
 use gdiff::GdiffPatchHandler;
 use ips::IpsPatchHandler;
-use pat::{has_pat_record_signature, PatPatchHandler};
-use pds::PdsPatchHandler;
+use pat::{PatPatchHandler, has_pat_record_signature};
 use pmsr::PmsrPatchHandler;
 use ppf::PpfPatchHandler;
 use rom_weaver_core::{FormatDescriptor, OperationFamily, PatchHandler, Result, RomWeaverError};
@@ -47,7 +45,6 @@ use rup::RupPatchHandler;
 use solid::SolidPatchHandler;
 use tracing::trace;
 use ups::UpsPatchHandler;
-#[cfg(not(target_family = "wasm"))]
 use vcdiff::VcdiffPatchHandler;
 
 const IPS: FormatDescriptor = FormatDescriptor {
@@ -80,14 +77,12 @@ const UPS: FormatDescriptor = FormatDescriptor {
     aliases: &[],
     extensions: &[".ups"],
 };
-#[cfg(not(target_family = "wasm"))]
 const VCDIFF: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
     name: "VCDIFF",
     aliases: &["vcdiff"],
     extensions: &[".vcdiff"],
 };
-#[cfg(not(target_family = "wasm"))]
 const XDELTA: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
     name: "xdelta",
@@ -142,6 +137,7 @@ const BDF_BSDIFF40: FormatDescriptor = FormatDescriptor {
     aliases: &["bdf", "bsdiff", "bsdiff40"],
     extensions: &[".bdf", ".bsdiff", ".bsdiff40"],
 };
+#[cfg(feature = "bsp-js")]
 const BSP: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
     name: "BSP",
@@ -166,16 +162,9 @@ const DPS: FormatDescriptor = FormatDescriptor {
     aliases: &[],
     extensions: &[".dps"],
 };
-const PDS: FormatDescriptor = FormatDescriptor {
-    family: OperationFamily::Patch,
-    name: "PDS",
-    aliases: &[],
-    extensions: &[".pds"],
-};
 
 const BPS_SIGNATURE: &[u8] = b"BPS1";
 const UPS_SIGNATURE: &[u8] = b"UPS1";
-#[cfg(not(target_family = "wasm"))]
 const VCDIFF_SIGNATURE: [u8; 3] = [0xD6, 0xC3, 0xC4];
 const GDIFF_SIGNATURE: [u8; 5] = [0xD1, 0xFF, 0xD1, 0xFF, 4];
 const APS_N64_SIGNATURE: &[u8] = b"APS10";
@@ -274,11 +263,8 @@ impl PatchRegistry {
             Arc::new(BpsPatchHandler::new(&BPS)),
             Arc::new(UpsPatchHandler::new(&UPS)),
         ];
-        #[cfg(not(target_family = "wasm"))]
-        {
-            handlers.push(Arc::new(VcdiffPatchHandler::new(&VCDIFF)));
-            handlers.push(Arc::new(VcdiffPatchHandler::new(&XDELTA)));
-        }
+        handlers.push(Arc::new(VcdiffPatchHandler::new(&VCDIFF)));
+        handlers.push(Arc::new(VcdiffPatchHandler::new(&XDELTA)));
         handlers.push(Arc::new(GdiffPatchHandler::new(&GDIFF)));
         handlers.push(Arc::new(ApsN64PatchHandler::new(&APS)));
         handlers.push(Arc::new(ApsGbaPatchHandler::new(&APSGBA)));
@@ -287,11 +273,11 @@ impl PatchRegistry {
         handlers.push(Arc::new(PatPatchHandler::new(&PAT)));
         handlers.push(Arc::new(IpsPatchHandler::new_ebp(&EBP)));
         handlers.push(Arc::new(BdfPatchHandler::new(&BDF_BSDIFF40)));
+        #[cfg(feature = "bsp-js")]
         handlers.push(Arc::new(BspPatchHandler::new(&BSP)));
         handlers.push(Arc::new(PmsrPatchHandler::new(&MOD)));
         handlers.push(Arc::new(DldiPatchHandler::new(&DLDI)));
         handlers.push(Arc::new(DpsPatchHandler::new(&DPS)));
-        handlers.push(Arc::new(PdsPatchHandler::new(&PDS)));
         Self {
             handlers: handlers
                 .into_iter()
@@ -306,26 +292,13 @@ impl PatchRegistry {
 
     pub fn probe(&self, path: &Path) -> Option<Arc<dyn PatchHandler>> {
         let ebp_extension = is_ebp_extension(path);
-        #[cfg(not(target_family = "wasm"))]
         let xdelta_extension = is_xdelta_extension(path);
-
-        #[cfg(target_family = "wasm")]
-        trace!(
-            patch = %path.display(),
-            ebp_extension,
-            "patch registry probe start"
-        );
-        #[cfg(not(target_family = "wasm"))]
         trace!(
             patch = %path.display(),
             ebp_extension,
             xdelta_extension,
             "patch registry probe start"
         );
-
-        #[cfg(target_family = "wasm")]
-        let signature_match = self.probe_by_signature(path, ebp_extension);
-        #[cfg(not(target_family = "wasm"))]
         let signature_match = self.probe_by_signature(path, ebp_extension, xdelta_extension);
         if let Some(signature_match) = signature_match {
             trace!(
@@ -377,7 +350,7 @@ impl PatchRegistry {
         &self,
         path: &Path,
         ebp_extension: bool,
-        #[cfg(not(target_family = "wasm"))] xdelta_extension: bool,
+        xdelta_extension: bool,
     ) -> Option<Arc<dyn PatchHandler>> {
         let Some(prefix) = read_signature_prefix(path, DLDI_SIGNATURE.len()) else {
             trace!(
@@ -393,7 +366,6 @@ impl PatchRegistry {
         if prefix.starts_with(UPS_SIGNATURE) {
             return self.probe_signature_match(path, "UPS1", "ups");
         }
-        #[cfg(not(target_family = "wasm"))]
         if prefix.starts_with(&VCDIFF_SIGNATURE) {
             if xdelta_extension {
                 return self.probe_signature_match(path, "VCDIFF+xdelta extension", "xdelta");
@@ -538,11 +510,7 @@ mod tests {
             .map(|handler| handler.descriptor().name)
             .collect::<Vec<_>>();
         let mut expected = vec!["IPS", "IPS32", "SOLID", "BPS", "UPS"];
-        #[cfg(not(target_family = "wasm"))]
-        {
-            expected.extend(["VCDIFF", "xdelta"]);
-        }
-        expected.push("GDIFF");
+        expected.extend(["VCDIFF", "xdelta", "GDIFF"]);
         expected.extend([
             "APS",
             "APSGBA",
@@ -551,12 +519,12 @@ mod tests {
             "PAT",
             "EBP",
             "BDF/BSDIFF40",
-            "BSP",
             "MOD",
             "DLDI",
             "DPS",
-            "PDS",
         ]);
+        #[cfg(feature = "bsp-js")]
+        expected.insert(expected.iter().position(|name| *name == "MOD").unwrap(), "BSP");
         assert_eq!(names, expected);
     }
 
@@ -580,6 +548,7 @@ mod tests {
         assert!(capabilities.create);
     }
 
+    #[cfg(feature = "bsp-js")]
     #[test]
     fn bsp_is_wired_to_supported_handler() {
         let registry = PatchRegistry::new();
@@ -604,16 +573,6 @@ mod tests {
     fn pat_is_wired_to_supported_handler() {
         let registry = PatchRegistry::new();
         let handler = registry.find_by_name("pat").expect("pat handler");
-        let capabilities = handler.capabilities();
-        assert!(capabilities.parse);
-        assert!(capabilities.apply);
-        assert!(capabilities.create);
-    }
-
-    #[test]
-    fn pds_is_wired_to_supported_handler() {
-        let registry = PatchRegistry::new();
-        let handler = registry.find_by_name("pds").expect("pds handler");
         let capabilities = handler.capabilities();
         assert!(capabilities.parse);
         assert!(capabilities.apply);
@@ -781,13 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn probe_routes_pds_extension_to_pds_handler() {
-        let registry = PatchRegistry::new();
-        let handler = registry.probe(Path::new("update.pds")).expect("pds probe");
-        assert_eq!(handler.descriptor().name, "PDS");
-    }
-
-    #[test]
     fn probe_routes_dps_extension_to_dps_handler() {
         let registry = PatchRegistry::new();
         let handler = registry.probe(Path::new("update.dps")).expect("dps probe");
@@ -857,6 +809,7 @@ mod tests {
         assert_eq!(handler.descriptor().name, "MOD");
     }
 
+    #[cfg(feature = "bsp-js")]
     #[test]
     fn probe_routes_bsp_extension_to_bsp_handler() {
         let registry = PatchRegistry::new();
@@ -901,6 +854,7 @@ mod tests {
         assert_eq!(handler.descriptor().name, "GDIFF");
     }
 
+    #[cfg(feature = "bsp-js")]
     #[test]
     fn find_by_name_routes_bsp_name_to_bsp_handler() {
         let registry = PatchRegistry::new();
