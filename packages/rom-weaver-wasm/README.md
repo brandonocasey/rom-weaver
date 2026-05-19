@@ -34,7 +34,7 @@ console.log(result.stdout);
 ## `run` vs `runJson`
 
 - `run(args)` returns raw `stdout`/`stderr`.
-- `runJson(args)` runs `--json` and parses newline-delimited JSON events.
+- `runJson(args)` runs `--json`, parses stdout JSON progress events, and parses stderr JSON trace events.
 
 ```js
 import { createRomWeaverWasiRunner } from 'rom-weaver-wasm';
@@ -48,6 +48,9 @@ const structured = await runner.runJson(['inspect', 'game.bin'], {
   onEvent(event) {
     console.log('event', event);
   },
+  onTraceEvent(event) {
+    console.log('trace', event);
+  },
   onNonJsonLine(line) {
     console.log('non-json', line);
   },
@@ -55,6 +58,8 @@ const structured = await runner.runJson(['inspect', 'game.bin'], {
 
 console.log(structured.events.length);
 console.log(structured.nonJsonLines);
+console.log(structured.traceEvents.length);
+console.log(structured.traceNonJsonLines);
 ```
 
 ## NodeFS Example

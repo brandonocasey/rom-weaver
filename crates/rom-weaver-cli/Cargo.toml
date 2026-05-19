@@ -14,6 +14,8 @@ rom-weaver-containers = { path = "../rom-weaver-containers" }
 rom-weaver-core = { path = "../rom-weaver-core" }
 rom-weaver-patches = { path = "../rom-weaver-patches" }
 serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 xdvdfs.workspace = true
 
 [dev-dependencies]

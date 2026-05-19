@@ -23,6 +23,7 @@ use rom_weaver_core::{
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest as Sha2Digest, Sha256};
+use tracing::trace;
 
 const SUPPORTED_ALGORITHMS: &[&str] = &[
     "crc32", "md5", "sha1", "sha256", "blake3", "crc32c", "crc16", "adler32",
@@ -101,6 +102,14 @@ impl NativeChecksumEngine {
         context: &OperationContext,
         stage: &'static str,
     ) -> Result<OperationReport> {
+        trace!(
+            stage,
+            source = %request.source.display(),
+            algorithms = ?request.algorithms,
+            start = ?request.start,
+            length = ?request.length,
+            "running checksum operation"
+        );
         let algorithms = resolve_algorithms(&request.algorithms)?;
         let range = ResolvedRange::from_request(&request.source, request.start, request.length)?;
         let computed = compute_checksum_values(request, context)?;
@@ -490,6 +499,13 @@ fn compute_checksum_values(
     request: &ChecksumRequest,
     context: &OperationContext,
 ) -> Result<ChecksumValues> {
+    trace!(
+        source = %request.source.display(),
+        algorithms = ?request.algorithms,
+        start = ?request.start,
+        length = ?request.length,
+        "computing checksum values"
+    );
     let algorithms = resolve_algorithms(&request.algorithms)?;
     let range = ResolvedRange::from_request(&request.source, request.start, request.length)?;
     let fingerprint = SourceFingerprint::from_path(&request.source)?;
@@ -503,10 +519,24 @@ fn compute_checksum_values(
         .collect::<Vec<_>>();
 
     let cached_count = algorithms.len().saturating_sub(missing_algorithms.len());
+    trace!(
+        source = %request.source.display(),
+        total_algorithms = algorithms.len(),
+        missing_algorithms = missing_algorithms.len(),
+        cached_algorithms = cached_count,
+        "resolved checksum cache coverage"
+    );
     let execution = if missing_algorithms.is_empty() {
+        trace!(source = %request.source.display(), "checksum cache hit for all algorithms");
         cache_hit_execution(context.thread_budget())
     } else {
         let plan = plan_checksum(&missing_algorithms, &range);
+        trace!(
+            source = %request.source.display(),
+            mode = ?plan.mode,
+            capability = ?plan.capability,
+            "selected checksum execution plan"
+        );
         let (execution, computed) =
             execute_plan(&request.source, &range, &missing_algorithms, context, &plan)?;
         cached_results.extend(computed);
@@ -543,8 +573,25 @@ fn execute_plan(
     context: &OperationContext,
     plan: &ChecksumPlan,
 ) -> Result<(ThreadExecution, BTreeMap<String, String>)> {
+    trace!(
+        source = %source.display(),
+        start = range.start,
+        length = range.len,
+        algorithms = ?algorithms,
+        mode = ?plan.mode,
+        capability = ?plan.capability,
+        "executing checksum plan"
+    );
     let mapped = map_range(source, range);
     let execution = context.plan_threads(plan.capability.clone());
+    trace!(
+        source = %source.display(),
+        mapped = mapped.is_some(),
+        requested_threads = execution.requested_threads,
+        effective_threads = execution.effective_threads,
+        used_parallelism = execution.used_parallelism,
+        "checksum execution thread plan resolved"
+    );
     if !execution.used_parallelism || execution.effective_threads == 1 {
         let computed = compute_sequential(
             mapped.as_ref(),
@@ -554,6 +601,11 @@ fn execute_plan(
             &execution,
             context.cancel(),
         )?;
+        trace!(
+            source = %source.display(),
+            algorithm_count = computed.len(),
+            "checksum plan completed with sequential execution"
+        );
         return Ok((execution, computed));
     }
 
@@ -585,6 +637,11 @@ fn execute_plan(
             context.cancel(),
         )?,
     };
+    trace!(
+        source = %source.display(),
+        algorithm_count = computed.len(),
+        "checksum plan completed with pooled execution"
+    );
 
     Ok((execution, computed))
 }

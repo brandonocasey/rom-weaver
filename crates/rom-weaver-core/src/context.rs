@@ -4,6 +4,7 @@ use crate::{
     CancellationToken, ProgressEvent, ProgressSink, Result, SharedThreadPool, TempPathAllocator,
     ThreadBudget, ThreadCapability, ThreadExecution,
 };
+use tracing::trace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PatchChecksumValidation {
@@ -27,6 +28,11 @@ impl OperationContext {
         progress: Arc<dyn ProgressSink>,
         cancel: CancellationToken,
     ) -> Self {
+        trace!(
+            thread_budget = %thread_budget,
+            temp_root = %temp_root.display(),
+            "creating operation context"
+        );
         Self {
             thread_budget,
             temp_paths: Arc::new(TempPathAllocator::new(temp_root)),
@@ -64,10 +70,19 @@ impl OperationContext {
     }
 
     pub fn emit(&self, event: ProgressEvent) {
+        trace!(
+            command = %event.command,
+            family = ?event.family,
+            format = ?event.format,
+            stage = %event.stage,
+            status = ?event.status,
+            "emitting progress event"
+        );
         self.progress.emit(event);
     }
 
     pub fn plan_threads(&self, capability: ThreadCapability) -> ThreadExecution {
+        trace!(capability = ?capability, budget = %self.thread_budget, "planning thread usage");
         capability.negotiate(self.thread_budget)
     }
 
@@ -76,6 +91,13 @@ impl OperationContext {
         capability: ThreadCapability,
     ) -> Result<(ThreadExecution, SharedThreadPool)> {
         let execution = self.plan_threads(capability);
+        trace!(
+            requested_threads = execution.requested_threads,
+            effective_threads = execution.effective_threads,
+            thread_mode = ?execution.thread_mode,
+            used_parallelism = execution.used_parallelism,
+            "building execution pool for operation context"
+        );
         let pool = SharedThreadPool::with_execution(&execution)?;
         Ok((execution, pool))
     }

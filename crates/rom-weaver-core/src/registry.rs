@@ -1,9 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::{
     OperationContext, OperationFamily, OperationStatus, Result, RomWeaverError, ThreadCapability,
     ThreadExecution,
 };
+use tracing::trace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FormatDescriptor {
@@ -215,6 +219,18 @@ pub struct CodecCapabilities {
 
 pub type CodecDescriptor = FormatDescriptor;
 
+pub fn traced_container_handler(handler: Arc<dyn ContainerHandler>) -> Arc<dyn ContainerHandler> {
+    Arc::new(TracingContainerHandler { inner: handler })
+}
+
+pub fn traced_patch_handler(handler: Arc<dyn PatchHandler>) -> Arc<dyn PatchHandler> {
+    Arc::new(TracingPatchHandler { inner: handler })
+}
+
+pub fn traced_codec_backend(backend: Arc<dyn CodecBackend>) -> Arc<dyn CodecBackend> {
+    Arc::new(TracingCodecBackend { inner: backend })
+}
+
 pub trait ContainerHandler: Send + Sync {
     fn descriptor(&self) -> &'static FormatDescriptor;
     fn probe(&self, source: &Path) -> ProbeConfidence {
@@ -299,4 +315,294 @@ pub trait CodecBackend: Send + Sync {
         context: &OperationContext,
     ) -> Result<OperationReport>;
     fn capabilities(&self) -> CodecCapabilities;
+}
+
+struct TracingContainerHandler {
+    inner: Arc<dyn ContainerHandler>,
+}
+
+impl ContainerHandler for TracingContainerHandler {
+    fn descriptor(&self) -> &'static FormatDescriptor {
+        self.inner.descriptor()
+    }
+
+    fn probe(&self, source: &Path) -> ProbeConfidence {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            source = %source.display(),
+            "container probe start"
+        );
+        let confidence = self.inner.probe(source);
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            source = %source.display(),
+            confidence = ?confidence,
+            "container probe complete"
+        );
+        confidence
+    }
+
+    fn inspect(
+        &self,
+        request: &ContainerInspectRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            source = %request.source.display(),
+            "container inspect start"
+        );
+        let result = self.inner.inspect(request, context);
+        trace_operation_result("inspect", descriptor, &result);
+        result
+    }
+
+    fn list_entries(
+        &self,
+        request: &ContainerInspectRequest,
+        context: &OperationContext,
+    ) -> Result<Vec<String>> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            source = %request.source.display(),
+            "container list start"
+        );
+        let result = self.inner.list_entries(request, context);
+        match &result {
+            Ok(entries) => {
+                trace!(
+                    family = ?descriptor.family,
+                    format = descriptor.name,
+                    entry_count = entries.len(),
+                    "container list complete"
+                );
+            }
+            Err(error) => {
+                trace!(
+                    family = ?descriptor.family,
+                    format = descriptor.name,
+                    error = %error,
+                    "container list failed"
+                );
+            }
+        }
+        result
+    }
+
+    fn extract(
+        &self,
+        request: &ContainerExtractRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            source = %request.source.display(),
+            out_dir = %request.out_dir.display(),
+            selections = request.selections.len(),
+            "container extract start"
+        );
+        let result = self.inner.extract(request, context);
+        trace_operation_result("extract", descriptor, &result);
+        result
+    }
+
+    fn create(
+        &self,
+        request: &ContainerCreateRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            output = %request.output.display(),
+            input_count = request.inputs.len(),
+            requested_format = %request.format,
+            codec = ?request.codec,
+            level = ?request.level,
+            "container create start"
+        );
+        let result = self.inner.create(request, context);
+        trace_operation_result("create", descriptor, &result);
+        result
+    }
+
+    fn capabilities(&self) -> ContainerCapabilities {
+        self.inner.capabilities()
+    }
+}
+
+struct TracingPatchHandler {
+    inner: Arc<dyn PatchHandler>,
+}
+
+impl PatchHandler for TracingPatchHandler {
+    fn descriptor(&self) -> &'static FormatDescriptor {
+        self.inner.descriptor()
+    }
+
+    fn probe(&self, patch_path: &Path) -> ProbeConfidence {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            patch = %patch_path.display(),
+            "patch probe start"
+        );
+        let confidence = self.inner.probe(patch_path);
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            patch = %patch_path.display(),
+            confidence = ?confidence,
+            "patch probe complete"
+        );
+        confidence
+    }
+
+    fn parse(&self, patch_path: &Path, context: &OperationContext) -> Result<OperationReport> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            patch = %patch_path.display(),
+            "patch parse start"
+        );
+        let result = self.inner.parse(patch_path, context);
+        trace_operation_result("parse", descriptor, &result);
+        result
+    }
+
+    fn apply(
+        &self,
+        request: &PatchApplyRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            input = %request.input.display(),
+            output = %request.output.display(),
+            patch_count = request.patches.len(),
+            "patch apply start"
+        );
+        let result = self.inner.apply(request, context);
+        trace_operation_result("apply", descriptor, &result);
+        result
+    }
+
+    fn create(
+        &self,
+        request: &PatchCreateRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            original = %request.original.display(),
+            modified = %request.modified.display(),
+            output = %request.output.display(),
+            requested_format = %request.format,
+            "patch create start"
+        );
+        let result = self.inner.create(request, context);
+        trace_operation_result("create", descriptor, &result);
+        result
+    }
+
+    fn capabilities(&self) -> PatchCapabilities {
+        self.inner.capabilities()
+    }
+}
+
+struct TracingCodecBackend {
+    inner: Arc<dyn CodecBackend>,
+}
+
+impl CodecBackend for TracingCodecBackend {
+    fn descriptor(&self) -> &'static CodecDescriptor {
+        self.inner.descriptor()
+    }
+
+    fn encode(
+        &self,
+        request: &CodecOperationRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            input = %request.input.display(),
+            output = %request.output.display(),
+            level = ?request.level,
+            "codec encode start"
+        );
+        let result = self.inner.encode(request, context);
+        trace_operation_result("encode", descriptor, &result);
+        result
+    }
+
+    fn decode(
+        &self,
+        request: &CodecOperationRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let descriptor = self.inner.descriptor();
+        trace!(
+            family = ?descriptor.family,
+            format = descriptor.name,
+            input = %request.input.display(),
+            output = %request.output.display(),
+            level = ?request.level,
+            "codec decode start"
+        );
+        let result = self.inner.decode(request, context);
+        trace_operation_result("decode", descriptor, &result);
+        result
+    }
+
+    fn capabilities(&self) -> CodecCapabilities {
+        self.inner.capabilities()
+    }
+}
+
+fn trace_operation_result(
+    stage: &str,
+    descriptor: &FormatDescriptor,
+    result: &Result<OperationReport>,
+) {
+    match result {
+        Ok(report) => {
+            trace!(
+                family = ?descriptor.family,
+                format = descriptor.name,
+                stage,
+                status = ?report.status,
+                percent = ?report.percent,
+                label = %report.label,
+                "operation complete"
+            );
+        }
+        Err(error) => {
+            trace!(
+                family = ?descriptor.family,
+                format = descriptor.name,
+                stage,
+                error = %error,
+                "operation failed"
+            );
+        }
+    }
 }

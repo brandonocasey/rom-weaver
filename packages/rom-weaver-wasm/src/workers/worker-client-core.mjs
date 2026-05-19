@@ -19,10 +19,16 @@ export class RomWeaverWorkerClientCore {
   }
 
   runJson(args = [], options = {}) {
-    const { onEvent, onNonJsonLine, ...runOptions } = options ?? {};
+    const {
+      onEvent,
+      onNonJsonLine,
+      onTraceEvent,
+      onTraceNonJsonLine,
+      ...runOptions
+    } = options ?? {};
     return this._send(
       { type: 'runJson', args, options: runOptions },
-      { onEvent, onNonJsonLine },
+      { onEvent, onNonJsonLine, onTraceEvent, onTraceNonJsonLine },
     );
   }
 
@@ -41,6 +47,12 @@ export class RomWeaverWorkerClientCore {
         onEvent: typeof handlers.onEvent === 'function' ? handlers.onEvent : null,
         onNonJsonLine: typeof handlers.onNonJsonLine === 'function'
           ? handlers.onNonJsonLine
+          : null,
+        onTraceEvent: typeof handlers.onTraceEvent === 'function'
+          ? handlers.onTraceEvent
+          : null,
+        onTraceNonJsonLine: typeof handlers.onTraceNonJsonLine === 'function'
+          ? handlers.onTraceNonJsonLine
           : null,
       });
 
@@ -68,6 +80,12 @@ export class RomWeaverWorkerClientCore {
         return;
       case 'nonJsonLine':
         pending?.onNonJsonLine?.(message.line);
+        return;
+      case 'traceEvent':
+        pending?.onTraceEvent?.(message.event);
+        return;
+      case 'traceNonJsonLine':
+        pending?.onTraceNonJsonLine?.(message.line);
         return;
       case 'ready':
         this._pending.delete(requestId);

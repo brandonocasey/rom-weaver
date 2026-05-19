@@ -1,5 +1,6 @@
 import type {
   RomWeaverNodeWorkerMode,
+  RomWeaverRunJsonOptions,
   RomWeaverRunJsonResult,
   RomWeaverRunOptions,
   RomWeaverRunResult,
@@ -7,7 +8,7 @@ import type {
 } from '../rom-weaver-types.d.ts';
 
 export const WORKER_REQUEST_TYPES: readonly ['init', 'run', 'runJson', 'dispose'];
-export const WORKER_RESPONSE_TYPES: readonly ['ready', 'result', 'event', 'nonJsonLine', 'disposed', 'error'];
+export const WORKER_RESPONSE_TYPES: readonly ['ready', 'result', 'event', 'nonJsonLine', 'traceEvent', 'traceNonJsonLine', 'disposed', 'error'];
 
 export interface RomWeaverWorkerInitRequest {
   type: 'init';
@@ -27,7 +28,7 @@ export interface RomWeaverWorkerRunJsonRequest {
   type: 'runJson';
   requestId: number;
   args?: unknown[];
-  options?: Omit<RomWeaverRunOptions, 'onEvent' | 'onNonJsonLine'> & Record<string, unknown>;
+  options?: Omit<RomWeaverRunJsonOptions<unknown, unknown>, 'onEvent' | 'onNonJsonLine' | 'onTraceEvent' | 'onTraceNonJsonLine'> & Record<string, unknown>;
 }
 
 export interface RomWeaverWorkerDisposeRequest {
@@ -51,7 +52,7 @@ export interface RomWeaverWorkerResultMessage {
   type: 'result';
   requestId: number;
   operation: 'run' | 'runJson';
-  result: RomWeaverRunResult | RomWeaverRunJsonResult<unknown>;
+  result: RomWeaverRunResult | RomWeaverRunJsonResult<unknown, unknown>;
 }
 
 export interface RomWeaverWorkerProgressEventMessage {
@@ -62,6 +63,18 @@ export interface RomWeaverWorkerProgressEventMessage {
 
 export interface RomWeaverWorkerNonJsonLineMessage {
   type: 'nonJsonLine';
+  requestId: number;
+  line: string;
+}
+
+export interface RomWeaverWorkerTraceEventMessage {
+  type: 'traceEvent';
+  requestId: number;
+  event: unknown;
+}
+
+export interface RomWeaverWorkerTraceNonJsonLineMessage {
+  type: 'traceNonJsonLine';
   requestId: number;
   line: string;
 }
@@ -82,5 +95,7 @@ export type RomWeaverWorkerResponse =
   | RomWeaverWorkerResultMessage
   | RomWeaverWorkerProgressEventMessage
   | RomWeaverWorkerNonJsonLineMessage
+  | RomWeaverWorkerTraceEventMessage
+  | RomWeaverWorkerTraceNonJsonLineMessage
   | RomWeaverWorkerDisposedMessage
   | RomWeaverWorkerErrorMessage;

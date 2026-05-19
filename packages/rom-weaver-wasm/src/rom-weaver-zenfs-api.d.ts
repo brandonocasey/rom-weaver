@@ -12,10 +12,10 @@ export interface RomWeaverZenFsNodeRunner {
   fs: unknown;
   guestMounts: Record<string, string>;
   run(args?: unknown[], options?: RomWeaverZenFsBrowserRunOptions): Promise<RomWeaverRunResult>;
-  runJson<TEvent = unknown>(
+  runJson<TEvent = unknown, TTraceEvent = unknown>(
     args?: unknown[],
-    options?: RomWeaverRunJsonOptions<TEvent>,
-  ): Promise<RomWeaverRunJsonResult<TEvent>>;
+    options?: RomWeaverRunJsonOptions<TEvent, TTraceEvent>,
+  ): Promise<RomWeaverRunJsonResult<TEvent, TTraceEvent>>;
 }
 
 export interface RomWeaverZenFsBrowserRunner {
@@ -25,10 +25,10 @@ export interface RomWeaverZenFsBrowserRunner {
   opfsGuestPath: string;
   runtimeMounts: string[];
   run(args?: unknown[], options?: RomWeaverZenFsBrowserRunOptions): Promise<RomWeaverRunResult>;
-  runJson<TEvent = unknown>(
+  runJson<TEvent = unknown, TTraceEvent = unknown>(
     args?: unknown[],
-    options?: RomWeaverRunJsonOptions<TEvent>,
-  ): Promise<RomWeaverRunJsonResult<TEvent>>;
+    options?: RomWeaverRunJsonOptions<TEvent, TTraceEvent>,
+  ): Promise<RomWeaverRunJsonResult<TEvent, TTraceEvent>>;
 }
 
 export function createRomWeaverZenFsNode(options?: RomWeaverZenFsNodeOptions): Promise<RomWeaverZenFsNodeRunner>;

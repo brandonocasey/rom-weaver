@@ -24,6 +24,8 @@ use rom_weaver_core::{
     ThreadBudget, ThreadCapability, ThreadExecution,
 };
 use rom_weaver_patches::PatchRegistry;
+use tracing::trace;
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use xdvdfs::{
     blockdev::OffsetWrapper as XdvdfsOffsetWrapper,
     write::{fs::XDVDFSFilesystem as XdvdfsFilesystem, img::create_xdvdfs_image},
@@ -42,6 +44,12 @@ struct Cli {
         help = "Emit progress and terminal status as JSON lines"
     )]
     json: bool,
+    #[arg(
+        long,
+        global = true,
+        help = "Enable trace logs (also enabled by ROM_WEAVER_LOG or RUST_LOG)"
+    )]
+    trace: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -327,6 +335,13 @@ struct PatchCreateCommand {
 
 pub fn main_entry() -> ExitCode {
     let cli = Cli::parse();
+    init_trace_logging(cli.trace, cli.json);
+    trace!(
+        json = cli.json,
+        trace_requested = cli.trace,
+        command = ?cli.command,
+        "parsed command-line arguments"
+    );
     let reporter: Arc<dyn ProgressSink> = if cli.json {
         Arc::new(StdoutReporter::json())
     } else {
@@ -336,6 +351,66 @@ pub fn main_entry() -> ExitCode {
         !cli.json && io::stdin().is_terminal() && io::stderr().is_terminal();
     let app = CliApp::new(reporter, cli.json, interactive_selection_enabled);
     app.run(cli.command)
+}
+
+fn init_trace_logging(trace_flag: bool, json_mode: bool) {
+    static TRACE_LOGGING_INIT: OnceLock<()> = OnceLock::new();
+    TRACE_LOGGING_INIT.get_or_init(|| {
+        let filter_spec = std::env::var("ROM_WEAVER_LOG")
+            .ok()
+            .and_then(trim_non_empty)
+            .or_else(|| std::env::var("RUST_LOG").ok().and_then(trim_non_empty))
+            .or_else(|| {
+                if trace_flag {
+                    Some(
+                        "rom_weaver_cli=trace,rom_weaver_core=trace,rom_weaver_containers=trace,rom_weaver_patches=trace,rom_weaver_checksum=trace,rom_weaver_codecs=trace"
+                            .to_string(),
+                    )
+                } else {
+                    None
+                }
+            });
+
+        let Some(filter_spec) = filter_spec else {
+            return;
+        };
+
+        let env_filter = match EnvFilter::try_new(filter_spec.clone()) {
+            Ok(filter) => filter,
+            Err(error) => {
+                eprintln!(
+                    "warning: invalid trace filter `{filter_spec}` ({error}); using `off`"
+                );
+                EnvFilter::new("off")
+            }
+        };
+
+        if json_mode {
+            let _ = tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt::layer().json().with_ansi(false).with_writer(io::stderr))
+                .try_init();
+        } else {
+            let _ = tracing_subscriber::registry()
+                .with(env_filter)
+                .with(
+                    fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(io::stderr)
+                        .compact(),
+                )
+                .try_init();
+        }
+    });
+}
+
+fn trim_non_empty(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 struct CliApp {
@@ -694,6 +769,8 @@ impl CliApp {
     }
 
     fn run(&self, command: Commands) -> ExitCode {
+        let command_name = Self::command_name(&command);
+        trace!(command = command_name, "dispatching CLI command");
         match command {
             Commands::Inspect(args) => self.run_inspect(args),
             Commands::Extract(args) => self.run_extract(args),
@@ -705,7 +782,20 @@ impl CliApp {
         }
     }
 
+    fn command_name(command: &Commands) -> &'static str {
+        match command {
+            Commands::Inspect(_) => "inspect",
+            Commands::Extract(_) => "extract",
+            Commands::Checksum(_) => "checksum",
+            Commands::Compress(_) => "compress",
+            Commands::Trim(_) => "trim",
+            Commands::PatchApply(_) => "patch-apply",
+            Commands::PatchCreate(_) => "patch-create",
+        }
+    }
+
     fn run_inspect(&self, args: InspectCommand) -> ExitCode {
+        trace!(source = %args.source.display(), list = args.list, "starting inspect command");
         let context = self.context(ThreadBudget::Fixed(1));
         let source = args.source.clone();
         if let Some(report) =
@@ -871,6 +961,14 @@ impl CliApp {
     }
 
     fn run_extract(&self, args: ExtractCommand) -> ExitCode {
+        trace!(
+            source = %args.source.display(),
+            selections = args.select.len(),
+            out_dir = %args.out_dir.display(),
+            split_bin = args.split_bin,
+            threads = %args.threads,
+            "starting extract command"
+        );
         let ExtractCommand {
             source,
             select: selections,
@@ -981,6 +1079,19 @@ impl CliApp {
     }
 
     fn run_checksum(&self, args: ChecksumCommand) -> ExitCode {
+        trace!(
+            source = %args.source.display(),
+            algorithm_count = args.algo.len(),
+            selections = args.select.len(),
+            no_extract = args.no_extract,
+            no_ignore = args.no_ignore,
+            strip_header = args.strip_header,
+            no_trim_fix = args.no_trim_fix,
+            start = ?args.start,
+            length = ?args.length,
+            threads = %args.threads,
+            "starting checksum command"
+        );
         let ChecksumCommand {
             source,
             algo,
@@ -1674,6 +1785,15 @@ impl CliApp {
     }
 
     fn run_compress(&self, args: CompressCommand) -> ExitCode {
+        trace!(
+            input_count = args.input.len(),
+            output = %args.output.display(),
+            requested_format = ?args.format,
+            codec = ?args.codec,
+            level = ?args.level,
+            threads = %args.threads,
+            "starting compress command"
+        );
         let CompressCommand {
             input,
             format,
@@ -1843,6 +1963,17 @@ impl CliApp {
     }
 
     fn run_trim(&self, args: TrimCommand) -> ExitCode {
+        trace!(
+            source_count = args.source.len(),
+            output = ?args.output.as_ref().map(|path| path.display().to_string()),
+            extension = ?args.extension,
+            in_place = args.in_place,
+            dry_run = args.dry_run,
+            revert = args.revert,
+            recursive = args.recursive,
+            threads = %args.threads,
+            "starting trim command"
+        );
         let TrimCommand {
             source,
             output,
@@ -2093,6 +2224,26 @@ impl CliApp {
     }
 
     fn run_patch_apply(&self, args: PatchApplyCommand) -> ExitCode {
+        trace!(
+            input = %args.input.display(),
+            selections = args.select.len(),
+            patch_count = args.patches.len(),
+            output = %args.output.display(),
+            no_extract = args.no_extract,
+            no_ignore = args.no_ignore,
+            no_compress = args.no_compress,
+            compress_format = ?args.compress_format,
+            compress_codec = ?args.compress_codec,
+            compress_level = ?args.compress_level,
+            checksum_cache = args.checksum_cache.len(),
+            validate_with_checksums = args.validate_with_checksums.len(),
+            strip_header = args.strip_header,
+            add_header = args.add_header,
+            repair_checksum = args.repair_checksum,
+            ignore_checksum_validation = args.ignore_checksum_validation,
+            threads = %args.threads,
+            "starting patch-apply command"
+        );
         let PatchApplyCommand {
             input,
             select,
@@ -2639,6 +2790,14 @@ impl CliApp {
     }
 
     fn run_patch_create(&self, args: PatchCreateCommand) -> ExitCode {
+        trace!(
+            original = %args.original.display(),
+            modified = %args.modified.display(),
+            output = %args.output.display(),
+            format = %args.format,
+            threads = %args.threads,
+            "starting patch-create command"
+        );
         let context = self.context(args.threads);
         let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
         if let Some(report) = self.require_existing_path(
@@ -2837,13 +2996,28 @@ impl CliApp {
             return;
         }
 
+        let stage = stage.into();
+        let label = label.into();
+        trace!(
+            command,
+            family = ?family,
+            format = ?format,
+            stage = %stage,
+            label = %label,
+            percent = ?percent,
+            requested_threads = ?thread_execution.as_ref().map(|value| value.requested_threads),
+            effective_threads = ?thread_execution.as_ref().map(|value| value.effective_threads),
+            thread_mode = ?thread_execution.as_ref().map(|value| value.thread_mode),
+            used_parallelism = ?thread_execution.as_ref().map(|value| value.used_parallelism),
+            "emitting running progress event"
+        );
         let thread_execution = thread_execution.as_ref();
         self.reporter.emit(ProgressEvent {
             command: command.to_string(),
             family,
             format: format.map(str::to_string),
-            stage: stage.into(),
-            label: label.into(),
+            stage,
+            label,
             percent,
             requested_threads: thread_execution.map(|value| value.requested_threads),
             effective_threads: thread_execution.map(|value| value.effective_threads),
@@ -4231,6 +4405,16 @@ impl CliApp {
     }
 
     fn finish(&self, command: &str, report: OperationReport) -> ExitCode {
+        trace!(
+            command,
+            family = ?report.family,
+            format = ?report.format,
+            stage = %report.stage,
+            status = ?report.status,
+            percent = ?report.percent,
+            label = %report.label,
+            "finishing command with terminal report"
+        );
         let status = report.status;
         self.reporter.emit(report.into_event(command));
         ExitCode::from(status.exit_code())

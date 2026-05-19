@@ -129,14 +129,19 @@ impl Default for CodecRegistry {
 
 impl CodecRegistry {
     pub fn new() -> Self {
+        let backends = vec![
+            Arc::new(NativeCodecBackend::new(&STORE, NativeCodecKind::Store))
+                as Arc<dyn CodecBackend>,
+            Arc::new(NativeCodecBackend::new(&DEFLATE, NativeCodecKind::Deflate)),
+            Arc::new(NativeCodecBackend::new(&ZSTD, NativeCodecKind::Zstd)),
+            Arc::new(NativeCodecBackend::new(&LZMA2, NativeCodecKind::Lzma2)),
+            Arc::new(NativeCodecBackend::new(&BZIP2, NativeCodecKind::Bzip2)),
+        ];
         Self {
-            backends: vec![
-                Arc::new(NativeCodecBackend::new(&STORE, NativeCodecKind::Store)),
-                Arc::new(NativeCodecBackend::new(&DEFLATE, NativeCodecKind::Deflate)),
-                Arc::new(NativeCodecBackend::new(&ZSTD, NativeCodecKind::Zstd)),
-                Arc::new(NativeCodecBackend::new(&LZMA2, NativeCodecKind::Lzma2)),
-                Arc::new(NativeCodecBackend::new(&BZIP2, NativeCodecKind::Bzip2)),
-            ],
+            backends: backends
+                .into_iter()
+                .map(rom_weaver_core::traced_codec_backend)
+                .collect(),
         }
     }
 

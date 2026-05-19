@@ -9,3 +9,4 @@ version.workspace = true
 rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tracing.workspace = true

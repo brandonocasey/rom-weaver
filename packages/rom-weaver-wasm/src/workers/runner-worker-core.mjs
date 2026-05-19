@@ -53,6 +53,12 @@ export function createRunnerWorkerMessageQueue({ postMessage, initRunner }) {
           onNonJsonLine(line) {
             postMessage({ type: 'nonJsonLine', requestId, line: String(line) });
           },
+          onTraceEvent(event) {
+            postMessage({ type: 'traceEvent', requestId, event });
+          },
+          onTraceNonJsonLine(line) {
+            postMessage({ type: 'traceNonJsonLine', requestId, line: String(line) });
+          },
         };
         const result = await runner.runJson(normalizeArgs(message.args), runOptions);
         postMessage({

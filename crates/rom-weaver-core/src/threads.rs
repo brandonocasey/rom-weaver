@@ -2,6 +2,7 @@ use std::{fmt, str::FromStr, sync::Arc};
 
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
+use tracing::trace;
 
 use crate::{Result, RomWeaverError};
 
@@ -90,7 +91,7 @@ impl ThreadCapability {
 
     pub fn negotiate(&self, budget: ThreadBudget) -> ThreadExecution {
         let requested_threads = budget.requested_threads();
-        match self {
+        let execution = match self {
             Self::SingleThreaded => ThreadExecution {
                 requested_threads,
                 effective_threads: 1,
@@ -109,7 +110,17 @@ impl ThreadCapability {
                     used_parallelism: effective_threads > 1,
                 }
             }
-        }
+        };
+        trace!(
+            capability = ?self,
+            budget = %budget,
+            requested_threads = execution.requested_threads,
+            effective_threads = execution.effective_threads,
+            thread_mode = ?execution.thread_mode,
+            used_parallelism = execution.used_parallelism,
+            "thread execution negotiated"
+        );
+        execution
     }
 
     pub fn supports_execution(&self, execution: &ThreadExecution) -> bool {
@@ -145,6 +156,7 @@ pub struct SharedThreadPool {
 impl SharedThreadPool {
     pub fn with_size(size: usize) -> Result<Self> {
         let size = size.max(1);
+        trace!(size, "building shared thread pool");
         let inner = rayon::ThreadPoolBuilder::new()
             .num_threads(size)
             .build()
@@ -156,6 +168,13 @@ impl SharedThreadPool {
     }
 
     pub fn with_execution(execution: &ThreadExecution) -> Result<Self> {
+        trace!(
+            requested_threads = execution.requested_threads,
+            effective_threads = execution.effective_threads,
+            thread_mode = ?execution.thread_mode,
+            used_parallelism = execution.used_parallelism,
+            "building thread pool from execution plan"
+        );
         Self::with_size(execution.effective_threads)
     }
 

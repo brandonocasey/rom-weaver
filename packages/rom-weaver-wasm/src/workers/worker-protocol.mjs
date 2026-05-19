@@ -5,6 +5,8 @@ export const WORKER_RESPONSE_TYPES = [
   'result',
   'event',
   'nonJsonLine',
+  'traceEvent',
+  'traceNonJsonLine',
   'disposed',
   'error',
 ];

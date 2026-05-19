@@ -30,14 +30,30 @@ export interface ParseJsonLinesResult<TEvent = unknown> {
   nonJsonLines: string[];
 }
 
-export interface RomWeaverRunJsonOptions<TEvent = unknown> extends RomWeaverRunOptions {
-  onEvent?: (event: TEvent) => void;
-  onNonJsonLine?: (line: string) => void;
+export interface ParseTraceJsonLinesOptions<TTraceEvent = unknown> {
+  onTraceEvent?: (event: TTraceEvent) => void;
+  onTraceNonJsonLine?: (line: string) => void;
 }
 
-export interface RomWeaverRunJsonResult<TEvent = unknown> extends RomWeaverRunResult {
+export interface ParseTraceJsonLinesResult<TTraceEvent = unknown> {
+  traceEvents: TTraceEvent[];
+  traceNonJsonLines: string[];
+}
+
+export interface RomWeaverRunJsonOptions<TEvent = unknown, TTraceEvent = unknown>
+extends RomWeaverRunOptions {
+  onEvent?: (event: TEvent) => void;
+  onNonJsonLine?: (line: string) => void;
+  onTraceEvent?: (event: TTraceEvent) => void;
+  onTraceNonJsonLine?: (line: string) => void;
+}
+
+export interface RomWeaverRunJsonResult<TEvent = unknown, TTraceEvent = unknown>
+extends RomWeaverRunResult {
   events: TEvent[];
   nonJsonLines: string[];
+  traceEvents: TTraceEvent[];
+  traceNonJsonLines: string[];
 }
 
 export interface RomWeaverWasiRunnerOptions {

@@ -236,7 +236,12 @@ impl ContainerRegistry {
         handlers.push(Arc::new(RvzContainerHandler));
         handlers.push(Arc::new(Z3dsContainerHandler));
         handlers.push(Arc::new(XisoContainerHandler));
-        Self { handlers }
+        Self {
+            handlers: handlers
+                .into_iter()
+                .map(rom_weaver_core::traced_container_handler)
+                .collect(),
+        }
     }
 
     pub fn handlers(&self) -> &[Arc<dyn ContainerHandler>] {

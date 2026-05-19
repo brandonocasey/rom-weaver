@@ -19,6 +19,6 @@ pub use registry::{
     CodecDescriptor, CodecOperationRequest, ContainerCapabilities, ContainerCreateRequest,
     ContainerExtractRequest, ContainerHandler, ContainerInspectRequest, FormatDescriptor,
     OperationReport, PatchApplyRequest, PatchCapabilities, PatchCreateRequest, PatchHandler,
-    ProbeConfidence,
+    ProbeConfidence, traced_codec_backend, traced_container_handler, traced_patch_handler,
 };
 pub use threads::{SharedThreadPool, ThreadBudget, ThreadCapability, ThreadExecution, ThreadMode};
