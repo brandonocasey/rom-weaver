@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::ThreadMode;
 
@@ -45,11 +46,15 @@ pub struct ProgressEvent {
     pub format: Option<String>,
     pub stage: String,
     pub label: String,
+    pub details: Option<Value>,
     pub percent: Option<f32>,
     pub requested_threads: Option<usize>,
     pub effective_threads: Option<usize>,
     pub thread_mode: Option<ThreadMode>,
     pub used_parallelism: Option<bool>,
+    pub thread_fallback: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_fallback_reason: Option<String>,
     pub status: OperationStatus,
 }
 

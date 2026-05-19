@@ -97,6 +97,8 @@ impl ThreadCapability {
                 effective_threads: 1,
                 thread_mode: budget.mode(),
                 used_parallelism: false,
+                thread_fallback: false,
+                thread_fallback_reason: None,
             },
             Self::Parallel { max_threads } => {
                 let effective_threads = max_threads
@@ -108,6 +110,8 @@ impl ThreadCapability {
                     effective_threads,
                     thread_mode: budget.mode(),
                     used_parallelism: effective_threads > 1,
+                    thread_fallback: false,
+                    thread_fallback_reason: None,
                 }
             }
         };
@@ -118,8 +122,26 @@ impl ThreadCapability {
             effective_threads = execution.effective_threads,
             thread_mode = ?execution.thread_mode,
             used_parallelism = execution.used_parallelism,
+            threads_enabled = execution.used_parallelism,
             "thread execution negotiated"
         );
+        if execution.used_parallelism {
+            trace!(
+                capability = ?self,
+                budget = %budget,
+                requested_threads = execution.requested_threads,
+                effective_threads = execution.effective_threads,
+                "parallel threads enabled"
+            );
+        } else {
+            trace!(
+                capability = ?self,
+                budget = %budget,
+                requested_threads = execution.requested_threads,
+                effective_threads = execution.effective_threads,
+                "parallel threads disabled"
+            );
+        }
         execution
     }
 
@@ -145,6 +167,17 @@ pub struct ThreadExecution {
     pub effective_threads: usize,
     pub thread_mode: ThreadMode,
     pub used_parallelism: bool,
+    pub thread_fallback: bool,
+    pub thread_fallback_reason: Option<String>,
+}
+
+impl ThreadExecution {
+    pub fn apply_pool_fallback(&mut self, reason: impl Into<String>) {
+        self.effective_threads = 1;
+        self.used_parallelism = false;
+        self.thread_fallback = true;
+        self.thread_fallback_reason = Some(reason.into());
+    }
 }
 
 #[derive(Clone)]
@@ -156,6 +189,9 @@ pub struct SharedThreadPool {
 impl SharedThreadPool {
     pub fn with_size(size: usize) -> Result<Self> {
         let size = size.max(1);
+        if let Some(reason) = Self::forced_build_failure_reason(size) {
+            return Err(RomWeaverError::ThreadPoolBuild(reason));
+        }
         trace!(size, "building shared thread pool");
         let inner = rayon::ThreadPoolBuilder::new()
             .num_threads(size)
@@ -178,6 +214,50 @@ impl SharedThreadPool {
         Self::with_size(execution.effective_threads)
     }
 
+    pub fn with_execution_fallback(execution: ThreadExecution) -> Result<(ThreadExecution, Self)> {
+        Self::with_execution_fallback_with_builder(execution, Self::with_execution)
+    }
+
+    fn with_execution_fallback_with_builder(
+        mut execution: ThreadExecution,
+        mut builder: impl FnMut(&ThreadExecution) -> Result<Self>,
+    ) -> Result<(ThreadExecution, Self)> {
+        match builder(&execution) {
+            Ok(pool) => Ok((execution, pool)),
+            Err(RomWeaverError::ThreadPoolBuild(reason)) if execution.used_parallelism => {
+                trace!(
+                    requested_threads = execution.requested_threads,
+                    effective_threads = execution.effective_threads,
+                    thread_mode = ?execution.thread_mode,
+                    fallback_reason = %reason,
+                    "multi-thread pool build failed; retrying with single-thread fallback"
+                );
+                execution.apply_pool_fallback(reason.clone());
+                trace!(
+                    requested_threads = execution.requested_threads,
+                    effective_threads = execution.effective_threads,
+                    thread_mode = ?execution.thread_mode,
+                    used_parallelism = execution.used_parallelism,
+                    threads_enabled = execution.used_parallelism,
+                    thread_fallback = execution.thread_fallback,
+                    thread_fallback_reason = ?execution.thread_fallback_reason,
+                    "parallel threads disabled after thread pool fallback"
+                );
+                let pool = match builder(&execution) {
+                    Ok(pool) => pool,
+                    Err(RomWeaverError::ThreadPoolBuild(single_reason)) => {
+                        return Err(RomWeaverError::ThreadPoolBuild(format!(
+                            "multi-thread pool build failed: {reason}; single-thread fallback failed: {single_reason}"
+                        )));
+                    }
+                    Err(error) => return Err(error),
+                };
+                Ok((execution, pool))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn size(&self) -> usize {
         self.size
     }
@@ -185,11 +265,54 @@ impl SharedThreadPool {
     pub fn install<R: Send>(&self, operation: impl FnOnce() -> R + Send) -> R {
         self.inner.install(operation)
     }
+
+    fn forced_build_failure_reason(size: usize) -> Option<String> {
+        if !cfg!(debug_assertions) {
+            return None;
+        }
+
+        let raw = std::env::var("ROM_WEAVER_TEST_THREAD_POOL_FAIL").ok()?;
+        let mode = raw.trim().to_ascii_lowercase();
+        let should_fail = match mode.as_str() {
+            "all" => true,
+            "multi" => size > 1,
+            "single" => size == 1,
+            _ => false,
+        };
+        should_fail.then(|| format!("forced thread pool build failure ({mode})"))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ThreadBudget, ThreadCapability, ThreadExecution, ThreadMode};
+    use super::{SharedThreadPool, ThreadBudget, ThreadCapability, ThreadExecution, ThreadMode};
+    use crate::RomWeaverError;
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            // SAFETY: test-only helper scopes environment mutation to a single process.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = &self.original {
+                // SAFETY: test-only helper restores the previous value.
+                unsafe { std::env::set_var(self.key, value) };
+            } else {
+                // SAFETY: test-only helper restores the previous state.
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
 
     #[test]
     fn auto_budget_resolves_to_a_positive_thread_count() {
@@ -210,6 +333,8 @@ mod tests {
         assert_eq!(execution.requested_threads, 8);
         assert_eq!(execution.effective_threads, 1);
         assert!(!execution.used_parallelism);
+        assert!(!execution.thread_fallback);
+        assert!(execution.thread_fallback_reason.is_none());
     }
 
     #[test]
@@ -218,6 +343,8 @@ mod tests {
         assert_eq!(execution.requested_threads, 8);
         assert_eq!(execution.effective_threads, 4);
         assert!(execution.used_parallelism);
+        assert!(!execution.thread_fallback);
+        assert!(execution.thread_fallback_reason.is_none());
     }
 
     #[test]
@@ -227,6 +354,8 @@ mod tests {
             effective_threads: 1,
             thread_mode: ThreadMode::Fixed,
             used_parallelism: false,
+            thread_fallback: false,
+            thread_fallback_reason: None,
         };
         assert!(ThreadCapability::single_threaded().supports_execution(&execution));
     }
@@ -238,6 +367,8 @@ mod tests {
             effective_threads: 2,
             thread_mode: ThreadMode::Fixed,
             used_parallelism: true,
+            thread_fallback: false,
+            thread_fallback_reason: None,
         };
         assert!(!ThreadCapability::single_threaded().supports_execution(&execution));
     }
@@ -249,6 +380,8 @@ mod tests {
             effective_threads: 1,
             thread_mode: ThreadMode::Fixed,
             used_parallelism: false,
+            thread_fallback: false,
+            thread_fallback_reason: None,
         };
         assert!(ThreadCapability::parallel(None).supports_execution(&execution));
     }
@@ -260,6 +393,8 @@ mod tests {
             effective_threads: 5,
             thread_mode: ThreadMode::Fixed,
             used_parallelism: true,
+            thread_fallback: false,
+            thread_fallback_reason: None,
         };
         assert!(!ThreadCapability::parallel(Some(4)).supports_execution(&execution));
     }
@@ -271,7 +406,99 @@ mod tests {
             effective_threads: 1,
             thread_mode: ThreadMode::Fixed,
             used_parallelism: true,
+            thread_fallback: false,
+            thread_fallback_reason: None,
         };
         assert!(!ThreadCapability::parallel(None).supports_execution(&execution));
+    }
+
+    #[test]
+    fn pool_build_falls_back_to_single_thread_when_parallel_build_fails() {
+        let mut attempts = 0usize;
+        let planned = ThreadCapability::parallel(None).negotiate(ThreadBudget::Fixed(8));
+        let (execution, pool) =
+            SharedThreadPool::with_execution_fallback_with_builder(planned, |execution| {
+                attempts += 1;
+                if attempts == 1 {
+                    return Err(RomWeaverError::ThreadPoolBuild(
+                        "operation not supported on this platform".to_string(),
+                    ));
+                }
+                SharedThreadPool::with_size(execution.effective_threads)
+            })
+            .expect("fallback succeeds");
+
+        assert_eq!(attempts, 2);
+        assert_eq!(execution.requested_threads, 8);
+        assert_eq!(execution.effective_threads, 1);
+        assert!(!execution.used_parallelism);
+        assert!(execution.thread_fallback);
+        assert_eq!(
+            execution.thread_fallback_reason.as_deref(),
+            Some("operation not supported on this platform")
+        );
+        assert_eq!(pool.size(), 1);
+    }
+
+    #[test]
+    fn pool_build_hard_fails_when_single_thread_fallback_also_fails() {
+        let planned = ThreadCapability::parallel(None).negotiate(ThreadBudget::Fixed(8));
+        let result =
+            SharedThreadPool::with_execution_fallback_with_builder(planned, |_execution| {
+                Err(RomWeaverError::ThreadPoolBuild(
+                    "operation not supported on this platform".to_string(),
+                ))
+            });
+        assert!(result.is_err(), "fallback should fail");
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("expected thread pool build error"),
+        };
+
+        let RomWeaverError::ThreadPoolBuild(message) = error else {
+            panic!("expected thread pool build error");
+        };
+        assert!(message.contains("multi-thread pool build failed"));
+        assert!(message.contains("single-thread fallback failed"));
+    }
+
+    #[test]
+    fn pool_build_does_not_retry_when_execution_is_already_single_threaded() {
+        let mut attempts = 0usize;
+        let planned = ThreadCapability::single_threaded().negotiate(ThreadBudget::Fixed(8));
+        let result =
+            SharedThreadPool::with_execution_fallback_with_builder(planned, |_execution| {
+                attempts += 1;
+                Err(RomWeaverError::ThreadPoolBuild(
+                    "single thread pool unavailable".to_string(),
+                ))
+            });
+        assert!(
+            result.is_err(),
+            "single-thread plan should not succeed when build fails"
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("expected thread pool build error"),
+        };
+
+        assert_eq!(attempts, 1);
+        let RomWeaverError::ThreadPoolBuild(message) = error else {
+            panic!("expected thread pool build error");
+        };
+        assert_eq!(message, "single thread pool unavailable");
+    }
+
+    #[test]
+    fn test_force_mode_fails_multi_only() {
+        let _guard = ScopedEnvVar::set("ROM_WEAVER_TEST_THREAD_POOL_FAIL", "multi");
+        assert!(
+            SharedThreadPool::with_size(4).is_err(),
+            "multi mode should fail multi-thread pools"
+        );
+        assert!(
+            SharedThreadPool::with_size(1).is_ok(),
+            "multi mode should allow single-thread pools"
+        );
     }
 }

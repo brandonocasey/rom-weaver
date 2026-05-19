@@ -3,6 +3,8 @@ use std::{
     sync::Arc,
 };
 
+use serde_json::Value;
+
 use crate::{
     OperationContext, OperationFamily, OperationStatus, Result, RomWeaverError, ThreadCapability,
     ThreadExecution,
@@ -53,6 +55,7 @@ pub struct OperationReport {
     pub format: Option<String>,
     pub stage: String,
     pub label: String,
+    pub details: Option<Value>,
     pub percent: Option<f32>,
     pub thread_execution: Option<ThreadExecution>,
     pub status: OperationStatus,
@@ -71,6 +74,7 @@ impl OperationReport {
             format,
             stage: stage.into(),
             label: label.into(),
+            details: None,
             percent: None,
             thread_execution,
             status: OperationStatus::Unsupported,
@@ -89,6 +93,7 @@ impl OperationReport {
             format,
             stage: stage.into(),
             label: label.into(),
+            details: None,
             percent: None,
             thread_execution,
             status: OperationStatus::Failed,
@@ -108,6 +113,7 @@ impl OperationReport {
             format,
             stage: stage.into(),
             label: label.into(),
+            details: None,
             percent,
             thread_execution,
             status: OperationStatus::Succeeded,
@@ -122,11 +128,15 @@ impl OperationReport {
             format: self.format,
             stage: self.stage,
             label: self.label,
+            details: self.details,
             percent: self.percent,
             requested_threads: thread_execution.map(|value| value.requested_threads),
             effective_threads: thread_execution.map(|value| value.effective_threads),
             thread_mode: thread_execution.map(|value| value.thread_mode),
             used_parallelism: thread_execution.map(|value| value.used_parallelism),
+            thread_fallback: thread_execution.map(|value| value.thread_fallback),
+            thread_fallback_reason: thread_execution
+                .and_then(|value| value.thread_fallback_reason.clone()),
             status: self.status,
         }
     }
@@ -604,5 +614,41 @@ fn trace_operation_result(
                 "operation failed"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OperationReport;
+    use crate::{OperationFamily, OperationStatus, ThreadExecution, ThreadMode};
+
+    #[test]
+    fn into_event_preserves_thread_fallback_metadata() {
+        let report = OperationReport {
+            family: OperationFamily::Patch,
+            format: Some("IPS".to_string()),
+            stage: "apply".to_string(),
+            label: "patched".to_string(),
+            details: None,
+            percent: Some(1.0),
+            thread_execution: Some(ThreadExecution {
+                requested_threads: 8,
+                effective_threads: 1,
+                thread_mode: ThreadMode::Fixed,
+                used_parallelism: false,
+                thread_fallback: true,
+                thread_fallback_reason: Some(
+                    "operation not supported on this platform".to_string(),
+                ),
+            }),
+            status: OperationStatus::Succeeded,
+        };
+
+        let event = report.into_event("patch-apply");
+        assert_eq!(event.thread_fallback, Some(true));
+        assert_eq!(
+            event.thread_fallback_reason.as_deref(),
+            Some("operation not supported on this platform")
+        );
     }
 }

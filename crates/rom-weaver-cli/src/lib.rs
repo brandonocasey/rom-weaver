@@ -4206,6 +4206,10 @@ impl CliApp {
             effective_threads = ?thread_execution.as_ref().map(|value| value.effective_threads),
             thread_mode = ?thread_execution.as_ref().map(|value| value.thread_mode),
             used_parallelism = ?thread_execution.as_ref().map(|value| value.used_parallelism),
+            thread_fallback = ?thread_execution.as_ref().map(|value| value.thread_fallback),
+            thread_fallback_reason = ?thread_execution
+                .as_ref()
+                .and_then(|value| value.thread_fallback_reason.as_deref()),
             "emitting running progress event"
         );
         let thread_execution = thread_execution.as_ref();
@@ -4215,11 +4219,15 @@ impl CliApp {
             format: format.map(str::to_string),
             stage,
             label,
+            details: None,
             percent,
             requested_threads: thread_execution.map(|value| value.requested_threads),
             effective_threads: thread_execution.map(|value| value.effective_threads),
             thread_mode: thread_execution.map(|value| value.thread_mode),
             used_parallelism: thread_execution.map(|value| value.used_parallelism),
+            thread_fallback: thread_execution.map(|value| value.thread_fallback),
+            thread_fallback_reason: thread_execution
+                .and_then(|value| value.thread_fallback_reason.clone()),
             status: OperationStatus::Running,
         });
     }

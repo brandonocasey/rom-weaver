@@ -963,6 +963,8 @@ fn cache_hit_execution(budget: ThreadBudget) -> ThreadExecution {
         effective_threads: 1,
         thread_mode: budget.mode(),
         used_parallelism: false,
+        thread_fallback: false,
+        thread_fallback_reason: None,
     }
 }
 

@@ -98,7 +98,6 @@ impl OperationContext {
             used_parallelism = execution.used_parallelism,
             "building execution pool for operation context"
         );
-        let pool = SharedThreadPool::with_execution(&execution)?;
-        Ok((execution, pool))
+        SharedThreadPool::with_execution_fallback(execution)
     }
 }

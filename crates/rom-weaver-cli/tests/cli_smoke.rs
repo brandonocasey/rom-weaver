@@ -2410,6 +2410,8 @@ fn extract_reports_thread_fallback_in_json() {
     assert_eq!(json["effective_threads"], 1);
     assert_eq!(json["thread_mode"], "fixed");
     assert_eq!(json["used_parallelism"], false);
+    assert_eq!(json["thread_fallback"], false);
+    assert!(json["thread_fallback_reason"].is_null());
     assert_eq!(json["status"], "succeeded");
     assert_eq!(
         fs::read(out_dir.child("disc.iso").path()).expect("extract"),
@@ -2624,6 +2626,8 @@ fn extract_rar_reports_thread_fallback_in_json() {
     assert_eq!(json["effective_threads"], 1);
     assert_eq!(json["thread_mode"], "fixed");
     assert_eq!(json["used_parallelism"], false);
+    assert_eq!(json["thread_fallback"], false);
+    assert!(json["thread_fallback_reason"].is_null());
     assert_eq!(json["status"], "succeeded");
     assert_eq!(
         fs::read(out_dir.child("VERSION").path()).expect("extract"),
@@ -10580,6 +10584,75 @@ fn patch_apply_uses_parallel_threads_for_large_ips_patch() {
     assert_eq!(json["requested_threads"], 8);
     assert_eq!(json["effective_threads"], 2);
     assert_eq!(json["used_parallelism"], true);
+    assert_eq!(json["status"], "succeeded");
+
+    let output_bytes = fs::read(temp.child("output.bin").path()).expect("output");
+    assert_eq!(output_bytes.len(), total_len as usize);
+    assert!(output_bytes.iter().all(|byte| *byte == b'Z'));
+}
+
+#[test]
+fn patch_apply_falls_back_to_single_thread_when_pool_build_fails() {
+    let temp = setup_temp_dir();
+    fs::write(temp.child("input.bin").path(), []).expect("fixture");
+
+    let total_len = (2 * 1024 * 1024 + 321) as u32;
+    let mut records = Vec::new();
+    let mut offset = 0u32;
+    while offset < total_len {
+        let remaining = total_len - offset;
+        let len = remaining.min(u16::MAX as u32) as u16;
+        records.push(TestIpsRecord::Rle {
+            offset,
+            len,
+            value: b'Z',
+        });
+        offset += u32::from(len);
+    }
+
+    fs::write(
+        temp.child("update.ips").path(),
+        build_ips_patch(records, Some(total_len)),
+    )
+    .expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .env("ROM_WEAVER_TEST_THREAD_POOL_FAIL", "multi")
+        .args([
+            "patch-apply",
+            "--input",
+            temp.child("input.bin").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.ips").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.bin").path().to_str().expect("path"),
+            "--threads",
+            "8",
+            "--no-compress",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-apply");
+    assert_eq!(json["family"], "patch");
+    assert_eq!(json["format"], "IPS");
+    assert_eq!(json["requested_threads"], 8);
+    assert_eq!(json["effective_threads"], 1);
+    assert_eq!(json["thread_mode"], "fixed");
+    assert_eq!(json["used_parallelism"], false);
+    assert_eq!(json["thread_fallback"], true);
+    assert!(
+        json["thread_fallback_reason"]
+            .as_str()
+            .expect("thread fallback reason")
+            .contains("forced thread pool build failure (multi)")
+    );
     assert_eq!(json["status"], "succeeded");
 
     let output_bytes = fs::read(temp.child("output.bin").path()).expect("output");
