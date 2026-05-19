@@ -4897,6 +4897,128 @@ fn archive_container_formats_round_trip() {
 }
 
 #[test]
+fn extract_xz_reports_parallel_decode_threads() {
+    let temp = setup_temp_dir();
+    let payload = (0..131_072)
+        .map(|index| ((index * 11) % 251) as u8)
+        .collect::<Vec<_>>();
+    fs::write(temp.child("source.bin").path(), &payload).expect("fixture");
+    let archive = temp.child("source.bin.xz");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("source.bin").path().to_str().expect("path"),
+            "--format",
+            "xz",
+            "--output",
+            archive.path().to_str().expect("path"),
+            "--threads",
+            "8",
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let out_dir = temp.child("extract");
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--select",
+            "source.bin",
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--threads",
+            "8",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let events = parse_json_lines(&output);
+    assert_running_percent_event(&events, "extract", "xz");
+    let json = events.last().expect("extract terminal event");
+    assert_eq!(json["command"], "extract");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "xz");
+    assert_eq!(json["requested_threads"], 8);
+    assert_eq!(json["effective_threads"], 8);
+    assert_eq!(json["used_parallelism"], true);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(out_dir.child("source.bin").path()).expect("extracted"),
+        payload
+    );
+}
+
+#[test]
+fn extract_zst_reports_single_threaded_decode_threads() {
+    let temp = setup_temp_dir();
+    let payload = (0..131_072)
+        .map(|index| ((index * 17) % 251) as u8)
+        .collect::<Vec<_>>();
+    fs::write(temp.child("source.bin").path(), &payload).expect("fixture");
+    let archive = temp.child("source.bin.zst");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("source.bin").path().to_str().expect("path"),
+            "--format",
+            "zst",
+            "--output",
+            archive.path().to_str().expect("path"),
+            "--threads",
+            "8",
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let out_dir = temp.child("extract");
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--select",
+            "source.bin",
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--threads",
+            "8",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let events = parse_json_lines(&output);
+    assert_running_percent_event(&events, "extract", "zst");
+    let json = events.last().expect("extract terminal event");
+    assert_eq!(json["command"], "extract");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "zst");
+    assert_eq!(json["requested_threads"], 8);
+    assert_eq!(json["effective_threads"], 1);
+    assert_eq!(json["used_parallelism"], false);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(out_dir.child("source.bin").path()).expect("extracted"),
+        payload
+    );
+}
+
+#[test]
 fn tar_gz_emits_incremental_running_progress() {
     let temp = setup_temp_dir();
     let input_dir = temp.child("input");
