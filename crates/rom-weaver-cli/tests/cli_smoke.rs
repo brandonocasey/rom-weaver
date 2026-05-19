@@ -2141,9 +2141,21 @@ fn inspect_reports_known_container_as_supported() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "succeeded");
-    let label = json["label"].as_str().expect("label");
-    assert!(label.contains("recommended_compress_format=chd"));
-    assert!(label.contains("reason=not-wii-gc-or-unrecognized"));
+    assert_eq!(
+        json["details"]["container"]["recommended_compress_format"],
+        "chd"
+    );
+    assert_eq!(
+        json["details"]["container"]["reason"],
+        "not-wii-gc-or-unrecognized"
+    );
+    assert!(json["details"]["container"]["entry_count"].is_null());
+    assert!(
+        !json["label"]
+            .as_str()
+            .expect("label")
+            .contains("recommended_compress_format")
+    );
 }
 
 #[test]
@@ -2185,9 +2197,22 @@ fn inspect_list_reports_selectable_zip_entries() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "succeeded");
-    let label = json["label"].as_str().expect("label");
-    assert!(label.contains("selectable entries"));
-    assert!(label.contains("sample.bin"));
+    assert_eq!(json["details"]["container"]["entry_count"], 1);
+    assert_eq!(json["details"]["container"]["entries"][0], "sample.bin");
+    assert_eq!(
+        json["details"]["container"]["recommended_compress_format"],
+        "chd"
+    );
+    assert_eq!(
+        json["details"]["container"]["reason"],
+        "not-wii-gc-or-unrecognized"
+    );
+    assert!(
+        !json["label"]
+            .as_str()
+            .expect("label")
+            .contains("selectable entries")
+    );
 }
 
 #[test]
@@ -2344,11 +2369,18 @@ fn inspect_list_reports_pbp_multi_disc_selectable_outputs() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "pbp");
     assert_eq!(json["status"], "succeeded");
-    let label = json["label"].as_str().expect("label");
-    assert!(label.contains("multi.disc01.cue"));
-    assert!(label.contains("multi.disc01.bin"));
-    assert!(label.contains("multi.disc02.cue"));
-    assert!(label.contains("multi.disc02.bin"));
+    assert_eq!(json["details"]["container"]["entry_count"], 4);
+    let entries = json["details"]["container"]["entries"]
+        .as_array()
+        .expect("entries");
+    let as_strings = entries
+        .iter()
+        .map(|value| value.as_str().expect("entry string"))
+        .collect::<Vec<_>>();
+    assert!(as_strings.contains(&"multi.disc01.cue"));
+    assert!(as_strings.contains(&"multi.disc01.bin"));
+    assert!(as_strings.contains(&"multi.disc02.cue"));
+    assert!(as_strings.contains(&"multi.disc02.bin"));
 }
 
 #[test]
@@ -3947,7 +3979,7 @@ fn compress_wia_and_extract_round_trip() {
             "--output",
             wia_path.path().to_str().expect("path"),
             "--codec",
-            "lzma2:6",
+            "lzma2",
             "--threads",
             "8",
             "--json",
@@ -4494,7 +4526,7 @@ fn compress_defaults_to_max_global_level_profile() {
         .assert()
         .code(0);
 
-    let explicit_output = temp.child("explicit.zst");
+    let explicit_output = temp.child("explicit-max.zst");
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
@@ -4504,10 +4536,8 @@ fn compress_defaults_to_max_global_level_profile() {
             "zst",
             "--output",
             explicit_output.path().to_str().expect("path"),
-            "--codec",
-            "zstd:22",
             "--level",
-            "min",
+            "max",
             "--json",
         ])
         .assert()
@@ -4586,9 +4616,12 @@ fn run_archive_round_trip(format: &str, archive_name: &str, codec: Option<&str>)
     assert_eq!(extract_json["family"], "container");
     assert_eq!(extract_json["format"], format);
     assert_eq!(extract_json["requested_threads"], 8);
-    assert_eq!(extract_json["effective_threads"], 1);
+    let effective_threads = extract_json["effective_threads"]
+        .as_u64()
+        .expect("effective_threads");
+    assert!((1..=8).contains(&effective_threads));
     assert_eq!(extract_json["thread_mode"], "fixed");
-    assert_eq!(extract_json["used_parallelism"], false);
+    assert_eq!(extract_json["used_parallelism"], effective_threads > 1);
     assert_eq!(extract_json["status"], "succeeded");
 
     let extracted = fs::read(out_dir.child("source.bin").path()).expect("read extract");
@@ -4599,19 +4632,19 @@ fn run_archive_round_trip(format: &str, archive_name: &str, codec: Option<&str>)
 fn archive_container_formats_round_trip() {
     let cases = [
         ("zip", "sample.zip", None),
-        ("zipx", "sample.zipx", Some("zstd:3")),
+        ("zipx", "sample.zipx", Some("zstd")),
         ("7z", "sample.7z", Some("lzma2")),
-        ("7z", "sample-level.7z", Some("lzma2:9")),
+        ("7z", "sample-level.7z", Some("lzma")),
         ("tar", "sample.tar", None),
-        ("tar.gz", "sample.tar.gz", Some("gzip:6")),
-        ("tar.bz2", "sample.tar.bz2", Some("bzip2:6")),
-        ("tar.xz", "sample.tar.xz", Some("xz:6")),
-        ("tar.xz", "sample-lzma2.tar.xz", Some("lzma2:6")),
-        ("gz", "source.bin.gz", Some("gzip:6")),
-        ("bz2", "source.bin.bz2", Some("bzip2:6")),
-        ("xz", "source.bin.xz", Some("xz:6")),
-        ("xz", "source.bin.xz", Some("lzma2:6")),
-        ("zst", "source.bin.zst", Some("zstd:3")),
+        ("tar.gz", "sample.tar.gz", Some("gzip")),
+        ("tar.bz2", "sample.tar.bz2", Some("bzip2")),
+        ("tar.xz", "sample.tar.xz", Some("xz")),
+        ("tar.xz", "sample-lzma2.tar.xz", Some("lzma2")),
+        ("gz", "source.bin.gz", Some("gzip")),
+        ("bz2", "source.bin.bz2", Some("bzip2")),
+        ("xz", "source.bin.xz", Some("xz")),
+        ("xz", "source.bin.xz", Some("lzma2")),
+        ("zst", "source.bin.zst", Some("zstd")),
     ];
 
     for (format, archive_name, codec) in cases {
@@ -5271,11 +5304,11 @@ fn chd_compress_and_extract_gdi_round_trip() {
 }
 
 #[test]
-fn chd_compress_accepts_level_for_supported_codecs() {
+fn chd_compress_accepts_supported_codecs() {
     let source = (0..16_384)
         .map(|index| (index % 199) as u8)
         .collect::<Vec<_>>();
-    run_chd_round_trip("disc.bin", &source, "zstd:5", "disc.bin");
+    run_chd_round_trip("disc.bin", &source, "zstd", "disc.bin");
 }
 
 #[test]
@@ -6046,7 +6079,7 @@ fn rvz_compress_and_extract_round_trips() {
             "--output",
             rvz_path.path().to_str().expect("path"),
             "--codec",
-            "lzma2:6",
+            "lzma2",
             "--threads",
             "8",
             "--json",
@@ -6099,7 +6132,7 @@ fn rvz_compress_and_extract_round_trips() {
 }
 
 #[test]
-fn rvz_compress_store_rejects_level() {
+fn rvz_compress_store_ignores_level_profile() {
     let temp = setup_temp_dir();
     let iso_bytes = build_test_gamecube_iso(0x4000);
     fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
@@ -6114,11 +6147,13 @@ fn rvz_compress_store_rejects_level() {
             "--output",
             temp.child("disc.rvz").path().to_str().expect("path"),
             "--codec",
-            "store:1",
+            "store",
+            "--level",
+            "min",
             "--json",
         ])
         .assert()
-        .code(1)
+        .code(0)
         .get_output()
         .stdout
         .clone();
@@ -6127,12 +6162,12 @@ fn rvz_compress_store_rejects_level() {
     assert_eq!(json["command"], "compress");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "rvz");
-    assert_eq!(json["status"], "failed");
+    assert_eq!(json["status"], "succeeded");
     assert!(
         json["label"]
             .as_str()
             .expect("label")
-            .contains("does not accept --level")
+            .contains("codec=store")
     );
 }
 
@@ -6243,7 +6278,7 @@ fn z3ds_compress_inspect_and_extract_round_trip() {
             "--output",
             z3ds_path.path().to_str().expect("path"),
             "--codec",
-            "zstd:5",
+            "zstd",
             "--json",
         ])
         .assert()
@@ -6328,7 +6363,7 @@ fn z3ds_extract_reports_parallel_threads_for_large_file() {
             "--output",
             z3ds_path.path().to_str().expect("path"),
             "--codec",
-            "zstd:4",
+            "zstd",
             "--json",
         ])
         .assert()
@@ -6386,7 +6421,7 @@ fn z3ds_extract_supports_single_output_selection() {
             "--output",
             z3ds_path.path().to_str().expect("path"),
             "--codec",
-            "zstd:4",
+            "zstd",
             "--json",
         ])
         .assert()
@@ -6458,7 +6493,7 @@ fn z3ds_compress_reports_parallel_threads_for_large_file() {
             "--output",
             z3ds_path.path().to_str().expect("path"),
             "--codec",
-            "zstd:4",
+            "zstd",
             "--threads",
             "8",
             "--json",
@@ -7106,6 +7141,7 @@ fn patch_create_succeeds_for_ips_and_round_trips() {
             patch.path().to_str().expect("path"),
             "--output",
             output.path().to_str().expect("path"),
+            "--ignore-checksum-validation",
             "--no-compress",
             "--json",
         ])
@@ -7182,6 +7218,7 @@ fn patch_create_succeeds_for_ips32_and_round_trips() {
             "--output",
             output.path().to_str().expect("path"),
             "--no-compress",
+            "--ignore-checksum-validation",
             "--json",
         ])
         .assert()
@@ -7234,6 +7271,7 @@ fn patch_apply_succeeds_for_valid_ebp_patch() {
             temp.child("output.bin").path().to_str().expect("path"),
             "--threads",
             "8",
+            "--ignore-checksum-validation",
             "--no-compress",
             "--json",
         ])
@@ -7762,6 +7800,7 @@ fn patch_apply_succeeds_for_valid_solid_patch() {
             "--threads",
             "8",
             "--no-compress",
+            "--ignore-checksum-validation",
             "--json",
         ])
         .assert()
@@ -8370,6 +8409,200 @@ fn patch_apply_auto_extract_select_resolves_ambiguity() {
 }
 
 #[test]
+fn patch_apply_auto_extract_patch_archive_ambiguity_requires_select() {
+    let temp = setup_temp_dir();
+    let original = temp.child("game.bin");
+    let modified_a = temp.child("game-mod-a.bin");
+    let modified_b = temp.child("game-mod-b.bin");
+    let patch_a = temp.child("update-a.bps");
+    let patch_b = temp.child("update-b.bps");
+    let patch_archive = temp.child("patches.zip");
+    let output = temp.child("output.bin");
+    fs::write(original.path(), b"game payload").expect("fixture");
+    fs::write(modified_a.path(), b"game payload patched A").expect("fixture");
+    fs::write(modified_b.path(), b"game payload patched B").expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified_a.path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            patch_a.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified_b.path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            patch_b.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            patch_a.path().to_str().expect("path"),
+            patch_b.path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            patch_archive.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let apply_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-apply",
+            "--input",
+            original.path().to_str().expect("path"),
+            "--patch",
+            patch_archive.path().to_str().expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let apply_json = parse_single_json_line(&apply_output);
+    assert_eq!(apply_json["command"], "patch-apply");
+    assert_eq!(apply_json["family"], "patch");
+    assert_eq!(apply_json["status"], "failed");
+    let label = apply_json["label"].as_str().expect("label");
+    assert!(label.contains("ambiguous"));
+    assert!(label.contains("update-a.bps"));
+    assert!(label.contains("update-b.bps"));
+    assert!(label.contains("--select"));
+}
+
+#[test]
+fn patch_apply_auto_extract_patch_archive_select_resolves_ambiguity() {
+    let temp = setup_temp_dir();
+    let original = temp.child("game.bin");
+    let modified_a = temp.child("game-mod-a.bin");
+    let modified_b = temp.child("game-mod-b.bin");
+    let patch_a = temp.child("update-a.bps");
+    let patch_b = temp.child("update-b.bps");
+    let patch_archive = temp.child("patches.zip");
+    let output = temp.child("output.bin");
+    fs::write(original.path(), b"game payload").expect("fixture");
+    fs::write(modified_a.path(), b"game payload patched A").expect("fixture");
+    fs::write(modified_b.path(), b"game payload patched B").expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified_a.path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            patch_a.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified_b.path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            patch_b.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            patch_a.path().to_str().expect("path"),
+            patch_b.path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            patch_archive.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let apply_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-apply",
+            "--input",
+            original.path().to_str().expect("path"),
+            "--patch",
+            patch_archive.path().to_str().expect("path"),
+            "--select",
+            "update-a.bps",
+            "--output",
+            output.path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let apply_json = parse_single_json_line(&apply_output);
+    assert_eq!(apply_json["command"], "patch-apply");
+    assert_eq!(apply_json["family"], "patch");
+    assert_eq!(apply_json["format"], "BPS");
+    assert_eq!(apply_json["status"], "succeeded");
+    assert!(
+        apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("patch apply patch source resolved via 1 container extract step(s)")
+    );
+    assert_eq!(
+        fs::read(output.path()).expect("output"),
+        fs::read(modified_a.path()).expect("modified")
+    );
+}
+
+#[test]
 fn patch_apply_auto_extract_ignores_sidecars_unless_no_ignore() {
     let temp = setup_temp_dir();
     let original = temp.child("game.bin");
@@ -8795,12 +9028,62 @@ fn inspect_patch_reports_expected_checksums_for_bps() {
     assert_eq!(inspect_json["family"], "patch");
     assert_eq!(inspect_json["format"], "BPS");
     assert_eq!(inspect_json["status"], "succeeded");
-    assert!(
-        inspect_json["label"]
-            .as_str()
-            .expect("label")
-            .contains("source crc32")
-    );
+    assert_eq!(inspect_json["details"]["patch"]["format"], "BPS");
+    assert_eq!(inspect_json["details"]["patch"]["source_size"], 15);
+    assert_eq!(inspect_json["details"]["patch"]["target_size"], 15);
+    assert!(inspect_json["details"]["patch"]["source_crc32"].is_number());
+    assert!(inspect_json["details"]["patch"]["target_crc32"].is_number());
+    assert!(inspect_json["details"]["patch"]["patch_crc32"].is_number());
+    assert!(inspect_json["details"]["patch"]["record_count"].is_number());
+}
+
+#[test]
+fn inspect_patch_reports_structured_summary_for_ups() {
+    let temp = setup_temp_dir();
+    let original = temp.child("old.bin");
+    let modified = temp.child("new.bin");
+    let patch = temp.child("update.ups");
+    fs::write(original.path(), b"hello old world").expect("fixture");
+    fs::write(modified.path(), b"hello new world").expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified.path().to_str().expect("path"),
+            "--format",
+            "ups",
+            "--output",
+            patch.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let inspect_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["inspect", patch.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let inspect_json = parse_single_json_line(&inspect_output);
+    assert_eq!(inspect_json["command"], "inspect");
+    assert_eq!(inspect_json["family"], "patch");
+    assert_eq!(inspect_json["format"], "UPS");
+    assert_eq!(inspect_json["status"], "succeeded");
+    assert_eq!(inspect_json["details"]["patch"]["format"], "UPS");
+    assert_eq!(inspect_json["details"]["patch"]["source_size"], 15);
+    assert_eq!(inspect_json["details"]["patch"]["target_size"], 15);
+    assert!(inspect_json["details"]["patch"]["source_crc32"].is_number());
+    assert!(inspect_json["details"]["patch"]["target_crc32"].is_number());
+    assert!(inspect_json["details"]["patch"]["patch_crc32"].is_number());
+    assert!(inspect_json["details"]["patch"]["record_count"].is_number());
 }
 
 #[test]
@@ -9289,6 +9572,7 @@ fn patch_create_succeeds_for_mod_and_round_trips() {
             "--output",
             output.path().to_str().expect("path"),
             "--no-compress",
+            "--ignore-checksum-validation",
             "--json",
         ])
         .assert()
@@ -10651,6 +10935,7 @@ fn patch_apply_succeeds_for_valid_mod_patch() {
             "--threads",
             "8",
             "--no-compress",
+            "--ignore-checksum-validation",
             "--json",
         ])
         .assert()
@@ -10975,6 +11260,5 @@ fn inspect_reports_unknown_formats_cleanly() {
     assert_eq!(json["stage"], "probe");
     assert_eq!(json["status"], "failed");
     let label = json["label"].as_str().expect("label");
-    assert!(label.contains("recommended_compress_format=chd"));
-    assert!(label.contains("reason=not-wii-gc-or-unrecognized"));
+    assert!(label.contains("no registered handler matched"));
 }

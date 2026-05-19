@@ -304,13 +304,19 @@ pub struct TrimCommand {
 pub struct PatchApplyCommand {
     #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
     pub input: PathBuf,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "select"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "select",
+            help = "Container payload selection pattern(s) used while auto-extracting patch-apply input and patch files"
+        )
+    )]
     pub select: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
             long,
-            help = "Disable container auto-extract and patch the source bytes directly"
+            help = "Disable container auto-extract and patch the raw input and patch bytes directly"
         )
     )]
     pub no_extract: bool,
@@ -1930,6 +1936,7 @@ impl CliApp {
                     None,
                 )
             });
+            let mut listed_entries: Option<Vec<String>> = None;
             if report.status == OperationStatus::Succeeded && args.list {
                 self.emit_running(
                     "inspect",
@@ -1951,15 +1958,27 @@ impl CliApp {
                 });
                 match listed {
                     Ok(entries) => {
-                        report.label = Self::append_entry_list_label(&report.label, &entries);
+                        if !self.emit_progress_events {
+                            report.label = Self::append_entry_list_label(&report.label, &entries);
+                        }
+                        listed_entries = Some(entries);
                     }
                     Err(list_error) => {
                         report = list_error;
                     }
                 }
             }
-            report =
-                Self::append_recommended_compress_label(report, inspect_recommendation.as_ref());
+            if !self.emit_progress_events {
+                report = Self::append_recommended_compress_label(
+                    report,
+                    inspect_recommendation.as_ref(),
+                );
+            }
+            report = Self::attach_container_inspect_details(
+                report,
+                listed_entries,
+                inspect_recommendation.as_ref(),
+            );
             return self.finish("inspect", report);
         }
 
@@ -1981,15 +2000,9 @@ impl CliApp {
                     "inspect --list is only supported for container formats",
                     None,
                 );
-                return self.finish(
-                    "inspect",
-                    Self::append_recommended_compress_label(
-                        report,
-                        inspect_recommendation.as_ref(),
-                    ),
-                );
+                return self.finish("inspect", report);
             }
-            let report = handler.parse(&source, &context).unwrap_or_else(|error| {
+            let mut report = handler.parse(&source, &context).unwrap_or_else(|error| {
                 OperationReport::failed(
                     OperationFamily::Patch,
                     Some(handler.descriptor().name.to_string()),
@@ -1998,9 +2011,13 @@ impl CliApp {
                     None,
                 )
             });
-            let report =
-                Self::append_recommended_compress_label(report, inspect_recommendation.as_ref());
-            return self.finish("inspect", report);
+            if !self.emit_progress_events {
+                report = Self::append_recommended_compress_label(
+                    report,
+                    inspect_recommendation.as_ref(),
+                );
+            }
+            return self.finish("inspect", Self::attach_patch_inspect_details(report));
         }
 
         if let Ok(Some(header_match)) = Self::detect_known_rom_header(&source) {
@@ -2012,15 +2029,9 @@ impl CliApp {
                     "inspect --list is only supported for container formats",
                     None,
                 );
-                return self.finish(
-                    "inspect",
-                    Self::append_recommended_compress_label(
-                        report,
-                        inspect_recommendation.as_ref(),
-                    ),
-                );
+                return self.finish("inspect", report);
             }
-            let report = OperationReport::succeeded(
+            let mut report = OperationReport::succeeded(
                 OperationFamily::Command,
                 Some("rom-header".to_string()),
                 "inspect",
@@ -2037,23 +2048,27 @@ impl CliApp {
                 Some(100.0),
                 Some(context.plan_threads(ThreadCapability::single_threaded())),
             );
-            return self.finish(
-                "inspect",
-                Self::append_recommended_compress_label(report, inspect_recommendation.as_ref()),
-            );
+            if !self.emit_progress_events {
+                report = Self::append_recommended_compress_label(
+                    report,
+                    inspect_recommendation.as_ref(),
+                );
+            }
+            return self.finish("inspect", report);
         }
 
-        let report = OperationReport::failed(
+        let mut report = OperationReport::failed(
             OperationFamily::Command,
             None,
             "probe",
             format!("no registered handler matched `{}`", source.display()),
             None,
         );
-        self.finish(
-            "inspect",
-            Self::append_recommended_compress_label(report, inspect_recommendation.as_ref()),
-        )
+        if !self.emit_progress_events {
+            report =
+                Self::append_recommended_compress_label(report, inspect_recommendation.as_ref());
+        }
+        self.finish("inspect", report)
     }
 
     fn run_extract(&self, args: ExtractCommand) -> ExitCode {
@@ -3742,8 +3757,68 @@ impl CliApp {
         } else {
             None
         };
-
         let mut temp_paths = cleanup_paths;
+        let mut resolved_patches = Vec::with_capacity(patches.len());
+        let mut extracted_patch_notes = Vec::new();
+        for (index, patch_path) in patches.iter().enumerate() {
+            let patch_source_label = if patches.len() == 1 {
+                "patch apply patch source".to_string()
+            } else {
+                format!("patch apply patch {}/{} source", index + 1, patches.len())
+            };
+            let resolved_patch = match self.resolve_source_with_auto_extract(
+                patch_path,
+                &select,
+                no_extract,
+                no_ignore,
+                &context,
+                AutoExtractResolutionLabels {
+                    command: "patch-apply",
+                    family: OperationFamily::Patch,
+                    format: None,
+                    source_label: patch_source_label.as_str(),
+                    temp_prefix: "patch-apply-patch-extract",
+                },
+            ) {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    return self.finish(
+                        "patch-apply",
+                        OperationReport::failed(
+                            OperationFamily::Patch,
+                            None,
+                            "prepare",
+                            error.to_string(),
+                            probe_threads.clone(),
+                        ),
+                    );
+                }
+            };
+            let ResolvedChecksumSource {
+                source: resolved_patch_source,
+                extracted_archives: resolved_patch_extracted_archives,
+                cleanup_paths: resolved_patch_cleanup_paths,
+            } = resolved_patch;
+            if resolved_patch_extracted_archives > 0 {
+                let note = if patches.len() == 1 {
+                    format!(
+                        "patch apply patch source resolved via {} container extract step(s)",
+                        resolved_patch_extracted_archives
+                    )
+                } else {
+                    format!(
+                        "patch {}/{} source resolved via {} container extract step(s)",
+                        index + 1,
+                        patches.len(),
+                        resolved_patch_extracted_archives
+                    )
+                };
+                extracted_patch_notes.push(note);
+            }
+            temp_paths.extend(resolved_patch_cleanup_paths);
+            resolved_patches.push((patch_path.clone(), resolved_patch_source));
+        }
+
         let report = (|| {
             if patches.is_empty() {
                 return OperationReport::failed(
@@ -3848,7 +3923,7 @@ impl CliApp {
                 }
             }
 
-            let patch_count = patches.len();
+            let patch_count = resolved_patches.len();
             let requires_compat_finalize = add_header || repair_checksum || patch_count > 1;
             let needs_staged_output = requires_compat_finalize || compression_options.enabled;
             let staged_output = if needs_staged_output {
@@ -3872,17 +3947,26 @@ impl CliApp {
                 Some(context.plan_threads(ThreadCapability::single_threaded())),
             );
 
-            for (index, patch_path) in patches.iter().enumerate() {
-                let Some(handler) = self.patches.probe(patch_path) else {
+            for (index, (patch_path, resolved_patch_path)) in resolved_patches.iter().enumerate() {
+                let Some(handler) = self.patches.probe(resolved_patch_path) else {
+                    let patch_label = if patch_path == resolved_patch_path {
+                        format!("`{}`", patch_path.display())
+                    } else {
+                        format!(
+                            "`{}` (resolved from `{}`)",
+                            resolved_patch_path.display(),
+                            patch_path.display()
+                        )
+                    };
                     return OperationReport::failed(
                         OperationFamily::Patch,
                         None,
                         "probe",
                         format!(
-                            "patch {}/{}: no registered patch handler matched `{}`",
+                            "patch {}/{}: no registered patch handler matched {}",
                             index + 1,
                             patch_count,
-                            patch_path.display()
+                            patch_label
                         ),
                         probe_threads.clone(),
                     );
@@ -3936,7 +4020,7 @@ impl CliApp {
 
                 let request = PatchApplyRequest {
                     input: current_input,
-                    patches: vec![patch_path.clone()],
+                    patches: vec![resolved_patch_path.clone()],
                     output: apply_output.clone(),
                 };
                 report = handler.apply(&request, &context).unwrap_or_else(|error| {
@@ -4053,6 +4137,9 @@ impl CliApp {
                     "{}; patch apply input source resolved via {extracted_archives} container extract step(s)",
                     report.label
                 );
+            }
+            if !extracted_patch_notes.is_empty() {
+                report.label = format!("{}; {}", report.label, extracted_patch_notes.join("; "));
             }
             if !checksum_verification_labels.is_empty() {
                 report.label = format!(
@@ -5770,6 +5857,81 @@ impl CliApp {
             report.label =
                 Self::append_compress_recommendation_label(&report.label, recommendation);
         }
+        report
+    }
+
+    fn attach_container_inspect_details(
+        mut report: OperationReport,
+        listed_entries: Option<Vec<String>>,
+        recommendation: Option<&CompressFormatRecommendation>,
+    ) -> OperationReport {
+        if report.status != OperationStatus::Succeeded {
+            return report;
+        }
+
+        let mut details = match report.details.take() {
+            Some(Value::Object(map)) => map,
+            _ => Map::new(),
+        };
+        let mut container = match details.remove("container") {
+            Some(Value::Object(map)) => map,
+            _ => Map::new(),
+        };
+
+        let entry_count = listed_entries.as_ref().map(Vec::len);
+        container.insert(
+            "entry_count".to_string(),
+            entry_count.map_or(Value::Null, |value| json!(value)),
+        );
+        if let Some(entries) = listed_entries {
+            container.insert("entries".to_string(), json!(entries));
+        }
+        if let Some(recommendation) = recommendation {
+            container.insert(
+                "recommended_compress_format".to_string(),
+                json!(recommendation.format_name),
+            );
+            container.insert("reason".to_string(), json!(recommendation.reason));
+        }
+
+        details.insert("container".to_string(), Value::Object(container));
+        report.details = Some(Value::Object(details));
+        report
+    }
+
+    fn attach_patch_inspect_details(mut report: OperationReport) -> OperationReport {
+        if report.status != OperationStatus::Succeeded {
+            return report;
+        }
+
+        let mut details = match report.details.take() {
+            Some(Value::Object(map)) => map,
+            _ => Map::new(),
+        };
+        let mut patch = match details.remove("patch") {
+            Some(Value::Object(map)) => map,
+            _ => Map::new(),
+        };
+
+        patch.entry("format".to_string()).or_insert_with(|| {
+            report
+                .format
+                .as_ref()
+                .map_or(Value::Null, |format| json!(format))
+        });
+        for field in [
+            "source_size",
+            "target_size",
+            "source_crc32",
+            "target_crc32",
+            "patch_crc32",
+            "record_count",
+        ] {
+            patch.entry(field.to_string()).or_insert(Value::Null);
+        }
+
+        details.insert("patch".to_string(), Value::Object(patch));
+        report.details = Some(Value::Object(details));
         report
     }
 

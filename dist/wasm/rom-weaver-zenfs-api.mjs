@@ -1,4 +1,5 @@
 import {
+  createWasmEnvImports,
   createRomWeaverWasiRunner,
   parseJsonLines,
   parseTraceJsonLines,
@@ -165,6 +166,7 @@ export async function createRomWeaverZenFsBrowser(options = {}) {
 
         const instance = await WebAssembly.instantiate(module, {
           wasi_snapshot_preview1: wasi.wasiImport,
+          env: createWasmEnvImports(),
         });
 
         const exitCode = wasi.start(instance);

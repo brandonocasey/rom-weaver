@@ -5,6 +5,7 @@ import type {
   ParseTraceJsonLinesOptions,
   ParseTraceJsonLinesResult,
   RomWeaverPreopens,
+  RomWeaverProgressEvent,
   RomWeaverRunJsonOptions,
   RomWeaverRunJsonResult,
   RomWeaverRunOptions,
@@ -18,7 +19,7 @@ export const DEFAULT_PREOPENS: RomWeaverPreopens;
 export class RomWeaverWasiRunner {
   constructor(options?: RomWeaverWasiRunnerOptions);
   run(args?: unknown[], options?: RomWeaverRunOptions): Promise<RomWeaverRunResult>;
-  runJson<TEvent = unknown, TTraceEvent = unknown>(
+  runJson<TEvent = RomWeaverProgressEvent, TTraceEvent = unknown>(
     args?: unknown[],
     options?: RomWeaverRunJsonOptions<TEvent, TTraceEvent>,
   ): Promise<RomWeaverRunJsonResult<TEvent, TTraceEvent>>;
@@ -30,7 +31,7 @@ export function createNodeFsRunner(options?: NodeFsRunnerOptions): RomWeaverWasi
 
 export function buildNodeFsPreopens(options?: NodeFsRunnerOptions): RomWeaverPreopens;
 
-export function parseJsonLines<TEvent = unknown>(
+export function parseJsonLines<TEvent = RomWeaverProgressEvent>(
   text: string,
   options?: ParseJsonLinesOptions<TEvent>,
 ): ParseJsonLinesResult<TEvent>;

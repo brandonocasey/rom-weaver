@@ -1,4 +1,5 @@
 import type {
+  RomWeaverProgressEvent,
   RomWeaverRunJsonOptions,
   RomWeaverRunJsonResult,
   RomWeaverRunResult,
@@ -12,7 +13,7 @@ export interface RomWeaverZenFsNodeRunner {
   fs: unknown;
   guestMounts: Record<string, string>;
   run(args?: unknown[], options?: RomWeaverZenFsBrowserRunOptions): Promise<RomWeaverRunResult>;
-  runJson<TEvent = unknown, TTraceEvent = unknown>(
+  runJson<TEvent = RomWeaverProgressEvent, TTraceEvent = unknown>(
     args?: unknown[],
     options?: RomWeaverRunJsonOptions<TEvent, TTraceEvent>,
   ): Promise<RomWeaverRunJsonResult<TEvent, TTraceEvent>>;
@@ -25,7 +26,7 @@ export interface RomWeaverZenFsBrowserRunner {
   opfsGuestPath: string;
   runtimeMounts: string[];
   run(args?: unknown[], options?: RomWeaverZenFsBrowserRunOptions): Promise<RomWeaverRunResult>;
-  runJson<TEvent = unknown, TTraceEvent = unknown>(
+  runJson<TEvent = RomWeaverProgressEvent, TTraceEvent = unknown>(
     args?: unknown[],
     options?: RomWeaverRunJsonOptions<TEvent, TTraceEvent>,
   ): Promise<RomWeaverRunJsonResult<TEvent, TTraceEvent>>;
