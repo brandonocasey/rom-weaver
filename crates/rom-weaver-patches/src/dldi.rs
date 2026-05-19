@@ -41,6 +41,7 @@ const DO_WRITE_SECTORS: usize = 0x74;
 const DO_CLEAR_STATUS: usize = 0x78;
 const DO_SHUTDOWN: usize = 0x7C;
 const DO_CODE: usize = 0x80;
+const INPUT_NO_DLDI_SLOT_MESSAGE: &str = "input does not contain a patchable DLDI section";
 
 pub struct DldiPatchHandler {
     descriptor: &'static FormatDescriptor,
@@ -86,22 +87,40 @@ impl PatchHandler for DldiPatchHandler {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let patch = fs::read(patch_path)?;
         let input = map_file_read_only(&request.input)?;
-        let apply = apply_dldi_patch(input.as_ref(), &patch)?;
+        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let apply = match apply_dldi_patch(input.as_ref(), &patch) {
+            Ok(apply) => apply,
+            Err(RomWeaverError::Validation(message)) if message == INPUT_NO_DLDI_SLOT_MESSAGE => {
+                return Ok(OperationReport::unsupported(
+                    OperationFamily::Patch,
+                    Some(self.descriptor.name.to_string()),
+                    "apply",
+                    message,
+                    Some(execution),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
 
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(&request.output, &apply.output)?;
 
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let mut label = format!(
+            "applied {} driver `{}` over `{}` at 0x{:08X}",
+            self.descriptor.name, apply.new_driver, apply.old_driver, apply.patch_offset
+        );
+        for warning in &apply.warnings {
+            label.push_str("; warning=");
+            label.push_str(warning);
+        }
+
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "apply",
-            format!(
-                "applied {} driver `{}` over `{}` at 0x{:08X}",
-                self.descriptor.name, apply.new_driver, apply.old_driver, apply.patch_offset
-            ),
+            label,
             Some(100.0),
             Some(execution),
         ))
@@ -206,6 +225,7 @@ struct DldiApplyOutput {
     patch_offset: usize,
     old_driver: String,
     new_driver: String,
+    warnings: Vec<String>,
 }
 
 fn parse_dldi_at(bytes: &[u8], start: usize, label: &str) -> Result<DldiHeader> {
@@ -223,6 +243,18 @@ fn parse_dldi_at(bytes: &[u8], start: usize, label: &str) -> Result<DldiHeader> 
 }
 
 fn parse_dldi_bytes(bytes: &[u8], label: &str) -> Result<DldiHeader> {
+    parse_dldi_bytes_with_options(bytes, label, false)
+}
+
+fn parse_dldi_bytes_for_apply(bytes: &[u8], label: &str) -> Result<DldiHeader> {
+    parse_dldi_bytes_with_options(bytes, label, true)
+}
+
+fn parse_dldi_bytes_with_options(
+    bytes: &[u8],
+    label: &str,
+    allow_truncated_driver_bytes: bool,
+) -> Result<DldiHeader> {
     if bytes.len() < DO_CODE {
         return Err(RomWeaverError::Validation(format!(
             "{label} is too small to contain a valid DLDI header"
@@ -248,7 +280,7 @@ fn parse_dldi_bytes(bytes: &[u8], label: &str) -> Result<DldiHeader> {
             "{label} driver size {driver_size_bytes} is smaller than header size {DO_CODE}"
         )));
     }
-    if driver_size_bytes > bytes.len() {
+    if !allow_truncated_driver_bytes && driver_size_bytes > bytes.len() {
         return Err(RomWeaverError::Validation(format!(
             "{label} declares {driver_size_bytes} byte(s), but only {} byte(s) are available",
             bytes.len()
@@ -284,10 +316,10 @@ fn parse_friendly_name(bytes: &[u8]) -> Result<String> {
 }
 
 fn apply_dldi_patch(input: &[u8], patch: &[u8]) -> Result<DldiApplyOutput> {
-    let patch_header = parse_dldi_bytes(patch, "DLDI patch")?;
-    let patch_offset = find_dldi_slot(input).ok_or_else(|| {
-        RomWeaverError::Validation("input does not contain a patchable DLDI section".into())
-    })?;
+    let patch_header = parse_dldi_bytes_for_apply(patch, "DLDI patch")?;
+    let patch_offset = find_dldi_slot(input)
+        .ok_or_else(|| RomWeaverError::Validation(INPUT_NO_DLDI_SLOT_MESSAGE.into()))?;
+    let mut warnings = Vec::new();
 
     if patch_offset
         .checked_add(DO_CODE)
@@ -302,10 +334,10 @@ fn apply_dldi_patch(input: &[u8], patch: &[u8]) -> Result<DldiApplyOutput> {
     let existing_header = parse_dldi_at(input, patch_offset, "input DLDI section")?;
     if patch_header.driver_size_log2 > existing_header.allocated_space_log2 {
         let available = size_from_log2(existing_header.allocated_space_log2, "input DLDI space")?;
-        return Err(RomWeaverError::Validation(format!(
+        warnings.push(format!(
             "not enough space for DLDI patch (available {available} byte(s), need {} byte(s))",
             patch_header.driver_size_bytes
-        )));
+        ));
     }
 
     let mut output = input.to_vec();
@@ -313,12 +345,18 @@ fn apply_dldi_patch(input: &[u8], patch: &[u8]) -> Result<DldiApplyOutput> {
         .checked_add(patch_header.driver_size_bytes)
         .ok_or_else(|| RomWeaverError::Validation("DLDI patch range overflowed".into()))?;
     if patch_end > output.len() {
-        return Err(RomWeaverError::Validation(
-            "input file ended before the DLDI patch slot".into(),
+        warnings.push(format!(
+            "input file ended before the DLDI patch slot; extending output from {} to {} byte(s)",
+            output.len(),
+            patch_end
         ));
+        output.resize(patch_end, 0);
     }
 
-    output[patch_offset..patch_end].copy_from_slice(&patch[..patch_header.driver_size_bytes]);
+    // Keep oversized applies deterministic: legacy dlditool overflow behavior is undefined,
+    // so we copy only available patch bytes and still run full relocation/BSS fixups.
+    let patch_copy_len = patch.len().min(patch_header.driver_size_bytes);
+    output[patch_offset..patch_offset + patch_copy_len].copy_from_slice(&patch[..patch_copy_len]);
     output[patch_offset + DO_ALLOCATED_SPACE] = existing_header.allocated_space_log2;
 
     let input_slot = &input[patch_offset..];
@@ -390,6 +428,7 @@ fn apply_dldi_patch(input: &[u8], patch: &[u8]) -> Result<DldiApplyOutput> {
         patch_offset,
         old_driver: existing_header.friendly_name,
         new_driver: patch_header.friendly_name,
+        warnings,
     })
 }
 
@@ -533,9 +572,15 @@ fn size_from_log2(log2: u8, label: &str) -> Result<usize> {
 }
 
 fn find_dldi_slot(input: &[u8]) -> Option<usize> {
-    input
-        .windows(DLDI_MAGIC.len())
-        .position(|window| window == DLDI_MAGIC)
+    let search_end = input.len().checked_sub(DLDI_MAGIC.len())?;
+    let mut offset = 0usize;
+    while offset <= search_end {
+        if input[offset..offset + DLDI_MAGIC.len()] == DLDI_MAGIC {
+            return Some(offset);
+        }
+        offset = offset.checked_add(4)?;
+    }
+    None
 }
 
 fn map_file_read_only(path: &Path) -> Result<Mmap> {
@@ -637,6 +682,169 @@ mod tests {
         )
         .expect("bss end");
         assert!(slot[bss_start..bss_end].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn apply_warns_and_extends_when_patch_exceeds_allocated_space() {
+        let temp = TestDir::new();
+        let input_path = temp.child("input.nds");
+        let patch_path = temp.child("driver.dldi");
+        let output_path = temp.child("output.nds");
+
+        let slot_offset = 0x500;
+        let mem_offset = 0x0220_0000i32;
+        let input = build_test_app_with_slot(slot_offset, 8, mem_offset, "Default driver");
+        let patch = build_test_dldi_driver(
+            12,
+            0xBF82_0000u32 as i32,
+            "Oversized Driver",
+            FIX_ALL | FIX_GLUE | FIX_GOT | FIX_BSS,
+        );
+
+        fs::write(&input_path, &input).expect("fixture");
+        fs::write(&patch_path, &patch).expect("fixture");
+
+        let handler = DldiPatchHandler::new(&DLDI);
+        let report = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path,
+                    patches: vec![patch_path],
+                    output: output_path.clone(),
+                },
+                &test_context_with_threads(&temp, 2),
+            )
+            .expect("apply");
+
+        assert!(report.label.contains(
+            "warning=not enough space for DLDI patch (available 256 byte(s), need 4096 byte(s))"
+        ));
+        assert!(
+            report
+                .label
+                .contains("warning=input file ended before the DLDI patch slot; extending output from 1664 to 5376 byte(s)")
+        );
+
+        let output = fs::read(output_path).expect("output");
+        assert_eq!(output.len(), slot_offset + (1 << 12));
+        assert_eq!(output[slot_offset + DO_ALLOCATED_SPACE], 8);
+        assert_eq!(output[slot_offset + DO_DRIVER_SIZE], 12);
+
+        let slot = &output[slot_offset..slot_offset + (1 << 12)];
+        let startup = i32::from_le_bytes(slot[DO_STARTUP..DO_STARTUP + 4].try_into().expect("len"));
+        assert_eq!(startup, mem_offset + i32::try_from(DO_CODE).expect("fits"));
+    }
+
+    #[test]
+    fn apply_ignores_misaligned_dldi_slot() {
+        let temp = TestDir::new();
+        let input_path = temp.child("misaligned.nds");
+        let patch_path = temp.child("driver.dldi");
+        let output_path = temp.child("output.nds");
+
+        let aligned = build_test_app_with_slot(0x300, 12, 0x0200_0000, "Default driver");
+        let mut misaligned = Vec::with_capacity(aligned.len() + 1);
+        misaligned.push(0);
+        misaligned.extend_from_slice(&aligned);
+        let patch = build_test_dldi_driver(
+            8,
+            0xBF80_0000u32 as i32,
+            "Test Driver",
+            FIX_ALL | FIX_GLUE | FIX_GOT | FIX_BSS,
+        );
+
+        fs::write(&input_path, &misaligned).expect("fixture");
+        fs::write(&patch_path, &patch).expect("fixture");
+
+        let handler = DldiPatchHandler::new(&DLDI);
+        let report = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path,
+                    patches: vec![patch_path],
+                    output: output_path,
+                },
+                &test_context_with_threads(&temp, 2),
+            )
+            .expect("misaligned slot should report unsupported");
+        assert!(
+            report
+                .label
+                .contains("input does not contain a patchable DLDI section")
+        );
+        assert_eq!(report.status, rom_weaver_core::OperationStatus::Unsupported);
+    }
+
+    #[test]
+    fn apply_accepts_truncated_patch_payload() {
+        let temp = TestDir::new();
+        let input_path = temp.child("input.nds");
+        let patch_path = temp.child("driver-truncated.dldi");
+        let output_path = temp.child("output.nds");
+
+        let slot_offset = 0x300;
+        let mem_offset = 0x0200_0000i32;
+        let input = build_test_app_with_slot(slot_offset, 12, mem_offset, "Default driver");
+        let patch_full = build_test_dldi_driver(
+            8,
+            0xBF80_0000u32 as i32,
+            "Truncated Driver",
+            FIX_ALL | FIX_GLUE | FIX_GOT | FIX_BSS,
+        );
+        let patch_truncated = &patch_full[..DO_CODE];
+
+        fs::write(&input_path, &input).expect("fixture");
+        fs::write(&patch_path, patch_truncated).expect("fixture");
+
+        let handler = DldiPatchHandler::new(&DLDI);
+        handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path.clone(),
+                    patches: vec![patch_path],
+                    output: output_path.clone(),
+                },
+                &test_context_with_threads(&temp, 2),
+            )
+            .expect("apply");
+
+        let output = fs::read(output_path).expect("output");
+        let original_slot = &input[slot_offset..slot_offset + (1 << 8)];
+        let output_slot = &output[slot_offset..slot_offset + (1 << 8)];
+        assert_eq!(output_slot[DO_DRIVER_SIZE], 8);
+        assert_eq!(output_slot[DO_ALLOCATED_SPACE], 12);
+        let bss_start = usize::try_from(
+            i32::from_le_bytes(
+                output_slot[DO_BSS_START..DO_BSS_START + 4]
+                    .try_into()
+                    .expect("len"),
+            ) - mem_offset,
+        )
+        .expect("bss start");
+        let bss_end = usize::try_from(
+            i32::from_le_bytes(
+                output_slot[DO_BSS_END..DO_BSS_END + 4]
+                    .try_into()
+                    .expect("len"),
+            ) - mem_offset,
+        )
+        .expect("bss end");
+        assert_eq!(
+            &output_slot[DO_CODE..bss_start],
+            &original_slot[DO_CODE..bss_start],
+            "missing patch payload should preserve existing bytes before BSS"
+        );
+        assert!(
+            output_slot[bss_start..bss_end]
+                .iter()
+                .all(|value| *value == 0),
+            "BSS should still be zeroed by fix flags even with truncated payload"
+        );
+        assert_eq!(
+            &output_slot[bss_end..(1 << 8)],
+            &original_slot[bss_end..(1 << 8)],
+            "missing patch payload should preserve existing bytes after BSS"
+        );
     }
 
     #[test]
