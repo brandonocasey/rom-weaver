@@ -540,6 +540,12 @@ fn rar_fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn trim_fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/trim")
+        .join(name)
+}
+
 fn encode_varint(bytes: &mut Vec<u8>, mut value: u64) {
     if value == 0 {
         bytes.push(0);
@@ -1485,6 +1491,89 @@ fn trim_dsi_uses_ntr_twl_size_boundary() {
     let trimmed = fs::read(output.path()).expect("trimmed output");
     assert_eq!(trimmed.len(), 0x3A00);
     assert_eq!(&trimmed[..], &rom[..0x3A00]);
+}
+
+fn assert_trim_fixture_parity_and_determinism(
+    fixture_base: &str,
+    expected_mode: &str,
+    expected_trimmed_size: usize,
+    expected_download_play_cert: bool,
+) {
+    let temp = setup_temp_dir();
+    let source = temp.child(format!("{fixture_base}.input.nds"));
+    let output_a = temp.child(format!("{fixture_base}.trim-a.nds"));
+    let output_b = temp.child(format!("{fixture_base}.trim-b.nds"));
+
+    let source_fixture = trim_fixture_path(&format!("{fixture_base}.input.nds"));
+    let expected_fixture = trim_fixture_path(&format!("{fixture_base}.expected.trim.nds"));
+    fs::copy(&source_fixture, source.path()).expect("copy input fixture");
+    let expected = fs::read(expected_fixture).expect("expected trimmed fixture");
+
+    let first_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "--output",
+            output_a.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let first_terminal = parse_single_json_line(&first_output);
+    assert_eq!(first_terminal["command"], "trim");
+    assert_eq!(first_terminal["family"], "command");
+    assert_eq!(first_terminal["format"], "nds");
+    assert_eq!(first_terminal["status"], "succeeded");
+
+    let first_label = first_terminal["label"].as_str().expect("label");
+    assert!(first_label.contains(&format!("mode={expected_mode}")));
+    assert!(first_label.contains(&format!("trimmed_size={expected_trimmed_size}")));
+    assert!(first_label.contains(&format!(
+        "preserved_download_play_cert={expected_download_play_cert}"
+    )));
+
+    let first_trimmed = fs::read(output_a.path()).expect("first trimmed output");
+    assert_eq!(first_trimmed, expected);
+
+    let second_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "trim",
+            source.path().to_str().expect("path"),
+            "--output",
+            output_b.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let second_terminal = parse_single_json_line(&second_output);
+    assert_eq!(second_terminal["command"], "trim");
+    assert_eq!(second_terminal["family"], "command");
+    assert_eq!(second_terminal["format"], "nds");
+    assert_eq!(second_terminal["status"], "succeeded");
+
+    let second_trimmed = fs::read(output_b.path()).expect("second trimmed output");
+    assert_eq!(second_trimmed, expected);
+    assert_eq!(first_trimmed, second_trimmed);
+}
+
+#[test]
+fn trim_nds_fixture_matches_expected_output_deterministically() {
+    assert_trim_fixture_parity_and_determinism("nds-downloadplay", "ds", 0x3200 + 0x88, true);
+}
+
+#[test]
+fn trim_dsi_fixture_matches_expected_output_deterministically() {
+    assert_trim_fixture_parity_and_determinism("dsi-ntr-twl", "dsi", 0x3A00, false);
 }
 
 #[test]
