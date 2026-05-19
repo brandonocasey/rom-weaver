@@ -1898,8 +1898,8 @@ impl StreamContainerHandler {
 
     fn create_thread_capability(&self) -> ThreadCapability {
         match self.compression {
-            StreamCompression::Zstd => ThreadCapability::parallel(None),
-            StreamCompression::Gzip | StreamCompression::Bzip2 | StreamCompression::Xz => {
+            StreamCompression::Xz | StreamCompression::Zstd => ThreadCapability::parallel(None),
+            StreamCompression::Gzip | StreamCompression::Bzip2 => {
                 ThreadCapability::single_threaded()
             }
         }
@@ -9806,6 +9806,24 @@ mod tests {
     }
 
     #[test]
+    fn xz_stream_capabilities_report_parallel_create_threads() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("xz").expect("xz handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.inspect);
+        assert!(capabilities.extract);
+        assert!(capabilities.create);
+        assert_eq!(
+            capabilities.extract_threads,
+            ThreadCapability::single_threaded()
+        );
+        assert_eq!(
+            capabilities.create_threads,
+            ThreadCapability::parallel(None)
+        );
+    }
+
+    #[test]
     fn zip_runtime_threads_match_capabilities_for_create_and_extract() {
         let temp_dir = temp_dir_path("zip-thread-parity");
         fs::create_dir_all(&temp_dir).expect("temp dir");
@@ -10058,6 +10076,69 @@ mod tests {
                 &test_context(&temp_dir, 8),
             )
             .expect("extract zst");
+        let extract_execution = extract_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .extract_threads
+                .supports_execution(&extract_execution)
+        );
+        assert_eq!(extract_execution.requested_threads, 8);
+        assert_eq!(extract_execution.effective_threads, 1);
+        assert!(!extract_execution.used_parallelism);
+
+        let extracted = fs::read(output_dir.join("source.bin")).expect("read extracted payload");
+        assert_eq!(extracted, payload);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn xz_stream_create_runtime_threads_match_capability() {
+        let temp_dir = temp_dir_path("xz-stream-thread-parity");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let source_path = temp_dir.join("source.bin");
+        let archive_path = temp_dir.join("source.bin.xz");
+        let output_dir = temp_dir.join("out");
+        let payload = (0..(3 * 1024 * 1024))
+            .map(|index| (index as u8).wrapping_mul(11))
+            .collect::<Vec<_>>();
+        fs::write(&source_path, &payload).expect("write fixture");
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("xz").expect("xz handler");
+        let capabilities = handler.capabilities();
+        let create_report = handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![source_path.clone()],
+                    output: archive_path.clone(),
+                    format: "xz".to_string(),
+                    codec: None,
+                    level: None,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("create xz");
+        let create_execution = create_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .create_threads
+                .supports_execution(&create_execution)
+        );
+        assert_eq!(create_execution.requested_threads, 8);
+        assert_eq!(create_execution.effective_threads, 8);
+        assert!(create_execution.used_parallelism);
+
+        let extract_report = handler
+            .extract(
+                &rom_weaver_core::ContainerExtractRequest {
+                    source: archive_path,
+                    out_dir: output_dir.clone(),
+                    selections: Vec::new(),
+                    split_bin: false,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("extract xz");
         let extract_execution = extract_report.thread_execution.expect("thread execution");
         assert!(
             capabilities

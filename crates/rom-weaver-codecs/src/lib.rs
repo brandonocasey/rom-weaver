@@ -1,13 +1,14 @@
 use std::{
     fs::{self, File},
     io::{self, BufReader, BufWriter, Write},
+    num::NonZeroU64,
     path::Path,
     sync::Arc,
 };
 
 use bzip2::{Compression as Bzip2Compression, read::BzDecoder, write::BzEncoder};
 use flate2::{Compression as DeflateCompression, read::GzDecoder, write::GzEncoder};
-use lzma_rust2::{XzOptions, XzReader, XzWriter};
+use lzma_rust2::{XzOptions, XzReader, XzWriter, XzWriterMt};
 use rom_weaver_core::{
     CodecBackend, CodecCapabilities, CodecDescriptor, CodecOperationRequest, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, Result, RomWeaverError, ThreadCapability,
@@ -173,6 +174,8 @@ struct NativeCodecBackend {
 }
 
 impl NativeCodecBackend {
+    const XZ_MT_BLOCK_BYTES: u64 = 1 << 20;
+
     const fn new(descriptor: &'static CodecDescriptor, kind: NativeCodecKind) -> Self {
         Self { descriptor, kind }
     }
@@ -246,16 +249,31 @@ impl NativeCodecBackend {
 
     fn encode_thread_capability(&self) -> ThreadCapability {
         match self.kind {
-            NativeCodecKind::Zstd => ThreadCapability::parallel(None),
-            NativeCodecKind::Store
-            | NativeCodecKind::Deflate
-            | NativeCodecKind::Lzma2
-            | NativeCodecKind::Bzip2 => ThreadCapability::single_threaded(),
+            NativeCodecKind::Zstd | NativeCodecKind::Lzma2 => ThreadCapability::parallel(None),
+            NativeCodecKind::Store | NativeCodecKind::Deflate | NativeCodecKind::Bzip2 => {
+                ThreadCapability::single_threaded()
+            }
         }
     }
 
     fn decode_thread_capability(&self) -> ThreadCapability {
         ThreadCapability::single_threaded()
+    }
+
+    fn xz_thread_count(effective_threads: usize) -> u32 {
+        match u32::try_from(effective_threads) {
+            Ok(count) => count.clamp(1, 256),
+            Err(_) => 256,
+        }
+    }
+
+    fn xz_mt_options(level: u32) -> Result<XzOptions> {
+        let mut options = XzOptions::with_preset(level);
+        let block_size = NonZeroU64::new(Self::XZ_MT_BLOCK_BYTES).ok_or_else(|| {
+            RomWeaverError::Validation("lzma2 internal block size must be non-zero".into())
+        })?;
+        options.set_block_size(Some(block_size));
+        Ok(options)
     }
 
     fn encode_impl(
@@ -304,12 +322,24 @@ impl NativeCodecBackend {
             NativeCodecKind::Lzma2 => {
                 let mut source = BufReader::new(File::open(&request.input)?);
                 let output = BufWriter::new(File::create(&request.output)?);
-                let mut encoder =
-                    XzWriter::new(output, XzOptions::with_preset(level.unwrap_or(6) as u32))?;
-                let copied = io::copy(&mut source, &mut encoder)?;
-                let mut output = encoder.finish()?;
-                output.flush()?;
-                copied
+                let level = level.unwrap_or(6) as u32;
+                if execution.used_parallelism {
+                    let mut encoder = XzWriterMt::new(
+                        output,
+                        Self::xz_mt_options(level)?,
+                        Self::xz_thread_count(execution.effective_threads),
+                    )?;
+                    let copied = io::copy(&mut source, &mut encoder)?;
+                    let mut output = encoder.finish()?;
+                    output.flush()?;
+                    copied
+                } else {
+                    let mut encoder = XzWriter::new(output, XzOptions::with_preset(level))?;
+                    let copied = io::copy(&mut source, &mut encoder)?;
+                    let mut output = encoder.finish()?;
+                    output.flush()?;
+                    copied
+                }
             }
             NativeCodecKind::Bzip2 => {
                 let mut source = BufReader::new(File::open(&request.input)?);
@@ -707,15 +737,54 @@ mod tests {
     fn capabilities_report_thread_support_per_codec_backend() {
         let registry = CodecRegistry::new();
 
-        let zstd = registry.find_by_name("zstd").expect("zstd backend");
-        assert_eq!(zstd.capabilities().threads, ThreadCapability::parallel(None));
+        for codec in ["zstd", "lzma2"] {
+            let backend = registry.find_by_name(codec).expect("codec backend");
+            assert_eq!(
+                backend.capabilities().threads,
+                ThreadCapability::parallel(None)
+            );
+        }
 
-        for codec in ["store", "deflate", "lzma2", "bzip2"] {
+        for codec in ["store", "deflate", "bzip2"] {
             let backend = registry.find_by_name(codec).expect("codec backend");
             assert_eq!(
                 backend.capabilities().threads,
                 ThreadCapability::single_threaded()
             );
         }
+    }
+
+    #[test]
+    fn lzma2_backend_encode_runtime_threads_match_capability() {
+        let temp = TestDir::new();
+        let source = temp.path().join("source.bin");
+        let encoded = temp.path().join("encoded.xz");
+        let payload = (0..(2 * 1024 * 1024))
+            .map(|index| (index as u8).wrapping_mul(19))
+            .collect::<Vec<_>>();
+        fs::write(&source, payload).expect("write source");
+
+        let registry = CodecRegistry::new();
+        let backend = registry.find_by_name("lzma2").expect("lzma2 backend");
+        let capabilities = backend.capabilities();
+        let context = codec_context(temp.path());
+
+        let encode = backend
+            .encode(
+                &CodecOperationRequest {
+                    input: source,
+                    output: encoded,
+                    level: Some(6),
+                },
+                &context,
+            )
+            .expect("encode");
+        assert_eq!(encode.status, OperationStatus::Succeeded);
+
+        let execution = encode.thread_execution.expect("thread execution");
+        assert!(capabilities.threads.supports_execution(&execution));
+        assert_eq!(execution.requested_threads, 8);
+        assert_eq!(execution.effective_threads, 8);
+        assert!(execution.used_parallelism);
     }
 }
