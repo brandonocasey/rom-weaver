@@ -116,16 +116,26 @@ impl PatchHandler for IpsPatchHandler {
         let input_len = fs::metadata(&request.input)?.len();
         let output_size = patch.resolved_output_size(input_len)?;
         let max_parallel_chunks = max_parallel_chunks(output_size)?;
-        let (execution, pool) =
-            context.build_pool(ThreadCapability::parallel(Some(max_parallel_chunks)))?;
+        let thread_capability = ThreadCapability::parallel(Some(max_parallel_chunks));
+        let planned_execution = context.plan_threads(thread_capability.clone());
         let tasks = build_chunk_tasks(&patch, output_size, context)?;
 
-        let render_result = pool.install(|| {
-            tasks
-                .par_iter()
+        let (execution, render_result) = if planned_execution.used_parallelism {
+            let (execution, pool) = context.build_pool(thread_capability)?;
+            let render_result = pool.install(|| {
+                tasks
+                    .par_iter()
+                    .map(|task| render_chunk_task(task, &request.input, input_len, &patch, context))
+                    .collect::<Result<Vec<_>>>()
+            });
+            (execution, render_result)
+        } else {
+            let render_result = tasks
+                .iter()
                 .map(|task| render_chunk_task(task, &request.input, input_len, &patch, context))
-                .collect::<Result<Vec<_>>>()
-        });
+                .collect::<Result<Vec<_>>>();
+            (planned_execution, render_result)
+        };
 
         if let Err(error) = render_result {
             cleanup_chunk_files(&tasks);

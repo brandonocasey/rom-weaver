@@ -105,3 +105,113 @@ test('node worker client handles concurrent runJson calls after init', async () 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('node worker client streams progress events for compress, extract, and patch-apply', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'rom-weaver-wasm-worker-progress-'));
+  const sourcePath = join(dir, 'source.bin');
+  const archivePath = join(dir, 'archive.gz');
+  const extractDir = join(dir, 'extract');
+  const originalPath = join(dir, 'original.bin');
+  const modifiedPath = join(dir, 'modified.bin');
+  const patchPath = join(dir, 'update.ips');
+  const appliedPath = join(dir, 'patched-output');
+  const client = createNodeWorkerClient();
+
+  try {
+    await writeFile(sourcePath, Buffer.from('worker progress fixture', 'utf8'));
+    await writeFile(originalPath, Buffer.from('abcdefgh', 'utf8'));
+    await writeFile(modifiedPath, Buffer.from('a1XYZf!!!', 'utf8'));
+    await client.init('wasi');
+
+    const compressEvents = [];
+    const compressResult = await client.runJson(
+      ['compress', sourcePath, '--format', 'gz', '--output', archivePath, '--threads', '1'],
+      {
+        onEvent(event) {
+          compressEvents.push(event);
+        },
+      },
+    );
+    assert.equal(compressResult.exitCode, 0);
+    assert.equal(compressResult.ok, true);
+    assert.ok(
+      compressEvents.some(
+        (event) => event.command === 'compress' && event.status === 'running' && event.format === 'gz',
+      ),
+    );
+
+    const extractEvents = [];
+    const extractResult = await client.runJson(
+      ['extract', archivePath, '--out-dir', extractDir, '--threads', '1'],
+      {
+        onEvent(event) {
+          extractEvents.push(event);
+        },
+      },
+    );
+    assert.equal(extractResult.exitCode, 0);
+    assert.equal(extractResult.ok, true);
+    assert.ok(
+      extractEvents.some(
+        (event) => event.command === 'extract' && event.status === 'running' && event.format === 'gz',
+      ),
+    );
+
+    const patchCreateResult = await client.runJson([
+      'patch-create',
+      '--original',
+      originalPath,
+      '--modified',
+      modifiedPath,
+      '--format',
+      'ips',
+      '--output',
+      patchPath,
+      '--threads',
+      '1',
+    ]);
+    assert.equal(patchCreateResult.exitCode, 0);
+    assert.equal(patchCreateResult.ok, true);
+
+    const patchApplyEvents = [];
+    const patchApplyResult = await client.runJson(
+      [
+        'patch-apply',
+        '--input',
+        originalPath,
+        '--patch',
+        patchPath,
+        '--output',
+        appliedPath,
+        '--compress-format',
+        'gz',
+        '--threads',
+        '1',
+      ],
+      {
+        onEvent(event) {
+          patchApplyEvents.push(event);
+        },
+      },
+    );
+    assert.equal(patchApplyResult.exitCode, 0);
+    assert.equal(patchApplyResult.ok, true);
+    assert.ok(
+      patchApplyEvents.some(
+        (event) => event.command === 'patch-apply' && event.status === 'running' && event.format === 'IPS',
+      ),
+    );
+    assert.ok(
+      patchApplyEvents.some(
+        (event) => event.command === 'patch-apply'
+          && event.status === 'running'
+          && event.stage === 'compress'
+          && typeof event.format === 'string'
+          && event.format.length > 0,
+      ),
+    );
+  } finally {
+    await client.terminate();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -2518,7 +2518,7 @@ impl CliApp {
             self.emit_running(
                 labels.command,
                 labels.family,
-                labels.format,
+                Some(handler.descriptor().name),
                 "prepare",
                 format!(
                     "extracting {} payload from `{}`",
@@ -4100,7 +4100,7 @@ impl CliApp {
                 self.emit_running(
                     "patch-apply",
                     OperationFamily::Patch,
-                    report.format.as_deref(),
+                    Some(compression_plan.format.as_str()),
                     "compress",
                     format!(
                         "compressing patched output as {} (codec={codec_label})",
@@ -6777,6 +6777,15 @@ impl CliApp {
                 out_dir: nested_out_dir.clone(),
                 split_bin: false,
             };
+            self.emit_running(
+                "extract",
+                OperationFamily::Container,
+                Some(handler.descriptor().name),
+                "nested-extract",
+                format!("extracting nested archive `{}`", source.display()),
+                None,
+                Some(context.plan_threads(handler.capabilities().extract_threads)),
+            );
             handler.extract(&nested_request, context).map_err(|error| {
                 RomWeaverError::Validation(format!(
                     "nested extract failed for `{}` ({}): {error}",

@@ -141,8 +141,8 @@ impl PatchHandler for VcdiffPatchHandler {
         }
 
         let requested_threads = patch.windows.len().max(1);
-        let (execution, pool) =
-            context.build_pool(ThreadCapability::parallel(Some(requested_threads)))?;
+        let thread_capability = ThreadCapability::parallel(Some(requested_threads));
+        let planned_execution = context.plan_threads(thread_capability.clone());
         let tasks = patch
             .windows
             .iter()
@@ -160,9 +160,27 @@ impl PatchHandler for VcdiffPatchHandler {
         let input_path = request.input.clone();
         let validate_checksums_for_tasks = validate_checksums;
 
-        let mut decoded = pool.install(|| {
-            tasks
-                .into_par_iter()
+        let (execution, mut decoded) = if planned_execution.used_parallelism {
+            let (execution, pool) = context.build_pool(thread_capability)?;
+            let decoded = pool.install(|| {
+                tasks
+                    .into_par_iter()
+                    .map(|task| {
+                        decode_window_task(
+                            &task,
+                            &patch_path,
+                            &input_path,
+                            input_len,
+                            &patch_header,
+                            validate_checksums_for_tasks,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })?;
+            (execution, decoded)
+        } else {
+            let decoded = tasks
+                .into_iter()
                 .map(|task| {
                     decode_window_task(
                         &task,
@@ -173,8 +191,9 @@ impl PatchHandler for VcdiffPatchHandler {
                         validate_checksums_for_tasks,
                     )
                 })
-                .collect::<Result<Vec<_>>>()
-        })?;
+                .collect::<Result<Vec<_>>>()?;
+            (planned_execution, decoded)
+        };
 
         decoded.sort_by_key(|window| (window.output_offset, window.index));
 
