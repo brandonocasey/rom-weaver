@@ -40,7 +40,7 @@
 | CMD-011 | command | n64-format-converter | n/a | n/a | todo | n/a | n/a | context-plumbed | cli-smoke,fixture-roundtrip,json-contract | todo | Convert between `.z64`, `.n64`, and `.v64` byte orders with auto-detection of the input format. |
 | CMD-012 | command | save-file-converter | n/a | n/a | todo | n/a | n/a | context-plumbed | cli-smoke,fixture-roundtrip,json-contract | todo | Convert between save formats (`.sav`, `.srm`, `.eep`, `.fla`, `.sra`), swap endianness, and pad/trim output for flash-cart compatibility. |
 | CMD-013 | command | snes-copier-header-tool | n/a | n/a | todo | n/a | n/a | context-plumbed | cli-smoke,fixture-roundtrip,json-contract | todo | Detect, add, and remove 512-byte copier headers. |
-| CMD-014 | command | batch-header-fixer | n/a | n/a | todo | n/a | n/a | context-plumbed | cli-smoke,fixture-roundtrip,json-contract | todo | Fix headers for 19 systems (SNES, NES, GB/GBC, GBA, Mega Drive, N64, DS, and more), based on RetroMultiTools reference behavior. |
+| CMD-014 | command | batch-header-fixer | n/a | n/a | done | n/a | n/a | context-plumbed | cli-smoke,fixture-roundtrip,json-contract | done | `batch-header-fixer` landed with recursive batch scanning, side-by-side or in-place output modes, dry-run support, and RetroMultiTools-style 19-profile header repair/validation coverage with JSON contract details. |
 
 ## Threading Groundwork
 

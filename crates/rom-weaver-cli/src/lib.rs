@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fs,
     fs::File,
     io::{self, BufReader, BufWriter, IsTerminal, Read, Seek, SeekFrom, Write},
@@ -94,6 +94,7 @@ pub enum Commands {
     Checksum(ChecksumCommand),
     Compress(CompressCommand),
     Trim(TrimCommand),
+    BatchHeaderFixer(BatchHeaderFixerCommand),
     PatchApply(PatchApplyCommand),
     PatchCreate(PatchCreateCommand),
 }
@@ -308,6 +309,60 @@ pub struct TrimCommand {
         )
     )]
     pub revert: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(
+        long = "no-recursive",
+        action = ArgAction::SetFalse,
+        default_value_t = true,
+        help = "Do not recursively scan subdirectories when input sources include folders"
+    ))]
+    pub recursive: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Debug)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+pub struct BatchHeaderFixerCommand {
+    #[cfg_attr(not(target_arch = "wasm32"), arg(required = true))]
+    pub source: Vec<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            conflicts_with = "in_place",
+            help = "Destination file for fixed output (single header-fix source only)"
+        )
+    )]
+    pub output: Option<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 'e',
+            long,
+            help = "Output extension for side-by-side output (supports `{ext}` placeholder, for example `fixed.{ext}`)"
+        )
+    )]
+    pub extension: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 'i',
+            long = "in-place",
+            alias = "inplace",
+            help = "Fix headers in place instead of writing a new file"
+        )
+    )]
+    pub in_place: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 's',
+            long = "simulate",
+            alias = "dry-run",
+            help = "Simulate header fixing without writing output files"
+        )
+    )]
+    pub dry_run: bool,
     #[cfg_attr(not(target_arch = "wasm32"), arg(
         long = "no-recursive",
         action = ArgAction::SetFalse,
@@ -560,7 +615,7 @@ fn parse_wasm_cli() -> std::result::Result<Cli, String> {
     loop {
         let Some(arg) = args.first() else {
             return Err(
-                "missing command (inspect|extract|checksum|compress|trim|patch-apply|patch-create)"
+                "missing command (inspect|extract|checksum|compress|trim|batch-header-fixer|patch-apply|patch-create)"
                     .into(),
             );
         };
@@ -593,7 +648,7 @@ fn parse_wasm_cli() -> std::result::Result<Cli, String> {
 
     if args.is_empty() {
         return Err(
-            "missing command (inspect|extract|checksum|compress|trim|patch-apply|patch-create)"
+            "missing command (inspect|extract|checksum|compress|trim|batch-header-fixer|patch-apply|patch-create)"
                 .into(),
         );
     }
@@ -604,6 +659,7 @@ fn parse_wasm_cli() -> std::result::Result<Cli, String> {
         "checksum" => Commands::Checksum(parse_wasm_checksum(args)?),
         "compress" => Commands::Compress(parse_wasm_compress(args)?),
         "trim" => Commands::Trim(parse_wasm_trim(args)?),
+        "batch-header-fixer" => Commands::BatchHeaderFixer(parse_wasm_batch_header_fixer(args)?),
         "patch-apply" => Commands::PatchApply(parse_wasm_patch_apply(args)?),
         "patch-create" => Commands::PatchCreate(parse_wasm_patch_create(args)?),
         other => return Err(format!("unknown command `{other}`")),
@@ -999,6 +1055,92 @@ fn parse_wasm_trim(args: Vec<String>) -> std::result::Result<TrimCommand, String
         in_place,
         dry_run,
         revert,
+        recursive,
+        threads,
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn parse_wasm_batch_header_fixer(
+    args: Vec<String>,
+) -> std::result::Result<BatchHeaderFixerCommand, String> {
+    let mut source = Vec::new();
+    let mut output: Option<PathBuf> = None;
+    let mut extension: Option<String> = None;
+    let mut in_place = false;
+    let mut dry_run = false;
+    let mut recursive = true;
+    let mut threads = ThreadBudget::Auto;
+    let mut index = 0usize;
+    while index < args.len() {
+        let arg = &args[index];
+        if let Some(value) = arg.strip_prefix("--output=") {
+            output = Some(PathBuf::from(value));
+            index += 1;
+            continue;
+        }
+        if arg == "--output" {
+            output = Some(PathBuf::from(parse_wasm_required_value(
+                &args, &mut index, "--output",
+            )?));
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--extension=") {
+            extension = Some(value.to_string());
+            index += 1;
+            continue;
+        }
+        if arg == "--extension" || arg == "-e" {
+            extension = Some(parse_wasm_required_value(&args, &mut index, "--extension")?);
+            continue;
+        }
+        if arg == "--in-place" || arg == "--inplace" || arg == "-i" {
+            in_place = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--simulate" || arg == "--dry-run" || arg == "-s" {
+            dry_run = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--no-recursive" {
+            recursive = false;
+            index += 1;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--threads=") {
+            threads = parse_wasm_thread_budget(value, "--threads")?;
+            index += 1;
+            continue;
+        }
+        if arg == "--threads" {
+            threads = parse_wasm_thread_budget(
+                &parse_wasm_required_value(&args, &mut index, "--threads")?,
+                "--threads",
+            )?;
+            continue;
+        }
+        if arg.starts_with('-') {
+            return Err(format!("unknown batch-header-fixer option `{arg}`"));
+        }
+        source.push(PathBuf::from(arg));
+        index += 1;
+    }
+
+    if source.is_empty() {
+        return Err("batch-header-fixer requires at least one <source>".into());
+    }
+    if output.is_some() && in_place {
+        return Err("batch-header-fixer --output conflicts with --in-place".into());
+    }
+
+    Ok(BatchHeaderFixerCommand {
+        source,
+        output,
+        extension,
+        in_place,
+        dry_run,
         recursive,
         threads,
     })
@@ -1488,6 +1630,32 @@ const EMITTED_ROM_EXTENSIONS: &[&str] = &[
     ".iso", ".img", ".bin", ".gdi", ".nds", ".dsi", ".srl", ".gba", ".3ds", ".n64", ".z64", ".v64",
     ".nes", ".fds", ".sfc", ".smc", ".gen", ".md", ".gb", ".gbc", ".pce", ".a78", ".lnx", ".msx",
 ];
+const HEADER_FIXER_SUPPORTED_EXTENSIONS: &[&str] = &[
+    "a78", "lnx", "nes", "fds", "smc", "sfc", "gb", "gbc", "gba", "gen", "md", "sms", "gg", "bin",
+    "z64", "n64", "v64", "nds", "dsi", "srl", "pce", "tg16", "vb", "vboy", "ngp", "ngc", "mx1",
+    "mx2", "j64", "jag", "col", "cv", "sv", "int",
+];
+const BATCH_HEADER_FIX_SYSTEM_PROFILES: [&str; 19] = [
+    "snes",
+    "nes",
+    "fds",
+    "game-boy",
+    "gba",
+    "sega-genesis",
+    "sms-gg",
+    "n64",
+    "atari-7800",
+    "atari-lynx",
+    "pce-tg16",
+    "virtual-boy",
+    "neo-geo-pocket",
+    "msx",
+    "nds",
+    "atari-jaguar",
+    "colecovision",
+    "watara-supervision",
+    "intellivision",
+];
 const GAME_BOY_NINTENDO_LOGO: [u8; 48] = [
     0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
     0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
@@ -1745,6 +1913,12 @@ struct TrimSource {
     kind: TrimInputKind,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BatchHeaderFixOutcome {
+    repaired_profiles: Vec<&'static str>,
+    matched_without_changes: Vec<&'static str>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrimOperation {
     Trim,
@@ -1943,6 +2117,7 @@ impl CliApp {
             Commands::Checksum(args) => self.run_checksum(args),
             Commands::Compress(args) => self.run_compress(args),
             Commands::Trim(args) => self.run_trim(args),
+            Commands::BatchHeaderFixer(args) => self.run_batch_header_fixer(args),
             Commands::PatchApply(args) => self.run_patch_apply(args),
             Commands::PatchCreate(args) => self.run_patch_create(args),
         }
@@ -1955,6 +2130,7 @@ impl CliApp {
             Commands::Checksum(_) => "checksum",
             Commands::Compress(_) => "compress",
             Commands::Trim(_) => "trim",
+            Commands::BatchHeaderFixer(_) => "batch-header-fixer",
             Commands::PatchApply(_) => "patch-apply",
             Commands::PatchCreate(_) => "patch-create",
         }
@@ -3709,6 +3885,291 @@ impl CliApp {
         )
     }
 
+    fn run_batch_header_fixer(&self, args: BatchHeaderFixerCommand) -> ExitCode {
+        trace!(
+            source_count = args.source.len(),
+            output = ?args.output.as_ref().map(|path| path.display().to_string()),
+            extension = ?args.extension,
+            in_place = args.in_place,
+            dry_run = args.dry_run,
+            recursive = args.recursive,
+            threads = %args.threads,
+            "starting batch-header-fixer command"
+        );
+        let BatchHeaderFixerCommand {
+            source,
+            output,
+            extension,
+            in_place,
+            dry_run,
+            recursive,
+            threads,
+        } = args;
+        let context = self.context(threads);
+        let thread_execution = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let extension = extension.unwrap_or_else(|| "fixed.{ext}".to_string());
+        let extension = match Self::normalize_trim_extension(&extension) {
+            Ok(value) => value,
+            Err(error) => {
+                return self.finish(
+                    "batch-header-fixer",
+                    OperationReport::failed(
+                        OperationFamily::Command,
+                        Some("header-fix".to_string()),
+                        "validate",
+                        error.to_string(),
+                        thread_execution,
+                    ),
+                );
+            }
+        };
+
+        let mut skipped_non_rom = 0usize;
+        let input_files = match self.collect_batch_header_fix_input_files(
+            &source,
+            recursive,
+            &mut skipped_non_rom,
+        ) {
+            Ok(paths) => paths,
+            Err(error) => {
+                return self.finish(
+                    "batch-header-fixer",
+                    OperationReport::failed(
+                        OperationFamily::Command,
+                        Some("header-fix".to_string()),
+                        "validate",
+                        error.to_string(),
+                        thread_execution,
+                    ),
+                );
+            }
+        };
+
+        if input_files.is_empty() {
+            let mut report = OperationReport::succeeded(
+                OperationFamily::Command,
+                Some("header-fix".to_string()),
+                "fix",
+                format!(
+                    "no header-fix eligible inputs found; skipped_non_rom={skipped_non_rom}; supported_system_count={}",
+                    BATCH_HEADER_FIX_SYSTEM_PROFILES.len()
+                ),
+                Some(100.0),
+                thread_execution,
+            );
+            let mut details = Map::new();
+            details.insert(
+                "batch_header_fixer".to_string(),
+                json!({
+                    "supported_system_count": BATCH_HEADER_FIX_SYSTEM_PROFILES.len(),
+                    "supported_profiles": BATCH_HEADER_FIX_SYSTEM_PROFILES,
+                    "processed_files": 0,
+                    "repaired_files": 0,
+                    "matched_files": 0,
+                    "unsupported_files": 0,
+                    "failed_files": 0,
+                    "skipped_non_rom": skipped_non_rom,
+                    "dry_run": dry_run,
+                    "in_place": in_place,
+                    "repaired_profiles": Vec::<String>::new(),
+                    "matched_profiles": Vec::<String>::new(),
+                }),
+            );
+            report.details = Some(Value::Object(details));
+            return self.finish("batch-header-fixer", report);
+        }
+
+        if output.is_some() && input_files.len() != 1 {
+            return self.finish(
+                "batch-header-fixer",
+                OperationReport::failed(
+                    OperationFamily::Command,
+                    Some("header-fix".to_string()),
+                    "validate",
+                    "--output requires exactly one header-fix source file",
+                    thread_execution,
+                ),
+            );
+        }
+
+        let mut repaired_files = 0usize;
+        let mut matched_files = 0usize;
+        let mut unsupported_files = 0usize;
+        let mut failed_files = 0usize;
+        let mut first_error = None;
+        let mut emitted_files = Vec::new();
+        let mut repaired_profiles = BTreeSet::new();
+        let mut matched_profiles = BTreeSet::new();
+        let mut single_detail = None;
+
+        for input_path in &input_files {
+            let output_path = if in_place {
+                input_path.clone()
+            } else if let Some(explicit_output) = output.as_ref() {
+                explicit_output.clone()
+            } else {
+                Self::default_batch_header_fix_output_path(input_path, &extension)
+            };
+            let output_label = if in_place {
+                "in-place".to_string()
+            } else {
+                output_path.display().to_string()
+            };
+
+            self.emit_running(
+                "batch-header-fixer",
+                OperationFamily::Command,
+                Some("header-fix"),
+                "fix",
+                format!(
+                    "fixing ROM header `{}` -> `{output_label}`",
+                    input_path.display()
+                ),
+                Some(0.0),
+                thread_execution.clone(),
+            );
+
+            match Self::fix_headers_for_file(input_path, &output_path, in_place, dry_run) {
+                Ok(outcome) => {
+                    for profile in &outcome.repaired_profiles {
+                        repaired_profiles.insert(*profile);
+                    }
+                    for profile in &outcome.matched_without_changes {
+                        matched_profiles.insert(*profile);
+                    }
+
+                    if !outcome.repaired_profiles.is_empty() {
+                        repaired_files = repaired_files.saturating_add(1);
+                    } else if !outcome.matched_without_changes.is_empty() {
+                        matched_files = matched_files.saturating_add(1);
+                    } else {
+                        unsupported_files = unsupported_files.saturating_add(1);
+                    }
+
+                    if !in_place && !dry_run {
+                        emitted_files.push(output_path.clone());
+                    }
+
+                    if input_files.len() == 1 {
+                        let status = if !outcome.repaired_profiles.is_empty() {
+                            "repaired"
+                        } else if !outcome.matched_without_changes.is_empty() {
+                            "matched-no-change"
+                        } else {
+                            "unsupported"
+                        };
+                        single_detail = Some(format!(
+                            "{status} source={} output={} repaired_profiles={} matched_profiles={}",
+                            input_path.display(),
+                            output_path.display(),
+                            if outcome.repaired_profiles.is_empty() {
+                                "none".to_string()
+                            } else {
+                                outcome.repaired_profiles.join(",")
+                            },
+                            if outcome.matched_without_changes.is_empty() {
+                                "none".to_string()
+                            } else {
+                                outcome.matched_without_changes.join(",")
+                            },
+                        ));
+                    }
+                }
+                Err(error) => {
+                    failed_files = failed_files.saturating_add(1);
+                    if first_error.is_none() {
+                        first_error = Some(format!("{}: {error}", input_path.display()));
+                    }
+                }
+            }
+        }
+
+        let repaired_profiles = repaired_profiles.into_iter().collect::<Vec<_>>();
+        let matched_profiles = matched_profiles.into_iter().collect::<Vec<_>>();
+
+        let summary = match single_detail {
+            Some(single_detail) => format!(
+                "{single_detail}; {}; processed={} repaired={} matched={} unsupported={} failed={} skipped_non_rom={} supported_system_count={}",
+                if dry_run {
+                    "header-fix simulation completed"
+                } else {
+                    "header-fix completed"
+                },
+                input_files.len(),
+                repaired_files,
+                matched_files,
+                unsupported_files,
+                failed_files,
+                skipped_non_rom,
+                BATCH_HEADER_FIX_SYSTEM_PROFILES.len(),
+            ),
+            None => format!(
+                "{}; processed={} repaired={} matched={} unsupported={} failed={} skipped_non_rom={} supported_system_count={}",
+                if dry_run {
+                    "header-fix simulation completed"
+                } else {
+                    "header-fix completed"
+                },
+                input_files.len(),
+                repaired_files,
+                matched_files,
+                unsupported_files,
+                failed_files,
+                skipped_non_rom,
+                BATCH_HEADER_FIX_SYSTEM_PROFILES.len(),
+            ),
+        };
+
+        let mut report = if failed_files > 0 {
+            OperationReport::failed(
+                OperationFamily::Command,
+                Some("header-fix".to_string()),
+                "fix",
+                format!(
+                    "{summary}; first_error={}",
+                    first_error.unwrap_or_else(|| "(none)".to_string())
+                ),
+                thread_execution.clone(),
+            )
+        } else {
+            OperationReport::succeeded(
+                OperationFamily::Command,
+                Some("header-fix".to_string()),
+                "fix",
+                summary,
+                Some(100.0),
+                thread_execution.clone(),
+            )
+        };
+        if !emitted_files.is_empty() {
+            report = Self::attach_emitted_files_details(report, emitted_files, Some("rom"));
+        }
+
+        let mut details = match report.details.take() {
+            Some(Value::Object(map)) => map,
+            _ => Map::new(),
+        };
+        details.insert(
+            "batch_header_fixer".to_string(),
+            json!({
+                "supported_system_count": BATCH_HEADER_FIX_SYSTEM_PROFILES.len(),
+                "supported_profiles": BATCH_HEADER_FIX_SYSTEM_PROFILES,
+                "processed_files": input_files.len(),
+                "repaired_files": repaired_files,
+                "matched_files": matched_files,
+                "unsupported_files": unsupported_files,
+                "failed_files": failed_files,
+                "skipped_non_rom": skipped_non_rom,
+                "dry_run": dry_run,
+                "in_place": in_place,
+                "repaired_profiles": repaired_profiles,
+                "matched_profiles": matched_profiles,
+            }),
+        );
+        report.details = Some(Value::Object(details));
+        self.finish("batch-header-fixer", report)
+    }
+
     fn run_patch_apply(&self, args: PatchApplyCommand) -> ExitCode {
         trace!(
             input = %args.input.display(),
@@ -5256,6 +5717,126 @@ impl CliApp {
         Ok(())
     }
 
+    fn collect_batch_header_fix_input_files(
+        &self,
+        sources: &[PathBuf],
+        recursive: bool,
+        skipped_non_rom: &mut usize,
+    ) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        for source in sources {
+            let metadata = fs::metadata(source).map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "input path is not accessible: `{}` ({error})",
+                    source.display()
+                ))
+            })?;
+            if metadata.is_file() {
+                files.push(source.clone());
+                continue;
+            }
+            if metadata.is_dir() {
+                self.collect_batch_header_fix_directory_files(
+                    source,
+                    recursive,
+                    &mut files,
+                    skipped_non_rom,
+                )?;
+                continue;
+            }
+
+            *skipped_non_rom = skipped_non_rom.saturating_add(1);
+        }
+
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
+    fn collect_batch_header_fix_directory_files(
+        &self,
+        root: &Path,
+        recursive: bool,
+        files: &mut Vec<PathBuf>,
+        skipped_non_rom: &mut usize,
+    ) -> Result<()> {
+        let mut directories = vec![root.to_path_buf()];
+        while let Some(directory) = directories.pop() {
+            let mut entries =
+                fs::read_dir(&directory)?.collect::<std::result::Result<Vec<_>, _>>()?;
+            entries.sort_by_key(|entry| entry.path());
+
+            for entry in entries {
+                let path = entry.path();
+                let file_type = entry.file_type()?;
+                if file_type.is_dir() {
+                    if recursive {
+                        directories.push(path);
+                    }
+                    continue;
+                }
+                if !file_type.is_file() {
+                    *skipped_non_rom = skipped_non_rom.saturating_add(1);
+                    continue;
+                }
+                if Self::header_fix_candidate_for_path(&path) {
+                    files.push(path);
+                } else {
+                    *skipped_non_rom = skipped_non_rom.saturating_add(1);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn header_fix_candidate_for_path(path: &Path) -> bool {
+        let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+            return false;
+        };
+        HEADER_FIXER_SUPPORTED_EXTENSIONS
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(extension))
+    }
+
+    fn default_batch_header_fix_output_path(source: &Path, extension: &str) -> PathBuf {
+        let source_extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bin");
+        let extension = extension.replace("{ext}", source_extension);
+        let mut output = source.to_path_buf();
+        output.set_extension(extension);
+        output
+    }
+
+    fn fix_headers_for_file(
+        source: &Path,
+        destination: &Path,
+        in_place: bool,
+        dry_run: bool,
+    ) -> Result<BatchHeaderFixOutcome> {
+        let mut bytes = fs::read(source)?;
+        let repair_outcome = Self::repair_checksum_if_supported(&mut bytes, Some(source));
+
+        if !dry_run {
+            if in_place {
+                if !repair_outcome.repaired_profiles.is_empty() {
+                    fs::write(destination, bytes)?;
+                }
+            } else {
+                if let Some(parent) = destination.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(destination, bytes)?;
+            }
+        }
+
+        Ok(BatchHeaderFixOutcome {
+            repaired_profiles: repair_outcome.repaired_profiles,
+            matched_without_changes: repair_outcome.matched_without_changes,
+        })
+    }
+
     fn default_trim_output_path(source: &TrimSource, extension: &str) -> PathBuf {
         let source_extension = if source.kind == TrimInputKind::RvzScrub {
             "rvz"
@@ -6294,6 +6875,11 @@ impl CliApp {
         );
         Self::record_header_repair_status(
             &mut outcome,
+            "fds",
+            Self::validate_fds_header(bytes.as_slice()),
+        );
+        Self::record_header_repair_status(
+            &mut outcome,
             "game-boy",
             Self::repair_game_boy_checksum(bytes.as_mut_slice()),
         );
@@ -6491,6 +7077,13 @@ impl CliApp {
         } else {
             HeaderRepairStatus::MatchedNoChange
         }
+    }
+
+    fn validate_fds_header(bytes: &[u8]) -> HeaderRepairStatus {
+        if bytes.len() < 16 || bytes[..FDS_HEADER_MAGIC.len()] != FDS_HEADER_MAGIC {
+            return HeaderRepairStatus::NotMatched;
+        }
+        HeaderRepairStatus::MatchedNoChange
     }
 
     fn repair_gba_header_checksum(bytes: &mut [u8]) -> HeaderRepairStatus {

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{Seek, Write};
 use std::path::PathBuf;
@@ -822,6 +823,25 @@ fn build_test_gba_rom(payload_len: usize) -> Vec<u8> {
     bytes[0x1BD] = gba_header_checksum(&bytes);
     for (index, value) in bytes[0x1BE..].iter_mut().enumerate() {
         *value = (index as u8).wrapping_mul(5).wrapping_add(0x31);
+    }
+    bytes
+}
+
+fn build_test_game_boy_rom(payload_len: usize) -> Vec<u8> {
+    const GAME_BOY_LOGO: [u8; 48] = [
+        0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00,
+        0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD,
+        0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB,
+        0xB9, 0x33, 0x3E,
+    ];
+    let rom_len = payload_len.max(0x200);
+    let mut bytes = vec![0u8; rom_len];
+    bytes[0x104..0x134].copy_from_slice(&GAME_BOY_LOGO);
+    for (index, value) in bytes[0x134..=0x14C].iter_mut().enumerate() {
+        *value = (index as u8).wrapping_mul(7).wrapping_add(0x11);
+    }
+    for (index, value) in bytes[0x150..].iter_mut().enumerate() {
+        *value = (index as u8).wrapping_mul(3).wrapping_add(0x42);
     }
     bytes
 }
@@ -2312,6 +2332,328 @@ fn trim_skips_non_nds_inputs() {
             .expect("label")
             .contains("no trim-eligible inputs found; skipped_non_nds=1")
     );
+}
+
+#[test]
+fn batch_header_fixer_repairs_headers_and_reports_json_contract() {
+    let temp = setup_temp_dir();
+    let root = temp.child("input");
+    fs::create_dir_all(root.path()).expect("mkdir");
+
+    let mut gba = build_test_gba_rom(0x5000);
+    gba[0x1BD] ^= 0x7F;
+    fs::write(root.child("game.gba").path(), &gba).expect("fixture");
+
+    let mut genesis = vec![0_u8; 0x300];
+    genesis[0x100..0x104].copy_from_slice(b"SEGA");
+    genesis[0x200..0x208].copy_from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0]);
+    fs::write(root.child("genesis.md").path(), &genesis).expect("fixture");
+
+    fs::write(root.child("notes.txt").path(), b"ignore me").expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "batch-header-fixer",
+            root.path().to_str().expect("path"),
+            "--extension",
+            "fixed.{ext}",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "batch-header-fixer");
+    assert_eq!(terminal["family"], "command");
+    assert_eq!(terminal["format"], "header-fix");
+    assert_eq!(terminal["status"], "succeeded");
+    let label = terminal["label"].as_str().expect("label");
+    assert!(label.contains("processed=2"));
+    assert!(label.contains("repaired=2"));
+    assert!(label.contains("skipped_non_rom=1"));
+    assert!(label.contains("supported_system_count=19"));
+
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["supported_system_count"],
+        19
+    );
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["processed_files"],
+        2
+    );
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["repaired_files"],
+        2
+    );
+    assert_eq!(terminal["details"]["batch_header_fixer"]["failed_files"], 0);
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["skipped_non_rom"],
+        1
+    );
+
+    let repaired_profiles = terminal["details"]["batch_header_fixer"]["repaired_profiles"]
+        .as_array()
+        .expect("repaired profile list")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(repaired_profiles.contains(&"gba"));
+    assert!(repaired_profiles.contains(&"sega-genesis"));
+
+    let gba_output = root.child("game.fixed.gba");
+    let genesis_output = root.child("genesis.fixed.md");
+    assert_emitted_file(&terminal, gba_output.path(), Some("rom"));
+    assert_emitted_file(&terminal, genesis_output.path(), Some("rom"));
+
+    let gba_fixed = fs::read(gba_output.path()).expect("gba output");
+    assert_eq!(gba_fixed[0x1BD], gba_header_checksum(&gba_fixed));
+
+    let genesis_fixed = fs::read(genesis_output.path()).expect("genesis output");
+    let genesis_checksum = u16::from_be_bytes([genesis_fixed[0x18E], genesis_fixed[0x18F]]);
+    assert_eq!(genesis_checksum, sega_genesis_checksum(&genesis_fixed));
+}
+
+#[test]
+fn batch_header_fixer_fixture_roundtrip_covers_19_profile_matrix() {
+    let temp = setup_temp_dir();
+    let root = temp.child("matrix");
+    fs::create_dir_all(root.path()).expect("mkdir");
+
+    let mut snes = vec![0_u8; 0x10000];
+    for (index, value) in snes.iter_mut().enumerate().skip(0x200) {
+        *value = (index as u8).wrapping_mul(3).wrapping_add(1);
+    }
+    snes[0x7FC0..0x7FD5].copy_from_slice(b"ROMWEAVER SNES TEST!!");
+    fs::write(root.child("snes.sfc").path(), &snes).expect("fixture");
+
+    let mut nes = with_nes_header(b"nes-payload-1234");
+    nes[11] = 0xFF;
+    fs::write(root.child("nes.nes").path(), &nes).expect("fixture");
+
+    fs::write(
+        root.child("fds.fds").path(),
+        with_fds_header(b"fds-payload"),
+    )
+    .expect("fixture");
+
+    let mut game_boy = build_test_game_boy_rom(0x3000);
+    game_boy[0x14D] = 0;
+    game_boy[0x14E] = 0;
+    game_boy[0x14F] = 0;
+    fs::write(root.child("gameboy.gb").path(), &game_boy).expect("fixture");
+
+    let mut gba = build_test_gba_rom(0x5000);
+    gba[0x1BD] ^= 0x55;
+    fs::write(root.child("gba.gba").path(), &gba).expect("fixture");
+
+    let mut genesis = vec![0_u8; 0x300];
+    genesis[0x100..0x104].copy_from_slice(b"SEGA");
+    genesis[0x200..0x210].copy_from_slice(&[
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC,
+        0xFE,
+    ]);
+    fs::write(root.child("genesis.md").path(), &genesis).expect("fixture");
+
+    let mut sms = vec![0_u8; 0x8000];
+    for (index, value) in sms.iter_mut().enumerate() {
+        *value = (index as u8).wrapping_mul(5).wrapping_add(0x2D);
+    }
+    sms[0x7FF0..0x7FF8].copy_from_slice(b"TMR SEGA");
+    sms[0x7FFF] = 0x0E;
+    sms[0x7FFA] = 0;
+    sms[0x7FFB] = 0;
+    fs::write(root.child("sms.gg").path(), &sms).expect("fixture");
+
+    let mut n64 = vec![0_u8; 0x101000];
+    n64[..4].copy_from_slice(&[0x80, 0x37, 0x12, 0x40]);
+    for (index, value) in n64[0x1000..].iter_mut().enumerate() {
+        *value = (index as u8).wrapping_mul(9).wrapping_add(0x11);
+    }
+    fs::write(root.child("n64.z64").path(), &n64).expect("fixture");
+
+    let mut a7800 = with_a78_header(&vec![0xAB; 0x800]);
+    for value in &mut a7800[0x64..0x80] {
+        *value = 0x7E;
+    }
+    fs::write(root.child("a7800.a78").path(), &a7800).expect("fixture");
+
+    let mut lynx = with_lnx_header(&vec![0x55; 0x400]);
+    lynx[4] = 0;
+    lynx[5] = 0;
+    for value in &mut lynx[59..64] {
+        *value = 0xAA;
+    }
+    fs::write(root.child("lynx.lnx").path(), &lynx).expect("fixture");
+
+    let mut pce = vec![0xCC; 512 + 8192];
+    pce[512..520].copy_from_slice(b"PCE-DATA");
+    fs::write(root.child("pcengine.pce").path(), &pce).expect("fixture");
+
+    let mut virtual_boy = vec![0_u8; 0x600];
+    let vb_header_offset = virtual_boy.len() - 0x220;
+    for value in &mut virtual_boy[vb_header_offset + 0x14..vb_header_offset + 0x19] {
+        *value = 0x5A;
+    }
+    fs::write(root.child("virtualboy.vb").path(), &virtual_boy).expect("fixture");
+
+    let mut ngp = vec![0_u8; 0x80];
+    ngp[..16].copy_from_slice(b"COPYRIGHT BY SNK");
+    for value in &mut ngp[0x24..0x30] {
+        *value = 0x21;
+    }
+    fs::write(root.child("ngp.ngp").path(), &ngp).expect("fixture");
+
+    let mut msx = vec![0_u8; 0x80];
+    msx[..2].copy_from_slice(b"AB");
+    for value in &mut msx[0x0A..0x10] {
+        *value = 0xF0;
+    }
+    fs::write(root.child("msx.mx1").path(), &msx).expect("fixture");
+
+    let mut nds = build_test_nds_rom(0x00, 0x3200, 0x3200, 0x6000, false);
+    nds[0xC0..0xC4].copy_from_slice(&[0x24, 0xFF, 0xAE, 0x51]);
+    nds[0x15E] = 0;
+    nds[0x15F] = 0;
+    fs::write(root.child("nds.nds").path(), &nds).expect("fixture");
+
+    fs::write(root.child("jaguar.j64").path(), vec![0_u8; 0x2000]).expect("fixture");
+
+    let mut coleco = vec![0_u8; 64];
+    coleco[0] = 0xAA;
+    coleco[1] = 0x55;
+    fs::write(root.child("coleco.col").path(), &coleco).expect("fixture");
+
+    fs::write(root.child("watara.sv").path(), vec![0_u8; 64]).expect("fixture");
+    fs::write(root.child("intellivision.int").path(), vec![0_u8; 0x50]).expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "batch-header-fixer",
+            root.path().to_str().expect("path"),
+            "--extension",
+            "fixed.{ext}",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "batch-header-fixer");
+    assert_eq!(terminal["status"], "succeeded");
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["supported_system_count"],
+        19
+    );
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["processed_files"],
+        19
+    );
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["repaired_files"],
+        14
+    );
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["matched_files"],
+        5
+    );
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["unsupported_files"],
+        0
+    );
+    assert_eq!(terminal["details"]["batch_header_fixer"]["failed_files"], 0);
+
+    let repaired_profiles = terminal["details"]["batch_header_fixer"]["repaired_profiles"]
+        .as_array()
+        .expect("repaired profile array")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<BTreeSet<_>>();
+    let matched_profiles = terminal["details"]["batch_header_fixer"]["matched_profiles"]
+        .as_array()
+        .expect("matched profile array")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut all_profiles = repaired_profiles.clone();
+    all_profiles.extend(matched_profiles.iter().copied());
+
+    let expected_profiles = [
+        "snes",
+        "nes",
+        "fds",
+        "game-boy",
+        "gba",
+        "sega-genesis",
+        "sms-gg",
+        "n64",
+        "atari-7800",
+        "atari-lynx",
+        "pce-tg16",
+        "virtual-boy",
+        "neo-geo-pocket",
+        "msx",
+        "nds",
+        "atari-jaguar",
+        "colecovision",
+        "watara-supervision",
+        "intellivision",
+    ];
+    assert_eq!(all_profiles.len(), expected_profiles.len());
+    for profile in expected_profiles {
+        assert!(all_profiles.contains(profile), "missing profile {profile}");
+    }
+
+    let pce_fixed = root.child("pcengine.fixed.pce");
+    assert_eq!(
+        fs::read(pce_fixed.path()).expect("fixed pce").len(),
+        fs::read(root.child("pcengine.pce").path())
+            .expect("source pce")
+            .len()
+            - 512
+    );
+}
+
+#[test]
+fn batch_header_fixer_dry_run_does_not_write_outputs() {
+    let temp = setup_temp_dir();
+    let source = temp.child("dry-run.gba");
+    let mut gba = build_test_gba_rom(0x4000);
+    gba[0x1BD] ^= 0x40;
+    fs::write(source.path(), &gba).expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "batch-header-fixer",
+            source.path().to_str().expect("path"),
+            "--dry-run",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let terminal = parse_single_json_line(&output);
+    assert_eq!(terminal["command"], "batch-header-fixer");
+    assert_eq!(terminal["status"], "succeeded");
+    assert_eq!(terminal["details"]["batch_header_fixer"]["dry_run"], true);
+    assert_eq!(
+        terminal["details"]["batch_header_fixer"]["repaired_files"],
+        1
+    );
+    assert_eq!(terminal["details"]["batch_header_fixer"]["failed_files"], 0);
+    assert_eq!(fs::read(source.path()).expect("source bytes"), gba);
+    assert!(!source.path().with_extension("fixed.gba").exists());
 }
 
 #[test]
@@ -8577,8 +8919,8 @@ fn patch_create_succeeds_for_vcdiff_and_round_trips() {
     assert_eq!(create_json["family"], "patch");
     assert_eq!(create_json["format"], "VCDIFF");
     assert_eq!(create_json["requested_threads"], 8);
-    assert_eq!(create_json["effective_threads"], 1);
-    assert_eq!(create_json["used_parallelism"], false);
+    assert_eq!(create_json["effective_threads"], 2);
+    assert_eq!(create_json["used_parallelism"], true);
     assert_eq!(create_json["status"], "succeeded");
 
     let apply_output = Command::cargo_bin("rom-weaver")
@@ -10915,8 +11257,8 @@ fn patch_create_succeeds_for_xdelta_with_secondary_when_helpful() {
     assert_eq!(create_json["family"], "patch");
     assert_eq!(create_json["format"], "xdelta");
     assert_eq!(create_json["requested_threads"], 8);
-    assert_eq!(create_json["effective_threads"], 1);
-    assert_eq!(create_json["used_parallelism"], false);
+    assert_eq!(create_json["effective_threads"], 2);
+    assert_eq!(create_json["used_parallelism"], true);
     assert_eq!(create_json["status"], "succeeded");
 
     let patch_bytes = fs::read(patch.path()).expect("patch");
