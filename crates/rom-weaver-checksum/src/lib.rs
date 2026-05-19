@@ -9,8 +9,8 @@ use std::{
 
 use adler2::Adler32;
 use blake3::Hasher as Blake3Hasher;
-use crc16::{ARC, State as Crc16State};
-use crc32c::crc32c_append;
+use crc16::{State as Crc16State, ARC};
+use crc32c::{crc32c_append, crc32c_combine};
 use crc32fast::Hasher as Crc32Hasher;
 use md5::{Digest as Md5Digest, Md5};
 use memmap2::{Mmap, MmapOptions};
@@ -37,6 +37,21 @@ const FANOUT_PARALLEL_THRESHOLD: u64 = 8 * 1024 * 1024;
 const CRC32_PARALLEL_THRESHOLD: u64 = 32 * 1024 * 1024;
 const CRC32_PARALLEL_MIN_BYTES_PER_THREAD: u64 = 16 * 1024 * 1024;
 const CRC32_PARALLEL_MAX_THREADS: usize = 4;
+const CRC32C_PARALLEL_THRESHOLD: u64 = 32 * 1024 * 1024;
+const CRC32C_PARALLEL_MIN_BYTES_PER_THREAD: u64 = 16 * 1024 * 1024;
+const CRC32C_PARALLEL_MAX_THREADS: usize = 4;
+const CRC16_PARALLEL_THRESHOLD: u64 = 32 * 1024 * 1024;
+const CRC16_PARALLEL_MIN_BYTES_PER_THREAD: u64 = 16 * 1024 * 1024;
+const CRC16_PARALLEL_MAX_THREADS: usize = 4;
+const ADLER32_PARALLEL_THRESHOLD: u64 = 32 * 1024 * 1024;
+const ADLER32_PARALLEL_MIN_BYTES_PER_THREAD: u64 = 16 * 1024 * 1024;
+const ADLER32_PARALLEL_MAX_THREADS: usize = 4;
+const BLAKE3_PARALLEL_THRESHOLD: u64 = 32 * 1024 * 1024;
+const BLAKE3_PARALLEL_MIN_BYTES_PER_THREAD: u64 = 16 * 1024 * 1024;
+const BLAKE3_PARALLEL_MAX_THREADS: usize = 8;
+const ADLER32_MODULO: u64 = 65_521;
+const CRC16_GF2_DIM: usize = 16;
+const CRC16_ARC_REFLECTED_POLY: u16 = 0xA001;
 
 pub struct NativeChecksumEngine;
 
@@ -457,6 +472,10 @@ enum ChecksumMode {
     Sequential,
     ParallelFanout,
     ParallelCrc32,
+    ParallelCrc32c,
+    ParallelCrc16,
+    ParallelAdler32,
+    ParallelBlake3,
 }
 
 #[derive(Clone, Debug)]
@@ -559,6 +578,34 @@ fn plan_checksum(algorithms: &[Algorithm], range: &ResolvedRange) -> ChecksumPla
         }
     }
 
+    if algorithms == [Algorithm::Crc32c] && range.len >= CRC32C_PARALLEL_THRESHOLD {
+        let max_threads = parallel_crc32c_max_threads(range.len);
+        if max_threads > 1 {
+            return ChecksumPlan::parallel(ChecksumMode::ParallelCrc32c, max_threads);
+        }
+    }
+
+    if algorithms == [Algorithm::Crc16] && range.len >= CRC16_PARALLEL_THRESHOLD {
+        let max_threads = parallel_crc16_max_threads(range.len);
+        if max_threads > 1 {
+            return ChecksumPlan::parallel(ChecksumMode::ParallelCrc16, max_threads);
+        }
+    }
+
+    if algorithms == [Algorithm::Adler32] && range.len >= ADLER32_PARALLEL_THRESHOLD {
+        let max_threads = parallel_adler32_max_threads(range.len);
+        if max_threads > 1 {
+            return ChecksumPlan::parallel(ChecksumMode::ParallelAdler32, max_threads);
+        }
+    }
+
+    if algorithms == [Algorithm::Blake3] && range.len >= BLAKE3_PARALLEL_THRESHOLD {
+        let max_threads = parallel_blake3_max_threads(range.len);
+        if max_threads > 1 {
+            return ChecksumPlan::parallel(ChecksumMode::ParallelBlake3, max_threads);
+        }
+    }
+
     if algorithms.len() > 1 && range.len >= FANOUT_PARALLEL_THRESHOLD {
         return ChecksumPlan::parallel(ChecksumMode::ParallelFanout, algorithms.len());
     }
@@ -629,6 +676,38 @@ fn execute_plan(
             context.cancel(),
         )?,
         ChecksumMode::ParallelCrc32 => compute_parallel_crc32(
+            mapped.as_ref(),
+            source,
+            range,
+            &pool,
+            &execution,
+            context.cancel(),
+        )?,
+        ChecksumMode::ParallelCrc32c => compute_parallel_crc32c(
+            mapped.as_ref(),
+            source,
+            range,
+            &pool,
+            &execution,
+            context.cancel(),
+        )?,
+        ChecksumMode::ParallelCrc16 => compute_parallel_crc16(
+            mapped.as_ref(),
+            source,
+            range,
+            &pool,
+            &execution,
+            context.cancel(),
+        )?,
+        ChecksumMode::ParallelAdler32 => compute_parallel_adler32(
+            mapped.as_ref(),
+            source,
+            range,
+            &pool,
+            &execution,
+            context.cancel(),
+        )?,
+        ChecksumMode::ParallelBlake3 => compute_parallel_blake3(
             mapped.as_ref(),
             source,
             range,
@@ -907,6 +986,304 @@ fn compute_parallel_crc32_stream(
     Ok(results)
 }
 
+fn compute_parallel_crc32c(
+    mapped: Option<&MappedRange>,
+    source: &Path,
+    range: &ResolvedRange,
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    if let Some(mapped) = mapped {
+        return compute_parallel_crc32c_mapped(mapped.bytes(), pool, execution, cancel);
+    }
+
+    compute_parallel_crc32c_stream(source, range, pool, execution, cancel)
+}
+
+fn compute_parallel_crc32c_mapped(
+    bytes: &[u8],
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    let chunk_size = crc32_parallel_chunk_size(bytes.len() as u64, execution.effective_threads);
+    let partials = pool.install(|| {
+        bytes
+            .par_chunks(chunk_size as usize)
+            .map(|chunk| {
+                cancel.check()?;
+                Ok::<_, RomWeaverError>((crc32c_append(0, chunk), chunk.len()))
+            })
+            .collect::<Vec<_>>()
+    });
+    let combined = combine_crc32c_partials(partials)?;
+
+    let mut results = BTreeMap::new();
+    results.insert(
+        Algorithm::Crc32c.name().to_string(),
+        format!("{combined:08x}"),
+    );
+    Ok(results)
+}
+
+fn compute_parallel_crc32c_stream(
+    source: &Path,
+    range: &ResolvedRange,
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    let chunk_size = crc32_parallel_chunk_size(range.len, execution.effective_threads) as usize;
+    let mut file = File::open(source)?;
+    file.seek(SeekFrom::Start(range.start))?;
+
+    let mut remaining = range.len;
+    let mut partials = Vec::new();
+    while remaining > 0 {
+        cancel.check()?;
+        let limit = remaining.min(chunk_size as u64) as usize;
+        let mut buffer = vec![0u8; limit];
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            return Err(RomWeaverError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "source ended before checksum range chunk was fully read",
+            )));
+        }
+
+        buffer.truncate(bytes_read);
+        let partial = pool.install(|| (crc32c_append(0, &buffer), buffer.len()));
+        partials.push(Ok(partial));
+        remaining -= bytes_read as u64;
+    }
+    let combined = combine_crc32c_partials(partials)?;
+
+    let mut results = BTreeMap::new();
+    results.insert(
+        Algorithm::Crc32c.name().to_string(),
+        format!("{combined:08x}"),
+    );
+    Ok(results)
+}
+
+fn compute_parallel_crc16(
+    mapped: Option<&MappedRange>,
+    source: &Path,
+    range: &ResolvedRange,
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    if let Some(mapped) = mapped {
+        return compute_parallel_crc16_mapped(mapped.bytes(), pool, execution, cancel);
+    }
+
+    compute_parallel_crc16_stream(source, range, pool, execution, cancel)
+}
+
+fn compute_parallel_crc16_mapped(
+    bytes: &[u8],
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    let chunk_size = crc32_parallel_chunk_size(bytes.len() as u64, execution.effective_threads);
+    let partials = pool.install(|| {
+        bytes
+            .par_chunks(chunk_size as usize)
+            .map(|chunk| {
+                cancel.check()?;
+                let mut state = Crc16State::<ARC>::new();
+                state.update(chunk);
+                Ok::<_, RomWeaverError>((state.get(), chunk.len()))
+            })
+            .collect::<Vec<_>>()
+    });
+    let combined = combine_crc16_partials(partials)?;
+
+    let mut results = BTreeMap::new();
+    results.insert(
+        Algorithm::Crc16.name().to_string(),
+        format!("{combined:04x}"),
+    );
+    Ok(results)
+}
+
+fn compute_parallel_crc16_stream(
+    source: &Path,
+    range: &ResolvedRange,
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    let chunk_size = crc32_parallel_chunk_size(range.len, execution.effective_threads) as usize;
+    let mut file = File::open(source)?;
+    file.seek(SeekFrom::Start(range.start))?;
+
+    let mut remaining = range.len;
+    let mut partials = Vec::new();
+    while remaining > 0 {
+        cancel.check()?;
+        let limit = remaining.min(chunk_size as u64) as usize;
+        let mut buffer = vec![0u8; limit];
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            return Err(RomWeaverError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "source ended before checksum range chunk was fully read",
+            )));
+        }
+
+        buffer.truncate(bytes_read);
+        let partial = pool.install(|| {
+            let mut state = Crc16State::<ARC>::new();
+            state.update(&buffer);
+            (state.get(), buffer.len())
+        });
+        partials.push(Ok(partial));
+        remaining -= bytes_read as u64;
+    }
+    let combined = combine_crc16_partials(partials)?;
+
+    let mut results = BTreeMap::new();
+    results.insert(
+        Algorithm::Crc16.name().to_string(),
+        format!("{combined:04x}"),
+    );
+    Ok(results)
+}
+
+fn compute_parallel_adler32(
+    mapped: Option<&MappedRange>,
+    source: &Path,
+    range: &ResolvedRange,
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    if let Some(mapped) = mapped {
+        return compute_parallel_adler32_mapped(mapped.bytes(), pool, execution, cancel);
+    }
+
+    compute_parallel_adler32_stream(source, range, pool, execution, cancel)
+}
+
+fn compute_parallel_adler32_mapped(
+    bytes: &[u8],
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    let chunk_size = crc32_parallel_chunk_size(bytes.len() as u64, execution.effective_threads);
+    let partials = pool.install(|| {
+        bytes
+            .par_chunks(chunk_size as usize)
+            .map(|chunk| {
+                cancel.check()?;
+                Ok::<_, RomWeaverError>((adler32_checksum(chunk), chunk.len()))
+            })
+            .collect::<Vec<_>>()
+    });
+    let combined = combine_adler32_partials(partials)?;
+
+    let mut results = BTreeMap::new();
+    results.insert(
+        Algorithm::Adler32.name().to_string(),
+        format!("{combined:08x}"),
+    );
+    Ok(results)
+}
+
+fn compute_parallel_adler32_stream(
+    source: &Path,
+    range: &ResolvedRange,
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    let chunk_size = crc32_parallel_chunk_size(range.len, execution.effective_threads) as usize;
+    let mut file = File::open(source)?;
+    file.seek(SeekFrom::Start(range.start))?;
+
+    let mut remaining = range.len;
+    let mut partials = Vec::new();
+    while remaining > 0 {
+        cancel.check()?;
+        let limit = remaining.min(chunk_size as u64) as usize;
+        let mut buffer = vec![0u8; limit];
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            return Err(RomWeaverError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "source ended before checksum range chunk was fully read",
+            )));
+        }
+
+        buffer.truncate(bytes_read);
+        let partial = pool.install(|| (adler32_checksum(&buffer), buffer.len()));
+        partials.push(Ok(partial));
+        remaining -= bytes_read as u64;
+    }
+    let combined = combine_adler32_partials(partials)?;
+
+    let mut results = BTreeMap::new();
+    results.insert(
+        Algorithm::Adler32.name().to_string(),
+        format!("{combined:08x}"),
+    );
+    Ok(results)
+}
+
+fn compute_parallel_blake3(
+    mapped: Option<&MappedRange>,
+    source: &Path,
+    range: &ResolvedRange,
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+) -> Result<BTreeMap<String, String>> {
+    let mut hasher = Blake3Hasher::new();
+
+    if let Some(mapped) = mapped {
+        cancel.check()?;
+        pool.install(|| {
+            hasher.update_rayon(mapped.bytes());
+        });
+    } else {
+        let mut file = File::open(source)?;
+        file.seek(SeekFrom::Start(range.start))?;
+
+        let mut remaining = range.len;
+        let chunk_size = tuned_chunk_size(range.len, execution.effective_threads);
+        let mut buffer = vec![0u8; chunk_size];
+        while remaining > 0 {
+            cancel.check()?;
+            let limit = remaining.min(buffer.len() as u64) as usize;
+            let bytes_read = file.read(&mut buffer[..limit])?;
+            if bytes_read == 0 {
+                return Err(RomWeaverError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "source ended before checksum range was fully read",
+                )));
+            }
+
+            let chunk = &buffer[..bytes_read];
+            pool.install(|| {
+                hasher.update_rayon(chunk);
+            });
+            remaining -= bytes_read as u64;
+        }
+    }
+
+    let mut results = BTreeMap::new();
+    results.insert(
+        Algorithm::Blake3.name().to_string(),
+        hasher.finalize().to_hex().to_string(),
+    );
+    Ok(results)
+}
+
 fn combine_crc32_partials(partials: Vec<Result<Crc32Hasher>>) -> Result<Crc32Hasher> {
     let mut partials = partials.into_iter();
     let mut combined = match partials.next() {
@@ -915,6 +1292,129 @@ fn combine_crc32_partials(partials: Vec<Result<Crc32Hasher>>) -> Result<Crc32Has
     };
     for partial in partials {
         combined.combine(&partial?);
+    }
+    Ok(combined)
+}
+
+fn combine_crc32c_partials(partials: Vec<Result<(u32, usize)>>) -> Result<u32> {
+    let mut partials = partials.into_iter();
+    let (mut combined, _) = match partials.next() {
+        Some(partial) => partial?,
+        None => (0, 0),
+    };
+    for partial in partials {
+        let (crc, len) = partial?;
+        combined = crc32c_combine(combined, crc, len);
+    }
+    Ok(combined)
+}
+
+fn gf2_matrix_times_u16(mat: &[u16; CRC16_GF2_DIM], mut vec: u16) -> u16 {
+    let mut sum = 0u16;
+    let mut idx = 0usize;
+    while vec > 0 {
+        if vec & 1 == 1 {
+            sum ^= mat[idx];
+        }
+        vec >>= 1;
+        idx += 1;
+    }
+    sum
+}
+
+fn gf2_matrix_square_u16(square: &mut [u16; CRC16_GF2_DIM], mat: &[u16; CRC16_GF2_DIM]) {
+    for n in 0..CRC16_GF2_DIM {
+        square[n] = gf2_matrix_times_u16(mat, mat[n]);
+    }
+}
+
+fn crc16_arc_combine(mut crc1: u16, crc2: u16, mut len2: usize) -> u16 {
+    let mut row = 1u16;
+    let mut even = [0u16; CRC16_GF2_DIM];
+    let mut odd = [0u16; CRC16_GF2_DIM];
+
+    if len2 == 0 {
+        return crc1;
+    }
+
+    odd[0] = CRC16_ARC_REFLECTED_POLY;
+    for value in odd.iter_mut().skip(1) {
+        *value = row;
+        row <<= 1;
+    }
+
+    gf2_matrix_square_u16(&mut even, &odd);
+    gf2_matrix_square_u16(&mut odd, &even);
+
+    loop {
+        gf2_matrix_square_u16(&mut even, &odd);
+        if len2 & 1 == 1 {
+            crc1 = gf2_matrix_times_u16(&even, crc1);
+        }
+        len2 >>= 1;
+        if len2 == 0 {
+            break;
+        }
+
+        gf2_matrix_square_u16(&mut odd, &even);
+        if len2 & 1 == 1 {
+            crc1 = gf2_matrix_times_u16(&odd, crc1);
+        }
+        len2 >>= 1;
+        if len2 == 0 {
+            break;
+        }
+    }
+
+    crc1 ^ crc2
+}
+
+fn combine_crc16_partials(partials: Vec<Result<(u16, usize)>>) -> Result<u16> {
+    let mut partials = partials.into_iter();
+    let (mut combined, _) = match partials.next() {
+        Some(partial) => partial?,
+        None => (0, 0),
+    };
+    for partial in partials {
+        let (crc, len) = partial?;
+        combined = crc16_arc_combine(combined, crc, len);
+    }
+    Ok(combined)
+}
+
+fn adler32_checksum(bytes: &[u8]) -> u32 {
+    let mut state = Adler32::new();
+    state.write_slice(bytes);
+    state.checksum()
+}
+
+fn adler32_combine(adler1: u32, adler2: u32, len2: usize) -> u32 {
+    if len2 == 0 {
+        return adler1;
+    }
+
+    let a1 = u64::from(adler1 & 0xffff);
+    let b1 = u64::from((adler1 >> 16) & 0xffff);
+    let a2 = u64::from(adler2 & 0xffff);
+    let b2 = u64::from((adler2 >> 16) & 0xffff);
+
+    let a = (a1 + a2 + ADLER32_MODULO - 1) % ADLER32_MODULO;
+    let len2_mod = (len2 as u64) % ADLER32_MODULO;
+    let a1_minus_one = (a1 + ADLER32_MODULO - 1) % ADLER32_MODULO;
+    let b = (b1 + b2 + (len2_mod * a1_minus_one)) % ADLER32_MODULO;
+
+    ((b as u32) << 16) | (a as u32)
+}
+
+fn combine_adler32_partials(partials: Vec<Result<(u32, usize)>>) -> Result<u32> {
+    let mut partials = partials.into_iter();
+    let (mut combined, _) = match partials.next() {
+        Some(partial) => partial?,
+        None => (1, 0),
+    };
+    for partial in partials {
+        let (crc, len) = partial?;
+        combined = adler32_combine(combined, crc, len);
     }
     Ok(combined)
 }
@@ -933,6 +1433,26 @@ fn partition_algorithms(algorithms: &[Algorithm], worker_count: usize) -> Vec<Ve
 fn parallel_crc32_max_threads(range_len: u64) -> usize {
     ((range_len / CRC32_PARALLEL_MIN_BYTES_PER_THREAD) as usize)
         .clamp(1, CRC32_PARALLEL_MAX_THREADS)
+}
+
+fn parallel_crc32c_max_threads(range_len: u64) -> usize {
+    ((range_len / CRC32C_PARALLEL_MIN_BYTES_PER_THREAD) as usize)
+        .clamp(1, CRC32C_PARALLEL_MAX_THREADS)
+}
+
+fn parallel_crc16_max_threads(range_len: u64) -> usize {
+    ((range_len / CRC16_PARALLEL_MIN_BYTES_PER_THREAD) as usize)
+        .clamp(1, CRC16_PARALLEL_MAX_THREADS)
+}
+
+fn parallel_adler32_max_threads(range_len: u64) -> usize {
+    ((range_len / ADLER32_PARALLEL_MIN_BYTES_PER_THREAD) as usize)
+        .clamp(1, ADLER32_PARALLEL_MAX_THREADS)
+}
+
+fn parallel_blake3_max_threads(range_len: u64) -> usize {
+    ((range_len / BLAKE3_PARALLEL_MIN_BYTES_PER_THREAD) as usize)
+        .clamp(1, BLAKE3_PARALLEL_MAX_THREADS)
 }
 
 fn crc32_parallel_chunk_size(range_len: u64, worker_count: usize) -> u64 {
@@ -1018,19 +1538,25 @@ mod tests {
         fs::{self, File},
         io::Write,
         path::{Path, PathBuf},
-        sync::Arc,
         sync::atomic::{AtomicU64, Ordering},
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use proptest::prelude::*;
     use rom_weaver_core::{
         CancellationToken, ChecksumEngine, ChecksumRequest, NoopProgressSink, OperationContext,
         ThreadBudget,
     };
 
     use super::{
+        adler32_checksum, combine_adler32_partials, combine_crc16_partials,
+        combine_crc32c_partials, crc32c_append, plan_checksum, supported_algorithms, ChecksumMode,
+        Crc16State, NativeChecksumEngine, ResolvedRange, ADLER32_PARALLEL_MIN_BYTES_PER_THREAD,
+        ADLER32_PARALLEL_THRESHOLD, ARC, BLAKE3_PARALLEL_MIN_BYTES_PER_THREAD,
+        BLAKE3_PARALLEL_THRESHOLD, CRC16_PARALLEL_MIN_BYTES_PER_THREAD, CRC16_PARALLEL_THRESHOLD,
+        CRC32C_PARALLEL_MIN_BYTES_PER_THREAD, CRC32C_PARALLEL_THRESHOLD,
         CRC32_PARALLEL_MIN_BYTES_PER_THREAD, CRC32_PARALLEL_THRESHOLD, FANOUT_PARALLEL_THRESHOLD,
-        NativeChecksumEngine, supported_algorithms,
     };
 
     static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1087,13 +1613,143 @@ mod tests {
         }
     }
 
+    fn chunk_boundaries(data_len: usize, split_hints: &[u16]) -> Vec<usize> {
+        let mut boundaries = Vec::with_capacity(split_hints.len() + 2);
+        boundaries.push(0);
+        boundaries.push(data_len);
+        for hint in split_hints {
+            boundaries.push(usize::from(*hint) % (data_len.saturating_add(1)));
+        }
+        boundaries.sort_unstable();
+        boundaries.dedup();
+        if boundaries.first().copied() != Some(0) {
+            boundaries.insert(0, 0);
+        }
+        if boundaries.last().copied() != Some(data_len) {
+            boundaries.push(data_len);
+        }
+        boundaries
+    }
+
+    fn assert_parallel_range_for_algorithm(
+        algorithm: &str,
+        file_name: &str,
+        threshold: u64,
+        min_bytes_per_thread: u64,
+    ) {
+        let temp = TestDir::new();
+        let source = temp.path().join(file_name);
+        let range_start = 1_u64 << 20;
+        let range_len = threshold + min_bytes_per_thread;
+        let file_len = range_start + range_len + (1_u64 << 20);
+        write_patterned_file(
+            &source,
+            usize::try_from(file_len).expect("range fixture length fits usize"),
+        );
+
+        let request = ChecksumRequest {
+            source,
+            algorithms: vec![algorithm.into()],
+            start: Some(range_start),
+            length: Some(range_len),
+        };
+
+        let sequential = NativeChecksumEngine
+            .checksum_range(
+                &request,
+                &checksum_context(&temp.path().join("seq"), ThreadBudget::Fixed(1)),
+            )
+            .expect("sequential report");
+        let parallel = NativeChecksumEngine
+            .checksum_range(
+                &request,
+                &checksum_context(&temp.path().join("par"), ThreadBudget::Fixed(8)),
+            )
+            .expect("parallel report");
+
+        assert_eq!(parallel.label, sequential.label);
+        assert!(parallel.label.contains(&format!(
+            "range={}..{}",
+            range_start,
+            range_start + range_len
+        )));
+        let execution = parallel.thread_execution.expect("thread execution");
+        assert!(execution.effective_threads > 1);
+        assert!(execution.used_parallelism);
+    }
+
+    proptest! {
+        #[test]
+        fn crc32c_chunk_combine_matches_sequential(
+            data in proptest::collection::vec(any::<u8>(), 0..(512 * 1024)),
+            split_hints in proptest::collection::vec(any::<u16>(), 0..32),
+        ) {
+            let boundaries = chunk_boundaries(data.len(), &split_hints);
+            let mut partials = Vec::with_capacity(boundaries.len().saturating_sub(1));
+            for window in boundaries.windows(2) {
+                let start = window[0];
+                let end = window[1];
+                let chunk = &data[start..end];
+                partials.push(Ok((crc32c_append(0, chunk), chunk.len())));
+            }
+
+            let combined = combine_crc32c_partials(partials).expect("combine");
+            let sequential = crc32c_append(0, &data);
+            prop_assert_eq!(combined, sequential);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn crc16_chunk_combine_matches_sequential(
+            data in proptest::collection::vec(any::<u8>(), 0..(512 * 1024)),
+            split_hints in proptest::collection::vec(any::<u16>(), 0..32),
+        ) {
+            let boundaries = chunk_boundaries(data.len(), &split_hints);
+            let mut partials = Vec::with_capacity(boundaries.len().saturating_sub(1));
+            for window in boundaries.windows(2) {
+                let start = window[0];
+                let end = window[1];
+                let chunk = &data[start..end];
+                let mut state = Crc16State::<ARC>::new();
+                state.update(chunk);
+                partials.push(Ok((state.get(), chunk.len())));
+            }
+
+            let combined = combine_crc16_partials(partials).expect("combine");
+            let mut sequential_state = Crc16State::<ARC>::new();
+            sequential_state.update(&data);
+            let sequential = sequential_state.get();
+            prop_assert_eq!(combined, sequential);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn adler32_chunk_combine_matches_sequential(
+            data in proptest::collection::vec(any::<u8>(), 0..(512 * 1024)),
+            split_hints in proptest::collection::vec(any::<u16>(), 0..32),
+        ) {
+            let boundaries = chunk_boundaries(data.len(), &split_hints);
+            let mut partials = Vec::with_capacity(boundaries.len().saturating_sub(1));
+            for window in boundaries.windows(2) {
+                let start = window[0];
+                let end = window[1];
+                let chunk = &data[start..end];
+                partials.push(Ok((adler32_checksum(chunk), chunk.len())));
+            }
+
+            let combined = combine_adler32_partials(partials).expect("combine");
+            let sequential = adler32_checksum(&data);
+            prop_assert_eq!(combined, sequential);
+        }
+    }
+
     #[test]
     fn registry_contains_planned_algorithms() {
         assert_eq!(
             supported_algorithms(),
-            &[
-                "crc32", "md5", "sha1", "sha256", "blake3", "crc32c", "crc16", "adler32",
-            ]
+            &["crc32", "md5", "sha1", "sha256", "blake3", "crc32c", "crc16", "adler32",]
         );
     }
 
@@ -1125,26 +1781,18 @@ mod tests {
         assert_eq!(report.stage, "checksum");
         assert_eq!(report.status, rom_weaver_core::OperationStatus::Succeeded);
         assert!(report.label.contains("crc32=0d4a1185"));
-        assert!(
-            report
-                .label
-                .contains("md5=5eb63bbbe01eeed093cb22bb8f5acdc3")
-        );
-        assert!(
-            report
-                .label
-                .contains("sha1=2aae6c35c94fcfb415dbe95f408b9ce91ee846ed")
-        );
-        assert!(
-            report.label.contains(
-                "sha256=b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-            )
-        );
-        assert!(
-            report.label.contains(
-                "blake3=d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24"
-            )
-        );
+        assert!(report
+            .label
+            .contains("md5=5eb63bbbe01eeed093cb22bb8f5acdc3"));
+        assert!(report
+            .label
+            .contains("sha1=2aae6c35c94fcfb415dbe95f408b9ce91ee846ed"));
+        assert!(report
+            .label
+            .contains("sha256=b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
+        assert!(report
+            .label
+            .contains("blake3=d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24"));
         assert!(report.label.contains("crc32c=c99465aa"));
         let execution = report.thread_execution.expect("thread execution");
         assert_eq!(execution.effective_threads, 1);
@@ -1219,6 +1867,198 @@ mod tests {
     }
 
     #[test]
+    fn standalone_blake3_uses_parallel_mode_on_large_files() {
+        let temp = TestDir::new();
+        let source = temp.path().join("large-blake3.bin");
+        write_patterned_file(
+            &source,
+            (BLAKE3_PARALLEL_THRESHOLD + BLAKE3_PARALLEL_MIN_BYTES_PER_THREAD) as usize,
+        );
+
+        let request = ChecksumRequest {
+            source,
+            algorithms: vec!["blake3".into()],
+            start: None,
+            length: None,
+        };
+
+        let sequential = NativeChecksumEngine
+            .checksum_file(
+                &request,
+                &checksum_context(&temp.path().join("seq"), ThreadBudget::Fixed(1)),
+            )
+            .expect("sequential report");
+        let parallel = NativeChecksumEngine
+            .checksum_file(
+                &request,
+                &checksum_context(&temp.path().join("par"), ThreadBudget::Fixed(8)),
+            )
+            .expect("parallel report");
+
+        assert_eq!(parallel.label, sequential.label);
+        let execution = parallel.thread_execution.expect("thread execution");
+        assert!(execution.effective_threads > 1);
+        assert!(execution.used_parallelism);
+    }
+
+    #[test]
+    fn standalone_crc32c_uses_parallel_mode_on_large_files() {
+        let temp = TestDir::new();
+        let source = temp.path().join("large-crc32c.bin");
+        write_patterned_file(
+            &source,
+            (CRC32C_PARALLEL_THRESHOLD + CRC32C_PARALLEL_MIN_BYTES_PER_THREAD) as usize,
+        );
+
+        let request = ChecksumRequest {
+            source,
+            algorithms: vec!["crc32c".into()],
+            start: None,
+            length: None,
+        };
+
+        let sequential = NativeChecksumEngine
+            .checksum_file(
+                &request,
+                &checksum_context(&temp.path().join("seq"), ThreadBudget::Fixed(1)),
+            )
+            .expect("sequential report");
+        let parallel = NativeChecksumEngine
+            .checksum_file(
+                &request,
+                &checksum_context(&temp.path().join("par"), ThreadBudget::Fixed(8)),
+            )
+            .expect("parallel report");
+
+        assert_eq!(parallel.label, sequential.label);
+        let execution = parallel.thread_execution.expect("thread execution");
+        assert!(execution.effective_threads > 1);
+        assert!(execution.used_parallelism);
+    }
+
+    #[test]
+    fn standalone_crc16_uses_parallel_mode_on_large_files() {
+        let temp = TestDir::new();
+        let source = temp.path().join("large-crc16.bin");
+        write_patterned_file(
+            &source,
+            (CRC16_PARALLEL_THRESHOLD + CRC16_PARALLEL_MIN_BYTES_PER_THREAD) as usize,
+        );
+
+        let request = ChecksumRequest {
+            source,
+            algorithms: vec!["crc16".into()],
+            start: None,
+            length: None,
+        };
+
+        let sequential = NativeChecksumEngine
+            .checksum_file(
+                &request,
+                &checksum_context(&temp.path().join("seq"), ThreadBudget::Fixed(1)),
+            )
+            .expect("sequential report");
+        let parallel = NativeChecksumEngine
+            .checksum_file(
+                &request,
+                &checksum_context(&temp.path().join("par"), ThreadBudget::Fixed(8)),
+            )
+            .expect("parallel report");
+
+        assert_eq!(parallel.label, sequential.label);
+        let execution = parallel.thread_execution.expect("thread execution");
+        assert!(execution.effective_threads > 1);
+        assert!(execution.used_parallelism);
+    }
+
+    #[test]
+    fn standalone_adler32_uses_parallel_mode_on_large_files() {
+        let temp = TestDir::new();
+        let source = temp.path().join("large-adler32.bin");
+        write_patterned_file(
+            &source,
+            (ADLER32_PARALLEL_THRESHOLD + ADLER32_PARALLEL_MIN_BYTES_PER_THREAD) as usize,
+        );
+
+        let request = ChecksumRequest {
+            source,
+            algorithms: vec!["adler32".into()],
+            start: None,
+            length: None,
+        };
+
+        let sequential = NativeChecksumEngine
+            .checksum_file(
+                &request,
+                &checksum_context(&temp.path().join("seq"), ThreadBudget::Fixed(1)),
+            )
+            .expect("sequential report");
+        let parallel = NativeChecksumEngine
+            .checksum_file(
+                &request,
+                &checksum_context(&temp.path().join("par"), ThreadBudget::Fixed(8)),
+            )
+            .expect("parallel report");
+
+        assert_eq!(parallel.label, sequential.label);
+        let execution = parallel.thread_execution.expect("thread execution");
+        assert!(execution.effective_threads > 1);
+        assert!(execution.used_parallelism);
+    }
+
+    #[test]
+    fn standalone_crc32c_range_uses_parallel_mode_on_large_files() {
+        assert_parallel_range_for_algorithm(
+            "crc32c",
+            "large-range-crc32c.bin",
+            CRC32C_PARALLEL_THRESHOLD,
+            CRC32C_PARALLEL_MIN_BYTES_PER_THREAD,
+        );
+    }
+
+    #[test]
+    fn standalone_crc16_range_uses_parallel_mode_on_large_files() {
+        assert_parallel_range_for_algorithm(
+            "crc16",
+            "large-range-crc16.bin",
+            CRC16_PARALLEL_THRESHOLD,
+            CRC16_PARALLEL_MIN_BYTES_PER_THREAD,
+        );
+    }
+
+    #[test]
+    fn standalone_adler32_range_uses_parallel_mode_on_large_files() {
+        assert_parallel_range_for_algorithm(
+            "adler32",
+            "large-range-adler32.bin",
+            ADLER32_PARALLEL_THRESHOLD,
+            ADLER32_PARALLEL_MIN_BYTES_PER_THREAD,
+        );
+    }
+
+    #[test]
+    fn planner_keeps_standalone_algorithms_sequential_below_threshold() {
+        let cases: &[(Vec<String>, u64)] = &[
+            (vec!["crc32".into()], CRC32_PARALLEL_THRESHOLD - 1),
+            (vec!["crc32c".into()], CRC32C_PARALLEL_THRESHOLD - 1),
+            (vec!["crc16".into()], CRC16_PARALLEL_THRESHOLD - 1),
+            (vec!["adler32".into()], ADLER32_PARALLEL_THRESHOLD - 1),
+            (vec!["blake3".into()], BLAKE3_PARALLEL_THRESHOLD - 1),
+        ];
+        for (values, len) in cases {
+            let algorithms = super::resolve_algorithms(values).expect("algorithms");
+            let range = ResolvedRange {
+                start: 0,
+                len: *len,
+                file_len: *len,
+                explicit: false,
+            };
+            let plan = plan_checksum(&algorithms, &range);
+            assert_eq!(plan.mode, ChecksumMode::Sequential);
+        }
+    }
+
+    #[test]
     fn checksum_range_respects_requested_slice() {
         let temp = TestDir::new();
         let source = temp.path().join("sample.bin");
@@ -1239,16 +2079,12 @@ mod tests {
         assert_eq!(report.stage, "checksum-range");
         assert!(report.label.contains("range=6..11"));
         assert!(report.label.contains("crc32=3a771143"));
-        assert!(
-            report
-                .label
-                .contains("md5=7d793037a0760186574b0282f2f435e7")
-        );
-        assert!(
-            report
-                .label
-                .contains("sha1=7c211433f02071597741e6ff5a8ea34789abbf43")
-        );
+        assert!(report
+            .label
+            .contains("md5=7d793037a0760186574b0282f2f435e7"));
+        assert!(report
+            .label
+            .contains("sha1=7c211433f02071597741e6ff5a8ea34789abbf43"));
     }
 
     #[test]
@@ -1337,10 +2173,8 @@ mod tests {
             )
             .expect_err("range should fail");
 
-        assert!(
-            error
-                .to_string()
-                .contains("checksum range start 6 is past the end")
-        );
+        assert!(error
+            .to_string()
+            .contains("checksum range start 6 is past the end"));
     }
 }
