@@ -1,5 +1,6 @@
 use std::{fs, path::Path};
 
+#[cfg(all(not(feature = "bsp-native"), feature = "bsp-js"))]
 use boa_engine::{
     Context as JsContext, JsValue, Source, js_string, native_function::NativeFunction,
     object::builtins::JsArrayBuffer, property::Attribute,
@@ -9,7 +10,9 @@ use rom_weaver_core::{
     PatchCapabilities, PatchCreateRequest, PatchHandler, Result, RomWeaverError, ThreadCapability,
 };
 
+#[cfg(any(test, all(not(feature = "bsp-native"), feature = "bsp-js")))]
 const BSP_VM_SOURCE: &str = include_str!("bsp_vm_runtime.js");
+#[cfg(all(not(feature = "bsp-native"), feature = "bsp-js"))]
 const BSP_APPLY_SCRIPT: &str = r#"
 const __rom_weaver_patcher = new BSPPatcher(__rom_weaver_patch, __rom_weaver_input);
 __rom_weaver_patcher.print = function (_message) {
@@ -107,85 +110,103 @@ impl PatchHandler for BspPatchHandler {
 }
 
 fn apply_bsp_patch_bytes(patch_bytes: Vec<u8>, input_bytes: Vec<u8>) -> Result<Vec<u8>> {
-    let mut context = JsContext::default();
-    register_set_timeout_polyfill(&mut context)?;
+    #[cfg(feature = "bsp-native")]
+    {
+        return crate::bsp_native_vm::apply_bsp_patch_bytes_native(patch_bytes, input_bytes);
+    }
 
-    let patch_buffer =
-        JsArrayBuffer::from_byte_block(patch_bytes, &mut context).map_err(map_js_error)?;
-    let input_buffer =
-        JsArrayBuffer::from_byte_block(input_bytes, &mut context).map_err(map_js_error)?;
+    #[cfg(all(not(feature = "bsp-native"), feature = "bsp-js"))]
+    {
+        let mut context = JsContext::default();
+        register_set_timeout_polyfill(&mut context)?;
 
-    context
-        .register_global_property(
-            js_string!("__rom_weaver_patch"),
-            patch_buffer,
-            Attribute::all(),
-        )
-        .map_err(map_js_error)?;
-    context
-        .register_global_property(
-            js_string!("__rom_weaver_input"),
-            input_buffer,
-            Attribute::all(),
-        )
-        .map_err(map_js_error)?;
+        let patch_buffer =
+            JsArrayBuffer::from_byte_block(patch_bytes, &mut context).map_err(map_js_error)?;
+        let input_buffer =
+            JsArrayBuffer::from_byte_block(input_bytes, &mut context).map_err(map_js_error)?;
 
-    context
-        .eval(Source::from_bytes(BSP_VM_SOURCE.as_bytes()))
-        .map_err(map_js_error)?;
-    context
-        .eval(Source::from_bytes(BSP_APPLY_SCRIPT.as_bytes()))
-        .map_err(map_js_error)?;
+        context
+            .register_global_property(
+                js_string!("__rom_weaver_patch"),
+                patch_buffer,
+                Attribute::all(),
+            )
+            .map_err(map_js_error)?;
+        context
+            .register_global_property(
+                js_string!("__rom_weaver_input"),
+                input_buffer,
+                Attribute::all(),
+            )
+            .map_err(map_js_error)?;
 
-    let state_value = context
-        .global_object()
-        .get(js_string!("__rom_weaver_state"), &mut context)
-        .map_err(map_js_error)?;
-    let result_value = context
-        .global_object()
-        .get(js_string!("__rom_weaver_result"), &mut context)
-        .map_err(map_js_error)?;
+        context
+            .eval(Source::from_bytes(BSP_VM_SOURCE.as_bytes()))
+            .map_err(map_js_error)?;
+        context
+            .eval(Source::from_bytes(BSP_APPLY_SCRIPT.as_bytes()))
+            .map_err(map_js_error)?;
 
-    let Some(state) = state_value.as_number().map(|value| value as i32) else {
-        return Err(RomWeaverError::Validation(
-            "BSP runtime returned an invalid completion state".into(),
-        ));
-    };
+        let state_value = context
+            .global_object()
+            .get(js_string!("__rom_weaver_state"), &mut context)
+            .map_err(map_js_error)?;
+        let result_value = context
+            .global_object()
+            .get(js_string!("__rom_weaver_result"), &mut context)
+            .map_err(map_js_error)?;
 
-    match state {
-        4 => {
-            let Some(result_object) = result_value.as_object() else {
-                return Err(RomWeaverError::Validation(
-                    "BSP runtime returned success without an output buffer".into(),
-                ));
-            };
-            let result_buffer =
-                JsArrayBuffer::from_object(result_object.clone()).map_err(map_js_error)?;
-            let Some(bytes) = result_buffer.data() else {
-                return Err(RomWeaverError::Validation(
-                    "BSP runtime returned a detached output buffer".into(),
-                ));
-            };
-            Ok(bytes.to_vec())
+        let Some(state) = state_value.as_number().map(|value| value as i32) else {
+            return Err(RomWeaverError::Validation(
+                "BSP runtime returned an invalid completion state".into(),
+            ));
+        };
+
+        match state {
+            4 => {
+                let Some(result_object) = result_value.as_object() else {
+                    return Err(RomWeaverError::Validation(
+                        "BSP runtime returned success without an output buffer".into(),
+                    ));
+                };
+                let result_buffer =
+                    JsArrayBuffer::from_object(result_object.clone()).map_err(map_js_error)?;
+                let Some(bytes) = result_buffer.data() else {
+                    return Err(RomWeaverError::Validation(
+                        "BSP runtime returned a detached output buffer".into(),
+                    ));
+                };
+                Ok(bytes.to_vec())
+            }
+            3 => {
+                let exit_status = result_value.as_number().unwrap_or(-1.0);
+                Err(RomWeaverError::Validation(format!(
+                    "BSP patch script exited with failure status {}",
+                    exit_status as i64
+                )))
+            }
+            2 => Err(RomWeaverError::Validation(format!(
+                "BSP patch execution failed: {}",
+                describe_js_value(&result_value, &mut context)
+            ))),
+            _ => Err(RomWeaverError::Validation(format!(
+                "BSP runtime ended in unsupported state {}",
+                state
+            ))),
         }
-        3 => {
-            let exit_status = result_value.as_number().unwrap_or(-1.0);
-            Err(RomWeaverError::Validation(format!(
-                "BSP patch script exited with failure status {}",
-                exit_status as i64
-            )))
-        }
-        2 => Err(RomWeaverError::Validation(format!(
-            "BSP patch execution failed: {}",
-            describe_js_value(&result_value, &mut context)
-        ))),
-        _ => Err(RomWeaverError::Validation(format!(
-            "BSP runtime ended in unsupported state {}",
-            state
-        ))),
+    }
+
+    #[cfg(not(any(feature = "bsp-native", feature = "bsp-js")))]
+    {
+        let _ = patch_bytes;
+        let _ = input_bytes;
+        Err(RomWeaverError::Unsupported(
+            "BSP patch apply is not enabled in this build".into(),
+        ))
     }
 }
 
+#[cfg(all(not(feature = "bsp-native"), feature = "bsp-js"))]
 fn register_set_timeout_polyfill(context: &mut JsContext) -> Result<()> {
     context
         .register_global_builtin_callable(
@@ -205,10 +226,12 @@ fn register_set_timeout_polyfill(context: &mut JsContext) -> Result<()> {
         .map_err(map_js_error)
 }
 
+#[cfg(all(not(feature = "bsp-native"), feature = "bsp-js"))]
 fn map_js_error(error: boa_engine::JsError) -> RomWeaverError {
     RomWeaverError::Validation(format!("BSP runtime error: {error}"))
 }
 
+#[cfg(all(not(feature = "bsp-native"), feature = "bsp-js"))]
 fn describe_js_value(value: &JsValue, context: &mut JsContext) -> String {
     if let Some(string) = value.as_string() {
         return string.to_std_string_escaped();
