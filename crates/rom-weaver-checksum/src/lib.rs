@@ -9,7 +9,7 @@ use std::{
 
 use adler2::Adler32;
 use blake3::Hasher as Blake3Hasher;
-use crc16::{State as Crc16State, ARC};
+use crc16::{ARC, State as Crc16State};
 use crc32c::{crc32c_append, crc32c_combine};
 use crc32fast::Hasher as Crc32Hasher;
 use md5::{Digest as Md5Digest, Md5};
@@ -1542,8 +1542,8 @@ mod tests {
         fs::{self, File},
         io::Write,
         path::{Path, PathBuf},
-        sync::atomic::{AtomicU64, Ordering},
         sync::Arc,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -1554,13 +1554,14 @@ mod tests {
     };
 
     use super::{
-        adler32_checksum, combine_adler32_partials, combine_crc16_partials,
-        combine_crc32c_partials, crc32c_append, plan_checksum, supported_algorithms, ChecksumMode,
-        Crc16State, NativeChecksumEngine, ResolvedRange, ADLER32_PARALLEL_MIN_BYTES_PER_THREAD,
-        ADLER32_PARALLEL_THRESHOLD, ARC, BLAKE3_PARALLEL_MIN_BYTES_PER_THREAD,
-        BLAKE3_PARALLEL_THRESHOLD, CRC16_PARALLEL_MIN_BYTES_PER_THREAD, CRC16_PARALLEL_THRESHOLD,
-        CRC32C_PARALLEL_MIN_BYTES_PER_THREAD, CRC32C_PARALLEL_THRESHOLD,
-        CRC32_PARALLEL_MIN_BYTES_PER_THREAD, CRC32_PARALLEL_THRESHOLD, FANOUT_PARALLEL_THRESHOLD,
+        ADLER32_PARALLEL_MIN_BYTES_PER_THREAD, ADLER32_PARALLEL_THRESHOLD, ARC,
+        BLAKE3_PARALLEL_MIN_BYTES_PER_THREAD, BLAKE3_PARALLEL_THRESHOLD,
+        CRC16_PARALLEL_MIN_BYTES_PER_THREAD, CRC16_PARALLEL_THRESHOLD,
+        CRC32_PARALLEL_MIN_BYTES_PER_THREAD, CRC32_PARALLEL_THRESHOLD,
+        CRC32C_PARALLEL_MIN_BYTES_PER_THREAD, CRC32C_PARALLEL_THRESHOLD, ChecksumMode, Crc16State,
+        FANOUT_PARALLEL_THRESHOLD, NativeChecksumEngine, ResolvedRange, adler32_checksum,
+        combine_adler32_partials, combine_crc16_partials, combine_crc32c_partials, crc32c_append,
+        plan_checksum, supported_algorithms,
     };
 
     static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1753,7 +1754,9 @@ mod tests {
     fn registry_contains_planned_algorithms() {
         assert_eq!(
             supported_algorithms(),
-            &["crc32", "md5", "sha1", "sha256", "blake3", "crc32c", "crc16", "adler32",]
+            &[
+                "crc32", "md5", "sha1", "sha256", "blake3", "crc32c", "crc16", "adler32",
+            ]
         );
     }
 
@@ -1785,18 +1788,26 @@ mod tests {
         assert_eq!(report.stage, "checksum");
         assert_eq!(report.status, rom_weaver_core::OperationStatus::Succeeded);
         assert!(report.label.contains("crc32=0d4a1185"));
-        assert!(report
-            .label
-            .contains("md5=5eb63bbbe01eeed093cb22bb8f5acdc3"));
-        assert!(report
-            .label
-            .contains("sha1=2aae6c35c94fcfb415dbe95f408b9ce91ee846ed"));
-        assert!(report
-            .label
-            .contains("sha256=b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
-        assert!(report
-            .label
-            .contains("blake3=d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24"));
+        assert!(
+            report
+                .label
+                .contains("md5=5eb63bbbe01eeed093cb22bb8f5acdc3")
+        );
+        assert!(
+            report
+                .label
+                .contains("sha1=2aae6c35c94fcfb415dbe95f408b9ce91ee846ed")
+        );
+        assert!(
+            report.label.contains(
+                "sha256=b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+            )
+        );
+        assert!(
+            report.label.contains(
+                "blake3=d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24"
+            )
+        );
         assert!(report.label.contains("crc32c=c99465aa"));
         let execution = report.thread_execution.expect("thread execution");
         assert_eq!(execution.effective_threads, 1);
@@ -2083,12 +2094,16 @@ mod tests {
         assert_eq!(report.stage, "checksum-range");
         assert!(report.label.contains("range=6..11"));
         assert!(report.label.contains("crc32=3a771143"));
-        assert!(report
-            .label
-            .contains("md5=7d793037a0760186574b0282f2f435e7"));
-        assert!(report
-            .label
-            .contains("sha1=7c211433f02071597741e6ff5a8ea34789abbf43"));
+        assert!(
+            report
+                .label
+                .contains("md5=7d793037a0760186574b0282f2f435e7")
+        );
+        assert!(
+            report
+                .label
+                .contains("sha1=7c211433f02071597741e6ff5a8ea34789abbf43")
+        );
     }
 
     #[test]
@@ -2177,8 +2192,10 @@ mod tests {
             )
             .expect_err("range should fail");
 
-        assert!(error
-            .to_string()
-            .contains("checksum range start 6 is past the end"));
+        assert!(
+            error
+                .to_string()
+                .contains("checksum range start 6 is past the end")
+        );
     }
 }
