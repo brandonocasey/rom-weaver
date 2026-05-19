@@ -4,6 +4,7 @@ mod bdf;
 mod bps;
 mod dldi;
 mod dps;
+mod gdiff;
 mod ips;
 mod pds;
 mod pmsr;
@@ -32,6 +33,7 @@ use bdf::BdfPatchHandler;
 use bps::BpsPatchHandler;
 use dldi::DldiPatchHandler;
 use dps::DpsPatchHandler;
+use gdiff::GdiffPatchHandler;
 use ips::IpsPatchHandler;
 use pds::PdsPatchHandler;
 use pmsr::PmsrPatchHandler;
@@ -86,6 +88,12 @@ const XDELTA: FormatDescriptor = FormatDescriptor {
     name: "xdelta",
     aliases: &["xdelta3"],
     extensions: &[".xdelta"],
+};
+const GDIFF: FormatDescriptor = FormatDescriptor {
+    family: OperationFamily::Patch,
+    name: "GDIFF",
+    aliases: &["gdiff"],
+    extensions: &[".gdiff", ".gdf"],
 };
 const APS: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
@@ -152,6 +160,7 @@ const BPS_SIGNATURE: &[u8] = b"BPS1";
 const UPS_SIGNATURE: &[u8] = b"UPS1";
 #[cfg(not(target_family = "wasm"))]
 const VCDIFF_SIGNATURE: [u8; 3] = [0xD6, 0xC3, 0xC4];
+const GDIFF_SIGNATURE: [u8; 5] = [0xD1, 0xFF, 0xD1, 0xFF, 4];
 const APS_N64_SIGNATURE: &[u8] = b"APS10";
 const APS_GBA_SIGNATURE: &[u8] = b"APS1";
 const RUP_SIGNATURE: &[u8] = b"NINJA2";
@@ -253,6 +262,7 @@ impl PatchRegistry {
             handlers.push(Arc::new(VcdiffPatchHandler::new(&VCDIFF)));
             handlers.push(Arc::new(VcdiffPatchHandler::new(&XDELTA)));
         }
+        handlers.push(Arc::new(GdiffPatchHandler::new(&GDIFF)));
         handlers.push(Arc::new(ApsN64PatchHandler::new(&APS)));
         handlers.push(Arc::new(ApsGbaPatchHandler::new(&APSGBA)));
         handlers.push(Arc::new(RupPatchHandler::new(&RUP)));
@@ -326,6 +336,9 @@ impl PatchRegistry {
                 return self.find_by_name("xdelta");
             }
             return self.find_by_name("vcdiff");
+        }
+        if prefix.starts_with(&GDIFF_SIGNATURE) {
+            return self.find_by_name("gdiff");
         }
         if prefix.starts_with(APS_N64_SIGNATURE) {
             return self.find_by_name("aps");
@@ -429,6 +442,7 @@ mod tests {
         {
             expected.extend(["VCDIFF", "xdelta"]);
         }
+        expected.push("GDIFF");
         expected.extend([
             "APS",
             "APSGBA",
@@ -498,6 +512,16 @@ mod tests {
     fn dps_is_wired_to_supported_handler() {
         let registry = PatchRegistry::new();
         let handler = registry.find_by_name("dps").expect("dps handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.parse);
+        assert!(capabilities.apply);
+        assert!(capabilities.create);
+    }
+
+    #[test]
+    fn gdiff_is_wired_to_supported_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry.find_by_name("gdiff").expect("gdiff handler");
         let capabilities = handler.capabilities();
         assert!(capabilities.parse);
         assert!(capabilities.apply);
@@ -649,6 +673,27 @@ mod tests {
     }
 
     #[test]
+    fn probe_routes_gdiff_extension_to_gdiff_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry
+            .probe(Path::new("update.gdiff"))
+            .expect("gdiff probe");
+        assert_eq!(handler.descriptor().name, "GDIFF");
+    }
+
+    #[test]
+    fn probe_routes_unknown_extension_with_gdiff_signature_to_gdiff_handler() {
+        let path = temp_file_path_with_extension("gdiff-signature", "bin");
+        fs::write(&path, [0xD1, 0xFF, 0xD1, 0xFF, 4, 0]).expect("fixture");
+
+        let registry = PatchRegistry::new();
+        let handler = registry.probe(&path).expect("gdiff probe");
+        assert_eq!(handler.descriptor().name, "GDIFF");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn probe_routes_dldi_extension_to_dldi_handler() {
         let registry = PatchRegistry::new();
         let handler = registry
@@ -692,6 +737,13 @@ mod tests {
         let registry = PatchRegistry::new();
         let handler = registry.find_by_name("dps").expect("dps name");
         assert_eq!(handler.descriptor().name, "DPS");
+    }
+
+    #[test]
+    fn find_by_name_routes_gdiff_name_to_gdiff_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry.find_by_name("gdiff").expect("gdiff name");
+        assert_eq!(handler.descriptor().name, "GDIFF");
     }
 
     #[test]

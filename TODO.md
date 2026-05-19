@@ -100,6 +100,7 @@
 | PAT-020 | patch | DPS | done | n/a | n/a | done | done | scan,diff,write flags | fixture-parity,cli-smoke | done | Native parse/apply/create landed for Deufeufeu `.dps` patches using fixed-size header metadata and mode-based copy/data records. |
 | PAT-021 | patch | bdf-pds-threaded-create | done | n/a | n/a | done | done | scan,diff,write flags | fixture-parity,cli-smoke,thread-model | done | Replace qbsdiff `ParallelScheme::Never` in BDF and PDS create paths with thread-budget-aware configuration and verify deterministic output parity. |
 | PAT-022 | patch | buffered-to-streaming-migration-wave-1 | done | n/a | n/a | done | done | scan,diff,write flags | fixture-parity,cli-smoke,large-file | done | Migrated heavy patch handlers (`UPS`, `APSGBA`, `RUP`, `PMSR`, `DPS`, `DLDI`, `SOLID`, `BDF`, `PDS`) off direct `fs::read` full-buffer apply/create paths where feasible, using chunked readers, in-place output writes, and file-backed mappings. |
+| PAT-023 | patch | GDIFF | done | n/a | n/a | done | done | scan,diff,write flags | fixture-parity,cli-smoke | done | Native GDIFF v4 parse/apply/create landed with DATA/COPY opcode coverage and CLI smoke round-trip coverage. |
 
 ## Codecs
 
