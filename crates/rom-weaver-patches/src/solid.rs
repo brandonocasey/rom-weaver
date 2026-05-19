@@ -6,10 +6,11 @@ use std::{
 
 use md5::{Digest, Md5};
 use memmap2::{Mmap, MmapOptions};
+use rayon::prelude::*;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
-    Result, RomWeaverError, ThreadCapability,
+    Result, RomWeaverError, SharedThreadPool, ThreadCapability,
 };
 
 const SOLID_MAGIC: &[u8; 2] = b"SP";
@@ -38,6 +39,7 @@ const SOLID_PATCH_VERSION_ENV: &str = "ROM_WEAVER_SOLID_VERSION";
 const SOLID_PATCH_AUTHOR_ENV: &str = "ROM_WEAVER_SOLID_AUTHOR";
 const SOLID_PATCH_CONTACT_ENV: &str = "ROM_WEAVER_SOLID_CONTACT";
 const SOLID_PATCH_COMMENT_ENV: &str = "ROM_WEAVER_SOLID_COMMENT";
+const CREATE_THREAD_SCAN_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct SolidPatchHandler {
     descriptor: &'static FormatDescriptor,
@@ -147,7 +149,10 @@ impl PatchHandler for SolidPatchHandler {
         request: &PatchCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let original_len = fs::metadata(&request.original)?.len();
+        let modified_len = fs::metadata(&request.modified)?.len();
+        let shared_len = original_len.min(modified_len);
+        let (execution, pool) = context.build_pool(solid_create_thread_capability(shared_len))?;
         let original = map_file_read_only(&request.original)?;
         let modified = map_file_read_only(&request.modified)?;
 
@@ -162,13 +167,23 @@ impl PatchHandler for SolidPatchHandler {
         let descriptions = build_description_strings(&request.original, &request.output);
         let uses_big_fields = original.len() > u32::MAX as usize
             || modified.len() > u32::MAX as usize
-            || diff_primitive_count(original.as_ref(), modified.as_ref(), expansion.is_none())?
-                > u32::MAX as u64;
+            || diff_primitive_count_with_threads(
+                original.as_ref(),
+                modified.as_ref(),
+                expansion.is_none(),
+                &pool,
+                execution.used_parallelism,
+            )? > u32::MAX as u64;
         let addr_param =
             build_created_addr_param(mod_action, uses_big_fields, descriptions.patch_info_flag);
 
-        let primitives =
-            build_created_primitives(original.as_ref(), modified.as_ref(), expansion.is_none())?;
+        let primitives = build_created_primitives_with_threads(
+            original.as_ref(),
+            modified.as_ref(),
+            expansion.is_none(),
+            &pool,
+            execution.used_parallelism,
+        )?;
         let primitive_count = primitives.len() as u64;
         let source_md5 = md5_bytes(original.as_ref());
         let date = current_patch_date();
@@ -270,7 +285,7 @@ impl PatchHandler for SolidPatchHandler {
             apply: true,
             create: true,
             threaded_scan: false,
-            threaded_diff: false,
+            threaded_diff: true,
             threaded_output: false,
         }
     }
@@ -567,8 +582,49 @@ fn build_created_addr_param(mod_action: u8, uses_big_fields: bool, patch_info_fl
     addr_param
 }
 
-fn diff_primitive_count(original: &[u8], modified: &[u8], include_suffix: bool) -> Result<u64> {
-    Ok(build_created_primitives(original, modified, include_suffix)?.len() as u64)
+fn solid_create_thread_capability(shared_len: u64) -> ThreadCapability {
+    let chunk_count = solid_create_chunk_count(shared_len).max(1);
+    ThreadCapability::parallel(Some(chunk_count))
+}
+
+fn solid_create_chunk_count(shared_len: u64) -> usize {
+    if shared_len == 0 {
+        return 1;
+    }
+    let chunk_bytes = CREATE_THREAD_SCAN_CHUNK_BYTES as u64;
+    let chunk_count = shared_len.saturating_add(chunk_bytes - 1) / chunk_bytes;
+    usize::try_from(chunk_count).unwrap_or(usize::MAX)
+}
+
+fn diff_primitive_count_with_threads(
+    original: &[u8],
+    modified: &[u8],
+    include_suffix: bool,
+    pool: &SharedThreadPool,
+    use_parallel_scan: bool,
+) -> Result<u64> {
+    Ok(build_created_primitives_with_threads(
+        original,
+        modified,
+        include_suffix,
+        pool,
+        use_parallel_scan,
+    )?
+    .len() as u64)
+}
+
+fn build_created_primitives_with_threads(
+    original: &[u8],
+    modified: &[u8],
+    include_suffix: bool,
+    pool: &SharedThreadPool,
+    use_parallel_scan: bool,
+) -> Result<Vec<CreatedPrimitive>> {
+    if use_parallel_scan {
+        build_created_primitives_parallel(original, modified, include_suffix, pool)
+    } else {
+        build_created_primitives(original, modified, include_suffix)
+    }
 }
 
 fn build_created_primitives(
@@ -576,8 +632,27 @@ fn build_created_primitives(
     modified: &[u8],
     include_suffix: bool,
 ) -> Result<Vec<CreatedPrimitive>> {
+    let chunks = collect_created_chunks_sequential(original, modified, include_suffix);
+    build_created_primitives_from_chunks(chunks)
+}
+
+fn build_created_primitives_parallel(
+    original: &[u8],
+    modified: &[u8],
+    include_suffix: bool,
+    pool: &SharedThreadPool,
+) -> Result<Vec<CreatedPrimitive>> {
+    let chunks = collect_created_chunks_parallel(original, modified, include_suffix, pool);
+    build_created_primitives_from_chunks(chunks)
+}
+
+fn collect_created_chunks_sequential(
+    original: &[u8],
+    modified: &[u8],
+    include_suffix: bool,
+) -> Vec<(u64, Vec<u8>)> {
     let shared_len = original.len().min(modified.len());
-    let mut chunks = Vec::<(u64, &[u8])>::new();
+    let mut chunks = Vec::<(u64, Vec<u8>)>::new();
 
     let mut index = 0usize;
     while index < shared_len {
@@ -590,13 +665,105 @@ fn build_created_primitives(
         while index < shared_len && original[index] != modified[index] {
             index += 1;
         }
-        chunks.push((start as u64, &modified[start..index]));
+        chunks.push((start as u64, modified[start..index].to_vec()));
     }
 
     if include_suffix && modified.len() > shared_len {
-        chunks.push((shared_len as u64, &modified[shared_len..]));
+        chunks.push((shared_len as u64, modified[shared_len..].to_vec()));
+    }
+    chunks
+}
+
+fn collect_created_chunks_parallel(
+    original: &[u8],
+    modified: &[u8],
+    include_suffix: bool,
+    pool: &SharedThreadPool,
+) -> Vec<(u64, Vec<u8>)> {
+    let shared_len = original.len().min(modified.len());
+    if shared_len == 0 {
+        if include_suffix && !modified.is_empty() {
+            return vec![(0, modified.to_vec())];
+        }
+        return Vec::new();
     }
 
+    let chunk_ranges = (0..shared_len)
+        .step_by(CREATE_THREAD_SCAN_CHUNK_BYTES)
+        .map(|start| {
+            let end = start
+                .saturating_add(CREATE_THREAD_SCAN_CHUNK_BYTES)
+                .min(shared_len);
+            start..end
+        })
+        .collect::<Vec<_>>();
+
+    let per_chunk = pool.install(|| {
+        chunk_ranges
+            .into_par_iter()
+            .map(|range| collect_created_chunk_ranges(original, modified, range.start, range.end))
+            .collect::<Vec<_>>()
+    });
+
+    let mut merged = Vec::<(u64, Vec<u8>)>::new();
+    for chunks in per_chunk {
+        for mut chunk in chunks {
+            if let Some(last) = merged.last_mut() {
+                let last_end = last
+                    .0
+                    .saturating_add(u64::try_from(last.1.len()).expect("len fits u64"));
+                if last_end == chunk.0 {
+                    last.1.append(&mut chunk.1);
+                    continue;
+                }
+            }
+            merged.push(chunk);
+        }
+    }
+
+    if include_suffix && modified.len() > shared_len {
+        let mut suffix = (shared_len as u64, modified[shared_len..].to_vec());
+        if let Some(last) = merged.last_mut() {
+            let last_end = last
+                .0
+                .saturating_add(u64::try_from(last.1.len()).expect("len fits u64"));
+            if last_end == suffix.0 {
+                last.1.append(&mut suffix.1);
+                return merged;
+            }
+        }
+        merged.push(suffix);
+    }
+
+    merged
+}
+
+fn collect_created_chunk_ranges(
+    original: &[u8],
+    modified: &[u8],
+    start: usize,
+    end: usize,
+) -> Vec<(u64, Vec<u8>)> {
+    let mut chunks = Vec::<(u64, Vec<u8>)>::new();
+    let mut index = start;
+    while index < end {
+        if original[index] == modified[index] {
+            index += 1;
+            continue;
+        }
+
+        let chunk_start = index;
+        while index < end && original[index] != modified[index] {
+            index += 1;
+        }
+        chunks.push((chunk_start as u64, modified[chunk_start..index].to_vec()));
+    }
+    chunks
+}
+
+fn build_created_primitives_from_chunks(
+    chunks: Vec<(u64, Vec<u8>)>,
+) -> Result<Vec<CreatedPrimitive>> {
     let mut primitives = Vec::new();
     let mut cursor = 0u64;
     for (offset, bytes) in chunks {
@@ -1092,6 +1259,156 @@ mod tests {
             fs::read(output).expect("output"),
             fs::read(modified).expect("modified")
         );
+    }
+
+    #[test]
+    fn create_is_deterministic_across_thread_budgets() {
+        let temp = TestDir::new();
+        let original = temp.child("old-large.bin");
+        let modified = temp.child("new-large.bin");
+        let single_patch = temp.child("single/update.solid");
+        let parallel_patch = temp.child("parallel/update.solid");
+
+        let len = super::CREATE_THREAD_SCAN_CHUNK_BYTES + 48 * 1024;
+        let mut source = vec![0u8; len];
+        for (index, byte) in source.iter_mut().enumerate() {
+            *byte = ((index * 5 + (index >> 1)) & 0xff) as u8;
+        }
+        let mut target = source.clone();
+        for index in (0..target.len()).step_by(4099) {
+            target[index] ^= 0x66;
+        }
+
+        fs::write(&original, &source).expect("source");
+        fs::write(&modified, &target).expect("target");
+
+        let handler = SolidPatchHandler::new(&SOLID);
+        let single_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: original.clone(),
+                    modified: modified.clone(),
+                    output: single_patch.clone(),
+                    format: "solid".into(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect("single create");
+        let parallel_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original,
+                    modified,
+                    output: parallel_patch.clone(),
+                    format: "solid".into(),
+                },
+                &test_context_with_threads(&temp, 8),
+            )
+            .expect("parallel create");
+
+        assert!(
+            !single_report
+                .thread_execution
+                .expect("single execution")
+                .used_parallelism
+        );
+        assert!(
+            parallel_report
+                .thread_execution
+                .expect("parallel execution")
+                .used_parallelism
+        );
+
+        assert_eq!(
+            fs::read(single_patch).expect("single patch"),
+            fs::read(parallel_patch).expect("parallel patch")
+        );
+    }
+
+    #[test]
+    fn create_is_deterministic_when_diff_crosses_chunk_boundary_and_expands_suffix() {
+        let temp = TestDir::new();
+        let original = temp.child("old-boundary.bin");
+        let modified = temp.child("new-boundary.bin");
+        let single_patch = temp.child("single/boundary.solid");
+        let parallel_patch = temp.child("parallel/boundary.solid");
+        let output = temp.child("output-boundary.bin");
+
+        let original_len = super::CREATE_THREAD_SCAN_CHUNK_BYTES + 8;
+        let mut source = vec![0u8; original_len];
+        for (index, byte) in source.iter_mut().enumerate() {
+            *byte = ((index * 3) & 0xff) as u8;
+        }
+        let mut target = source.clone();
+        target.resize(original_len + 32, 0);
+        let run_start = super::CREATE_THREAD_SCAN_CHUNK_BYTES - 4;
+        for (index, byte) in target.iter_mut().enumerate().skip(run_start) {
+            *byte = ((index * 13 + 5) & 0xff) as u8;
+        }
+
+        fs::write(&original, &source).expect("source");
+        fs::write(&modified, &target).expect("target");
+
+        let handler = SolidPatchHandler::new(&SOLID);
+        let single_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: original.clone(),
+                    modified: modified.clone(),
+                    output: single_patch.clone(),
+                    format: "solid".into(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect("single create");
+        let parallel_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: original.clone(),
+                    modified: modified.clone(),
+                    output: parallel_patch.clone(),
+                    format: "solid".into(),
+                },
+                &test_context_with_threads(&temp, 8),
+            )
+            .expect("parallel create");
+
+        assert!(
+            !single_report
+                .thread_execution
+                .expect("single execution")
+                .used_parallelism
+        );
+        assert!(
+            parallel_report
+                .thread_execution
+                .expect("parallel execution")
+                .used_parallelism
+        );
+        assert_eq!(
+            fs::read(&single_patch).expect("single patch"),
+            fs::read(&parallel_patch).expect("parallel patch")
+        );
+
+        let parsed =
+            parse_solid_patch_bytes(&fs::read(&parallel_patch).expect("patch bytes")).expect("parse");
+        match parsed.resize {
+            ResizeAction::Expand { size, .. } => assert_eq!(size, 32),
+            _ => panic!("expected expand resize action"),
+        }
+        assert_eq!(parsed.expansion_data.len(), 32);
+
+        handler
+            .apply(
+                &PatchApplyRequest {
+                    input: original,
+                    patches: vec![parallel_patch],
+                    output: output.clone(),
+                },
+                &test_context_with_threads(&temp, 2),
+            )
+            .expect("apply");
+        assert_eq!(fs::read(output).expect("output"), target);
     }
 
     #[test]

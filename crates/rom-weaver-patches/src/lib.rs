@@ -233,17 +233,6 @@ pub(crate) fn finalize_single_threaded_patch_create(
     ))
 }
 
-pub(crate) fn default_patch_capabilities() -> rom_weaver_core::PatchCapabilities {
-    rom_weaver_core::PatchCapabilities {
-        parse: true,
-        apply: true,
-        create: true,
-        threaded_scan: false,
-        threaded_diff: false,
-        threaded_output: false,
-    }
-}
-
 pub struct PatchRegistry {
     handlers: Vec<Arc<dyn PatchHandler>>,
 }

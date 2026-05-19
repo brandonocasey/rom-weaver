@@ -7,17 +7,19 @@ use std::{
 
 use crc32fast::Hasher;
 use memmap2::{Mmap, MmapOptions};
+use rayon::prelude::*;
 use rom_weaver_checksum::checksum_file_values;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
-    Result, RomWeaverError, ThreadCapability,
+    Result, RomWeaverError, SharedThreadPool, ThreadCapability,
 };
 use serde_json::json;
 
 const UPS_MAGIC: &[u8; 4] = b"UPS1";
 const UPS_FOOTER_SIZE: usize = 12;
 const UPS_IO_BUFFER_SIZE: usize = 64 * 1024;
+const CREATE_THREAD_SCAN_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct UpsPatchHandler {
     descriptor: &'static FormatDescriptor,
@@ -132,17 +134,42 @@ impl PatchHandler for UpsPatchHandler {
         request: &PatchCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let created = create_ups_patch_streaming(&request.original, &request.modified)?;
-        crate::finalize_single_threaded_patch_create(
-            self.descriptor,
-            request,
-            context,
-            crate::CreatedPatchFile::new(created.bytes, created.record_count),
-        )
+        let target_size = fs::metadata(&request.modified)?.len();
+        let (execution, pool) = context.build_pool(ups_create_thread_capability(target_size))?;
+        let created = create_ups_patch(
+            &request.original,
+            &request.modified,
+            &pool,
+            execution.used_parallelism,
+        )?;
+
+        if let Some(parent) = request.output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&request.output, created.bytes)?;
+
+        Ok(OperationReport::succeeded(
+            OperationFamily::Patch,
+            Some(self.descriptor.name.to_string()),
+            "create",
+            format!(
+                "created {} patch with {} record(s)",
+                self.descriptor.name, created.record_count
+            ),
+            Some(100.0),
+            Some(execution),
+        ))
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        crate::default_patch_capabilities()
+        PatchCapabilities {
+            parse: true,
+            apply: true,
+            create: true,
+            threaded_scan: false,
+            threaded_diff: true,
+            threaded_output: false,
+        }
     }
 }
 
@@ -346,6 +373,142 @@ fn apply_changes_in_place(
     Ok(())
 }
 
+fn ups_create_thread_capability(target_size: u64) -> ThreadCapability {
+    let chunk_count = ups_create_chunk_count(target_size).max(1);
+    ThreadCapability::parallel(Some(chunk_count))
+}
+
+fn ups_create_chunk_count(target_size: u64) -> usize {
+    if target_size == 0 {
+        return 1;
+    }
+    let chunk_bytes = CREATE_THREAD_SCAN_CHUNK_BYTES as u64;
+    let chunk_count = target_size.saturating_add(chunk_bytes - 1) / chunk_bytes;
+    usize::try_from(chunk_count).unwrap_or(usize::MAX)
+}
+
+fn create_ups_patch(
+    source_path: &Path,
+    target_path: &Path,
+    pool: &SharedThreadPool,
+    use_parallel_scan: bool,
+) -> Result<CreatedUpsPatch> {
+    if use_parallel_scan {
+        create_ups_patch_parallel(source_path, target_path, pool)
+    } else {
+        create_ups_patch_streaming(source_path, target_path)
+    }
+}
+
+fn create_ups_patch_parallel(
+    source_path: &Path,
+    target_path: &Path,
+    pool: &SharedThreadPool,
+) -> Result<CreatedUpsPatch> {
+    let source = map_file_read_only(source_path)?;
+    let target = map_file_read_only(target_path)?;
+
+    let source_size = u64::try_from(source.len())
+        .map_err(|_| RomWeaverError::Validation("UPS source size exceeded u64".into()))?;
+    let target_size = u64::try_from(target.len())
+        .map_err(|_| RomWeaverError::Validation("UPS target size exceeded u64".into()))?;
+    let source_checksum = crc32_bytes(source.as_ref());
+    let target_checksum = crc32_bytes(target.as_ref());
+    let changes = collect_ups_changes_parallel(source.as_ref(), target.as_ref(), pool);
+
+    encode_ups_patch(
+        &changes,
+        source_size,
+        target_size,
+        source_checksum,
+        target_checksum,
+    )
+}
+
+fn collect_ups_changes_parallel(
+    source: &[u8],
+    target: &[u8],
+    pool: &SharedThreadPool,
+) -> Vec<UpsChange> {
+    if target.is_empty() {
+        return Vec::new();
+    }
+
+    let chunk_ranges = (0..target.len())
+        .step_by(CREATE_THREAD_SCAN_CHUNK_BYTES)
+        .map(|start| {
+            let end = start
+                .saturating_add(CREATE_THREAD_SCAN_CHUNK_BYTES)
+                .min(target.len());
+            start..end
+        })
+        .collect::<Vec<_>>();
+
+    let per_chunk_changes = pool.install(|| {
+        chunk_ranges
+            .into_par_iter()
+            .map(|range| collect_ups_chunk_changes(source, target, range.start, range.end))
+            .collect::<Vec<_>>()
+    });
+
+    let mut merged: Vec<UpsChange> = Vec::new();
+    for changes in per_chunk_changes {
+        for mut change in changes {
+            if let Some(last) = merged.last_mut() {
+                let last_len = u64::try_from(last.xor_bytes.len()).expect("len fits u64");
+                if last
+                    .offset
+                    .checked_add(last_len)
+                    .is_some_and(|end| end == change.offset)
+                {
+                    last.xor_bytes.append(&mut change.xor_bytes);
+                    continue;
+                }
+            }
+            merged.push(change);
+        }
+    }
+    merged
+}
+
+fn collect_ups_chunk_changes(
+    source: &[u8],
+    target: &[u8],
+    start: usize,
+    end: usize,
+) -> Vec<UpsChange> {
+    let mut changes = Vec::new();
+    let mut pending_start: Option<usize> = None;
+    let mut pending_xor = Vec::<u8>::new();
+
+    for index in start..end {
+        let source_byte = source.get(index).copied().unwrap_or(0);
+        let target_byte = target[index];
+        if source_byte != target_byte {
+            if pending_start.is_none() {
+                pending_start = Some(index);
+            }
+            pending_xor.push(source_byte ^ target_byte);
+        } else if !pending_xor.is_empty() {
+            let offset = pending_start.expect("pending start exists");
+            changes.push(UpsChange {
+                offset: offset as u64,
+                xor_bytes: std::mem::take(&mut pending_xor),
+            });
+            pending_start = None;
+        }
+    }
+
+    if !pending_xor.is_empty() {
+        let offset = pending_start.expect("pending start exists");
+        changes.push(UpsChange {
+            offset: offset as u64,
+            xor_bytes: pending_xor,
+        });
+    }
+    changes
+}
+
 fn create_ups_patch_streaming(source_path: &Path, target_path: &Path) -> Result<CreatedUpsPatch> {
     let source_size = fs::metadata(source_path)?.len();
     let target_size = fs::metadata(target_path)?.len();
@@ -459,7 +622,7 @@ fn create_ups_patch_streaming(source_path: &Path, target_path: &Path) -> Result<
     )
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn create_ups_patch_bytes(source: &[u8], target: &[u8]) -> Result<CreatedUpsPatch> {
     let source_size = u64::try_from(source.len())
         .map_err(|_| RomWeaverError::Validation("UPS source size exceeded u64".into()))?;
@@ -477,7 +640,7 @@ fn create_ups_patch_bytes(source: &[u8], target: &[u8]) -> Result<CreatedUpsPatc
     )
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn build_changes(source: &[u8], target: &[u8]) -> Result<Vec<UpsChange>> {
     let target_size = target.len();
     let mut changes = Vec::new();
@@ -894,5 +1057,113 @@ mod tests {
 
         assert_eq!(created.record_count, 0);
         assert!(parsed.changes.is_empty());
+    }
+
+    #[test]
+    fn create_merges_change_that_crosses_thread_chunk_boundary() {
+        let temp = TestDir::new();
+        let source_path = temp.child("source-boundary.bin");
+        let target_path = temp.child("target-boundary.bin");
+        let patch_path = temp.child("boundary.ups");
+
+        let len = super::CREATE_THREAD_SCAN_CHUNK_BYTES + 32;
+        let source = vec![0u8; len];
+        let mut target = source.clone();
+        let run_start = super::CREATE_THREAD_SCAN_CHUNK_BYTES - 6;
+        let run_len = 18usize;
+        target[run_start..run_start + run_len].fill(0x7f);
+
+        fs::write(&source_path, &source).expect("source fixture");
+        fs::write(&target_path, &target).expect("target fixture");
+
+        let handler = UpsPatchHandler::new(&UPS);
+        let create_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: source_path,
+                    modified: target_path,
+                    output: patch_path.clone(),
+                    format: "UPS".into(),
+                },
+                &test_context_with_threads(&temp, 8),
+            )
+            .expect("create");
+
+        assert!(
+            create_report
+                .thread_execution
+                .expect("thread execution")
+                .used_parallelism
+        );
+
+        let parsed = parse_ups_bytes(&fs::read(patch_path).expect("patch bytes")).expect("parse");
+        assert_eq!(parsed.changes.len(), 1);
+        assert_eq!(parsed.changes[0].offset, run_start as u64);
+        assert_eq!(parsed.changes[0].xor_bytes.len(), run_len);
+        assert!(parsed.changes[0].xor_bytes.iter().all(|byte| *byte == 0x7f));
+    }
+
+    #[test]
+    fn create_is_deterministic_across_thread_budgets() {
+        let temp = TestDir::new();
+        let source_path = temp.child("source-large.bin");
+        let target_path = temp.child("target-large.bin");
+        let single_patch = temp.child("single.ups");
+        let parallel_patch = temp.child("parallel.ups");
+
+        let len = super::CREATE_THREAD_SCAN_CHUNK_BYTES + 64 * 1024;
+        let mut source = vec![0u8; len];
+        for (index, byte) in source.iter_mut().enumerate() {
+            *byte = ((index * 19 + (index >> 3)) & 0xff) as u8;
+        }
+        let mut target = source.clone();
+        for index in (0..target.len()).step_by(8191) {
+            target[index] ^= 0x5a;
+        }
+
+        fs::write(&source_path, &source).expect("source fixture");
+        fs::write(&target_path, &target).expect("target fixture");
+
+        let handler = UpsPatchHandler::new(&UPS);
+        let single_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: source_path.clone(),
+                    modified: target_path.clone(),
+                    output: single_patch.clone(),
+                    format: "UPS".into(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect("single-thread create");
+        let parallel_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: source_path,
+                    modified: target_path,
+                    output: parallel_patch.clone(),
+                    format: "UPS".into(),
+                },
+                &test_context_with_threads(&temp, 8),
+            )
+            .expect("parallel-thread create");
+
+        assert!(
+            parallel_report
+                .thread_execution
+                .expect("parallel execution")
+                .used_parallelism
+        );
+        assert!(
+            !single_report
+                .thread_execution
+                .expect("single execution")
+                .used_parallelism
+        );
+
+        assert_eq!(
+            fs::read(single_patch).expect("single patch"),
+            fs::read(parallel_patch).expect("parallel patch")
+        );
     }
 }

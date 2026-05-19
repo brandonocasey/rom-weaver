@@ -4,14 +4,17 @@ use std::{
     path::Path,
 };
 
+use memmap2::{Mmap, MmapOptions};
+use rayon::prelude::*;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    SharedThreadPool, ThreadCapability,
 };
 
 const PAT_LINE_MAX_BYTES: usize = 4 * 1024;
 const PAT_SCAN_BUFFER_SIZE: usize = 64 * 1024;
+const CREATE_THREAD_SCAN_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct PatPatchHandler {
     descriptor: &'static FormatDescriptor,
@@ -140,7 +143,21 @@ impl PatchHandler for PatPatchHandler {
         request: &PatchCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let created = create_pat_patch_streaming(&request.original, &request.modified)?;
+        let original_len = fs::metadata(&request.original)?.len();
+        let modified_len = fs::metadata(&request.modified)?.len();
+        if original_len != modified_len {
+            return Err(RomWeaverError::Validation(format!(
+                "PAT create requires equal input lengths (original: {original_len}, modified: {modified_len})"
+            )));
+        }
+
+        let (execution, pool) = context.build_pool(pat_create_thread_capability(original_len))?;
+        let created = create_pat_patch(
+            &request.original,
+            &request.modified,
+            &pool,
+            execution.used_parallelism,
+        )?;
 
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
@@ -155,7 +172,6 @@ impl PatchHandler for PatPatchHandler {
         }
         output.flush()?;
 
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
@@ -171,7 +187,14 @@ impl PatchHandler for PatPatchHandler {
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        crate::default_patch_capabilities()
+        PatchCapabilities {
+            parse: true,
+            apply: true,
+            create: true,
+            threaded_scan: false,
+            threaded_diff: true,
+            threaded_output: false,
+        }
     }
 }
 
@@ -330,6 +353,119 @@ fn create_pat_patch_streaming(
     Ok(CreatedPatPatch { records })
 }
 
+fn pat_create_thread_capability(input_len: u64) -> ThreadCapability {
+    let chunk_count = pat_create_chunk_count(input_len).max(1);
+    ThreadCapability::parallel(Some(chunk_count))
+}
+
+fn pat_create_chunk_count(input_len: u64) -> usize {
+    if input_len == 0 {
+        return 1;
+    }
+    let chunk_bytes = CREATE_THREAD_SCAN_CHUNK_BYTES as u64;
+    let chunk_count = input_len.saturating_add(chunk_bytes - 1) / chunk_bytes;
+    usize::try_from(chunk_count).unwrap_or(usize::MAX)
+}
+
+fn create_pat_patch(
+    original_path: &Path,
+    modified_path: &Path,
+    pool: &SharedThreadPool,
+    use_parallel_scan: bool,
+) -> Result<CreatedPatPatch> {
+    if use_parallel_scan {
+        create_pat_patch_parallel(original_path, modified_path, pool)
+    } else {
+        create_pat_patch_streaming(original_path, modified_path)
+    }
+}
+
+fn create_pat_patch_parallel(
+    original_path: &Path,
+    modified_path: &Path,
+    pool: &SharedThreadPool,
+) -> Result<CreatedPatPatch> {
+    let original = map_file_read_only(original_path)?;
+    let modified = map_file_read_only(modified_path)?;
+    if original.len() != modified.len() {
+        return Err(RomWeaverError::Validation(format!(
+            "PAT create requires equal input lengths (original: {}, modified: {})",
+            original.len(),
+            modified.len()
+        )));
+    }
+    if original.len() > (u32::MAX as usize).saturating_add(1) {
+        return Err(RomWeaverError::Validation(
+            "PAT create supports offsets up to 0xFFFFFFFF".into(),
+        ));
+    }
+
+    if original.is_empty() {
+        return Ok(CreatedPatPatch {
+            records: Vec::new(),
+        });
+    }
+
+    let chunk_ranges = (0..original.len())
+        .step_by(CREATE_THREAD_SCAN_CHUNK_BYTES)
+        .map(|start| {
+            let end = start
+                .saturating_add(CREATE_THREAD_SCAN_CHUNK_BYTES)
+                .min(original.len());
+            start..end
+        })
+        .collect::<Vec<_>>();
+
+    let per_chunk_records = pool.install(|| {
+        chunk_ranges
+            .into_par_iter()
+            .map(|range| {
+                collect_pat_chunk_records(
+                    original.as_ref(),
+                    modified.as_ref(),
+                    range.start,
+                    range.end,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let mut records = Vec::new();
+    for mut chunk_records in per_chunk_records {
+        records.append(&mut chunk_records);
+    }
+
+    Ok(CreatedPatPatch { records })
+}
+
+fn collect_pat_chunk_records(
+    original: &[u8],
+    modified: &[u8],
+    start: usize,
+    end: usize,
+) -> Vec<PatRecord> {
+    let mut records = Vec::new();
+    for index in start..end {
+        let source_byte = original[index];
+        let modified_byte = modified[index];
+        if source_byte != modified_byte {
+            records.push(PatRecord {
+                offset: index as u64,
+                source_byte,
+                modified_byte,
+            });
+        }
+    }
+    records
+}
+
+fn map_file_read_only(path: &Path) -> Result<Mmap> {
+    let file = File::open(path)?;
+    // SAFETY: This mapping is read-only and the file handle lives through map creation.
+    let map = unsafe { MmapOptions::new().map(&file)? };
+    Ok(map)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -480,6 +616,69 @@ mod tests {
         assert_eq!(
             fs::read(output).expect("output"),
             fs::read(modified).expect("modified")
+        );
+    }
+
+    #[test]
+    fn create_is_deterministic_across_thread_budgets() {
+        let temp = TestDir::new();
+        let original = temp.child("old-large.bin");
+        let modified = temp.child("new-large.bin");
+        let patch_single = temp.child("single.pat");
+        let patch_parallel = temp.child("parallel.pat");
+
+        let len = super::CREATE_THREAD_SCAN_CHUNK_BYTES + 32 * 1024;
+        let mut source = vec![0u8; len];
+        for (index, byte) in source.iter_mut().enumerate() {
+            *byte = ((index * 31 + (index >> 6)) & 0xff) as u8;
+        }
+        let mut target = source.clone();
+        for index in (0..target.len()).step_by(3001) {
+            target[index] ^= 0x7f;
+        }
+
+        fs::write(&original, &source).expect("source");
+        fs::write(&modified, &target).expect("target");
+
+        let handler = PatPatchHandler::new(&PAT);
+        let single_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: original.clone(),
+                    modified: modified.clone(),
+                    output: patch_single.clone(),
+                    format: "pat".into(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect("single create");
+        let parallel_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original,
+                    modified,
+                    output: patch_parallel.clone(),
+                    format: "pat".into(),
+                },
+                &test_context_with_threads(&temp, 8),
+            )
+            .expect("parallel create");
+
+        assert!(
+            !single_report
+                .thread_execution
+                .expect("single execution")
+                .used_parallelism
+        );
+        assert!(
+            parallel_report
+                .thread_execution
+                .expect("parallel execution")
+                .used_parallelism
+        );
+        assert_eq!(
+            fs::read(patch_single).expect("single patch"),
+            fs::read(patch_parallel).expect("parallel patch")
         );
     }
 }

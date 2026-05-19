@@ -5,16 +5,19 @@ use std::{
     path::Path,
 };
 
+use memmap2::{Mmap, MmapOptions};
+use rayon::prelude::*;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
-    ThreadCapability,
+    SharedThreadPool, ThreadCapability,
 };
 
 const GDIFF_MAGIC: [u8; 4] = [0xD1, 0xFF, 0xD1, 0xFF];
 const GDIFF_VERSION: u8 = 4;
 const GDIFF_IO_BUFFER_SIZE: usize = 64 * 1024;
 const GDIFF_INLINE_DATA_MAX: usize = 246;
+const CREATE_COMMAND_CHUNK_BYTES: usize = u16::MAX as usize;
 
 pub struct GdiffPatchHandler {
     descriptor: &'static FormatDescriptor,
@@ -114,36 +117,21 @@ impl PatchHandler for GdiffPatchHandler {
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let _ = fs::metadata(&request.original)?;
-        let mut modified = BufReader::new(File::open(&request.modified)?);
+        let modified_len = fs::metadata(&request.modified)?.len();
+        let (execution, pool) = context.build_pool(gdiff_create_thread_capability(modified_len))?;
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
         }
 
         let mut output = BufWriter::new(File::create(&request.output)?);
-        write_gdiff_header(&mut output)?;
-
-        let mut scratch = vec![0u8; u16::MAX as usize];
-        let mut command_count = 0usize;
-        let mut output_bytes = 0u64;
-        loop {
-            let read = modified.read(&mut scratch)?;
-            if read == 0 {
-                break;
-            }
-            encode_data_command(&mut output, &scratch[..read])?;
-            command_count = checked_add_usize(command_count, 1, "create command count")?;
-            output_bytes = checked_add_u64(
-                output_bytes,
-                u64::try_from(read).map_err(|_| {
-                    RomWeaverError::Validation("GDIFF data length overflowed".into())
-                })?,
-                "create output length",
-            )?;
-        }
-        output.write_all(&[0])?;
+        let (command_count, output_bytes) = create_gdiff_patch(
+            &request.modified,
+            &pool,
+            execution.used_parallelism,
+            &mut output,
+        )?;
         output.flush()?;
 
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
@@ -158,8 +146,29 @@ impl PatchHandler for GdiffPatchHandler {
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        crate::default_patch_capabilities()
+        PatchCapabilities {
+            parse: true,
+            apply: true,
+            create: true,
+            threaded_scan: false,
+            threaded_diff: true,
+            threaded_output: false,
+        }
     }
+}
+
+fn gdiff_create_thread_capability(modified_len: u64) -> ThreadCapability {
+    let command_count = gdiff_create_command_count(modified_len).max(1);
+    ThreadCapability::parallel(Some(command_count))
+}
+
+fn gdiff_create_command_count(modified_len: u64) -> usize {
+    if modified_len == 0 {
+        return 1;
+    }
+    let chunk_bytes = CREATE_COMMAND_CHUNK_BYTES as u64;
+    let command_count = modified_len.saturating_add(chunk_bytes - 1) / chunk_bytes;
+    usize::try_from(command_count).unwrap_or(usize::MAX)
 }
 
 #[derive(Clone, Copy)]
@@ -280,6 +289,104 @@ fn write_gdiff_header<W: Write>(writer: &mut W) -> Result<()> {
     writer.write_all(&GDIFF_MAGIC)?;
     writer.write_all(&[GDIFF_VERSION])?;
     Ok(())
+}
+
+fn create_gdiff_patch(
+    modified_path: &Path,
+    pool: &SharedThreadPool,
+    use_parallel_scan: bool,
+    output: &mut impl Write,
+) -> Result<(usize, u64)> {
+    if use_parallel_scan {
+        create_gdiff_patch_parallel(modified_path, pool, output)
+    } else {
+        create_gdiff_patch_streaming(modified_path, output)
+    }
+}
+
+fn create_gdiff_patch_streaming(
+    modified_path: &Path,
+    output: &mut impl Write,
+) -> Result<(usize, u64)> {
+    let mut modified = BufReader::new(File::open(modified_path)?);
+    write_gdiff_header(output)?;
+
+    let mut scratch = vec![0u8; CREATE_COMMAND_CHUNK_BYTES];
+    let mut command_count = 0usize;
+    let mut output_bytes = 0u64;
+    loop {
+        let read = modified.read(&mut scratch)?;
+        if read == 0 {
+            break;
+        }
+        encode_data_command(output, &scratch[..read])?;
+        command_count = checked_add_usize(command_count, 1, "create command count")?;
+        output_bytes = checked_add_u64(
+            output_bytes,
+            u64::try_from(read)
+                .map_err(|_| RomWeaverError::Validation("GDIFF data length overflowed".into()))?,
+            "create output length",
+        )?;
+    }
+    output.write_all(&[0])?;
+    Ok((command_count, output_bytes))
+}
+
+fn create_gdiff_patch_parallel(
+    modified_path: &Path,
+    pool: &SharedThreadPool,
+    output: &mut impl Write,
+) -> Result<(usize, u64)> {
+    let modified = map_file_read_only(modified_path)?;
+    write_gdiff_header(output)?;
+
+    let chunk_ranges = (0..modified.len())
+        .step_by(CREATE_COMMAND_CHUNK_BYTES)
+        .map(|start| {
+            let end = start
+                .saturating_add(CREATE_COMMAND_CHUNK_BYTES)
+                .min(modified.len());
+            start..end
+        })
+        .collect::<Vec<_>>();
+
+    let command_count = chunk_ranges.len();
+    let command_bytes = pool.install(|| {
+        chunk_ranges
+            .into_par_iter()
+            .map(|range| encode_data_command_bytes(&modified[range.start..range.end]))
+            .collect::<Result<Vec<_>>>()
+    })?;
+
+    for command in command_bytes {
+        output.write_all(&command)?;
+    }
+    output.write_all(&[0])?;
+    Ok((command_count, modified.len() as u64))
+}
+
+fn encode_data_command_bytes(data: &[u8]) -> Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(data.len() + 3);
+    if data.len() <= GDIFF_INLINE_DATA_MAX {
+        bytes.push(u8::try_from(data.len()).expect("inline command length <= 246"));
+    } else {
+        let len = u16::try_from(data.len()).map_err(|_| {
+            RomWeaverError::Validation(
+                "GDIFF create data command exceeded maximum chunk size".into(),
+            )
+        })?;
+        bytes.push(247);
+        bytes.extend_from_slice(&len.to_be_bytes());
+    }
+    bytes.extend_from_slice(data);
+    Ok(bytes)
+}
+
+fn map_file_read_only(path: &Path) -> Result<Mmap> {
+    let file = File::open(path)?;
+    // SAFETY: This mapping is read-only and the file handle lives through map creation.
+    let map = unsafe { MmapOptions::new().map(&file)? };
+    Ok(map)
 }
 
 fn encode_data_command<W: Write>(writer: &mut W, data: &[u8]) -> Result<()> {
@@ -621,6 +728,65 @@ mod tests {
         assert_eq!(
             fs::read(output_path).expect("output"),
             fs::read(target_path).expect("target")
+        );
+    }
+
+    #[test]
+    fn create_is_deterministic_across_thread_budgets() {
+        let temp = TestDir::new();
+        let source_path = temp.child("source-large.bin");
+        let target_path = temp.child("target-large.bin");
+        let single_patch = temp.child("single.gdiff");
+        let parallel_patch = temp.child("parallel.gdiff");
+
+        let len = super::CREATE_COMMAND_CHUNK_BYTES * 8 + 123;
+        fs::write(&source_path, vec![0u8; len]).expect("source");
+
+        let mut target = vec![0u8; len];
+        for (index, byte) in target.iter_mut().enumerate() {
+            *byte = ((index * 11 + (index >> 3)) & 0xff) as u8;
+        }
+        fs::write(&target_path, &target).expect("target");
+
+        let handler = GdiffPatchHandler::new(&GDIFF);
+        let single_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: source_path.clone(),
+                    modified: target_path.clone(),
+                    output: single_patch.clone(),
+                    format: "gdiff".into(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect("single create");
+        let parallel_report = handler
+            .create(
+                &PatchCreateRequest {
+                    original: source_path,
+                    modified: target_path,
+                    output: parallel_patch.clone(),
+                    format: "gdiff".into(),
+                },
+                &test_context_with_threads(&temp, 8),
+            )
+            .expect("parallel create");
+
+        assert!(
+            !single_report
+                .thread_execution
+                .expect("single execution")
+                .used_parallelism
+        );
+        assert!(
+            parallel_report
+                .thread_execution
+                .expect("parallel execution")
+                .used_parallelism
+        );
+        assert_eq!(
+            fs::read(single_patch).expect("single patch"),
+            fs::read(parallel_patch).expect("parallel patch")
         );
     }
 }

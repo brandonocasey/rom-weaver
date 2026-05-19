@@ -5,10 +5,11 @@ use std::{
 };
 
 use memmap2::{Mmap, MmapOptions};
+use rayon::prelude::*;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
-    Result, RomWeaverError, ThreadCapability,
+    Result, RomWeaverError, SharedThreadPool, ThreadCapability,
 };
 
 const APS_N64_MAGIC: &[u8; 5] = b"APS10";
@@ -91,15 +92,25 @@ impl PatchHandler for ApsN64PatchHandler {
             fs::create_dir_all(parent)?;
         }
         fs::copy(&request.input, &request.output)?;
+        let thread_capability = aps_apply_thread_capability(patch.records.len());
+        let planned_execution = context.plan_threads(thread_capability.clone());
         let mut output = OpenOptions::new()
             .read(true)
             .write(true)
             .open(&request.output)?;
         output.set_len(patch.output_size)?;
-        apply_aps_records(&mut output, patch.output_size, &patch.records)?;
+        let execution = if planned_execution.used_parallelism {
+            let (execution, pool) = context.build_pool(thread_capability)?;
+            let prepared =
+                prepare_aps_writes_parallel(&patch.records, patch.output_size, &pool, context)?;
+            apply_prepared_aps_writes(&mut output, &prepared)?;
+            execution
+        } else {
+            apply_aps_records(&mut output, patch.output_size, &patch.records)?;
+            planned_execution
+        };
         output.flush()?;
 
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
         let checksum_suffix = if validate_checksums {
             String::new()
         } else {
@@ -138,7 +149,14 @@ impl PatchHandler for ApsN64PatchHandler {
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        crate::default_patch_capabilities()
+        PatchCapabilities {
+            parse: true,
+            apply: true,
+            create: true,
+            threaded_scan: false,
+            threaded_diff: false,
+            threaded_output: true,
+        }
     }
 }
 
@@ -186,6 +204,15 @@ enum ApsRecord {
 struct CreatedApsPatch {
     bytes: Vec<u8>,
     record_count: usize,
+}
+
+struct PreparedApsWrite {
+    offset: u64,
+    data: Vec<u8>,
+}
+
+fn aps_apply_thread_capability(record_count: usize) -> ThreadCapability {
+    ThreadCapability::parallel(Some(record_count.max(1)))
 }
 
 fn parse_aps_file(path: &Path) -> Result<ParsedApsPatch> {
@@ -375,6 +402,74 @@ fn apply_aps_records(file: &mut File, output_size: u64, records: &[ApsRecord]) -
                 file.write_all(&fill)?;
             }
         }
+    }
+    Ok(())
+}
+
+fn prepare_aps_writes_parallel(
+    records: &[ApsRecord],
+    output_size: u64,
+    pool: &SharedThreadPool,
+    context: &OperationContext,
+) -> Result<Vec<PreparedApsWrite>> {
+    pool.install(|| {
+        records
+            .par_iter()
+            .map(|record| {
+                context.cancel().check()?;
+                prepare_aps_write(record, output_size)
+            })
+            .collect::<Result<Vec<_>>>()
+    })
+}
+
+fn prepare_aps_write(record: &ApsRecord, output_size: u64) -> Result<PreparedApsWrite> {
+    match record {
+        ApsRecord::Simple { offset, data } => {
+            let end = offset
+                .checked_add(u64::try_from(data.len()).map_err(|_| {
+                    RomWeaverError::Validation("APS record length exceeded u64".into())
+                })?)
+                .ok_or_else(|| RomWeaverError::Validation("APS record end overflowed".into()))?;
+            if end > output_size {
+                return Err(RomWeaverError::Validation(
+                    "APS record exceeded output size".into(),
+                ));
+            }
+            Ok(PreparedApsWrite {
+                offset: *offset,
+                data: data.clone(),
+            })
+        }
+        ApsRecord::Rle {
+            offset,
+            byte,
+            length,
+        } => {
+            let run_len = u64::from(*length);
+            let end = offset
+                .checked_add(run_len)
+                .ok_or_else(|| RomWeaverError::Validation("APS RLE end overflowed".into()))?;
+            if end > output_size {
+                return Err(RomWeaverError::Validation(
+                    "APS RLE record exceeded output size".into(),
+                ));
+            }
+            Ok(PreparedApsWrite {
+                offset: *offset,
+                data: vec![*byte; usize::from(*length)],
+            })
+        }
+    }
+}
+
+fn apply_prepared_aps_writes(file: &mut File, writes: &[PreparedApsWrite]) -> Result<()> {
+    for write in writes {
+        if write.data.is_empty() {
+            continue;
+        }
+        file.seek(SeekFrom::Start(write.offset))?;
+        file.write_all(&write.data)?;
     }
     Ok(())
 }
@@ -632,7 +727,7 @@ mod tests {
         fs::write(&patch_path, patch).expect("fixture");
 
         let handler = ApsN64PatchHandler::new(&APS);
-        handler
+        let report = handler
             .apply(
                 &PatchApplyRequest {
                     input: input_path,
@@ -642,6 +737,12 @@ mod tests {
                 &test_context_with_threads(&temp, 4),
             )
             .expect("apply");
+        assert!(
+            report
+                .thread_execution
+                .expect("thread execution")
+                .used_parallelism
+        );
 
         assert_eq!(fs::read(output_path).expect("output"), b"aXYdZZZhij");
     }
@@ -733,7 +834,7 @@ mod tests {
         assert!(parsed.n64_header.is_some());
         assert!(!parsed.records.is_empty());
 
-        handler
+        let report = handler
             .apply(
                 &PatchApplyRequest {
                     input: original_path,
@@ -744,8 +845,87 @@ mod tests {
                     .with_patch_checksum_validation(PatchChecksumValidation::Strict),
             )
             .expect("apply");
+        assert!(
+            report
+                .thread_execution
+                .expect("thread execution")
+                .used_parallelism
+        );
 
         assert_eq!(fs::read(output_path).expect("output"), modified);
+    }
+
+    #[test]
+    fn apply_with_overlapping_records_is_deterministic_across_thread_budgets() {
+        let temp = TestDir::new();
+        let input_path = temp.child("input.bin");
+        let patch_path = temp.child("overlap.aps");
+        let output_single = temp.child("output-single.bin");
+        let output_parallel = temp.child("output-parallel.bin");
+
+        fs::write(&input_path, b"0123456789").expect("fixture");
+        let patch = build_aps_patch(
+            0,
+            None,
+            10,
+            vec![
+                TestRecord::Simple {
+                    offset: 2,
+                    data: b"ABCD".to_vec(),
+                },
+                TestRecord::Simple {
+                    offset: 4,
+                    data: b"xy".to_vec(),
+                },
+                TestRecord::Rle {
+                    offset: 7,
+                    byte: b'Q',
+                    length: 2,
+                },
+            ],
+        );
+        fs::write(&patch_path, patch).expect("fixture");
+
+        let handler = ApsN64PatchHandler::new(&APS);
+        let single_report = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path.clone(),
+                    patches: vec![patch_path.clone()],
+                    output: output_single.clone(),
+                },
+                &test_context_with_threads(&temp, 1),
+            )
+            .expect("single-thread apply");
+        let parallel_report = handler
+            .apply(
+                &PatchApplyRequest {
+                    input: input_path,
+                    patches: vec![patch_path],
+                    output: output_parallel.clone(),
+                },
+                &test_context_with_threads(&temp, 8),
+            )
+            .expect("parallel apply");
+
+        assert!(
+            !single_report
+                .thread_execution
+                .expect("single execution")
+                .used_parallelism
+        );
+        assert!(
+            parallel_report
+                .thread_execution
+                .expect("parallel execution")
+                .used_parallelism
+        );
+        assert_eq!(fs::read(&output_single).expect("single"), b"01ABxy6QQ9");
+        assert_eq!(fs::read(&output_parallel).expect("parallel"), b"01ABxy6QQ9");
+        assert_eq!(
+            fs::read(output_single).expect("single"),
+            fs::read(output_parallel).expect("parallel")
+        );
     }
 
     #[test]
