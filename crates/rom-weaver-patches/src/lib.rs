@@ -11,7 +11,6 @@ mod ppf;
 mod qbsdiff_support;
 mod rup;
 mod solid;
-mod spatch;
 #[cfg(test)]
 mod test_support;
 mod ups;
@@ -40,7 +39,6 @@ use ppf::PpfPatchHandler;
 use rom_weaver_core::{FormatDescriptor, OperationFamily, PatchHandler, Result, RomWeaverError};
 use rup::RupPatchHandler;
 use solid::SolidPatchHandler;
-use spatch::SpatchPatchHandler;
 use ups::UpsPatchHandler;
 #[cfg(not(target_family = "wasm"))]
 use vcdiff::VcdiffPatchHandler;
@@ -56,12 +54,6 @@ const IPS32: FormatDescriptor = FormatDescriptor {
     name: "IPS32",
     aliases: &[],
     extensions: &[".ips32"],
-};
-const SPATCH: FormatDescriptor = FormatDescriptor {
-    family: OperationFamily::Patch,
-    name: "SPATCH",
-    aliases: &["double-ips", "doubleips"],
-    extensions: &[".spatch"],
 };
 const SOLID: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
@@ -252,7 +244,6 @@ impl PatchRegistry {
         let mut handlers: Vec<Arc<dyn PatchHandler>> = vec![
             Arc::new(IpsPatchHandler::new(&IPS)),
             Arc::new(IpsPatchHandler::new_ips32(&IPS32)),
-            Arc::new(SpatchPatchHandler::new(&SPATCH)),
             Arc::new(SolidPatchHandler::new(&SOLID)),
             Arc::new(BpsPatchHandler::new(&BPS)),
             Arc::new(UpsPatchHandler::new(&UPS)),
@@ -310,10 +301,6 @@ impl PatchRegistry {
 
         if bytes.starts_with(b"IPS32") {
             return self.find_by_name("ips32");
-        }
-
-        if spatch::is_double_ips_stream(&bytes) {
-            return self.find_by_name("spatch");
         }
 
         None
@@ -437,7 +424,7 @@ mod tests {
             .iter()
             .map(|handler| handler.descriptor().name)
             .collect::<Vec<_>>();
-        let mut expected = vec!["IPS", "IPS32", "SPATCH", "SOLID", "BPS", "UPS"];
+        let mut expected = vec!["IPS", "IPS32", "SOLID", "BPS", "UPS"];
         #[cfg(not(target_family = "wasm"))]
         {
             expected.extend(["VCDIFF", "xdelta"]);
@@ -558,15 +545,6 @@ mod tests {
     }
 
     #[test]
-    fn probe_routes_spatch_extension_to_spatch_handler() {
-        let registry = PatchRegistry::new();
-        let handler = registry
-            .probe(Path::new("update.spatch"))
-            .expect("spatch probe");
-        assert_eq!(handler.descriptor().name, "SPATCH");
-    }
-
-    #[test]
     fn probe_routes_solid_extension_to_solid_handler() {
         let registry = PatchRegistry::new();
         let handler = registry
@@ -597,13 +575,13 @@ mod tests {
     }
 
     #[test]
-    fn probe_routes_ips_extension_with_double_ips_signature_to_spatch_handler() {
+    fn probe_routes_ips_extension_with_double_ips_signature_to_ips_handler() {
         let path = temp_file_path("double-ips");
         fs::write(&path, b"PATCHEOFPATCHEOF").expect("fixture");
 
         let registry = PatchRegistry::new();
-        let handler = registry.probe(&path).expect("spatch probe");
-        assert_eq!(handler.descriptor().name, "SPATCH");
+        let handler = registry.probe(&path).expect("ips probe");
+        assert_eq!(handler.descriptor().name, "IPS");
 
         let _ = fs::remove_file(path);
     }
@@ -633,13 +611,13 @@ mod tests {
     }
 
     #[test]
-    fn probe_routes_unknown_extension_with_double_ips_signature_to_spatch_handler() {
+    fn probe_routes_unknown_extension_with_double_ips_signature_to_ips_handler() {
         let path = temp_file_path_with_extension("double-ips-signature", "bin");
         fs::write(&path, b"PATCHEOFPATCHEOF").expect("fixture");
 
         let registry = PatchRegistry::new();
-        let handler = registry.probe(&path).expect("spatch probe");
-        assert_eq!(handler.descriptor().name, "SPATCH");
+        let handler = registry.probe(&path).expect("ips probe");
+        assert_eq!(handler.descriptor().name, "IPS");
 
         let _ = fs::remove_file(path);
     }
@@ -724,11 +702,10 @@ mod tests {
     }
 
     #[test]
-    fn find_by_name_routes_double_ips_alias_to_spatch_handler() {
+    fn find_by_name_does_not_route_double_ips_aliases() {
         let registry = PatchRegistry::new();
         for alias in ["double-ips", "doubleips"] {
-            let handler = registry.find_by_name(alias).expect("spatch alias");
-            assert_eq!(handler.descriptor().name, "SPATCH");
+            assert!(registry.find_by_name(alias).is_none());
         }
     }
 
