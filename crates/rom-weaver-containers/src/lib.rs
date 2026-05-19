@@ -1892,6 +1892,9 @@ struct SevenZContainerHandler {
 }
 
 impl SevenZContainerHandler {
+    const DEFAULT_LZMA2_LEVEL: u32 = 6;
+    const LZMA2_MT_CHUNK_BYTES: u64 = 1 << 20;
+
     const fn new(descriptor: &'static FormatDescriptor) -> Self {
         Self { descriptor }
     }
@@ -1906,6 +1909,7 @@ impl SevenZContainerHandler {
         &self,
         codec: Option<&str>,
         level: Option<i32>,
+        execution: &rom_weaver_core::ThreadExecution,
     ) -> Result<SevenZMethodConfiguration> {
         let mut method = match parse_requested_codec(codec) {
             RequestedCodec::Unspecified | RequestedCodec::Known(CanonicalCodec::Lzma2) => {
@@ -1923,25 +1927,54 @@ impl SevenZContainerHandler {
             ))),
         }?;
 
-        if let Some(level) = level {
+        let level = if let Some(level) = level {
             if !(0..=9).contains(&level) {
                 return Err(RomWeaverError::Validation(format!(
                     "7z level `{level}` is out of range (0..=9)"
                 )));
             }
-            method = match method.method {
-                SevenZMethod::LZMA2 => method.with_options(
-                    sevenz_rust::encoder_options::Lzma2Options::from_level(level as u32).into(),
-                ),
-                SevenZMethod::LZMA => method.with_options(
-                    sevenz_rust::encoder_options::EncoderOptions::Lzma(
-                        sevenz_rust::encoder_options::LzmaOptions::from_level(level as u32),
-                    ),
-                ),
-                _ => method,
-            };
+            Some(level as u32)
+        } else {
+            None
+        };
+
+        match method.method {
+            SevenZMethod::LZMA2 if execution.used_parallelism => {
+                method = method.with_options(
+                    sevenz_rust::encoder_options::Lzma2Options::from_level_mt(
+                        level.unwrap_or(Self::DEFAULT_LZMA2_LEVEL),
+                        self.thread_count(execution.effective_threads),
+                        Self::LZMA2_MT_CHUNK_BYTES,
+                    )
+                    .into(),
+                );
+            }
+            SevenZMethod::LZMA2 => {
+                if let Some(level) = level {
+                    method = method.with_options(
+                        sevenz_rust::encoder_options::Lzma2Options::from_level(level).into(),
+                    );
+                }
+            }
+            SevenZMethod::LZMA => {
+                if let Some(level) = level {
+                    method =
+                        method.with_options(sevenz_rust::encoder_options::EncoderOptions::Lzma(
+                            sevenz_rust::encoder_options::LzmaOptions::from_level(level),
+                        ));
+                }
+            }
+            _ => {}
         }
+
         Ok(method)
+    }
+
+    fn thread_count(&self, effective_threads: usize) -> u32 {
+        match u32::try_from(effective_threads) {
+            Ok(count) => count.clamp(1, 256),
+            Err(_) => 256,
+        }
     }
 
     fn method_name(method: &SevenZMethodConfiguration) -> &'static str {
@@ -2029,10 +2062,11 @@ impl ContainerHandler for SevenZContainerHandler {
         request: &ContainerExtractRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
+        let execution = context.plan_threads(ThreadCapability::parallel(None));
         fs::create_dir_all(&request.out_dir)?;
 
         let mut reader = self.open_reader(&request.source)?;
+        reader.set_thread_count(self.thread_count(execution.effective_threads));
         let mut selections = SelectionMatcher::new(&request.selections);
         let mut extracted_files = 0usize;
         let mut written_bytes = 0u64;
@@ -2090,8 +2124,8 @@ impl ContainerHandler for SevenZContainerHandler {
         request: &ContainerCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
-        let method = self.parse_codec(request.codec.as_deref(), request.level)?;
+        let execution = context.plan_threads(ThreadCapability::parallel(None));
+        let method = self.parse_codec(request.codec.as_deref(), request.level, &execution)?;
         let entries = collect_archive_inputs(&request.inputs)?;
 
         if let Some(parent) = request.output.parent() {
@@ -2158,8 +2192,8 @@ impl ContainerHandler for SevenZContainerHandler {
             inspect: true,
             extract: true,
             create: true,
-            extract_threads: ThreadCapability::single_threaded(),
-            create_threads: ThreadCapability::single_threaded(),
+            extract_threads: ThreadCapability::parallel(None),
+            create_threads: ThreadCapability::parallel(None),
         }
     }
 }
@@ -7762,6 +7796,24 @@ mod tests {
     }
 
     #[test]
+    fn seven_z_capabilities_report_parallel_threads() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("7z").expect("7z handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.inspect);
+        assert!(capabilities.extract);
+        assert!(capabilities.create);
+        assert_eq!(
+            capabilities.extract_threads,
+            ThreadCapability::parallel(None)
+        );
+        assert_eq!(
+            capabilities.create_threads,
+            ThreadCapability::parallel(None)
+        );
+    }
+
+    #[test]
     fn cso_extract_round_trips_to_iso_output() {
         let temp_dir = temp_dir_path("cso-extract");
         fs::create_dir_all(&temp_dir).expect("temp dir");
@@ -8140,6 +8192,74 @@ mod tests {
         assert_eq!(execution.effective_threads, 1);
         assert!(!execution.used_parallelism);
         assert!(output_path.exists());
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn seven_z_runtime_threads_match_capabilities_for_create_and_extract() {
+        let temp_dir = temp_dir_path("seven-z-thread-parity");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let input_path = temp_dir.join("payload.bin");
+        let archive_path = temp_dir.join("payload.7z");
+        let output_dir = temp_dir.join("out");
+        let source_bytes = (0..(64 * 1024))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        fs::write(&input_path, &source_bytes).expect("fixture");
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("7z").expect("7z handler");
+        let capabilities = handler.capabilities();
+        let create_report = handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![input_path.clone()],
+                    output: archive_path.clone(),
+                    format: "7z".to_string(),
+                    codec: Some("lzma2".to_string()),
+                    level: Some(6),
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("create seven-z");
+
+        let create_execution = create_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .create_threads
+                .supports_execution(&create_execution)
+        );
+        assert_eq!(create_execution.requested_threads, 8);
+        assert_eq!(create_execution.effective_threads, 8);
+        assert!(create_execution.used_parallelism);
+        assert!(archive_path.exists());
+
+        let extract_report = handler
+            .extract(
+                &rom_weaver_core::ContainerExtractRequest {
+                    source: archive_path.clone(),
+                    out_dir: output_dir.clone(),
+                    selections: Vec::new(),
+                    split_bin: false,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("extract seven-z");
+
+        let extract_execution = extract_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .extract_threads
+                .supports_execution(&extract_execution)
+        );
+        assert_eq!(extract_execution.requested_threads, 8);
+        assert_eq!(extract_execution.effective_threads, 8);
+        assert!(extract_execution.used_parallelism);
+
+        let extracted_bytes =
+            fs::read(output_dir.join("payload.bin")).expect("read extracted file");
+        assert_eq!(extracted_bytes, source_bytes);
 
         let _ = fs::remove_dir_all(temp_dir);
     }

@@ -7,7 +7,7 @@ use std::{
 
 use bzip2::{Compression as Bzip2Compression, read::BzDecoder, write::BzEncoder};
 use flate2::{Compression as DeflateCompression, read::GzDecoder, write::GzEncoder};
-use liblzma::{read::XzDecoder, write::XzEncoder};
+use lzma_rust2::{XzOptions, XzReader, XzWriter};
 use rom_weaver_core::{
     CodecBackend, CodecCapabilities, CodecDescriptor, CodecOperationRequest, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, Result, RomWeaverError, ThreadCapability,
@@ -263,7 +263,8 @@ impl NativeCodecBackend {
             NativeCodecKind::Lzma2 => {
                 let mut source = BufReader::new(File::open(&request.input)?);
                 let output = BufWriter::new(File::create(&request.output)?);
-                let mut encoder = XzEncoder::new(output, level.unwrap_or(6) as u32);
+                let mut encoder =
+                    XzWriter::new(output, XzOptions::with_preset(level.unwrap_or(6) as u32))?;
                 let copied = io::copy(&mut source, &mut encoder)?;
                 let mut output = encoder.finish()?;
                 output.flush()?;
@@ -304,7 +305,7 @@ impl NativeCodecBackend {
             }
             NativeCodecKind::Lzma2 => {
                 let source = BufReader::new(File::open(&request.input)?);
-                let mut decoder = XzDecoder::new(source);
+                let mut decoder = XzReader::new(source, false);
                 let mut output = BufWriter::new(File::create(&request.output)?);
                 let copied = io::copy(&mut decoder, &mut output)?;
                 output.flush()?;
