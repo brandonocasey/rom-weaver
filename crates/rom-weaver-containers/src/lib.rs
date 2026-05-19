@@ -3126,6 +3126,13 @@ struct RarContainerHandler {
     descriptor: &'static FormatDescriptor,
 }
 
+#[derive(Clone, Debug)]
+struct RarExtractTask {
+    index: usize,
+    output_path: PathBuf,
+    is_directory: bool,
+}
+
 #[cfg(not(target_family = "wasm"))]
 impl RarContainerHandler {
     const fn new(descriptor: &'static FormatDescriptor) -> Self {
@@ -3148,6 +3155,107 @@ impl RarContainerHandler {
         RarArchive::new(source)
             .open_for_processing()
             .map_err(|error| RomWeaverError::Validation(format!("rar archive is invalid: {error}")))
+    }
+
+    fn build_extract_tasks(
+        &self,
+        request: &ContainerExtractRequest,
+    ) -> Result<Vec<RarExtractTask>> {
+        let mut archive = self.open_for_listing(&request.source)?;
+        let mut selections = SelectionMatcher::new(&request.selections);
+        let mut tasks = Vec::new();
+        let mut entry_index = 0usize;
+
+        while let Some(entry) = archive.read_header().map_err(|error| {
+            RomWeaverError::Validation(format!("rar extract failed while reading header: {error}"))
+        })? {
+            let raw_name = entry.entry().filename.to_string_lossy().into_owned();
+            let entry_name = normalize_archive_name(&raw_name);
+            if !entry_name.is_empty() && selections.matches(&entry_name) {
+                let relative = sanitize_archive_relative_path_from_str(&raw_name)?;
+                tasks.push(RarExtractTask {
+                    index: entry_index,
+                    output_path: request.out_dir.join(relative),
+                    is_directory: entry.entry().is_directory(),
+                });
+            }
+
+            archive = entry.skip().map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "rar extract failed while skipping entry `{entry_name}`: {error}"
+                ))
+            })?;
+            entry_index = entry_index.saturating_add(1);
+        }
+
+        selections.ensure_all_matched()?;
+        Ok(tasks)
+    }
+
+    fn extract_task_chunk(&self, source: &Path, chunk: &[RarExtractTask]) -> Result<(usize, u64)> {
+        if chunk.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let mut archive = self.open_for_processing(source)?;
+        let mut task_by_index = BTreeMap::new();
+        for task in chunk {
+            task_by_index.insert(task.index, task);
+        }
+
+        let mut entry_index = 0usize;
+        let mut matched_tasks = 0usize;
+        let mut extracted_files = 0usize;
+        let mut written_bytes = 0u64;
+
+        while let Some(entry) = archive.read_header().map_err(|error| {
+            RomWeaverError::Validation(format!("rar extract failed while reading header: {error}"))
+        })? {
+            let entry_name = normalize_archive_name(&entry.entry().filename.to_string_lossy());
+            if let Some(task) = task_by_index.get(&entry_index).copied() {
+                matched_tasks = matched_tasks.saturating_add(1);
+                if task.is_directory {
+                    fs::create_dir_all(&task.output_path)?;
+                    archive = entry.skip().map_err(|error| {
+                        RomWeaverError::Validation(format!(
+                            "rar extract failed while skipping directory `{entry_name}`: {error}"
+                        ))
+                    })?;
+                } else {
+                    if let Some(parent) = task.output_path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    archive = entry.extract_to(&task.output_path).map_err(|error| {
+                        RomWeaverError::Validation(format!(
+                            "rar extract failed for `{entry_name}`: {error}"
+                        ))
+                    })?;
+                    extracted_files = extracted_files.saturating_add(1);
+                    written_bytes =
+                        written_bytes.saturating_add(fs::metadata(&task.output_path)?.len());
+                }
+
+                if matched_tasks == task_by_index.len() {
+                    break;
+                }
+            } else {
+                archive = entry.skip().map_err(|error| {
+                    RomWeaverError::Validation(format!(
+                        "rar extract failed while skipping entry `{entry_name}`: {error}"
+                    ))
+                })?;
+            }
+
+            entry_index = entry_index.saturating_add(1);
+        }
+
+        if matched_tasks != task_by_index.len() {
+            return Err(RomWeaverError::Validation(
+                "rar extract failed because selected entries changed while processing".into(),
+            ));
+        }
+
+        Ok((extracted_files, written_bytes))
     }
 }
 
@@ -3245,54 +3353,51 @@ impl ContainerHandler for RarContainerHandler {
         request: &ContainerExtractRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
         fs::create_dir_all(&request.out_dir)?;
-
-        let mut archive = self.open_for_processing(&request.source)?;
-        let mut selections = SelectionMatcher::new(&request.selections);
-        let mut extracted_files = 0usize;
-        let mut written_bytes = 0u64;
-
-        while let Some(entry) = archive.read_header().map_err(|error| {
-            RomWeaverError::Validation(format!("rar extract failed while reading header: {error}"))
-        })? {
-            let entry_name = normalize_archive_name(&entry.entry().filename.to_string_lossy());
-            if entry_name.is_empty() || !selections.matches(&entry_name) {
-                archive = entry.skip().map_err(|error| {
-                    RomWeaverError::Validation(format!(
-                        "rar extract failed while skipping entry `{entry_name}`: {error}"
-                    ))
-                })?;
+        let tasks = self.build_extract_tasks(request)?;
+        let mut output_paths = BTreeSet::new();
+        let mut duplicate_output_paths = false;
+        for task in &tasks {
+            if task.is_directory {
                 continue;
             }
-
-            let relative =
-                sanitize_archive_relative_path_from_str(&entry.entry().filename.to_string_lossy())?;
-            let output_path = request.out_dir.join(relative);
-
-            if entry.entry().is_directory() {
-                fs::create_dir_all(&output_path)?;
-                archive = entry.skip().map_err(|error| {
-                    RomWeaverError::Validation(format!(
-                        "rar extract failed while skipping directory `{entry_name}`: {error}"
-                    ))
-                })?;
-                continue;
-            }
-
-            if let Some(parent) = output_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            archive = entry.extract_to(&output_path).map_err(|error| {
-                RomWeaverError::Validation(format!(
-                    "rar extract failed for `{entry_name}`: {error}"
-                ))
-            })?;
-            extracted_files = extracted_files.saturating_add(1);
-            written_bytes = written_bytes.saturating_add(fs::metadata(&output_path)?.len());
+            duplicate_output_paths |= !output_paths.insert(task.output_path.clone());
         }
 
-        selections.ensure_all_matched()?;
+        let (execution, extracted_files, written_bytes) =
+            if tasks.is_empty() || duplicate_output_paths {
+                let execution = context.plan_threads(ThreadCapability::single_threaded());
+                let (extracted_files, written_bytes) =
+                    self.extract_task_chunk(&request.source, &tasks)?;
+                (execution, extracted_files, written_bytes)
+            } else {
+                let task_count = tasks.len().max(1);
+                let (execution, pool) =
+                    context.build_pool(ThreadCapability::parallel(Some(task_count)))?;
+                let source = request.source.clone();
+                let (extracted_files, written_bytes) = if execution.used_parallelism {
+                    let worker_count = execution.effective_threads.max(1);
+                    let chunk_size = tasks.len().div_ceil(worker_count).max(1);
+                    let chunk_results = pool.install(|| {
+                        tasks
+                            .par_chunks(chunk_size)
+                            .map(|chunk| self.extract_task_chunk(&source, chunk))
+                            .collect::<Result<Vec<_>>>()
+                    })?;
+                    chunk_results.into_iter().fold(
+                        (0usize, 0u64),
+                        |(files_acc, bytes_acc), (files, bytes)| {
+                            (
+                                files_acc.saturating_add(files),
+                                bytes_acc.saturating_add(bytes),
+                            )
+                        },
+                    )
+                } else {
+                    self.extract_task_chunk(&source, &tasks)?
+                };
+                (execution, extracted_files, written_bytes)
+            };
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
@@ -3325,7 +3430,7 @@ impl ContainerHandler for RarContainerHandler {
             inspect: true,
             extract: true,
             create: false,
-            extract_threads: ThreadCapability::single_threaded(),
+            extract_threads: ThreadCapability::parallel(None),
             create_threads: ThreadCapability::single_threaded(),
         }
     }
@@ -3345,6 +3450,95 @@ impl RarContainerHandler {
     fn open_archive(&self, source: &Path) -> Result<rars::Archive> {
         RarRsArchiveReader::read_path(source)
             .map_err(|error| RomWeaverError::Validation(format!("rar archive is invalid: {error}")))
+    }
+
+    fn build_extract_tasks(
+        &self,
+        request: &ContainerExtractRequest,
+        archive: &rars::Archive,
+    ) -> Result<Vec<RarExtractTask>> {
+        let mut selections = SelectionMatcher::new(&request.selections);
+        let mut tasks = Vec::new();
+
+        for (index, member) in archive.members().enumerate() {
+            let entry_name =
+                normalize_archive_name(&String::from_utf8_lossy(member.meta.name_bytes()));
+            if entry_name.is_empty() || !selections.matches(&entry_name) {
+                continue;
+            }
+
+            let relative = sanitize_archive_relative_path_from_str(&entry_name)?;
+            tasks.push(RarExtractTask {
+                index,
+                output_path: request.out_dir.join(relative),
+                is_directory: member.meta.is_directory,
+            });
+        }
+
+        selections.ensure_all_matched()?;
+        Ok(tasks)
+    }
+
+    fn extract_task_chunk(&self, source: &Path, chunk: &[RarExtractTask]) -> Result<(usize, u64)> {
+        if chunk.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let archive = self.open_archive(source)?;
+        let mut task_by_index = BTreeMap::new();
+        for task in chunk {
+            task_by_index.insert(task.index, task);
+        }
+
+        let mut entry_index = 0usize;
+        let mut matched_tasks = 0usize;
+        let mut extracted_paths = Vec::new();
+
+        archive
+            .extract_to(None, |meta| {
+                let current_index = entry_index;
+                entry_index = entry_index.saturating_add(1);
+                let Some(task) = task_by_index.get(&current_index).copied() else {
+                    return Ok(Box::new(io::sink()) as Box<dyn Write>);
+                };
+
+                matched_tasks = matched_tasks.saturating_add(1);
+                if task.is_directory || meta.is_directory {
+                    fs::create_dir_all(&task.output_path)?;
+                    return Ok(Box::new(io::sink()) as Box<dyn Write>);
+                }
+
+                if let Some(parent) = task.output_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+
+                extracted_paths.push(task.output_path.clone());
+                Ok(Box::new(BufWriter::new(File::create(&task.output_path)?)) as Box<dyn Write>)
+            })
+            .map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "rar extract failed for `{}`: {error}",
+                    source.display()
+                ))
+            })?;
+
+        if matched_tasks != task_by_index.len() {
+            return Err(RomWeaverError::Validation(
+                "rar extract failed because selected entries changed while processing".into(),
+            ));
+        }
+
+        let mut extracted_files = 0usize;
+        let mut written_bytes = 0u64;
+        for path in extracted_paths {
+            let metadata = fs::metadata(&path)?;
+            if metadata.is_file() {
+                extracted_files = extracted_files.saturating_add(1);
+                written_bytes = written_bytes.saturating_add(metadata.len());
+            }
+        }
+
+        Ok((extracted_files, written_bytes))
     }
 }
 
@@ -3432,54 +3626,52 @@ impl ContainerHandler for RarContainerHandler {
         request: &ContainerExtractRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(ThreadCapability::single_threaded());
         fs::create_dir_all(&request.out_dir)?;
-
         let archive = self.open_archive(&request.source)?;
-        let mut selections = SelectionMatcher::new(&request.selections);
-        let mut extracted_paths = Vec::new();
-
-        archive
-            .extract_to(None, |meta| {
-                let entry_name = normalize_archive_name(&meta.name_lossy());
-                if entry_name.is_empty() || !selections.matches(&entry_name) {
-                    return Ok(Box::new(io::sink()) as Box<dyn Write>);
-                }
-
-                let relative = sanitize_archive_relative_path_from_str(&entry_name)
-                    .map_err(|error| std::io::Error::other(error.to_string()))?;
-                let output_path = request.out_dir.join(relative);
-
-                if meta.is_directory {
-                    fs::create_dir_all(&output_path)?;
-                    return Ok(Box::new(io::sink()) as Box<dyn Write>);
-                }
-
-                if let Some(parent) = output_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-
-                extracted_paths.push(output_path.clone());
-                Ok(Box::new(BufWriter::new(File::create(output_path)?)) as Box<dyn Write>)
-            })
-            .map_err(|error| {
-                RomWeaverError::Validation(format!(
-                    "rar extract failed for `{}`: {error}",
-                    request.source.display()
-                ))
-            })?;
-
-        selections.ensure_all_matched()?;
-
-        let mut extracted_files = 0usize;
-        let mut written_bytes = 0u64;
-        for path in extracted_paths {
-            let metadata = fs::metadata(&path)?;
-            if metadata.is_file() {
-                extracted_files = extracted_files.saturating_add(1);
-                written_bytes = written_bytes.saturating_add(metadata.len());
+        let tasks = self.build_extract_tasks(request, &archive)?;
+        let mut output_paths = BTreeSet::new();
+        let mut duplicate_output_paths = false;
+        for task in &tasks {
+            if task.is_directory {
+                continue;
             }
+            duplicate_output_paths |= !output_paths.insert(task.output_path.clone());
         }
+
+        let (execution, extracted_files, written_bytes) =
+            if tasks.is_empty() || duplicate_output_paths {
+                let execution = context.plan_threads(ThreadCapability::single_threaded());
+                let (extracted_files, written_bytes) =
+                    self.extract_task_chunk(&request.source, &tasks)?;
+                (execution, extracted_files, written_bytes)
+            } else {
+                let task_count = tasks.len().max(1);
+                let (execution, pool) =
+                    context.build_pool(ThreadCapability::parallel(Some(task_count)))?;
+                let source = request.source.clone();
+                let (extracted_files, written_bytes) = if execution.used_parallelism {
+                    let worker_count = execution.effective_threads.max(1);
+                    let chunk_size = tasks.len().div_ceil(worker_count).max(1);
+                    let chunk_results = pool.install(|| {
+                        tasks
+                            .par_chunks(chunk_size)
+                            .map(|chunk| self.extract_task_chunk(&source, chunk))
+                            .collect::<Result<Vec<_>>>()
+                    })?;
+                    chunk_results.into_iter().fold(
+                        (0usize, 0u64),
+                        |(files_acc, bytes_acc), (files, bytes)| {
+                            (
+                                files_acc.saturating_add(files),
+                                bytes_acc.saturating_add(bytes),
+                            )
+                        },
+                    )
+                } else {
+                    self.extract_task_chunk(&source, &tasks)?
+                };
+                (execution, extracted_files, written_bytes)
+            };
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
@@ -3512,7 +3704,7 @@ impl ContainerHandler for RarContainerHandler {
             inspect: true,
             extract: true,
             create: false,
-            extract_threads: ThreadCapability::single_threaded(),
+            extract_threads: ThreadCapability::parallel(None),
             create_threads: ThreadCapability::single_threaded(),
         }
     }
