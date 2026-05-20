@@ -608,7 +608,74 @@ pub fn run_command(command: Commands, options: RunCommandOptions) -> ExitCode {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_cli() -> std::result::Result<Cli, String> {
+type WasmCliParseResult<T> = std::result::Result<T, WasmCliParseError>;
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug)]
+enum WasmCliParseError {
+    Message(&'static str),
+    UnknownCommand {
+        command: String,
+    },
+    UnknownOption {
+        command: &'static str,
+        option: String,
+    },
+    UnexpectedArgument {
+        command: &'static str,
+        argument: String,
+    },
+    MissingValue {
+        flag: &'static str,
+    },
+    InvalidU64 {
+        flag: &'static str,
+        value: String,
+    },
+    InvalidThreadBudget {
+        flag: &'static str,
+        value: String,
+        source: RomWeaverError,
+    },
+    InvalidCompressionLevel {
+        value: String,
+    },
+}
+
+#[cfg(target_arch = "wasm32")]
+impl std::fmt::Display for WasmCliParseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Message(message) => formatter.write_str(message),
+            Self::UnknownCommand { command } => write!(formatter, "unknown command `{command}`"),
+            Self::UnknownOption { command, option } => {
+                write!(formatter, "unknown {command} option `{option}`")
+            }
+            Self::UnexpectedArgument { command, argument } => {
+                write!(formatter, "unexpected {command} argument `{argument}`")
+            }
+            Self::MissingValue { flag } => write!(formatter, "missing value for {flag}"),
+            Self::InvalidU64 { flag, value } => {
+                write!(formatter, "invalid value `{value}` for {flag}")
+            }
+            Self::InvalidThreadBudget {
+                flag,
+                value,
+                source,
+            } => write!(formatter, "invalid value `{value}` for {flag}: {source}"),
+            Self::InvalidCompressionLevel { value } => write!(
+                formatter,
+                "invalid compression level `{value}` (expected: min|very-low|low|medium|high|very-high|max)"
+            ),
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl std::error::Error for WasmCliParseError {}
+
+#[cfg(target_arch = "wasm32")]
+fn parse_wasm_cli() -> WasmCliParseResult<Cli> {
     let mut args = std::env::args().skip(1).collect::<Vec<_>>();
     let mut json = false;
     let mut progress = false;
@@ -617,10 +684,9 @@ fn parse_wasm_cli() -> std::result::Result<Cli, String> {
 
     loop {
         let Some(arg) = args.first() else {
-            return Err(
-                "missing command (inspect|extract|checksum|compress|trim|batch-header-fixer|patch-apply|patch-create)"
-                    .into(),
-            );
+            return Err(WasmCliParseError::Message(
+                "missing command (inspect|extract|checksum|compress|trim|batch-header-fixer|patch-apply|patch-create)",
+            ));
         };
         match arg.as_str() {
             "--json" => {
@@ -629,14 +695,18 @@ fn parse_wasm_cli() -> std::result::Result<Cli, String> {
             }
             "--progress" => {
                 if no_progress {
-                    return Err("cannot combine --progress and --no-progress".into());
+                    return Err(WasmCliParseError::Message(
+                        "cannot combine --progress and --no-progress",
+                    ));
                 }
                 progress = true;
                 args.remove(0);
             }
             "--no-progress" => {
                 if progress {
-                    return Err("cannot combine --progress and --no-progress".into());
+                    return Err(WasmCliParseError::Message(
+                        "cannot combine --progress and --no-progress",
+                    ));
                 }
                 no_progress = true;
                 args.remove(0);
@@ -650,10 +720,9 @@ fn parse_wasm_cli() -> std::result::Result<Cli, String> {
     }
 
     if args.is_empty() {
-        return Err(
-            "missing command (inspect|extract|checksum|compress|trim|batch-header-fixer|patch-apply|patch-create)"
-                .into(),
-        );
+        return Err(WasmCliParseError::Message(
+            "missing command (inspect|extract|checksum|compress|trim|batch-header-fixer|patch-apply|patch-create)",
+        ));
     }
     let command_name = args.remove(0);
     let command = match command_name.as_str() {
@@ -665,7 +734,11 @@ fn parse_wasm_cli() -> std::result::Result<Cli, String> {
         "batch-header-fixer" => Commands::BatchHeaderFixer(parse_wasm_batch_header_fixer(args)?),
         "patch-apply" => Commands::PatchApply(parse_wasm_patch_apply(args)?),
         "patch-create" => Commands::PatchCreate(parse_wasm_patch_create(args)?),
-        other => return Err(format!("unknown command `{other}`")),
+        other => {
+            return Err(WasmCliParseError::UnknownCommand {
+                command: other.to_owned(),
+            });
+        }
     };
     Ok(Cli {
         json,
@@ -677,7 +750,7 @@ fn parse_wasm_cli() -> std::result::Result<Cli, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_inspect(args: Vec<String>) -> std::result::Result<InspectCommand, String> {
+fn parse_wasm_inspect(args: Vec<String>) -> WasmCliParseResult<InspectCommand> {
     let mut list = false;
     let mut source: Option<PathBuf> = None;
     let mut index = 0usize;
@@ -689,20 +762,26 @@ fn parse_wasm_inspect(args: Vec<String>) -> std::result::Result<InspectCommand, 
             continue;
         }
         if arg.starts_with('-') {
-            return Err(format!("unknown inspect option `{arg}`"));
+            return Err(WasmCliParseError::UnknownOption {
+                command: "inspect",
+                option: arg.clone(),
+            });
         }
         if source.is_some() {
-            return Err(format!("unexpected inspect argument `{arg}`"));
+            return Err(WasmCliParseError::UnexpectedArgument {
+                command: "inspect",
+                argument: arg.clone(),
+            });
         }
         source = Some(PathBuf::from(arg));
         index += 1;
     }
-    let source = source.ok_or_else(|| "inspect requires <source>".to_string())?;
+    let source = source.ok_or(WasmCliParseError::Message("inspect requires <source>"))?;
     Ok(InspectCommand { source, list })
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_extract(args: Vec<String>) -> std::result::Result<ExtractCommand, String> {
+fn parse_wasm_extract(args: Vec<String>) -> WasmCliParseResult<ExtractCommand> {
     let mut source: Option<PathBuf> = None;
     let mut select = Vec::new();
     let mut out_dir: Option<PathBuf> = None;
@@ -751,17 +830,25 @@ fn parse_wasm_extract(args: Vec<String>) -> std::result::Result<ExtractCommand, 
             continue;
         }
         if arg.starts_with('-') {
-            return Err(format!("unknown extract option `{arg}`"));
+            return Err(WasmCliParseError::UnknownOption {
+                command: "extract",
+                option: arg.clone(),
+            });
         }
         if source.is_some() {
-            return Err(format!("unexpected extract argument `{arg}`"));
+            return Err(WasmCliParseError::UnexpectedArgument {
+                command: "extract",
+                argument: arg.clone(),
+            });
         }
         source = Some(PathBuf::from(arg));
         index += 1;
     }
 
-    let source = source.ok_or_else(|| "extract requires <source>".to_string())?;
-    let out_dir = out_dir.ok_or_else(|| "extract requires --out-dir <path>".to_string())?;
+    let source = source.ok_or(WasmCliParseError::Message("extract requires <source>"))?;
+    let out_dir = out_dir.ok_or(WasmCliParseError::Message(
+        "extract requires --out-dir <path>",
+    ))?;
     Ok(ExtractCommand {
         source,
         select,
@@ -772,7 +859,7 @@ fn parse_wasm_extract(args: Vec<String>) -> std::result::Result<ExtractCommand, 
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_checksum(args: Vec<String>) -> std::result::Result<ChecksumCommand, String> {
+fn parse_wasm_checksum(args: Vec<String>) -> WasmCliParseResult<ChecksumCommand> {
     let mut source: Option<PathBuf> = None;
     let mut algo = Vec::new();
     let mut select = Vec::new();
@@ -861,19 +948,27 @@ fn parse_wasm_checksum(args: Vec<String>) -> std::result::Result<ChecksumCommand
             continue;
         }
         if arg.starts_with('-') {
-            return Err(format!("unknown checksum option `{arg}`"));
+            return Err(WasmCliParseError::UnknownOption {
+                command: "checksum",
+                option: arg.clone(),
+            });
         }
         if source.is_some() {
-            return Err(format!("unexpected checksum argument `{arg}`"));
+            return Err(WasmCliParseError::UnexpectedArgument {
+                command: "checksum",
+                argument: arg.clone(),
+            });
         }
         source = Some(PathBuf::from(arg));
         index += 1;
     }
 
     if algo.is_empty() {
-        return Err("checksum requires at least one --algo <name>".into());
+        return Err(WasmCliParseError::Message(
+            "checksum requires at least one --algo <name>",
+        ));
     }
-    let source = source.ok_or_else(|| "checksum requires <source>".to_string())?;
+    let source = source.ok_or(WasmCliParseError::Message("checksum requires <source>"))?;
     Ok(ChecksumCommand {
         source,
         algo,
@@ -889,7 +984,7 @@ fn parse_wasm_checksum(args: Vec<String>) -> std::result::Result<ChecksumCommand
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_compress(args: Vec<String>) -> std::result::Result<CompressCommand, String> {
+fn parse_wasm_compress(args: Vec<String>) -> WasmCliParseResult<CompressCommand> {
     let mut input = Vec::new();
     let mut format: Option<String> = None;
     let mut output: Option<PathBuf> = None;
@@ -952,16 +1047,23 @@ fn parse_wasm_compress(args: Vec<String>) -> std::result::Result<CompressCommand
             continue;
         }
         if arg.starts_with('-') {
-            return Err(format!("unknown compress option `{arg}`"));
+            return Err(WasmCliParseError::UnknownOption {
+                command: "compress",
+                option: arg.clone(),
+            });
         }
         input.push(PathBuf::from(arg));
         index += 1;
     }
 
     if input.is_empty() {
-        return Err("compress requires at least one <input>".into());
+        return Err(WasmCliParseError::Message(
+            "compress requires at least one <input>",
+        ));
     }
-    let output = output.ok_or_else(|| "compress requires --output <path>".to_string())?;
+    let output = output.ok_or(WasmCliParseError::Message(
+        "compress requires --output <path>",
+    ))?;
     Ok(CompressCommand {
         input,
         format,
@@ -973,7 +1075,7 @@ fn parse_wasm_compress(args: Vec<String>) -> std::result::Result<CompressCommand
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_trim(args: Vec<String>) -> std::result::Result<TrimCommand, String> {
+fn parse_wasm_trim(args: Vec<String>) -> WasmCliParseResult<TrimCommand> {
     let mut source = Vec::new();
     let mut output: Option<PathBuf> = None;
     let mut extension: Option<String> = None;
@@ -1038,17 +1140,24 @@ fn parse_wasm_trim(args: Vec<String>) -> std::result::Result<TrimCommand, String
             continue;
         }
         if arg.starts_with('-') {
-            return Err(format!("unknown trim option `{arg}`"));
+            return Err(WasmCliParseError::UnknownOption {
+                command: "trim",
+                option: arg.clone(),
+            });
         }
         source.push(PathBuf::from(arg));
         index += 1;
     }
 
     if source.is_empty() {
-        return Err("trim requires at least one <source>".into());
+        return Err(WasmCliParseError::Message(
+            "trim requires at least one <source>",
+        ));
     }
     if output.is_some() && in_place {
-        return Err("trim --output conflicts with --in-place".into());
+        return Err(WasmCliParseError::Message(
+            "trim --output conflicts with --in-place",
+        ));
     }
 
     Ok(TrimCommand {
@@ -1064,9 +1173,7 @@ fn parse_wasm_trim(args: Vec<String>) -> std::result::Result<TrimCommand, String
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_batch_header_fixer(
-    args: Vec<String>,
-) -> std::result::Result<BatchHeaderFixerCommand, String> {
+fn parse_wasm_batch_header_fixer(args: Vec<String>) -> WasmCliParseResult<BatchHeaderFixerCommand> {
     let mut source = Vec::new();
     let mut output: Option<PathBuf> = None;
     let mut extension: Option<String> = None;
@@ -1125,17 +1232,24 @@ fn parse_wasm_batch_header_fixer(
             continue;
         }
         if arg.starts_with('-') {
-            return Err(format!("unknown batch-header-fixer option `{arg}`"));
+            return Err(WasmCliParseError::UnknownOption {
+                command: "batch-header-fixer",
+                option: arg.clone(),
+            });
         }
         source.push(PathBuf::from(arg));
         index += 1;
     }
 
     if source.is_empty() {
-        return Err("batch-header-fixer requires at least one <source>".into());
+        return Err(WasmCliParseError::Message(
+            "batch-header-fixer requires at least one <source>",
+        ));
     }
     if output.is_some() && in_place {
-        return Err("batch-header-fixer --output conflicts with --in-place".into());
+        return Err(WasmCliParseError::Message(
+            "batch-header-fixer --output conflicts with --in-place",
+        ));
     }
 
     Ok(BatchHeaderFixerCommand {
@@ -1150,7 +1264,7 @@ fn parse_wasm_batch_header_fixer(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_patch_apply(args: Vec<String>) -> std::result::Result<PatchApplyCommand, String> {
+fn parse_wasm_patch_apply(args: Vec<String>) -> WasmCliParseResult<PatchApplyCommand> {
     let mut input: Option<PathBuf> = None;
     let mut select = Vec::new();
     let mut no_extract = false;
@@ -1327,16 +1441,28 @@ fn parse_wasm_patch_apply(args: Vec<String>) -> std::result::Result<PatchApplyCo
             continue;
         }
         if arg.starts_with('-') {
-            return Err(format!("unknown patch-apply option `{arg}`"));
+            return Err(WasmCliParseError::UnknownOption {
+                command: "patch-apply",
+                option: arg.clone(),
+            });
         }
-        return Err(format!("unexpected patch-apply argument `{arg}`"));
+        return Err(WasmCliParseError::UnexpectedArgument {
+            command: "patch-apply",
+            argument: arg.clone(),
+        });
     }
 
-    let input = input.ok_or_else(|| "patch-apply requires --input <path>".to_string())?;
+    let input = input.ok_or(WasmCliParseError::Message(
+        "patch-apply requires --input <path>",
+    ))?;
     if patches.is_empty() {
-        return Err("patch-apply requires at least one --patch <path>".into());
+        return Err(WasmCliParseError::Message(
+            "patch-apply requires at least one --patch <path>",
+        ));
     }
-    let output = output.ok_or_else(|| "patch-apply requires --output <path>".to_string())?;
+    let output = output.ok_or(WasmCliParseError::Message(
+        "patch-apply requires --output <path>",
+    ))?;
     Ok(PatchApplyCommand {
         input,
         select,
@@ -1359,7 +1485,7 @@ fn parse_wasm_patch_apply(args: Vec<String>) -> std::result::Result<PatchApplyCo
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_patch_create(args: Vec<String>) -> std::result::Result<PatchCreateCommand, String> {
+fn parse_wasm_patch_create(args: Vec<String>) -> WasmCliParseResult<PatchCreateCommand> {
     let mut original: Option<PathBuf> = None;
     let mut modified: Option<PathBuf> = None;
     let mut format: Option<String> = None;
@@ -1427,14 +1553,28 @@ fn parse_wasm_patch_create(args: Vec<String>) -> std::result::Result<PatchCreate
             continue;
         }
         if arg.starts_with('-') {
-            return Err(format!("unknown patch-create option `{arg}`"));
+            return Err(WasmCliParseError::UnknownOption {
+                command: "patch-create",
+                option: arg.clone(),
+            });
         }
-        return Err(format!("unexpected patch-create argument `{arg}`"));
+        return Err(WasmCliParseError::UnexpectedArgument {
+            command: "patch-create",
+            argument: arg.clone(),
+        });
     }
-    let original = original.ok_or_else(|| "patch-create requires --original <path>".to_string())?;
-    let modified = modified.ok_or_else(|| "patch-create requires --modified <path>".to_string())?;
-    let format = format.ok_or_else(|| "patch-create requires --format <name>".to_string())?;
-    let output = output.ok_or_else(|| "patch-create requires --output <path>".to_string())?;
+    let original = original.ok_or(WasmCliParseError::Message(
+        "patch-create requires --original <path>",
+    ))?;
+    let modified = modified.ok_or(WasmCliParseError::Message(
+        "patch-create requires --modified <path>",
+    ))?;
+    let format = format.ok_or(WasmCliParseError::Message(
+        "patch-create requires --format <name>",
+    ))?;
+    let output = output.ok_or(WasmCliParseError::Message(
+        "patch-create requires --output <path>",
+    ))?;
     Ok(PatchCreateCommand {
         original,
         modified,
@@ -1448,11 +1588,11 @@ fn parse_wasm_patch_create(args: Vec<String>) -> std::result::Result<PatchCreate
 fn parse_wasm_required_value(
     args: &[String],
     index: &mut usize,
-    flag: &str,
-) -> std::result::Result<String, String> {
+    flag: &'static str,
+) -> WasmCliParseResult<String> {
     *index += 1;
     if *index >= args.len() {
-        return Err(format!("missing value for {flag}"));
+        return Err(WasmCliParseError::MissingValue { flag });
     }
     let value = args[*index].clone();
     *index += 1;
@@ -1460,23 +1600,28 @@ fn parse_wasm_required_value(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_u64(value: &str, flag: &str) -> std::result::Result<u64, String> {
+fn parse_wasm_u64(value: &str, flag: &'static str) -> WasmCliParseResult<u64> {
     value
         .parse::<u64>()
-        .map_err(|_| format!("invalid value `{value}` for {flag}"))
+        .map_err(|_| WasmCliParseError::InvalidU64 {
+            flag,
+            value: value.to_owned(),
+        })
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_thread_budget(value: &str, flag: &str) -> std::result::Result<ThreadBudget, String> {
+fn parse_wasm_thread_budget(value: &str, flag: &'static str) -> WasmCliParseResult<ThreadBudget> {
     value
         .parse::<ThreadBudget>()
-        .map_err(|error| format!("invalid value `{value}` for {flag}: {error}"))
+        .map_err(|source| WasmCliParseError::InvalidThreadBudget {
+            flag,
+            value: value.to_owned(),
+            source,
+        })
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_wasm_compression_level(
-    value: &str,
-) -> std::result::Result<CompressionLevelProfile, String> {
+fn parse_wasm_compression_level(value: &str) -> WasmCliParseResult<CompressionLevelProfile> {
     match value {
         "min" => Ok(CompressionLevelProfile::Min),
         "very-low" => Ok(CompressionLevelProfile::VeryLow),
@@ -1485,9 +1630,9 @@ fn parse_wasm_compression_level(
         "high" => Ok(CompressionLevelProfile::High),
         "very-high" => Ok(CompressionLevelProfile::VeryHigh),
         "max" => Ok(CompressionLevelProfile::Max),
-        _ => Err(format!(
-            "invalid compression level `{value}` (expected: min|very-low|low|medium|high|very-high|max)"
-        )),
+        _ => Err(WasmCliParseError::InvalidCompressionLevel {
+            value: value.to_owned(),
+        }),
     }
 }
 
