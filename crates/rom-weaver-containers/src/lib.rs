@@ -8949,6 +8949,16 @@ mod chd_native {
             session.extract_to_file(output, thread_count).map(|_| ())
         }
 
+        #[cfg(test)]
+        pub(super) fn encode_raw_flac_payload_for_tests(&self, hunk: &[u8]) -> Result<Vec<u8>> {
+            self.compress_rust_hunk(&ChdCreateKind::Raw, ChdCodec::FLAC, 0, hunk)
+        }
+
+        #[cfg(test)]
+        pub(super) fn encode_cd_flac_payload_for_tests(&self, hunk: &[u8]) -> Result<Vec<u8>> {
+            self.compress_rust_cd_hunk(ChdCodec::CD_FLAC, 0, hunk)
+        }
+
         fn explicit_codec_plan(&self, codecs: Vec<ChdCodec>) -> Result<ChdCompressionPlan> {
             if codecs.is_empty() {
                 return Err(RomWeaverError::Validation(
@@ -12657,7 +12667,7 @@ use chd_native::ChdContainerHandler;
 mod tests {
     use std::{
         env, fs,
-        io::{Seek, SeekFrom, Write},
+        io::{Cursor, Read, Seek, SeekFrom, Write},
         path::{Path, PathBuf},
         sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
@@ -12668,7 +12678,8 @@ mod tests {
         SelectionMatcher, Z3dsContainerHandler,
     };
     use ciso::write::write_ciso_image;
-    use flate2::{Compression as DeflateCompression, write::DeflateEncoder};
+    use claxon::frame::FrameReader as FlacFrameReader;
+    use flate2::{Compression as DeflateCompression, read::DeflateDecoder, write::DeflateEncoder};
     use nod::{
         common::{Compression as NodCompression, Format as NodFormat},
         read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
@@ -12742,6 +12753,44 @@ mod tests {
             }
         }
         data
+    }
+
+    fn decode_flac_frame_stream_to_pcm(
+        encoded: &[u8],
+        samples_per_channel: usize,
+        big_endian: bool,
+    ) -> (Vec<u8>, usize) {
+        let mut frame_reader = FlacFrameReader::new(Cursor::new(encoded));
+        let mut block_buffer = Vec::new();
+        let mut pcm = Vec::with_capacity(samples_per_channel * 4);
+        let mut written = 0usize;
+        while written < samples_per_channel {
+            let block = frame_reader
+                .read_next_or_eof(block_buffer)
+                .expect("decode flac frame")
+                .expect("flac stream ended before expected sample count");
+            for (left, right) in block.stereo_samples() {
+                if written >= samples_per_channel {
+                    break;
+                }
+                let left_bytes = if big_endian {
+                    (left as i16).to_be_bytes()
+                } else {
+                    (left as i16).to_le_bytes()
+                };
+                let right_bytes = if big_endian {
+                    (right as i16).to_be_bytes()
+                } else {
+                    (right as i16).to_le_bytes()
+                };
+                pcm.extend_from_slice(&left_bytes);
+                pcm.extend_from_slice(&right_bytes);
+                written = written.saturating_add(1);
+            }
+            block_buffer = block.into_buffer();
+        }
+        let consumed = frame_reader.into_inner().position() as usize;
+        (pcm, consumed)
     }
 
     fn write_test_cso(input: &Path, output: &Path) {
@@ -15688,6 +15737,86 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn chd_rust_raw_flac_payload_round_trip_matches_input_bytes() {
+        let handler = super::ChdContainerHandler;
+        let mut source = Vec::with_capacity(4096);
+        for sample_index in 0..(4096 / 4) {
+            let left = ((sample_index as i16).wrapping_mul(17)).wrapping_sub(11_000);
+            let right = ((sample_index as i16).wrapping_mul(31)).wrapping_sub(9_000);
+            source.extend_from_slice(&left.to_le_bytes());
+            source.extend_from_slice(&right.to_le_bytes());
+        }
+
+        let encoded = handler
+            .encode_raw_flac_payload_for_tests(&source)
+            .expect("encode raw flac payload");
+        assert_eq!(encoded.first(), Some(&b'L'));
+
+        let (decoded, consumed) =
+            decode_flac_frame_stream_to_pcm(&encoded[1..], source.len() / 4, false);
+        assert_eq!(decoded, source);
+        assert_eq!(consumed, encoded.len().saturating_sub(1));
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn chd_rust_cd_flac_payload_round_trip_matches_input_bytes() {
+        let handler = super::ChdContainerHandler;
+        let frame_count = 4usize;
+        let frame_bytes = 2448usize;
+        let sector_bytes = 2352usize;
+        let subcode_bytes = 96usize;
+        let mut source = Vec::with_capacity(frame_count * frame_bytes);
+        for frame_index in 0..frame_count {
+            for sample_index in 0..(sector_bytes / 4) {
+                let left =
+                    ((frame_index as i16).wrapping_mul(73)).wrapping_add(sample_index as i16);
+                let right = left.wrapping_mul(3).wrapping_sub(2_000);
+                source.extend_from_slice(&left.to_be_bytes());
+                source.extend_from_slice(&right.to_be_bytes());
+            }
+            for subcode_index in 0..subcode_bytes {
+                source.push(((frame_index * 59 + subcode_index) % 251) as u8);
+            }
+        }
+
+        let encoded = handler
+            .encode_cd_flac_payload_for_tests(&source)
+            .expect("encode cdfl payload");
+
+        let mut expected_sector_data = Vec::with_capacity(frame_count * sector_bytes);
+        let mut expected_subcode_data = Vec::with_capacity(frame_count * subcode_bytes);
+        for frame in source.chunks_exact(frame_bytes) {
+            expected_sector_data.extend_from_slice(&frame[..sector_bytes]);
+            expected_subcode_data.extend_from_slice(&frame[sector_bytes..]);
+        }
+        let samples_per_channel = expected_sector_data.len() / 4;
+        let (decoded_sector_data, consumed) =
+            decode_flac_frame_stream_to_pcm(&encoded, samples_per_channel, true);
+        assert_eq!(decoded_sector_data, expected_sector_data);
+
+        let mut subcode_decoder = DeflateDecoder::new(&encoded[consumed..]);
+        let mut decoded_subcode_data = Vec::new();
+        subcode_decoder
+            .read_to_end(&mut decoded_subcode_data)
+            .expect("decode cdfl subcode");
+        assert_eq!(decoded_subcode_data, expected_subcode_data);
+
+        let mut reconstructed = Vec::with_capacity(source.len());
+        for frame_index in 0..frame_count {
+            let sector_start = frame_index * sector_bytes;
+            let subcode_start = frame_index * subcode_bytes;
+            reconstructed
+                .extend_from_slice(&decoded_sector_data[sector_start..sector_start + sector_bytes]);
+            reconstructed.extend_from_slice(
+                &decoded_subcode_data[subcode_start..subcode_start + subcode_bytes],
+            );
+        }
+        assert_eq!(reconstructed, source);
     }
 
     #[cfg(not(target_family = "wasm"))]
