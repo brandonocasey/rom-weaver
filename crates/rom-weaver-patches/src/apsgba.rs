@@ -258,7 +258,9 @@ fn parse_apsgba_bytes(bytes: &[u8]) -> Result<ParsedApsGbaPatch> {
     let payload_len = bytes
         .len()
         .checked_sub(APS_GBA_HEADER_SIZE)
-        .expect("validated header size");
+        .ok_or_else(|| {
+            RomWeaverError::Validation("APSGBA patch header length underflowed".into())
+        })?;
     if payload_len % APS_GBA_RECORD_SIZE != 0 {
         return Err(RomWeaverError::Validation(
             "APSGBA patch has an invalid record payload length".into(),

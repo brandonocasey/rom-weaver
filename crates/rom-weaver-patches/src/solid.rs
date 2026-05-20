@@ -307,13 +307,13 @@ struct PatchDate {
 }
 
 #[derive(Debug)]
-struct ParsedSolidPatch {
+struct ParsedSolidPatch<'a> {
     version: u8,
     source_md5: [u8; SOLID_MD5_LEN],
     creation_date: Option<PatchDate>,
     resize: ResizeAction,
-    primitives: Vec<ParsedPrimitive>,
-    expansion_data: Vec<u8>,
+    primitives: Vec<ParsedPrimitive<'a>>,
+    expansion_data: &'a [u8],
 }
 
 #[derive(Debug)]
@@ -324,15 +324,15 @@ enum ResizeAction {
 }
 
 #[derive(Debug)]
-struct ParsedPrimitive {
+struct ParsedPrimitive<'a> {
     addr_byte: u8,
     base_delta: Option<u64>,
-    payload: PrimitivePayload,
+    payload: PrimitivePayload<'a>,
 }
 
 #[derive(Debug)]
-enum PrimitivePayload {
-    Literal(Vec<u8>),
+enum PrimitivePayload<'a> {
+    Literal(&'a [u8]),
     Rle { len: u8, value: u8 },
 }
 
@@ -365,7 +365,7 @@ struct SolidDescriptionStrings {
     patch_info_flag: bool,
 }
 
-fn parse_solid_patch_bytes(bytes: &[u8]) -> Result<ParsedSolidPatch> {
+fn parse_solid_patch_bytes<'a>(bytes: &'a [u8]) -> Result<ParsedSolidPatch<'a>> {
     if bytes.len() < SOLID_MAGIC.len() + 2 + SOLID_MD5_LEN + SOLID_DATE_LEN {
         return Err(RomWeaverError::Validation(
             "SOLID patch is too small to contain a valid header".into(),
@@ -459,7 +459,7 @@ fn parse_solid_patch_bytes(bytes: &[u8]) -> Result<ParsedSolidPatch> {
             let value = read_u8(bytes, &mut cursor, "SOLID RLE value")?;
             PrimitivePayload::Rle { len, value }
         } else {
-            let literal = read_exact(bytes, &mut cursor, usize::from(size_byte))?.to_vec();
+            let literal = read_exact(bytes, &mut cursor, usize::from(size_byte))?;
             PrimitivePayload::Literal(literal)
         };
         primitives.push(ParsedPrimitive {
@@ -474,7 +474,7 @@ fn parse_solid_patch_bytes(bytes: &[u8]) -> Result<ParsedSolidPatch> {
             let size_usize = usize::try_from(size).map_err(|_| {
                 RomWeaverError::Validation("SOLID expansion size exceeded usize".into())
             })?;
-            let data = read_exact(bytes, &mut cursor, size_usize)?.to_vec();
+            let data = read_exact(bytes, &mut cursor, size_usize)?;
             if data.len() != size_usize {
                 return Err(RomWeaverError::Validation(
                     "SOLID expansion data length did not match resizeFileDataSize".into(),
@@ -482,7 +482,7 @@ fn parse_solid_patch_bytes(bytes: &[u8]) -> Result<ParsedSolidPatch> {
             }
             data
         }
-        _ => Vec::new(),
+        _ => &[],
     };
 
     if cursor != bytes.len() {
@@ -501,7 +501,7 @@ fn parse_solid_patch_bytes(bytes: &[u8]) -> Result<ParsedSolidPatch> {
     })
 }
 
-fn apply_parsed_patch(parsed: &ParsedSolidPatch, source: &[u8]) -> Result<Vec<u8>> {
+fn apply_parsed_patch(parsed: &ParsedSolidPatch<'_>, source: &[u8]) -> Result<Vec<u8>> {
     let mut output = source.to_vec();
     let mut cursor = 0u64;
 
@@ -544,7 +544,7 @@ fn apply_parsed_patch(parsed: &ParsedSolidPatch, source: &[u8]) -> Result<Vec<u8
 }
 
 fn apply_parsed_patch_parallel(
-    parsed: &ParsedSolidPatch,
+    parsed: &ParsedSolidPatch<'_>,
     source: &[u8],
     pool: &SharedThreadPool,
     context: &OperationContext,
@@ -586,7 +586,7 @@ fn apply_parsed_patch_parallel(
 }
 
 fn build_primitive_write_plans(
-    parsed: &ParsedSolidPatch,
+    parsed: &ParsedSolidPatch<'_>,
     initial_output_len: usize,
 ) -> Result<(Vec<PrimitiveWritePlan>, usize)> {
     let mut plans = Vec::with_capacity(parsed.primitives.len());
@@ -633,7 +633,7 @@ fn build_primitive_write_plans(
     Ok((plans, required_output_len))
 }
 
-fn apply_resize_action(parsed: &ParsedSolidPatch, output: &mut Vec<u8>) -> Result<()> {
+fn apply_resize_action(parsed: &ParsedSolidPatch<'_>, output: &mut Vec<u8>) -> Result<()> {
     match parsed.resize {
         ResizeAction::None => {}
         ResizeAction::Expand { address, size } => {
@@ -760,7 +760,7 @@ fn build_created_primitives_parallel(
     include_suffix: bool,
     pool: &SharedThreadPool,
 ) -> Result<Vec<CreatedPrimitive>> {
-    let chunks = collect_created_chunks_parallel(original, modified, include_suffix, pool);
+    let chunks = collect_created_chunks_parallel(original, modified, include_suffix, pool)?;
     build_created_primitives_from_chunks(chunks)
 }
 
@@ -797,13 +797,13 @@ fn collect_created_chunks_parallel(
     modified: &[u8],
     include_suffix: bool,
     pool: &SharedThreadPool,
-) -> Vec<(u64, Vec<u8>)> {
+) -> Result<Vec<(u64, Vec<u8>)>> {
     let shared_len = original.len().min(modified.len());
     if shared_len == 0 {
         if include_suffix && !modified.is_empty() {
-            return vec![(0, modified.to_vec())];
+            return Ok(vec![(0, modified.to_vec())]);
         }
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let chunk_ranges = (0..shared_len)
@@ -827,9 +827,14 @@ fn collect_created_chunks_parallel(
     for chunks in per_chunk {
         for mut chunk in chunks {
             if let Some(last) = merged.last_mut() {
-                let last_end = last
-                    .0
-                    .saturating_add(u64::try_from(last.1.len()).expect("len fits u64"));
+                let last_len = u64::try_from(last.1.len()).map_err(|_| {
+                    RomWeaverError::Validation(
+                        "SOLID create chunk length exceeded 64-bit range".into(),
+                    )
+                })?;
+                let last_end = last.0.checked_add(last_len).ok_or_else(|| {
+                    RomWeaverError::Validation("SOLID create chunk offset overflowed".into())
+                })?;
                 if last_end == chunk.0 {
                     last.1.append(&mut chunk.1);
                     continue;
@@ -842,18 +847,21 @@ fn collect_created_chunks_parallel(
     if include_suffix && modified.len() > shared_len {
         let mut suffix = (shared_len as u64, modified[shared_len..].to_vec());
         if let Some(last) = merged.last_mut() {
-            let last_end = last
-                .0
-                .saturating_add(u64::try_from(last.1.len()).expect("len fits u64"));
+            let last_len = u64::try_from(last.1.len()).map_err(|_| {
+                RomWeaverError::Validation("SOLID create chunk length exceeded 64-bit range".into())
+            })?;
+            let last_end = last.0.checked_add(last_len).ok_or_else(|| {
+                RomWeaverError::Validation("SOLID create chunk offset overflowed".into())
+            })?;
             if last_end == suffix.0 {
                 last.1.append(&mut suffix.1);
-                return merged;
+                return Ok(merged);
             }
         }
         merged.push(suffix);
     }
 
-    merged
+    Ok(merged)
 }
 
 fn collect_created_chunk_ranges(
@@ -1200,7 +1208,7 @@ fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
 }
 
-impl ParsedPrimitive {
+impl ParsedPrimitive<'_> {
     fn write_len(&self) -> usize {
         match self.payload {
             PrimitivePayload::Literal(ref data) => data.len(),
@@ -1508,8 +1516,8 @@ mod tests {
             fs::read(&parallel_patch).expect("parallel patch")
         );
 
-        let parsed = parse_solid_patch_bytes(&fs::read(&parallel_patch).expect("patch bytes"))
-            .expect("parse");
+        let patch_bytes = fs::read(&parallel_patch).expect("patch bytes");
+        let parsed = parse_solid_patch_bytes(&patch_bytes).expect("parse");
         match parsed.resize {
             ResizeAction::Expand { size, .. } => assert_eq!(size, 32),
             _ => panic!("expected expand resize action"),

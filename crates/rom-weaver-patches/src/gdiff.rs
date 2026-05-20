@@ -595,7 +595,10 @@ fn create_gdiff_patch_parallel(
 fn encode_data_command_bytes(data: &[u8]) -> Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(data.len() + 3);
     if data.len() <= GDIFF_INLINE_DATA_MAX {
-        bytes.push(u8::try_from(data.len()).expect("inline command length <= 246"));
+        let inline_len = u8::try_from(data.len()).map_err(|_| {
+            RomWeaverError::Validation("GDIFF inline data command length exceeded u8 range".into())
+        })?;
+        bytes.push(inline_len);
     } else {
         let len = u16::try_from(data.len()).map_err(|_| {
             RomWeaverError::Validation(
@@ -618,7 +621,10 @@ fn map_file_read_only(path: &Path) -> Result<Mmap> {
 
 fn encode_data_command<W: Write>(writer: &mut W, data: &[u8]) -> Result<()> {
     if data.len() <= GDIFF_INLINE_DATA_MAX {
-        writer.write_all(&[u8::try_from(data.len()).expect("data len <= 246")])?;
+        let inline_len = u8::try_from(data.len()).map_err(|_| {
+            RomWeaverError::Validation("GDIFF inline data command length exceeded u8 range".into())
+        })?;
+        writer.write_all(&[inline_len])?;
     } else {
         let len = u16::try_from(data.len()).map_err(|_| {
             RomWeaverError::Validation(

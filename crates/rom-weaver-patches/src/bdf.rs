@@ -248,10 +248,10 @@ fn parse_bsdiff_patch_layout(patch_bytes: &[u8]) -> Result<BsdiffPatchLayout<'_>
         return Err(RomWeaverError::Validation("not a valid patch".into()));
     }
 
-    let control_compressed_len = decode_bsdiff_i64(&patch_bytes[8..16])
+    let control_compressed_len = decode_bsdiff_i64(&patch_bytes[8..16])?
         .try_into()
         .map_err(|_| RomWeaverError::Validation("patch corrupted".into()))?;
-    let delta_compressed_len = decode_bsdiff_i64(&patch_bytes[16..24])
+    let delta_compressed_len = decode_bsdiff_i64(&patch_bytes[16..24])?
         .try_into()
         .map_err(|_| RomWeaverError::Validation("patch corrupted".into()))?;
     let control_end = BSDIFF40_HEADER_BYTES
@@ -293,13 +293,15 @@ fn collect_bsdiff_write_plans(
             break;
         }
 
-        let add_len: u64 = decode_bsdiff_i64(&control[0..8]).try_into().map_err(|_| {
+        let add_len: u64 = decode_bsdiff_i64(&control[0..8])?.try_into().map_err(|_| {
             RomWeaverError::Validation("BSDIFF40 patch contains a negative add length".into())
         })?;
-        let copy_len: u64 = decode_bsdiff_i64(&control[8..16]).try_into().map_err(|_| {
-            RomWeaverError::Validation("BSDIFF40 patch contains a negative copy length".into())
-        })?;
-        let seek = decode_bsdiff_i64(&control[16..24]);
+        let copy_len: u64 = decode_bsdiff_i64(&control[8..16])?
+            .try_into()
+            .map_err(|_| {
+                RomWeaverError::Validation("BSDIFF40 patch contains a negative copy length".into())
+            })?;
+        let seek = decode_bsdiff_i64(&control[16..24])?;
 
         if add_len > 0 {
             let source_start = source_offset;
@@ -496,12 +498,15 @@ fn read_exact_or_eof<R: Read>(reader: &mut R, buffer: &mut [u8]) -> Result<usize
     Ok(read)
 }
 
-fn decode_bsdiff_i64(bytes: &[u8]) -> i64 {
-    let value = u64::from_le_bytes(bytes.try_into().expect("decode_bsdiff_i64 expects 8 bytes"));
+fn decode_bsdiff_i64(bytes: &[u8]) -> Result<i64> {
+    let value_bytes: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| RomWeaverError::Validation("BSDIFF40 i64 decode expected 8 bytes".into()))?;
+    let value = u64::from_le_bytes(value_bytes);
     if value >> 63 == 0 || value == (1 << 63) {
-        value as i64
+        Ok(value as i64)
     } else {
-        ((value & ((1 << 63) - 1)) as i64).wrapping_neg()
+        Ok(((value & ((1 << 63) - 1)) as i64).wrapping_neg())
     }
 }
 

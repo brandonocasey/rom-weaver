@@ -42,6 +42,7 @@ const DO_WRITE_SECTORS: usize = 0x74;
 const DO_CLEAR_STATUS: usize = 0x78;
 const DO_SHUTDOWN: usize = 0x7C;
 const DO_CODE: usize = 0x80;
+const DO_CODE_I32: i32 = DO_CODE as i32;
 const INPUT_NO_DLDI_SLOT_MESSAGE: &str = "input does not contain a patchable DLDI section";
 const THREAD_WORK_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
@@ -412,7 +413,7 @@ fn apply_dldi_patch(
     let mut mem_offset = existing_header.text_start;
     if mem_offset == 0 {
         mem_offset = read_addr_i32(input_slot, DO_STARTUP)?
-            .checked_sub(i32::try_from(DO_CODE).expect("DO_CODE fits i32"))
+            .checked_sub(DO_CODE_I32)
             .ok_or_else(|| {
                 RomWeaverError::Validation(
                     "DLDI startup pointer underflowed while deriving memory offset".into(),
@@ -426,7 +427,9 @@ fn apply_dldi_patch(
 
     let ddmem_start = i64::from(patch_header.text_start);
     let ddmem_end = ddmem_start
-        .checked_add(i64::try_from(patch_header.driver_size_bytes).expect("fits i64"))
+        .checked_add(i64::try_from(patch_header.driver_size_bytes).map_err(|_| {
+            RomWeaverError::Validation("DLDI driver size exceeded 64-bit range".into())
+        })?)
         .ok_or_else(|| RomWeaverError::Validation("DLDI address range overflowed".into()))?;
 
     if patch_header.fix_sections & FIX_ALL != 0 {
@@ -626,14 +629,18 @@ fn add_relocation(value: i32, relocation: i64, field: &str) -> Result<i32> {
 }
 
 fn read_addr_i32(bytes: &[u8], offset: usize) -> Result<i32> {
-    let value = bytes
+    let value_bytes: [u8; 4] = bytes
         .get(offset..offset + 4)
         .ok_or_else(|| {
             RomWeaverError::Validation(format!("DLDI address read out of bounds at 0x{offset:X}"))
         })?
         .try_into()
-        .expect("slice has exact length");
-    Ok(i32::from_le_bytes(value))
+        .map_err(|_| {
+            RomWeaverError::Validation(format!(
+                "DLDI address read returned a non-4-byte slice at 0x{offset:X}"
+            ))
+        })?;
+    Ok(i32::from_le_bytes(value_bytes))
 }
 
 fn write_addr_i32(bytes: &mut [u8], offset: usize, value: i32) -> Result<()> {

@@ -1836,7 +1836,12 @@ impl TarContainerHandler {
         let written_bytes = if file_tasks.is_empty() {
             0
         } else if execution.used_parallelism {
-            let pool = maybe_pool.expect("pool present for parallel extraction");
+            let pool = maybe_pool.ok_or_else(|| {
+                RomWeaverError::Validation(
+                    "internal validation error: parallel extraction planned without a thread pool"
+                        .into(),
+                )
+            })?;
             let progress_context = context.clone();
             let progress_execution = execution.clone();
             let progress_format = self.descriptor.name;

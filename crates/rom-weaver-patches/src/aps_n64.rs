@@ -558,10 +558,13 @@ fn create_aps_patch_bytes(
         let offset = u64::try_from(start)
             .map_err(|_| RomWeaverError::Validation("APS record offset exceeded u64".into()))?;
         if rle_candidate && different_data.len() > 2 {
+            let length = u8::try_from(different_data.len()).map_err(|_| {
+                RomWeaverError::Validation("APS record length exceeded 255 bytes".into())
+            })?;
             records.push(ApsRecord::Rle {
                 offset,
                 byte: repeated_byte,
-                length: u8::try_from(different_data.len()).expect("record len bounded to 255"),
+                length,
             });
         } else {
             records.push(ApsRecord::Simple {
@@ -833,10 +836,13 @@ fn encode_runs_as_aps_records(runs: Vec<ApsDiffRun>) -> Result<Vec<ApsRecord>> {
                 .checked_add(cursor as u64)
                 .ok_or_else(|| RomWeaverError::Validation("APS record offset overflowed".into()))?;
             if slice.len() > 2 && slice.iter().all(|byte| *byte == slice[0]) {
+                let length = u8::try_from(slice.len()).map_err(|_| {
+                    RomWeaverError::Validation("APS record length exceeded 255 bytes".into())
+                })?;
                 records.push(ApsRecord::Rle {
                     offset,
                     byte: slice[0],
-                    length: u8::try_from(slice.len()).expect("slice len is bounded to 255"),
+                    length,
                 });
             } else {
                 records.push(ApsRecord::Simple {

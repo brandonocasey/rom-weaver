@@ -2984,10 +2984,13 @@ impl CliApp {
                 )));
             }
 
-            let selected_candidate = candidates
-                .into_iter()
-                .next()
-                .expect("checked candidate count");
+            let Some(selected_candidate) = candidates.into_iter().next() else {
+                return Err(RomWeaverError::Validation(format!(
+                    "internal validation error: {} payload candidate set was empty for `{}`",
+                    labels.source_label,
+                    current_source.display()
+                )));
+            };
             trace!(
                 source = %current_source.display(),
                 selected = %selected_candidate.display_name,
@@ -3516,12 +3519,19 @@ impl CliApp {
                 )),
             )
         } else {
-            (
-                requested_format
-                    .clone()
-                    .expect("non-auto mode should keep an explicit format"),
-                None,
-            )
+            let Some(explicit_format) = requested_format.clone() else {
+                return self.finish(
+                    "compress",
+                    OperationReport::failed(
+                        OperationFamily::Container,
+                        None,
+                        "validate",
+                        "internal validation error: explicit compression mode requires --format",
+                        probe_threads,
+                    ),
+                );
+            };
+            (explicit_format, None)
         };
         let (codec, explicit_level) = match Self::resolve_codec_level(codec, "--codec") {
             Ok(value) => value,
@@ -5479,10 +5489,11 @@ impl CliApp {
                 }
             }
         } else {
-            let explicit_format = options
-                .requested_format
-                .clone()
-                .expect("non-auto patch compression must carry a requested format");
+            let explicit_format = options.requested_format.clone().ok_or_else(|| {
+                RomWeaverError::Validation(
+                    "internal validation error: explicit patch-output compression mode requires --compress-format".to_string(),
+                )
+            })?;
             (
                 explicit_format.clone(),
                 format!("explicit format={explicit_format}"),
@@ -7923,12 +7934,10 @@ impl ProgressSink for ProgressFilterReporter {
 impl ProgressSink for StdoutReporter {
     fn emit(&self, event: ProgressEvent) {
         match self.mode {
-            OutputMode::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string(&event).expect("serialize CLI progress event")
-                );
-            }
+            OutputMode::Json => match serde_json::to_string(&event) {
+                Ok(serialized) => println!("{serialized}"),
+                Err(error) => eprintln!("failed to serialize CLI progress event: {error}"),
+            },
             OutputMode::Text => {
                 let format = event.format.as_deref().unwrap_or("-");
                 let threads = match (

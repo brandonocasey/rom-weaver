@@ -75,16 +75,20 @@ pub struct RecordingProgressSink {
 }
 
 impl RecordingProgressSink {
+    fn events_guard(&self) -> std::sync::MutexGuard<'_, Vec<ProgressEvent>> {
+        match self.events.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     pub fn snapshot(&self) -> Vec<ProgressEvent> {
-        self.events.lock().expect("progress events mutex").clone()
+        self.events_guard().clone()
     }
 }
 
 impl ProgressSink for RecordingProgressSink {
     fn emit(&self, event: ProgressEvent) {
-        self.events
-            .lock()
-            .expect("progress events mutex")
-            .push(event);
+        self.events_guard().push(event);
     }
 }

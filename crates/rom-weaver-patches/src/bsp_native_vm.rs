@@ -96,11 +96,17 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
     }
 
     fn top_frame<'b>(&'b self) -> &'b Frame<'a> {
-        self.frames.last().expect("frame exists")
+        match self.frames.last() {
+            Some(frame) => frame,
+            None => panic!("BSP runtime frame stack is empty"),
+        }
     }
 
     fn top_frame_mut<'b>(&'b mut self) -> &'b mut Frame<'a> {
-        self.frames.last_mut().expect("frame exists")
+        match self.frames.last_mut() {
+            Some(frame) => frame,
+            None => panic!("BSP runtime frame stack is empty"),
+        }
     }
 
     fn patch_len(&self) -> usize {

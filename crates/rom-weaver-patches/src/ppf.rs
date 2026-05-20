@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::Path,
@@ -50,7 +51,8 @@ impl PatchHandler for PpfPatchHandler {
     }
 
     fn parse(&self, patch_path: &Path, _context: &OperationContext) -> Result<OperationReport> {
-        let parsed = parse_ppf_file(patch_path)?;
+        let patch = map_file_read_only(patch_path)?;
+        let parsed = parse_ppf_bytes(patch.as_ref())?;
         let mut label = format!(
             "parsed {} patch ({}) with {} record(s)",
             self.descriptor.name,
@@ -76,7 +78,8 @@ impl PatchHandler for PpfPatchHandler {
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
-        let parsed = parse_ppf_file(patch_path)?;
+        let patch = map_file_read_only(patch_path)?;
+        let parsed = parse_ppf_bytes(patch.as_ref())?;
         let validate_checksums =
             context.patch_checksum_validation() == PatchChecksumValidation::Strict;
         let input_len = fs::metadata(&request.input)?.len();
@@ -214,24 +217,24 @@ impl PpfVersion {
 }
 
 #[derive(Debug)]
-struct ParsedPpfPatch {
+struct ParsedPpfPatch<'a> {
     version: PpfVersion,
     expected_input_len: Option<u64>,
-    blockcheck: Option<PpfBlockcheck>,
-    records: Vec<PpfRecord>,
+    blockcheck: Option<PpfBlockcheck<'a>>,
+    records: Vec<PpfRecord<'a>>,
 }
 
 #[derive(Debug)]
-struct PpfBlockcheck {
+struct PpfBlockcheck<'a> {
     input_offset: u64,
-    expected: Vec<u8>,
+    expected: Cow<'a, [u8]>,
 }
 
 #[derive(Debug)]
-struct PpfRecord {
+struct PpfRecord<'a> {
     offset: u64,
-    data: Vec<u8>,
-    undo_data: Option<Vec<u8>>,
+    data: Cow<'a, [u8]>,
+    undo_data: Option<Cow<'a, [u8]>>,
 }
 
 #[derive(Debug)]
@@ -243,11 +246,6 @@ struct CreatedPpfPatch {
 struct PreparedPpfWrite {
     offset: u64,
     data: Vec<u8>,
-}
-
-fn parse_ppf_file(path: &Path) -> Result<ParsedPpfPatch> {
-    let bytes = map_file_read_only(path)?;
-    parse_ppf_bytes(&bytes)
 }
 
 fn map_file_read_only(path: &Path) -> Result<Mmap> {
@@ -304,7 +302,7 @@ fn create_ppf3_patch(
     }
 }
 
-fn parse_ppf_bytes(bytes: &[u8]) -> Result<ParsedPpfPatch> {
+fn parse_ppf_bytes<'a>(bytes: &'a [u8]) -> Result<ParsedPpfPatch<'a>> {
     if bytes.len() < PPF_HEADER_MIN_SIZE {
         return Err(RomWeaverError::Validation(
             "PPF patch is too small to contain a valid header".into(),
@@ -380,14 +378,23 @@ fn create_ppf3_patch_streaming(
                 }
                 pending_data.push(modified_byte);
                 if pending_data.len() == u8::MAX as usize {
-                    let start = pending_start.expect("pending start set when pending data exists");
+                    let start = pending_start.ok_or_else(|| {
+                        RomWeaverError::Validation(
+                            "internal PPF state error: pending diff data missing start offset"
+                                .into(),
+                        )
+                    })?;
                     write_ppf3_record(output, start, &pending_data)?;
                     pending_data.clear();
                     pending_start = None;
                     record_count = record_count.saturating_add(1);
                 }
             } else if !pending_data.is_empty() {
-                let start = pending_start.expect("pending start set when pending data exists");
+                let start = pending_start.ok_or_else(|| {
+                    RomWeaverError::Validation(
+                        "internal PPF state error: pending diff data missing start offset".into(),
+                    )
+                })?;
                 write_ppf3_record(output, start, &pending_data)?;
                 pending_data.clear();
                 pending_start = None;
@@ -406,7 +413,11 @@ fn create_ppf3_patch_streaming(
     }
 
     if !pending_data.is_empty() {
-        let start = pending_start.expect("pending start set when pending data exists");
+        let start = pending_start.ok_or_else(|| {
+            RomWeaverError::Validation(
+                "internal PPF state error: trailing pending diff data missing start offset".into(),
+            )
+        })?;
         write_ppf3_record(output, start, &pending_data)?;
         record_count = record_count.saturating_add(1);
     }
@@ -441,7 +452,7 @@ fn create_ppf3_patch_parallel(
     let blockcheck_enabled = write_ppf3_header(output, original_path, original_len)?;
     let original = map_file_read_only(original_path)?;
     let modified = map_file_read_only(modified_path)?;
-    let runs = collect_ppf_diff_runs_parallel(original.as_ref(), modified.as_ref(), pool);
+    let runs = collect_ppf_diff_runs_parallel(original.as_ref(), modified.as_ref(), pool)?;
 
     for run in &runs {
         let start = usize::try_from(run.offset).map_err(|_| {
@@ -466,7 +477,7 @@ fn collect_ppf_diff_runs_parallel(
     original: &[u8],
     modified: &[u8],
     pool: &SharedThreadPool,
-) -> Vec<PpfDiffRun> {
+) -> Result<Vec<PpfDiffRun>> {
     let chunk_ranges = (0..modified.len())
         .step_by(CREATE_THREAD_SCAN_CHUNK_BYTES)
         .map(|start| {
@@ -486,6 +497,7 @@ fn collect_ppf_diff_runs_parallel(
 
     let mut merged: Vec<PpfDiffRun> = Vec::new();
     for runs in per_chunk_runs {
+        let runs = runs?;
         for run in runs {
             if let Some(last) = merged.last_mut() {
                 let contiguous = last
@@ -503,7 +515,7 @@ fn collect_ppf_diff_runs_parallel(
             merged.push(run);
         }
     }
-    merged
+    Ok(merged)
 }
 
 fn collect_ppf_chunk_diff_runs(
@@ -511,7 +523,7 @@ fn collect_ppf_chunk_diff_runs(
     modified: &[u8],
     start: usize,
     end: usize,
-) -> Vec<PpfDiffRun> {
+) -> Result<Vec<PpfDiffRun>> {
     let mut runs = Vec::new();
     let mut pending_start: Option<usize> = None;
     let mut pending_len = 0usize;
@@ -525,18 +537,30 @@ fn collect_ppf_chunk_diff_runs(
             if pending_start.is_none() {
                 pending_start = Some(index);
             }
-            pending_len = pending_len.saturating_add(1);
+            pending_len = pending_len.checked_add(1).ok_or_else(|| {
+                RomWeaverError::Validation("PPF diff run length overflowed".into())
+            })?;
             if pending_len == usize::from(u8::MAX) {
+                let run_start = pending_start.ok_or_else(|| {
+                    RomWeaverError::Validation(
+                        "internal PPF state error: pending run missing start offset".into(),
+                    )
+                })?;
                 runs.push(PpfDiffRun {
-                    offset: pending_start.expect("pending start should exist") as u64,
+                    offset: run_start as u64,
                     len: u8::MAX,
                 });
                 pending_start = None;
                 pending_len = 0;
             }
         } else if pending_len > 0 {
+            let run_start = pending_start.ok_or_else(|| {
+                RomWeaverError::Validation(
+                    "internal PPF state error: pending run missing start offset".into(),
+                )
+            })?;
             runs.push(PpfDiffRun {
-                offset: pending_start.expect("pending start should exist") as u64,
+                offset: run_start as u64,
                 len: pending_len as u8,
             });
             pending_start = None;
@@ -545,12 +569,17 @@ fn collect_ppf_chunk_diff_runs(
     }
 
     if pending_len > 0 {
+        let run_start = pending_start.ok_or_else(|| {
+            RomWeaverError::Validation(
+                "internal PPF state error: trailing pending run missing start offset".into(),
+            )
+        })?;
         runs.push(PpfDiffRun {
-            offset: pending_start.expect("pending start should exist") as u64,
+            offset: run_start as u64,
             len: pending_len as u8,
         });
     }
-    runs
+    Ok(runs)
 }
 
 fn write_ppf3_header(
@@ -652,7 +681,7 @@ fn detect_version(bytes: &[u8]) -> Result<PpfVersion> {
     Ok(version_from_digits)
 }
 
-fn parse_ppf_v1(bytes: &[u8]) -> Result<ParsedPpfPatch> {
+fn parse_ppf_v1<'a>(bytes: &'a [u8]) -> Result<ParsedPpfPatch<'a>> {
     let records = parse_records_v1_v2(bytes, PPF_HEADER_MIN_SIZE, bytes.len())?;
     Ok(ParsedPpfPatch {
         version: PpfVersion::V1,
@@ -662,7 +691,7 @@ fn parse_ppf_v1(bytes: &[u8]) -> Result<ParsedPpfPatch> {
     })
 }
 
-fn parse_ppf_v2(bytes: &[u8]) -> Result<ParsedPpfPatch> {
+fn parse_ppf_v2<'a>(bytes: &'a [u8]) -> Result<ParsedPpfPatch<'a>> {
     if bytes.len() < PPF2_HEADER_SIZE {
         return Err(RomWeaverError::Validation(
             "PPF2 patch is too small to contain a validation header".into(),
@@ -681,7 +710,7 @@ fn parse_ppf_v2(bytes: &[u8]) -> Result<ParsedPpfPatch> {
     }
 
     let records = parse_records_v1_v2(bytes, PPF2_HEADER_SIZE, payload_end)?;
-    let expected = bytes[60..(60 + PPF_VALIDATION_BLOCK_SIZE)].to_vec();
+    let expected = Cow::Borrowed(&bytes[60..(60 + PPF_VALIDATION_BLOCK_SIZE)]);
 
     Ok(ParsedPpfPatch {
         version: PpfVersion::V2,
@@ -694,7 +723,7 @@ fn parse_ppf_v2(bytes: &[u8]) -> Result<ParsedPpfPatch> {
     })
 }
 
-fn parse_ppf_v3(bytes: &[u8]) -> Result<ParsedPpfPatch> {
+fn parse_ppf_v3<'a>(bytes: &'a [u8]) -> Result<ParsedPpfPatch<'a>> {
     if bytes.len() < PPF3_HEADER_BASE_SIZE {
         return Err(RomWeaverError::Validation(
             "PPF3 patch is too small to contain a valid header".into(),
@@ -720,7 +749,7 @@ fn parse_ppf_v3(bytes: &[u8]) -> Result<ParsedPpfPatch> {
             PPF2_HEADER_SIZE,
             Some(PpfBlockcheck {
                 input_offset,
-                expected: bytes[60..(60 + PPF_VALIDATION_BLOCK_SIZE)].to_vec(),
+                expected: Cow::Borrowed(&bytes[60..(60 + PPF_VALIDATION_BLOCK_SIZE)]),
             }),
         )
     } else {
@@ -747,7 +776,11 @@ fn parse_ppf_v3(bytes: &[u8]) -> Result<ParsedPpfPatch> {
     })
 }
 
-fn parse_records_v1_v2(bytes: &[u8], mut cursor: usize, end: usize) -> Result<Vec<PpfRecord>> {
+fn parse_records_v1_v2<'a>(
+    bytes: &'a [u8],
+    mut cursor: usize,
+    end: usize,
+) -> Result<Vec<PpfRecord<'a>>> {
     let mut records = Vec::new();
     while cursor < end {
         let header_end = cursor
@@ -774,7 +807,7 @@ fn parse_records_v1_v2(bytes: &[u8], mut cursor: usize, end: usize) -> Result<Ve
 
         records.push(PpfRecord {
             offset,
-            data: bytes[cursor..data_end].to_vec(),
+            data: Cow::Borrowed(&bytes[cursor..data_end]),
             undo_data: None,
         });
         cursor = data_end;
@@ -783,12 +816,12 @@ fn parse_records_v1_v2(bytes: &[u8], mut cursor: usize, end: usize) -> Result<Ve
     Ok(records)
 }
 
-fn parse_records_v3(
-    bytes: &[u8],
+fn parse_records_v3<'a>(
+    bytes: &'a [u8],
     mut cursor: usize,
     end: usize,
     undo_enabled: bool,
-) -> Result<Vec<PpfRecord>> {
+) -> Result<Vec<PpfRecord<'a>>> {
     let mut records = Vec::new();
     while cursor < end {
         let header_end = cursor
@@ -818,7 +851,7 @@ fn parse_records_v3(
             ));
         }
 
-        let data = bytes[cursor..data_end].to_vec();
+        let data = Cow::Borrowed(&bytes[cursor..data_end]);
         cursor = data_end;
 
         let undo_data = if undo_enabled {
@@ -830,7 +863,7 @@ fn parse_records_v3(
                     "PPF3 undo data exceeded patch bounds".into(),
                 ));
             }
-            let undo_data = bytes[cursor..undo_end].to_vec();
+            let undo_data = Cow::Borrowed(&bytes[cursor..undo_end]);
             cursor = undo_end;
             Some(undo_data)
         } else {
@@ -1006,7 +1039,7 @@ fn rfind_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .rposition(|window| window == needle)
 }
 
-fn validate_blockcheck(input_path: &Path, blockcheck: &PpfBlockcheck) -> Result<()> {
+fn validate_blockcheck(input_path: &Path, blockcheck: &PpfBlockcheck<'_>) -> Result<()> {
     let mut input = File::open(input_path)?;
     input.seek(SeekFrom::Start(blockcheck.input_offset))?;
 
@@ -1022,7 +1055,7 @@ fn validate_blockcheck(input_path: &Path, blockcheck: &PpfBlockcheck) -> Result<
         }
     })?;
 
-    if actual != blockcheck.expected {
+    if actual != blockcheck.expected.as_ref() {
         return Err(RomWeaverError::Validation(
             "PPF binblock/patchvalidation failed".into(),
         ));
@@ -1031,7 +1064,7 @@ fn validate_blockcheck(input_path: &Path, blockcheck: &PpfBlockcheck) -> Result<
     Ok(())
 }
 
-fn should_apply_undo_data(file: &mut File, records: &[PpfRecord]) -> Result<bool> {
+fn should_apply_undo_data(file: &mut File, records: &[PpfRecord<'_>]) -> Result<bool> {
     let Some(first_record) = records.first() else {
         return Ok(false);
     };
@@ -1048,16 +1081,16 @@ fn should_apply_undo_data(file: &mut File, records: &[PpfRecord]) -> Result<bool
         return Err(error.into());
     }
 
-    Ok(current_bytes == first_record.data)
+    Ok(current_bytes == first_record.data.as_ref())
 }
 
-fn apply_records(file: &mut File, records: &[PpfRecord], use_undo_data: bool) -> Result<()> {
+fn apply_records(file: &mut File, records: &[PpfRecord<'_>], use_undo_data: bool) -> Result<()> {
     for record in records {
         file.seek(SeekFrom::Start(record.offset))?;
         let payload = if use_undo_data {
-            record.undo_data.as_deref().unwrap_or(&record.data)
+            record.undo_data.as_deref().unwrap_or(record.data.as_ref())
         } else {
-            &record.data
+            record.data.as_ref()
         };
         file.write_all(payload)?;
     }
@@ -1065,7 +1098,7 @@ fn apply_records(file: &mut File, records: &[PpfRecord], use_undo_data: bool) ->
 }
 
 fn prepare_ppf_writes_parallel(
-    records: &[PpfRecord],
+    records: &[PpfRecord<'_>],
     use_undo_data: bool,
     pool: &SharedThreadPool,
     context: &OperationContext,
@@ -1076,9 +1109,9 @@ fn prepare_ppf_writes_parallel(
             .map(|record| {
                 context.cancel().check()?;
                 let payload = if use_undo_data {
-                    record.undo_data.as_deref().unwrap_or(&record.data)
+                    record.undo_data.as_deref().unwrap_or(record.data.as_ref())
                 } else {
-                    &record.data
+                    record.data.as_ref()
                 };
                 Ok(PreparedPpfWrite {
                     offset: record.offset,
@@ -1191,7 +1224,8 @@ mod tests {
         )
         .expect("fixture");
 
-        let parsed = parse_ppf_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
+        let patch_bytes = fs::read(&patch_path).expect("patch");
+        let parsed = parse_ppf_bytes(&patch_bytes).expect("parse");
         assert_eq!(parsed.records.len(), 2);
 
         let handler = PpfPatchHandler::new(&PPF);
@@ -1458,7 +1492,7 @@ mod tests {
         assert_eq!(parsed.version, PpfVersion::V3);
         assert_eq!(parsed.records.len(), 1);
         assert_eq!(parsed.records[0].offset, 1);
-        assert_eq!(parsed.records[0].data, b"AB");
+        assert_eq!(parsed.records[0].data.as_ref(), b"AB");
     }
 
     #[test]
@@ -1501,7 +1535,8 @@ mod tests {
         assert_eq!(execution.effective_threads, 1);
         assert!(!execution.used_parallelism);
 
-        let parsed = parse_ppf_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
+        let patch_bytes = fs::read(&patch_path).expect("patch");
+        let parsed = parse_ppf_bytes(&patch_bytes).expect("parse");
         assert_eq!(parsed.version, PpfVersion::V3);
         assert!(!parsed.records.is_empty());
 
@@ -1591,7 +1626,8 @@ mod tests {
             )
             .expect("create");
 
-        let parsed = parse_ppf_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
+        let patch_bytes = fs::read(&patch_path).expect("patch");
+        let parsed = parse_ppf_bytes(&patch_bytes).expect("parse");
         assert_eq!(parsed.version, PpfVersion::V3);
         assert!(parsed.blockcheck.is_some());
     }
@@ -1621,7 +1657,8 @@ mod tests {
             )
             .expect("create");
 
-        let parsed = parse_ppf_bytes(&fs::read(&patch_path).expect("patch")).expect("parse");
+        let patch_bytes = fs::read(&patch_path).expect("patch");
+        let parsed = parse_ppf_bytes(&patch_bytes).expect("parse");
         assert_eq!(parsed.version, PpfVersion::V3);
         assert_eq!(parsed.records.len(), 5);
         assert_eq!(parsed.records[0].offset, 0);
