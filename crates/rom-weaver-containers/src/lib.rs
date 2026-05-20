@@ -7,14 +7,14 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
 use bzip2::{Compression as Bzip2Compression, read::BzDecoder as Bzip2Decoder, write::BzEncoder};
 use ciso::{read::CSOReader as CsoReader, split::SplitFileReader};
 use flate2::{
-    Compression as GzipCompression, read::DeflateDecoder, read::GzDecoder, write::GzEncoder,
+    Compression as GzipCompression, read::DeflateDecoder, read::MultiGzDecoder, write::GzEncoder,
 };
 use lz4_flex::frame::{
     BlockMode as Lz4BlockMode, BlockSize as Lz4BlockSize, FrameEncoder as Lz4FrameEncoder,
@@ -200,43 +200,6 @@ const XISO: FormatDescriptor = FormatDescriptor {
     aliases: &[],
     extensions: &[".xiso", ".xiso.iso"],
 };
-
-/// Avoid vectored writes on WASI file descriptors, which can trigger host runtime crashes
-/// for some archive/codec pipelines.
-struct NonVectoredWriter<W> {
-    inner: W,
-}
-
-impl<W> NonVectoredWriter<W> {
-    fn new(inner: W) -> Self {
-        Self { inner }
-    }
-}
-
-impl<W: Write> Write for NonVectoredWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-
-    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
-        for slice in bufs {
-            if !slice.is_empty() {
-                return self.inner.write(slice);
-            }
-        }
-        Ok(0)
-    }
-}
-
-impl<W: Seek> Seek for NonVectoredWriter<W> {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.inner.seek(pos)
-    }
-}
 
 pub struct ContainerRegistry {
     handlers: Vec<Arc<dyn ContainerHandler>>,
@@ -1533,6 +1496,33 @@ struct TarContainerHandler {
     compression: TarCompression,
 }
 
+#[derive(Clone, Debug)]
+struct TarExtractTask {
+    index: usize,
+    archive_name: String,
+    output_path: PathBuf,
+    file_offset: u64,
+    file_size: u64,
+    is_dir: bool,
+}
+
+#[derive(Clone, Debug)]
+struct TarCreateTask {
+    entry_index: usize,
+    source: PathBuf,
+    archive_name: String,
+    is_dir: bool,
+    temp_archive: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct TarCreateArtifact {
+    entry_index: usize,
+    archive_name: String,
+    logical_bytes: u64,
+    temp_archive: PathBuf,
+}
+
 impl TarContainerHandler {
     const XZ_MT_BLOCK_BYTES: u64 = 1 << 20;
 
@@ -1686,23 +1676,202 @@ impl TarContainerHandler {
         Ok(logical_bytes)
     }
 
+    fn build_uncompressed_extract_tasks(
+        &self,
+        request: &ContainerExtractRequest,
+    ) -> Result<Vec<TarExtractTask>> {
+        let file = File::open(&request.source)?;
+        let mut archive = TarArchive::new(BufReader::new(file));
+        let mut selections = SelectionMatcher::new(&request.selections);
+        let mut tasks = Vec::new();
+
+        for (index, entry) in archive.entries()?.enumerate() {
+            let entry = entry?;
+            let raw_path = entry.path()?;
+            let relative = sanitize_archive_relative_path(raw_path.as_ref())?;
+            let archive_name = archive_path_to_name(&relative)?;
+            if !selections.matches(&archive_name) {
+                continue;
+            }
+
+            let output_path = request.out_dir.join(&relative);
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_dir() {
+                tasks.push(TarExtractTask {
+                    index,
+                    archive_name,
+                    output_path,
+                    file_offset: 0,
+                    file_size: 0,
+                    is_dir: true,
+                });
+                continue;
+            }
+            if !entry_type.is_file() {
+                return Err(RomWeaverError::Validation(format!(
+                    "{} extract does not support {} entries yet (`{}`)",
+                    self.descriptor.name,
+                    entry_type.as_byte(),
+                    archive_name
+                )));
+            }
+
+            tasks.push(TarExtractTask {
+                index,
+                archive_name,
+                output_path,
+                file_offset: entry.raw_file_position(),
+                file_size: entry.size(),
+                is_dir: false,
+            });
+        }
+
+        selections.ensure_all_matched()?;
+        Ok(tasks)
+    }
+
+    fn extract_uncompressed_task(&self, source: &Path, task: &TarExtractTask) -> Result<u64> {
+        if task.is_dir {
+            fs::create_dir_all(&task.output_path)?;
+            return Ok(0);
+        }
+
+        if let Some(parent) = task.output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut input = BufReader::new(File::open(source)?);
+        input.seek(SeekFrom::Start(task.file_offset))?;
+        let mut limited = input.take(task.file_size);
+        let mut output = BufWriter::new(File::create(&task.output_path)?);
+        let copied = io::copy(&mut limited, &mut output).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "{} extract failed while reading entry {} (`{}`): {error}",
+                self.descriptor.name, task.index, task.archive_name
+            ))
+        })?;
+        if copied != task.file_size {
+            return Err(RomWeaverError::Validation(format!(
+                "{} extract failed while reading entry {} (`{}`): expected {} bytes, copied {} bytes",
+                self.descriptor.name, task.index, task.archive_name, task.file_size, copied
+            )));
+        }
+        output.flush()?;
+        Ok(copied)
+    }
+
+    fn build_uncompressed_create_tasks(
+        &self,
+        entries: &[ArchiveInputEntry],
+        context: &OperationContext,
+    ) -> Vec<TarCreateTask> {
+        entries
+            .iter()
+            .enumerate()
+            .map(|(entry_index, entry)| TarCreateTask {
+                entry_index,
+                source: entry.source.clone(),
+                archive_name: entry.archive_name.clone(),
+                is_dir: entry.is_dir,
+                temp_archive: context.temp_paths().next_path(
+                    &format!("{}-create-{entry_index}", self.descriptor.name),
+                    Some("tar"),
+                ),
+            })
+            .collect()
+    }
+
+    fn stage_uncompressed_create_task(&self, task: &TarCreateTask) -> Result<TarCreateArtifact> {
+        if let Some(parent) = task.temp_archive.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let output = BufWriter::new(File::create(&task.temp_archive)?);
+        let mut builder = TarBuilder::new(output);
+        if task.is_dir {
+            builder.append_dir(&task.archive_name, &task.source)?;
+        } else {
+            builder.append_path_with_name(&task.source, &task.archive_name)?;
+        }
+        builder.finish()?;
+
+        Ok(TarCreateArtifact {
+            entry_index: task.entry_index,
+            archive_name: task.archive_name.clone(),
+            logical_bytes: if task.is_dir {
+                0
+            } else {
+                fs::metadata(&task.source)?.len()
+            },
+            temp_archive: task.temp_archive.clone(),
+        })
+    }
+
+    fn merge_uncompressed_create_artifact<W: Write>(
+        &self,
+        output: &mut W,
+        artifact: &TarCreateArtifact,
+    ) -> Result<()> {
+        let staged_len = fs::metadata(&artifact.temp_archive)?.len();
+        if staged_len < 1024 {
+            return Err(RomWeaverError::Validation(format!(
+                "{} create failed while finalizing staged entry `{}`",
+                self.descriptor.name, artifact.archive_name
+            )));
+        }
+        let payload_len = staged_len.saturating_sub(1024);
+        let mut staged = BufReader::new(File::open(&artifact.temp_archive)?);
+        let copied = io::copy(&mut staged.by_ref().take(payload_len), output).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "{} create failed while reading staged entry `{}`: {error}",
+                self.descriptor.name, artifact.archive_name
+            ))
+        })?;
+        if copied != payload_len {
+            return Err(RomWeaverError::Validation(format!(
+                "{} create failed while reading staged entry `{}`: expected {} bytes, copied {} bytes",
+                self.descriptor.name, artifact.archive_name, payload_len, copied
+            )));
+        }
+        Ok(())
+    }
+
+    fn cleanup_uncompressed_create_tasks(&self, tasks: &[TarCreateTask]) {
+        for task in tasks {
+            let _ = fs::remove_file(&task.temp_archive);
+        }
+    }
+
+    fn cleanup_uncompressed_create_artifacts(&self, artifacts: &[TarCreateArtifact]) {
+        for artifact in artifacts {
+            let _ = fs::remove_file(&artifact.temp_archive);
+        }
+    }
+
     fn open_reader(&self, source: &Path) -> Result<Box<dyn Read>> {
         let file = File::open(source)?;
         let reader: Box<dyn Read> = match self.compression {
             TarCompression::None => Box::new(BufReader::new(file)),
-            TarCompression::Gzip => Box::new(GzDecoder::new(BufReader::new(file))),
+            TarCompression::Gzip => Box::new(MultiGzDecoder::new(BufReader::new(file))),
             TarCompression::Bzip2 => Box::new(Bzip2Decoder::new(BufReader::new(file))),
             TarCompression::Xz => Box::new(XzReader::new(BufReader::new(file), false)),
         };
         Ok(reader)
     }
 
-    fn thread_capability(&self) -> ThreadCapability {
+    fn extract_thread_capability(&self) -> ThreadCapability {
         match self.compression {
-            TarCompression::Xz => ThreadCapability::parallel(None),
-            TarCompression::None | TarCompression::Gzip | TarCompression::Bzip2 => {
+            TarCompression::None | TarCompression::Xz => ThreadCapability::parallel(None),
+            TarCompression::Gzip | TarCompression::Bzip2 => {
                 ThreadCapability::single_threaded()
             }
+        }
+    }
+
+    fn create_thread_capability(&self) -> ThreadCapability {
+        match self.compression {
+            TarCompression::None | TarCompression::Gzip | TarCompression::Xz => {
+                ThreadCapability::parallel(None)
+            }
+            TarCompression::Bzip2 => ThreadCapability::single_threaded(),
         }
     }
 
@@ -1826,7 +1995,7 @@ impl ContainerHandler for TarContainerHandler {
         request: &ContainerExtractRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(self.thread_capability());
+        let execution = context.plan_threads(self.extract_thread_capability());
         fs::create_dir_all(&request.out_dir)?;
 
         let reader = self.open_reader_for_extract(&request.source, &execution)?;
@@ -2000,7 +2169,7 @@ impl ContainerHandler for TarContainerHandler {
         request: &ContainerCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let execution = context.plan_threads(self.thread_capability());
+        let mut execution = context.plan_threads(self.create_thread_capability());
         let level = self.parse_codec_and_level(request.codec.as_deref(), request.level)?;
         let entries = collect_archive_inputs(&request.inputs)?;
 
@@ -2017,14 +2186,58 @@ impl ContainerHandler for TarContainerHandler {
                 bytes
             }
             TarCompression::Gzip => {
-                let output = BufWriter::new(File::create(&request.output)?);
-                let encoder = GzEncoder::new(output, GzipCompression::new(level));
-                let mut builder = TarBuilder::new(encoder);
-                let bytes = self.append_entries(&mut builder, &entries, context, &execution)?;
-                let encoder = builder.into_inner()?;
-                let mut output = encoder.finish()?;
-                output.flush()?;
-                bytes
+                if execution.used_parallelism {
+                    let staged_tar = context
+                        .temp_paths()
+                        .next_path("tar-gz-create-stage", Some("tar"));
+                    let staged_result = (|| -> Result<(u64, Option<ThreadExecution>)> {
+                        if let Some(parent) = staged_tar.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        let staged_output = BufWriter::new(File::create(&staged_tar)?);
+                        let mut builder = TarBuilder::new(staged_output);
+                        let bytes =
+                            self.append_entries(&mut builder, &entries, context, &execution)?;
+                        builder.finish()?;
+
+                        let backend =
+                            CodecRegistry::new()
+                                .find_by_name("deflate")
+                                .ok_or_else(|| {
+                                    RomWeaverError::Unsupported(
+                                        "codec backend `deflate` is not registered for tar.gz"
+                                            .into(),
+                                    )
+                                })?;
+                        let encode_report = backend.encode(
+                            &CodecOperationRequest {
+                                input: staged_tar.clone(),
+                                output: request.output.clone(),
+                                level: Some(level as i32),
+                            },
+                            context,
+                        )?;
+                        if encode_report.status != OperationStatus::Succeeded {
+                            return Err(RomWeaverError::Unsupported(encode_report.label));
+                        }
+                        Ok((bytes, encode_report.thread_execution))
+                    })();
+                    let _ = fs::remove_file(&staged_tar);
+                    let (bytes, encode_execution) = staged_result?;
+                    if let Some(encode_execution) = encode_execution {
+                        execution = encode_execution;
+                    }
+                    bytes
+                } else {
+                    let output = BufWriter::new(File::create(&request.output)?);
+                    let encoder = GzEncoder::new(output, GzipCompression::new(level));
+                    let mut builder = TarBuilder::new(encoder);
+                    let bytes = self.append_entries(&mut builder, &entries, context, &execution)?;
+                    let encoder = builder.into_inner()?;
+                    let mut output = encoder.finish()?;
+                    output.flush()?;
+                    bytes
+                }
             }
             TarCompression::Bzip2 => {
                 let output = BufWriter::new(File::create(&request.output)?);
@@ -2076,13 +2289,12 @@ impl ContainerHandler for TarContainerHandler {
     }
 
     fn capabilities(&self) -> ContainerCapabilities {
-        let threads = self.thread_capability();
         ContainerCapabilities {
             inspect: true,
             extract: true,
             create: true,
-            extract_threads: threads.clone(),
-            create_threads: threads,
+            extract_threads: self.extract_thread_capability(),
+            create_threads: self.create_thread_capability(),
         }
     }
 }
@@ -2239,10 +2451,10 @@ impl StreamContainerHandler {
 
     fn create_thread_capability(&self) -> ThreadCapability {
         match self.compression {
-            StreamCompression::Xz | StreamCompression::Zstd => ThreadCapability::parallel(None),
-            StreamCompression::Gzip | StreamCompression::Bzip2 => {
-                ThreadCapability::single_threaded()
+            StreamCompression::Gzip | StreamCompression::Xz | StreamCompression::Zstd => {
+                ThreadCapability::parallel(None)
             }
+            StreamCompression::Bzip2 => ThreadCapability::single_threaded(),
         }
     }
 
@@ -2270,7 +2482,7 @@ impl StreamContainerHandler {
     ) -> Result<Box<dyn Read>> {
         let file = File::open(source)?;
         let reader: Box<dyn Read> = match self.compression {
-            StreamCompression::Gzip => Box::new(GzDecoder::new(BufReader::new(file))),
+            StreamCompression::Gzip => Box::new(MultiGzDecoder::new(BufReader::new(file))),
             StreamCompression::Bzip2 => Box::new(Bzip2Decoder::new(BufReader::new(file))),
             StreamCompression::Xz if execution.used_parallelism => {
                 let workers = Self::xz_thread_count(execution.effective_threads);
@@ -3263,23 +3475,46 @@ impl SevenZContainerHandler {
 
         match method.method {
             SevenZMethod::LZMA2 if execution.used_parallelism => {
-                method = method.with_options(
-                    sevenz_rust::encoder_options::Lzma2Options::from_level_mt(
-                        level.unwrap_or(Self::DEFAULT_LZMA2_LEVEL),
-                        self.thread_count(execution.effective_threads),
-                        Self::LZMA2_MT_CHUNK_BYTES,
-                    )
-                    .into(),
+                #[cfg(target_family = "wasm")]
+                let mut options = sevenz_rust::encoder_options::Lzma2Options::from_level_mt(
+                    level.unwrap_or(Self::DEFAULT_LZMA2_LEVEL),
+                    self.thread_count(execution.effective_threads),
+                    Self::LZMA2_MT_CHUNK_BYTES,
                 );
+                #[cfg(not(target_family = "wasm"))]
+                let options = sevenz_rust::encoder_options::Lzma2Options::from_level_mt(
+                    level.unwrap_or(Self::DEFAULT_LZMA2_LEVEL),
+                    self.thread_count(execution.effective_threads),
+                    Self::LZMA2_MT_CHUNK_BYTES,
+                );
+                #[cfg(target_family = "wasm")]
+                options.set_dictionary_size(1 << 12);
+                method = method.with_options(options.into());
             }
             SevenZMethod::LZMA2 => {
                 if let Some(level) = level {
-                    method = method.with_options(
-                        sevenz_rust::encoder_options::Lzma2Options::from_level(level).into(),
-                    );
+                    #[cfg(target_family = "wasm")]
+                    let mut options = sevenz_rust::encoder_options::Lzma2Options::from_level(level);
+                    #[cfg(not(target_family = "wasm"))]
+                    let options = sevenz_rust::encoder_options::Lzma2Options::from_level(level);
+                    #[cfg(target_family = "wasm")]
+                    options.set_dictionary_size(1 << 12);
+                    method = method.with_options(options.into());
                 }
             }
             SevenZMethod::LZMA => {
+                #[cfg(target_family = "wasm")]
+                {
+                    let mut options = sevenz_rust::encoder_options::LzmaOptions::from_level(
+                        level.unwrap_or(Self::DEFAULT_LZMA2_LEVEL),
+                    );
+                    options.set_dictionary_size(1 << 12);
+                    method =
+                        method.with_options(sevenz_rust::encoder_options::EncoderOptions::Lzma(
+                            options,
+                        ));
+                }
+                #[cfg(not(target_family = "wasm"))]
                 if let Some(level) = level {
                     method =
                         method.with_options(sevenz_rust::encoder_options::EncoderOptions::Lzma(
@@ -10813,6 +11048,42 @@ mod tests {
     }
 
     #[test]
+    fn tar_gz_capabilities_report_parallel_create_threads() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("tar.gz").expect("tar.gz handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.inspect);
+        assert!(capabilities.extract);
+        assert!(capabilities.create);
+        assert_eq!(
+            capabilities.extract_threads,
+            ThreadCapability::single_threaded()
+        );
+        assert_eq!(
+            capabilities.create_threads,
+            ThreadCapability::parallel(None)
+        );
+    }
+
+    #[test]
+    fn gz_stream_capabilities_report_parallel_create_threads() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("gz").expect("gz handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.inspect);
+        assert!(capabilities.extract);
+        assert!(capabilities.create);
+        assert_eq!(
+            capabilities.extract_threads,
+            ThreadCapability::single_threaded()
+        );
+        assert_eq!(
+            capabilities.create_threads,
+            ThreadCapability::parallel(None)
+        );
+    }
+
+    #[test]
     fn zst_stream_capabilities_report_parallel_create_threads() {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("zst").expect("zst handler");
@@ -10980,6 +11251,78 @@ mod tests {
     }
 
     #[test]
+    fn tar_gz_runtime_threads_match_capabilities_for_create_and_extract() {
+        let temp_dir = temp_dir_path("tar-gz-thread-parity");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let input_dir = temp_dir.join("input");
+        fs::create_dir_all(&input_dir).expect("input dir");
+        for index in 0..6 {
+            let path = input_dir.join(format!("blob-{index}.bin"));
+            let content = (0..(512 * 1024))
+                .map(|offset| (offset as u8).wrapping_mul(5).wrapping_add(index as u8))
+                .collect::<Vec<_>>();
+            fs::write(path, content).expect("write fixture");
+        }
+        let archive_path = temp_dir.join("payload.tar.gz");
+        let output_dir = temp_dir.join("out");
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("tar.gz").expect("tar.gz handler");
+        let capabilities = handler.capabilities();
+        let create_report = handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![input_dir.clone()],
+                    output: archive_path.clone(),
+                    format: "tar.gz".to_string(),
+                    codec: None,
+                    level: None,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("create tar.gz");
+        let create_execution = create_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .create_threads
+                .supports_execution(&create_execution)
+        );
+        assert_eq!(create_execution.requested_threads, 8);
+
+        let extract_report = handler
+            .extract(
+                &rom_weaver_core::ContainerExtractRequest {
+                    source: archive_path,
+                    out_dir: output_dir.clone(),
+                    selections: Vec::new(),
+                    split_bin: false,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("extract tar.gz");
+        let extract_execution = extract_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .extract_threads
+                .supports_execution(&extract_execution)
+        );
+        assert_eq!(extract_execution.requested_threads, 8);
+        assert_eq!(extract_execution.effective_threads, 1);
+        assert!(!extract_execution.used_parallelism);
+
+        for index in 0..6 {
+            let path = output_dir.join(format!("input/blob-{index}.bin"));
+            let content = fs::read(path).expect("read extracted file");
+            let expected = (0..(512 * 1024))
+                .map(|offset| (offset as u8).wrapping_mul(5).wrapping_add(index as u8))
+                .collect::<Vec<_>>();
+            assert_eq!(content, expected);
+        }
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn tar_xz_runtime_threads_match_capabilities_for_create_and_extract() {
         let temp_dir = temp_dir_path("tar-xz-thread-parity");
         fs::create_dir_all(&temp_dir).expect("temp dir");
@@ -11052,6 +11395,67 @@ mod tests {
             assert_eq!(content, expected);
         }
 
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn gz_stream_create_runtime_threads_match_capability() {
+        let temp_dir = temp_dir_path("gz-stream-thread-parity");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let source_path = temp_dir.join("source.bin");
+        let archive_path = temp_dir.join("source.bin.gz");
+        let output_dir = temp_dir.join("out");
+        let payload = (0..(1024 * 1024))
+            .map(|index| (index as u8).wrapping_mul(31))
+            .collect::<Vec<_>>();
+        fs::write(&source_path, &payload).expect("write fixture");
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("gz").expect("gz handler");
+        let capabilities = handler.capabilities();
+        let create_report = handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![source_path.clone()],
+                    output: archive_path.clone(),
+                    format: "gz".to_string(),
+                    codec: None,
+                    level: None,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("create gz");
+        let create_execution = create_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .create_threads
+                .supports_execution(&create_execution)
+        );
+        assert_eq!(create_execution.requested_threads, 8);
+
+        let extract_report = handler
+            .extract(
+                &rom_weaver_core::ContainerExtractRequest {
+                    source: archive_path,
+                    out_dir: output_dir.clone(),
+                    selections: Vec::new(),
+                    split_bin: false,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("extract gz");
+        let extract_execution = extract_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .extract_threads
+                .supports_execution(&extract_execution)
+        );
+        assert_eq!(extract_execution.requested_threads, 8);
+        assert_eq!(extract_execution.effective_threads, 1);
+        assert!(!extract_execution.used_parallelism);
+
+        let extracted = fs::read(output_dir.join("source.bin")).expect("read extracted payload");
+        assert_eq!(extracted, payload);
         let _ = fs::remove_dir_all(temp_dir);
     }
 
