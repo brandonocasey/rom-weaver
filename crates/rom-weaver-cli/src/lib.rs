@@ -23,7 +23,10 @@ use rom_weaver_core::{
     PatchCreateRequest, ProbeConfidence, ProgressEvent, ProgressSink, Result, RomWeaverError,
     ThreadBudget, ThreadCapability, ThreadExecution,
 };
-use rom_weaver_patches::PatchRegistry;
+use rom_weaver_patches::{
+    PatchRegistry, explicitly_unsupported_patch_reason_for_name,
+    explicitly_unsupported_patch_reason_for_path,
+};
 use serde_json::{Map, Value, json};
 use tracing::trace;
 #[cfg(not(target_arch = "wasm32"))]
@@ -2261,6 +2264,26 @@ impl CliApp {
                 );
             }
             return self.finish("inspect", Self::attach_patch_inspect_details(report));
+        }
+
+        if let Some(reason) = explicitly_unsupported_patch_reason_for_path(&source) {
+            let mut report = OperationReport::failed(
+                OperationFamily::Patch,
+                Some("PDS".to_string()),
+                "probe",
+                format!(
+                    "patch format for `{}` is explicitly not supported: {reason}",
+                    source.display()
+                ),
+                Some(context.plan_threads(ThreadCapability::single_threaded())),
+            );
+            if !self.emit_progress_events {
+                report = Self::append_recommended_compress_label(
+                    report,
+                    inspect_recommendation.as_ref(),
+                );
+            }
+            return self.finish("inspect", report);
         }
 
         if let Ok(Some(header_match)) = Self::detect_known_rom_header(&source) {
@@ -4533,16 +4556,33 @@ impl CliApp {
                             patch_path.display()
                         )
                     };
+                    let unsupported_reason =
+                        explicitly_unsupported_patch_reason_for_path(resolved_patch_path);
+                    let (format_name, label) = match unsupported_reason {
+                        Some(reason) => (
+                            Some("PDS".to_string()),
+                            format!(
+                                "patch {}/{}: {} is explicitly not supported: {reason}",
+                                index + 1,
+                                patch_count,
+                                patch_label
+                            ),
+                        ),
+                        None => (
+                            None,
+                            format!(
+                                "patch {}/{}: no registered patch handler matched {}",
+                                index + 1,
+                                patch_count,
+                                patch_label
+                            ),
+                        ),
+                    };
                     return OperationReport::failed(
                         OperationFamily::Patch,
-                        None,
+                        format_name,
                         "probe",
-                        format!(
-                            "patch {}/{}: no registered patch handler matched {}",
-                            index + 1,
-                            patch_count,
-                            patch_label
-                        ),
+                        label,
                         probe_threads.clone(),
                     );
                 };
@@ -4866,14 +4906,22 @@ impl CliApp {
             return self.finish("patch-create", report);
         }
 
-        let Some(handler) = self.patches.find_by_name(&args.format) else {
+        let requested_format = args.format;
+        let Some(handler) = self.patches.find_by_name(&requested_format) else {
+            let label = explicitly_unsupported_patch_reason_for_name(&requested_format)
+                .map(|reason| {
+                    format!(
+                        "requested patch format `{requested_format}` is explicitly not supported: {reason}"
+                    )
+                })
+                .unwrap_or_else(|| "requested patch format is not registered".to_string());
             return self.finish(
                 "patch-create",
                 OperationReport::failed(
                     OperationFamily::Patch,
-                    Some(args.format),
+                    Some(requested_format),
                     "probe",
-                    "requested patch format is not registered",
+                    label,
                     probe_threads,
                 ),
             );

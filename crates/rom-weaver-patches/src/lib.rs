@@ -7,6 +7,7 @@ mod bsp_native_vm;
 mod dldi;
 mod dps;
 mod gdiff;
+mod hdiffpatch;
 mod ips;
 mod ninja1;
 mod pat;
@@ -36,6 +37,7 @@ use bsp::BspPatchHandler;
 use dldi::DldiPatchHandler;
 use dps::DpsPatchHandler;
 use gdiff::GdiffPatchHandler;
+use hdiffpatch::HdiffPatchHandler;
 use ips::IpsPatchHandler;
 use ninja1::Ninja1PatchHandler;
 use pat::{PatPatchHandler, has_pat_record_signature};
@@ -95,6 +97,12 @@ const GDIFF: FormatDescriptor = FormatDescriptor {
     name: "GDIFF",
     aliases: &["gdiff"],
     extensions: &[".gdiff", ".gdf"],
+};
+const HDIFFPATCH: FormatDescriptor = FormatDescriptor {
+    family: OperationFamily::Patch,
+    name: "HDiffPatch/HPatchZ",
+    aliases: &["hdiffpatch", "hpatchz", "hdiff", "hpatch"],
+    extensions: &[".hdiff", ".hpatchz"],
 };
 const APS: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
@@ -188,6 +196,9 @@ const DLDI_SIGNATURE: [u8; 12] = [
     0xED, 0xA5, 0x8D, 0xBF, b' ', b'C', b'h', b'i', b's', b'h', b'm', 0x00,
 ];
 const BSDIFF_SIGNATURE: &[u8] = b"BSDIFF40";
+const HDIFF_SIGNATURE: &[u8] = b"HDIFF";
+const PDS_UNSUPPORTED_REASON: &str =
+    "PDS is explicitly unsupported because no surviving ecosystem patches are known";
 
 pub(crate) fn require_single_patch_file<'a>(
     patches: &'a [PathBuf],
@@ -201,43 +212,19 @@ pub(crate) fn require_single_patch_file<'a>(
     Ok(&patches[0])
 }
 
-pub(crate) struct CreatedPatchFile {
-    pub(crate) bytes: Vec<u8>,
-    pub(crate) record_count: usize,
+pub fn explicitly_unsupported_patch_reason_for_name(name: &str) -> Option<&'static str> {
+    if name.eq_ignore_ascii_case("pds") {
+        return Some(PDS_UNSUPPORTED_REASON);
+    }
+    None
 }
 
-impl CreatedPatchFile {
-    pub(crate) fn new(bytes: Vec<u8>, record_count: usize) -> Self {
-        Self {
-            bytes,
-            record_count,
-        }
+pub fn explicitly_unsupported_patch_reason_for_path(path: &Path) -> Option<&'static str> {
+    let file_name = path.file_name().and_then(|value| value.to_str())?;
+    if file_name.to_ascii_lowercase().ends_with(".pds") {
+        return Some(PDS_UNSUPPORTED_REASON);
     }
-}
-
-pub(crate) fn finalize_single_threaded_patch_create(
-    descriptor: &'static FormatDescriptor,
-    request: &rom_weaver_core::PatchCreateRequest,
-    context: &rom_weaver_core::OperationContext,
-    created_patch: CreatedPatchFile,
-) -> Result<rom_weaver_core::OperationReport> {
-    let execution = context.plan_threads(rom_weaver_core::ThreadCapability::single_threaded());
-    if let Some(parent) = request.output.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&request.output, created_patch.bytes)?;
-
-    Ok(rom_weaver_core::OperationReport::succeeded(
-        OperationFamily::Patch,
-        Some(descriptor.name.to_string()),
-        "create",
-        format!(
-            "created {} patch with {} record(s)",
-            descriptor.name, created_patch.record_count
-        ),
-        Some(100.0),
-        Some(execution),
-    ))
+    None
 }
 
 pub struct PatchRegistry {
@@ -262,6 +249,7 @@ impl PatchRegistry {
         handlers.push(Arc::new(VcdiffPatchHandler::new(&VCDIFF)));
         handlers.push(Arc::new(VcdiffPatchHandler::new(&XDELTA)));
         handlers.push(Arc::new(GdiffPatchHandler::new(&GDIFF)));
+        handlers.push(Arc::new(HdiffPatchHandler::new(&HDIFFPATCH)));
         handlers.push(Arc::new(ApsN64PatchHandler::new(&APS)));
         handlers.push(Arc::new(ApsGbaPatchHandler::new(&APSGBA)));
         handlers.push(Arc::new(Ninja1PatchHandler::new(&NINJA1)));
@@ -370,6 +358,9 @@ impl PatchRegistry {
         }
         if prefix.starts_with(&GDIFF_SIGNATURE) {
             return self.probe_signature_match(path, "GDIFF", "gdiff");
+        }
+        if prefix.starts_with(HDIFF_SIGNATURE) {
+            return self.probe_signature_match(path, "HDIFF", "hdiffpatch");
         }
         if prefix.starts_with(APS_N64_SIGNATURE) {
             return self.probe_signature_match(path, "APS N64", "aps");
@@ -510,6 +501,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut expected = vec!["IPS", "IPS32", "SOLID", "BPS", "UPS"];
         expected.extend(["VCDIFF", "xdelta", "GDIFF"]);
+        expected.extend(["HDiffPatch/HPatchZ"]);
         expected.extend([
             "APS",
             "APSGBA",
@@ -608,6 +600,18 @@ mod tests {
         assert!(capabilities.parse);
         assert!(capabilities.apply);
         assert!(capabilities.create);
+    }
+
+    #[test]
+    fn hdiffpatch_is_wired_to_supported_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry
+            .find_by_name("hdiffpatch")
+            .expect("hdiffpatch handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.parse);
+        assert!(capabilities.apply);
+        assert!(!capabilities.create);
     }
 
     #[test]
@@ -769,6 +773,24 @@ mod tests {
     }
 
     #[test]
+    fn probe_routes_hdiff_extension_to_hdiff_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry
+            .probe(Path::new("update.hdiff"))
+            .expect("hdiff probe");
+        assert_eq!(handler.descriptor().name, "HDiffPatch/HPatchZ");
+    }
+
+    #[test]
+    fn probe_routes_hpatchz_extension_to_hdiff_handler() {
+        let registry = PatchRegistry::new();
+        let handler = registry
+            .probe(Path::new("update.hpatchz"))
+            .expect("hpatchz probe");
+        assert_eq!(handler.descriptor().name, "HDiffPatch/HPatchZ");
+    }
+
+    #[test]
     fn probe_routes_pat_extension_to_pat_handler() {
         let registry = PatchRegistry::new();
         let handler = registry.probe(Path::new("update.pat")).expect("pat probe");
@@ -838,11 +860,46 @@ mod tests {
     }
 
     #[test]
+    fn probe_does_not_route_pds_extensions() {
+        let registry = PatchRegistry::new();
+        for path in ["update.pds", "update.PDS"] {
+            assert!(registry.probe(Path::new(path)).is_none());
+        }
+    }
+
+    #[test]
     fn find_by_name_does_not_route_bspatch_aliases() {
         let registry = PatchRegistry::new();
         for alias in ["bspatch", "bspatch40"] {
             assert!(registry.find_by_name(alias).is_none());
         }
+    }
+
+    #[test]
+    fn find_by_name_does_not_route_pds_name() {
+        let registry = PatchRegistry::new();
+        assert!(registry.find_by_name("pds").is_none());
+        assert!(registry.find_by_name("PDS").is_none());
+    }
+
+    #[test]
+    fn unsupported_reason_reports_pds_name_and_path() {
+        assert_eq!(
+            super::explicitly_unsupported_patch_reason_for_name("pds"),
+            Some(super::PDS_UNSUPPORTED_REASON)
+        );
+        assert_eq!(
+            super::explicitly_unsupported_patch_reason_for_name("PDS"),
+            Some(super::PDS_UNSUPPORTED_REASON)
+        );
+        assert_eq!(
+            super::explicitly_unsupported_patch_reason_for_path(Path::new("update.pds")),
+            Some(super::PDS_UNSUPPORTED_REASON)
+        );
+        assert_eq!(
+            super::explicitly_unsupported_patch_reason_for_path(Path::new("update.PDS")),
+            Some(super::PDS_UNSUPPORTED_REASON)
+        );
     }
 
     #[test]
@@ -864,6 +921,15 @@ mod tests {
         let registry = PatchRegistry::new();
         let handler = registry.find_by_name("gdiff").expect("gdiff name");
         assert_eq!(handler.descriptor().name, "GDIFF");
+    }
+
+    #[test]
+    fn find_by_name_routes_hdiff_aliases_to_hdiff_handler() {
+        let registry = PatchRegistry::new();
+        for alias in ["hdiffpatch", "hpatchz", "hdiff", "hpatch"] {
+            let handler = registry.find_by_name(alias).expect("hdiff alias");
+            assert_eq!(handler.descriptor().name, "HDiffPatch/HPatchZ");
+        }
     }
 
     #[test]

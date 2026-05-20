@@ -6,7 +6,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+bzip2.workspace = true
 crc32fast.workspace = true
+flate2.workspace = true
+lzma-rust2.workspace = true
 md-5.workspace = true
 memmap2.workspace = true
 qbsdiff.workspace = true
@@ -16,6 +19,7 @@ rayon.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 tracing.workspace = true
+zstd.workspace = true
 
 [build-dependencies]
 cc.workspace = true

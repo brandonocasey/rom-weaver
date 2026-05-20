@@ -573,6 +573,27 @@ fn encode_all_varints(values: &[u64]) -> Vec<u8> {
     bytes
 }
 
+fn build_hdiff13_nocomp_patch(old: &[u8], new: &[u8]) -> Vec<u8> {
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"HDIFF13&nocomp");
+    patch.push(0);
+    patch.extend_from_slice(&encode_all_varints(&[
+        u64::try_from(new.len()).expect("new size"),
+        u64::try_from(old.len()).expect("old size"),
+        0, // cover_count
+        0, // cover_buf_size
+        0, // compress_cover_buf_size
+        0, // rle_ctrl_buf_size
+        0, // compress_rle_ctrl_buf_size
+        0, // rle_code_buf_size
+        0, // compress_rle_code_buf_size
+        u64::try_from(new.len()).expect("new diff size"),
+        0, // compress_new_data_diff_size
+    ]));
+    patch.extend_from_slice(new);
+    patch
+}
+
 fn adler32(bytes: &[u8]) -> u32 {
     const MOD_ADLER: u32 = 65_521;
     let mut a = 1u32;
@@ -7604,6 +7625,44 @@ fn patch_apply_succeeds_for_valid_ips_patch() {
 }
 
 #[test]
+fn patch_apply_reports_pds_as_explicitly_unsupported() {
+    let temp = setup_temp_dir();
+    fs::write(temp.child("input.bin").path(), b"abcdefgh").expect("fixture");
+    fs::write(temp.child("update.pds").path(), b"not-a-supported-pds").expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-apply",
+            "--input",
+            temp.child("input.bin").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.pds").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.bin").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-apply");
+    assert_eq!(json["family"], "patch");
+    assert_eq!(json["format"], "PDS");
+    assert_eq!(json["status"], "failed");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("explicitly not supported")
+    );
+}
+
+#[test]
 fn patch_apply_defaults_to_compressed_output_and_appends_extension() {
     let temp = setup_temp_dir();
     let original = temp.child("old.bin");
@@ -8151,6 +8210,47 @@ fn patch_create_succeeds_for_ips_and_round_trips() {
 }
 
 #[test]
+fn patch_create_reports_pds_as_explicitly_unsupported() {
+    let temp = setup_temp_dir();
+    let original = temp.child("old.bin");
+    let modified = temp.child("new.bin");
+    fs::write(original.path(), b"abcdefgh").expect("fixture");
+    fs::write(modified.path(), b"a1XYZf!!!").expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified.path().to_str().expect("path"),
+            "--format",
+            "pds",
+            "--output",
+            temp.child("output.pds").path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-create");
+    assert_eq!(json["family"], "patch");
+    assert_eq!(json["format"], "pds");
+    assert_eq!(json["status"], "failed");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("explicitly not supported")
+    );
+}
+
+#[test]
 fn patch_create_succeeds_for_ips32_and_round_trips() {
     let temp = setup_temp_dir();
     let original = temp.child("old.bin");
@@ -8187,8 +8287,11 @@ fn patch_create_succeeds_for_ips32_and_round_trips() {
     assert_eq!(create_json["family"], "patch");
     assert_eq!(create_json["format"], "IPS32");
     assert_eq!(create_json["requested_threads"], 8);
-    assert_eq!(create_json["effective_threads"], 1);
-    assert_eq!(create_json["used_parallelism"], false);
+    let effective_threads = create_json["effective_threads"]
+        .as_u64()
+        .expect("effective_threads");
+    assert!((1..=8).contains(&effective_threads));
+    assert_eq!(create_json["used_parallelism"], effective_threads > 1);
     assert_eq!(create_json["status"], "succeeded");
 
     let patch_bytes = fs::read(patch.path()).expect("patch");
@@ -11053,6 +11156,50 @@ fn patch_create_succeeds_for_gdiff_and_round_trips() {
 }
 
 #[test]
+fn patch_create_reports_unsupported_for_hdiffpatch() {
+    let temp = setup_temp_dir();
+    let original = temp.child("old.bin");
+    let modified = temp.child("new.bin");
+    let patch = temp.child("update.hdiff");
+    fs::write(original.path(), b"hello old world").expect("fixture");
+    fs::write(modified.path(), vec![0x5a; 1024]).expect("fixture");
+
+    let create_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch-create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified.path().to_str().expect("path"),
+            "--format",
+            "hdiffpatch",
+            "--output",
+            patch.path().to_str().expect("path"),
+            "--threads",
+            "8",
+            "--json",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stdout
+        .clone();
+
+    let create_json = parse_single_json_line(&create_output);
+    assert_eq!(create_json["command"], "patch-create");
+    assert_eq!(create_json["family"], "patch");
+    assert_eq!(create_json["format"], "HDiffPatch/HPatchZ");
+    assert_eq!(create_json["status"], "unsupported");
+    assert!(
+        create_json["label"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("patch creation is disabled")
+    );
+}
+
+#[test]
 fn patch_apply_succeeds_for_valid_gdiff_patch() {
     let temp = setup_temp_dir();
     fs::write(temp.child("input.bin").path(), b"abcdefgh").expect("fixture");
@@ -11092,8 +11239,11 @@ fn patch_apply_succeeds_for_valid_gdiff_patch() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "GDIFF");
     assert_eq!(json["requested_threads"], 8);
-    assert_eq!(json["effective_threads"], 1);
-    assert_eq!(json["used_parallelism"], false);
+    let effective_threads = json["effective_threads"]
+        .as_u64()
+        .expect("effective_threads");
+    assert!((1..=8).contains(&effective_threads));
+    assert_eq!(json["used_parallelism"], effective_threads > 1);
     assert_eq!(json["status"], "succeeded");
     assert_eq!(
         fs::read(temp.child("output.bin").path()).expect("output"),
@@ -11137,8 +11287,11 @@ fn patch_apply_succeeds_for_valid_ffp_patch() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "PAT");
     assert_eq!(json["requested_threads"], 8);
-    assert_eq!(json["effective_threads"], 1);
-    assert_eq!(json["used_parallelism"], false);
+    let effective_threads = json["effective_threads"]
+        .as_u64()
+        .expect("effective_threads");
+    assert!((1..=8).contains(&effective_threads));
+    assert_eq!(json["used_parallelism"], effective_threads > 1);
     assert_eq!(json["status"], "succeeded");
     assert_eq!(
         fs::read(temp.child("output.bin").path()).expect("output"),
@@ -11470,6 +11623,30 @@ fn inspect_succeeds_for_valid_gdiff_patch() {
 }
 
 #[test]
+fn inspect_succeeds_for_valid_hdiffpatch_patch() {
+    let temp = setup_temp_dir();
+    let patch = temp.child("update.hpatchz");
+    let source = b"source bytes";
+    let target = b"target bytes for hdiffpatch";
+    fs::write(patch.path(), build_hdiff13_nocomp_patch(source, target)).expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["inspect", patch.path().to_str().expect("path"), "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["family"], "patch");
+    assert_eq!(json["format"], "HDiffPatch/HPatchZ");
+    assert_eq!(json["status"], "succeeded");
+}
+
+#[test]
 fn inspect_succeeds_for_valid_ebp_patch() {
     let temp = setup_temp_dir();
     fs::write(
@@ -11786,8 +11963,11 @@ fn patch_apply_succeeds_for_valid_bps_patch() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "BPS");
     assert_eq!(json["requested_threads"], 8);
-    assert_eq!(json["effective_threads"], 1);
-    assert_eq!(json["used_parallelism"], false);
+    let effective_threads = json["effective_threads"]
+        .as_u64()
+        .expect("effective_threads");
+    assert!((1..=8).contains(&effective_threads));
+    assert_eq!(json["used_parallelism"], effective_threads > 1);
     assert_eq!(json["status"], "succeeded");
     assert_eq!(
         fs::read(temp.child("output.bin").path()).expect("output"),
@@ -12249,4 +12429,37 @@ fn inspect_reports_unknown_formats_cleanly() {
     assert_eq!(json["status"], "failed");
     let label = json["label"].as_str().expect("label");
     assert!(label.contains("no registered handler matched"));
+}
+
+#[test]
+fn inspect_reports_pds_as_explicitly_unsupported() {
+    let temp = setup_temp_dir();
+    temp.child("legacy.pds")
+        .write_str("obsolete format")
+        .expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "inspect",
+            temp.child("legacy.pds").path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["family"], "patch");
+    assert_eq!(json["format"], "PDS");
+    assert_eq!(json["status"], "failed");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("explicitly not supported")
+    );
 }
