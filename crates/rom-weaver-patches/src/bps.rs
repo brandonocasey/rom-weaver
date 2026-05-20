@@ -6,7 +6,7 @@ use std::{
 
 use crc32fast::Hasher;
 use rayon::prelude::*;
-use rom_weaver_checksum::checksum_file_values;
+use rom_weaver_checksum::{checksum_file_values, crc32_bytes};
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
@@ -1302,10 +1302,6 @@ fn decode_signed_offset(raw: u64) -> i128 {
 
 fn read_u32_le(bytes: &[u8]) -> u32 {
     u32::from_le_bytes(bytes.try_into().expect("u32 slice"))
-}
-
-fn crc32_bytes(bytes: &[u8]) -> u32 {
-    crc32fast::hash(bytes)
 }
 
 fn crc32_path_cached(path: &Path, context: &OperationContext) -> Result<u32> {

@@ -7,6 +7,9 @@ use std::{
 
 use md5::{Digest, Md5};
 use rayon::prelude::*;
+#[cfg(test)]
+use rom_weaver_checksum::md5_bytes;
+use rom_weaver_checksum::md5_file;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
@@ -1165,27 +1168,6 @@ fn usize_from_u64(value: u64, label: &str) -> Result<usize> {
 fn checked_add_usize(lhs: usize, rhs: usize, label: &str) -> Result<usize> {
     lhs.checked_add(rhs)
         .ok_or_else(|| RomWeaverError::Validation(format!("{label} overflowed")))
-}
-
-#[cfg(test)]
-fn md5_bytes(bytes: &[u8]) -> [u8; 16] {
-    let mut digest = [0u8; 16];
-    digest.copy_from_slice(Md5::digest(bytes).as_slice());
-    digest
-}
-
-fn md5_file(path: &Path) -> Result<[u8; 16]> {
-    let mut file = BufReader::new(File::open(path)?);
-    let mut hasher = Md5::new();
-    let mut buffer = vec![0u8; RUP_IO_BUFFER_SIZE];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hasher.finalize().into())
 }
 
 fn format_md5_hex(value: [u8; 16]) -> String {

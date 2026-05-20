@@ -51,6 +51,8 @@ const BLAKE3_PARALLEL_MAX_THREADS: usize = 8;
 const ADLER32_MODULO: u64 = 65_521;
 const CRC16_GF2_DIM: usize = 16;
 const CRC16_ARC_REFLECTED_POLY: u16 = 0xA001;
+const CRC16_CCITT_POLYNOMIAL: u16 = 0x1021;
+const MD5_IO_BUFFER_SIZE: usize = 64 * 1024;
 
 pub struct NativeChecksumEngine;
 
@@ -172,6 +174,43 @@ pub fn seed_checksum_file_cache(
     cached.extend(algorithms.clone());
     cache.store(&fingerprint, &range, &cached)?;
     Ok(())
+}
+
+pub fn crc32_bytes(bytes: &[u8]) -> u32 {
+    crc32fast::hash(bytes)
+}
+
+pub fn crc16_ccitt_bytes(bytes: &[u8]) -> u16 {
+    let mut crc = 0xffffu16;
+    for &value in bytes {
+        crc ^= u16::from(value) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ CRC16_CCITT_POLYNOMIAL
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+pub fn md5_bytes(bytes: &[u8]) -> [u8; 16] {
+    Md5::digest(bytes).into()
+}
+
+pub fn md5_file(path: &Path) -> Result<[u8; 16]> {
+    let mut file = File::open(path)?;
+    let mut hasher = Md5::new();
+    let mut buffer = vec![0u8; MD5_IO_BUFFER_SIZE];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1383,7 +1422,7 @@ fn combine_crc16_partials(partials: Vec<Result<(u16, usize)>>) -> Result<u16> {
     Ok(combined)
 }
 
-fn adler32_checksum(bytes: &[u8]) -> u32 {
+pub fn adler32_checksum(bytes: &[u8]) -> u32 {
     let mut state = Adler32::new();
     state.write_slice(bytes);
     state.checksum()

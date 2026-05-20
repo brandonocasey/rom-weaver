@@ -5,6 +5,7 @@ use std::{
 };
 
 use rayon::prelude::*;
+use rom_weaver_checksum::crc16_ccitt_bytes as crc16_bytes;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
@@ -15,7 +16,6 @@ const APS_GBA_MAGIC: &[u8; 4] = b"APS1";
 const APS_GBA_HEADER_SIZE: usize = 12;
 const APS_GBA_BLOCK_SIZE: usize = 0x01_0000;
 const APS_GBA_RECORD_SIZE: usize = 4 + 2 + 2 + APS_GBA_BLOCK_SIZE;
-const CRC16_POLYNOMIAL: u16 = 0x1021;
 const APS_GBA_IO_BUFFER_SIZE: usize = 64 * 1024;
 
 pub struct ApsGbaPatchHandler {
@@ -693,21 +693,6 @@ fn crc16_range(bytes: &[u8], offset: usize, len: usize) -> u16 {
     }
     let end = offset.saturating_add(len).min(bytes.len());
     crc16_bytes(&bytes[offset..end])
-}
-
-fn crc16_bytes(bytes: &[u8]) -> u16 {
-    let mut crc = 0xffffu16;
-    for &value in bytes {
-        crc ^= u16::from(value) << 8;
-        for _ in 0..8 {
-            crc = if crc & 0x8000 != 0 {
-                (crc << 1) ^ CRC16_POLYNOMIAL
-            } else {
-                crc << 1
-            };
-        }
-    }
-    crc
 }
 
 fn read_u16_le(bytes: &[u8], offset: usize) -> Result<u16> {

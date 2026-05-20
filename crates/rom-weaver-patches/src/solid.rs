@@ -4,8 +4,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use md5::{Digest, Md5};
 use rayon::prelude::*;
+use rom_weaver_checksum::md5_bytes;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
@@ -1217,12 +1217,6 @@ fn write_u64_le(output: &mut Vec<u8>, value: u64, width: usize, label: &'static 
         output.push(((value >> (index * 8)) & 0xFF) as u8);
     }
     Ok(())
-}
-
-fn md5_bytes(bytes: &[u8]) -> [u8; SOLID_MD5_LEN] {
-    let mut digest = [0u8; SOLID_MD5_LEN];
-    digest.copy_from_slice(Md5::digest(bytes).as_slice());
-    digest
 }
 
 fn format_md5_hex(value: [u8; SOLID_MD5_LEN]) -> String {

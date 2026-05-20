@@ -7,7 +7,7 @@ use std::{
 
 use crc32fast::Hasher;
 use rayon::prelude::*;
-use rom_weaver_checksum::checksum_file_values;
+use rom_weaver_checksum::{checksum_file_values, crc32_bytes};
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
@@ -834,12 +834,6 @@ fn push_varint(bytes: &mut Vec<u8>, mut data: u64) {
         bytes.push(value);
         data -= 1;
     }
-}
-
-fn crc32_bytes(bytes: &[u8]) -> u32 {
-    let mut hasher = Hasher::new();
-    hasher.update(bytes);
-    hasher.finalize()
 }
 
 fn crc32_path_cached(path: &Path, context: &OperationContext) -> Result<u32> {

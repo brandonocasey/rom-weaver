@@ -16,6 +16,7 @@ use oxidelta::{
     },
 };
 use rayon::prelude::*;
+use rom_weaver_checksum::adler32_checksum as adler32;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
@@ -3283,17 +3284,6 @@ fn read_varint<R: Read>(reader: &mut R) -> Result<(u64, usize)> {
 fn checked_add(lhs: u64, rhs: u64, label: &str) -> Result<u64> {
     lhs.checked_add(rhs)
         .ok_or_else(|| RomWeaverError::Validation(format!("{label} overflowed u64")))
-}
-
-fn adler32(bytes: &[u8]) -> u32 {
-    const MOD_ADLER: u32 = 65_521;
-    let mut a = 1u32;
-    let mut b = 0u32;
-    for &byte in bytes {
-        a = (a + u32::from(byte)) % MOD_ADLER;
-        b = (b + a) % MOD_ADLER;
-    }
-    (b << 16) | a
 }
 
 #[cfg(test)]
