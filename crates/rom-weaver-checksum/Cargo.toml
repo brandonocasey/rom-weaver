@@ -12,7 +12,6 @@ crc16.workspace = true
 crc32c.workspace = true
 crc32fast.workspace = true
 md-5.workspace = true
-memmap2.workspace = true
 rayon = { workspace = true }
 rom-weaver-core = { path = "../rom-weaver-core" }
 serde = { workspace = true }
