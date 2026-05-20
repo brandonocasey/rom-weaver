@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
+#[cfg(target_family = "wasm")]
+use std::io::Cursor;
 use std::{
     collections::BTreeSet,
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     num::NonZeroU64,
     path::{Component, Path, PathBuf},
     sync::{
@@ -11,7 +13,9 @@ use std::{
     },
 };
 
-use bzip2::{Compression as Bzip2Compression, read::BzDecoder as Bzip2Decoder, write::BzEncoder};
+use bzip2::{
+    Compression as Bzip2Compression, read::MultiBzDecoder as Bzip2Decoder, write::BzEncoder,
+};
 use ciso::{read::CSOReader as CsoReader, split::SplitFileReader};
 use flate2::{
     Compression as GzipCompression, read::DeflateDecoder, read::MultiGzDecoder, write::GzEncoder,
@@ -1860,18 +1864,16 @@ impl TarContainerHandler {
     fn extract_thread_capability(&self) -> ThreadCapability {
         match self.compression {
             TarCompression::None | TarCompression::Xz => ThreadCapability::parallel(None),
-            TarCompression::Gzip | TarCompression::Bzip2 => {
-                ThreadCapability::single_threaded()
-            }
+            TarCompression::Gzip | TarCompression::Bzip2 => ThreadCapability::single_threaded(),
         }
     }
 
     fn create_thread_capability(&self) -> ThreadCapability {
         match self.compression {
-            TarCompression::None | TarCompression::Gzip | TarCompression::Xz => {
-                ThreadCapability::parallel(None)
-            }
-            TarCompression::Bzip2 => ThreadCapability::single_threaded(),
+            TarCompression::None
+            | TarCompression::Gzip
+            | TarCompression::Bzip2
+            | TarCompression::Xz => ThreadCapability::parallel(None),
         }
     }
 
@@ -2016,10 +2018,7 @@ impl ContainerHandler for TarContainerHandler {
                 .collect::<Vec<_>>();
 
             let (execution, maybe_pool) = if file_tasks.is_empty() {
-                (
-                    context.plan_threads(self.extract_thread_capability()),
-                    None,
-                )
+                (context.plan_threads(self.extract_thread_capability()), None)
             } else {
                 let (execution, pool) =
                     context.build_pool(ThreadCapability::parallel(Some(file_tasks.len())))?;
@@ -2055,7 +2054,9 @@ impl ContainerHandler for TarContainerHandler {
                         total_selected_entries,
                         format!(
                             "extracting `{}` ({}/{})",
-                            self.descriptor.name, selected_entries_completed, total_selected_entries
+                            self.descriptor.name,
+                            selected_entries_completed,
+                            total_selected_entries
                         ),
                         Some(&execution),
                     );
@@ -2092,9 +2093,7 @@ impl ContainerHandler for TarContainerHandler {
                                     "extract",
                                     format!(
                                         "extracting `{}` ({}/{})",
-                                        progress_format,
-                                        completed_bytes,
-                                        total_selected_file_bytes
+                                        progress_format, completed_bytes, total_selected_file_bytes
                                     ),
                                     percent,
                                     Some(&progress_execution),
@@ -2508,13 +2507,54 @@ impl ContainerHandler for TarContainerHandler {
                 }
             }
             TarCompression::Bzip2 => {
-                let output = BufWriter::new(File::create(&request.output)?);
-                let encoder = BzEncoder::new(output, Bzip2Compression::new(level));
-                let mut builder = TarBuilder::new(encoder);
-                let bytes = self.append_entries(&mut builder, &entries, context, &execution)?;
-                let mut output = builder.into_inner()?.finish()?;
-                output.flush()?;
-                bytes
+                if execution.used_parallelism {
+                    let staged_tar = context
+                        .temp_paths()
+                        .next_path("tar-bz2-create-stage", Some("tar"));
+                    let staged_result = (|| -> Result<(u64, Option<ThreadExecution>)> {
+                        if let Some(parent) = staged_tar.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        let staged_output = BufWriter::new(File::create(&staged_tar)?);
+                        let mut builder = TarBuilder::new(staged_output);
+                        let bytes =
+                            self.append_entries(&mut builder, &entries, context, &execution)?;
+                        builder.finish()?;
+
+                        let backend =
+                            CodecRegistry::new().find_by_name("bzip2").ok_or_else(|| {
+                                RomWeaverError::Unsupported(
+                                    "codec backend `bzip2` is not registered for tar.bz2".into(),
+                                )
+                            })?;
+                        let encode_report = backend.encode(
+                            &CodecOperationRequest {
+                                input: staged_tar.clone(),
+                                output: request.output.clone(),
+                                level: Some(level as i32),
+                            },
+                            context,
+                        )?;
+                        if encode_report.status != OperationStatus::Succeeded {
+                            return Err(RomWeaverError::Unsupported(encode_report.label));
+                        }
+                        Ok((bytes, encode_report.thread_execution))
+                    })();
+                    let _ = fs::remove_file(&staged_tar);
+                    let (bytes, encode_execution) = staged_result?;
+                    if let Some(encode_execution) = encode_execution {
+                        execution = encode_execution;
+                    }
+                    bytes
+                } else {
+                    let output = BufWriter::new(File::create(&request.output)?);
+                    let encoder = BzEncoder::new(output, Bzip2Compression::new(level));
+                    let mut builder = TarBuilder::new(encoder);
+                    let bytes = self.append_entries(&mut builder, &entries, context, &execution)?;
+                    let mut output = builder.into_inner()?.finish()?;
+                    output.flush()?;
+                    bytes
+                }
             }
             TarCompression::Xz => {
                 let output = BufWriter::new(File::create(&request.output)?);
@@ -2719,10 +2759,10 @@ impl StreamContainerHandler {
 
     fn create_thread_capability(&self) -> ThreadCapability {
         match self.compression {
-            StreamCompression::Gzip | StreamCompression::Xz | StreamCompression::Zstd => {
-                ThreadCapability::parallel(None)
-            }
-            StreamCompression::Bzip2 => ThreadCapability::single_threaded(),
+            StreamCompression::Gzip
+            | StreamCompression::Bzip2
+            | StreamCompression::Xz
+            | StreamCompression::Zstd => ThreadCapability::parallel(None),
         }
     }
 
@@ -3781,10 +3821,8 @@ impl SevenZContainerHandler {
                         level.unwrap_or(Self::DEFAULT_LZMA2_LEVEL),
                     );
                     options.set_dictionary_size(1 << 12);
-                    method =
-                        method.with_options(sevenz_rust::encoder_options::EncoderOptions::Lzma(
-                            options,
-                        ));
+                    method = method
+                        .with_options(sevenz_rust::encoder_options::EncoderOptions::Lzma(options));
                 }
                 #[cfg(not(target_family = "wasm"))]
                 if let Some(level) = level {
@@ -11363,9 +11401,45 @@ mod tests {
     }
 
     #[test]
+    fn tar_bz2_capabilities_report_parallel_create_threads() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("tar.bz2").expect("tar.bz2 handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.inspect);
+        assert!(capabilities.extract);
+        assert!(capabilities.create);
+        assert_eq!(
+            capabilities.extract_threads,
+            ThreadCapability::single_threaded()
+        );
+        assert_eq!(
+            capabilities.create_threads,
+            ThreadCapability::parallel(None)
+        );
+    }
+
+    #[test]
     fn gz_stream_capabilities_report_parallel_create_threads() {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("gz").expect("gz handler");
+        let capabilities = handler.capabilities();
+        assert!(capabilities.inspect);
+        assert!(capabilities.extract);
+        assert!(capabilities.create);
+        assert_eq!(
+            capabilities.extract_threads,
+            ThreadCapability::single_threaded()
+        );
+        assert_eq!(
+            capabilities.create_threads,
+            ThreadCapability::parallel(None)
+        );
+    }
+
+    #[test]
+    fn bz2_stream_capabilities_report_parallel_create_threads() {
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("bz2").expect("bz2 handler");
         let capabilities = handler.capabilities();
         assert!(capabilities.inspect);
         assert!(capabilities.extract);
@@ -11620,6 +11694,80 @@ mod tests {
     }
 
     #[test]
+    fn tar_bz2_runtime_threads_match_capabilities_for_create_and_extract() {
+        let temp_dir = temp_dir_path("tar-bz2-thread-parity");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let input_dir = temp_dir.join("input");
+        fs::create_dir_all(&input_dir).expect("input dir");
+        for index in 0..6 {
+            let path = input_dir.join(format!("blob-{index}.bin"));
+            let content = (0..(512 * 1024))
+                .map(|offset| (offset as u8).wrapping_mul(9).wrapping_add(index as u8))
+                .collect::<Vec<_>>();
+            fs::write(path, content).expect("write fixture");
+        }
+        let archive_path = temp_dir.join("payload.tar.bz2");
+        let output_dir = temp_dir.join("out");
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("tar.bz2").expect("tar.bz2 handler");
+        let capabilities = handler.capabilities();
+        let create_report = handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![input_dir.clone()],
+                    output: archive_path.clone(),
+                    format: "tar.bz2".to_string(),
+                    codec: None,
+                    level: None,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("create tar.bz2");
+        let create_execution = create_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .create_threads
+                .supports_execution(&create_execution)
+        );
+        assert_eq!(create_execution.requested_threads, 8);
+        assert_eq!(create_execution.effective_threads, 8);
+        assert!(create_execution.used_parallelism);
+
+        let extract_report = handler
+            .extract(
+                &rom_weaver_core::ContainerExtractRequest {
+                    source: archive_path,
+                    out_dir: output_dir.clone(),
+                    selections: Vec::new(),
+                    split_bin: false,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("extract tar.bz2");
+        let extract_execution = extract_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .extract_threads
+                .supports_execution(&extract_execution)
+        );
+        assert_eq!(extract_execution.requested_threads, 8);
+        assert_eq!(extract_execution.effective_threads, 1);
+        assert!(!extract_execution.used_parallelism);
+
+        for index in 0..6 {
+            let path = output_dir.join(format!("input/blob-{index}.bin"));
+            let content = fs::read(path).expect("read extracted file");
+            let expected = (0..(512 * 1024))
+                .map(|offset| (offset as u8).wrapping_mul(9).wrapping_add(index as u8))
+                .collect::<Vec<_>>();
+            assert_eq!(content, expected);
+        }
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn tar_runtime_threads_match_capabilities_for_create_and_extract() {
         let temp_dir = temp_dir_path("tar-thread-parity");
         fs::create_dir_all(&temp_dir).expect("temp dir");
@@ -11817,6 +11965,69 @@ mod tests {
                 &test_context(&temp_dir, 8),
             )
             .expect("extract gz");
+        let extract_execution = extract_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .extract_threads
+                .supports_execution(&extract_execution)
+        );
+        assert_eq!(extract_execution.requested_threads, 8);
+        assert_eq!(extract_execution.effective_threads, 1);
+        assert!(!extract_execution.used_parallelism);
+
+        let extracted = fs::read(output_dir.join("source.bin")).expect("read extracted payload");
+        assert_eq!(extracted, payload);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn bz2_stream_create_runtime_threads_match_capability() {
+        let temp_dir = temp_dir_path("bz2-stream-thread-parity");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let source_path = temp_dir.join("source.bin");
+        let archive_path = temp_dir.join("source.bin.bz2");
+        let output_dir = temp_dir.join("out");
+        let payload = (0..(3 * 1024 * 1024))
+            .map(|index| (index as u8).wrapping_mul(37))
+            .collect::<Vec<_>>();
+        fs::write(&source_path, &payload).expect("write fixture");
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("bz2").expect("bz2 handler");
+        let capabilities = handler.capabilities();
+        let create_report = handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![source_path.clone()],
+                    output: archive_path.clone(),
+                    format: "bz2".to_string(),
+                    codec: None,
+                    level: None,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("create bz2");
+        let create_execution = create_report.thread_execution.expect("thread execution");
+        assert!(
+            capabilities
+                .create_threads
+                .supports_execution(&create_execution)
+        );
+        assert_eq!(create_execution.requested_threads, 8);
+        assert_eq!(create_execution.effective_threads, 8);
+        assert!(create_execution.used_parallelism);
+
+        let extract_report = handler
+            .extract(
+                &rom_weaver_core::ContainerExtractRequest {
+                    source: archive_path,
+                    out_dir: output_dir.clone(),
+                    selections: Vec::new(),
+                    split_bin: false,
+                },
+                &test_context(&temp_dir, 8),
+            )
+            .expect("extract bz2");
         let extract_execution = extract_report.thread_execution.expect("thread execution");
         assert!(
             capabilities
