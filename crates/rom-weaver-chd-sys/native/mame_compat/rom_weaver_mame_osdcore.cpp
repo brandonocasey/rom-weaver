@@ -13,7 +13,7 @@ namespace {
 
 thread_local int g_rw_mame_chd_thread_count = 1;
 
-int rw_mame_resolved_thread_count() noexcept
+[[maybe_unused]] int rw_mame_resolved_thread_count() noexcept
 {
     if (g_rw_mame_chd_thread_count < 1)
         return 1;
@@ -128,11 +128,18 @@ osd_work_queue *osd_work_queue_alloc(int flags)
     queue->flags = flags;
 
     int worker_count = 0;
+#if defined(__wasi__)
+    // CHD's std::thread queue can deadlock in current WASI runtimes when
+    // compiled for wasm threads. Force inline execution for all WASI builds so
+    // CHD remains functional in both threaded and non-threaded wasm artifacts.
+    (void)flags;
+#else
     if (flags & WORK_QUEUE_FLAG_MULTI) {
         worker_count = rw_mame_resolved_thread_count();
     } else if (flags & WORK_QUEUE_FLAG_IO) {
         worker_count = 1;
     }
+#endif
 
     for (int index = 0; index < worker_count; ++index) {
         queue->workers.emplace_back(
