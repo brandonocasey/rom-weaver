@@ -176,7 +176,23 @@ export function createBrowserWorkerTransport() {
       if (event?.error instanceof Error) {
         return event.error;
       }
-      return new Error(event?.message || 'worker error');
+      const messageParts = [];
+      if (typeof event?.message === 'string' && event.message.trim().length > 0) {
+        messageParts.push(event.message.trim());
+      }
+      if (typeof event?.filename === 'string' && event.filename.trim().length > 0) {
+        const location = [
+          event.filename,
+          Number.isFinite(event?.lineno) ? String(event.lineno) : null,
+          Number.isFinite(event?.colno) ? String(event.colno) : null,
+        ]
+          .filter(Boolean)
+          .join(':');
+        if (location.length > 0) {
+          messageParts.push(`at ${location}`);
+        }
+      }
+      return new Error(messageParts.join(' ') || 'worker error');
     },
     terminate(worker) {
       worker.terminate();

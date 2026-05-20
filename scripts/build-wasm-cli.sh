@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${1:-${ROOT_DIR}/dist/wasm}"
 JS_API_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-wasi-api.mjs"
 ZENFS_API_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-zenfs-api.mjs"
+THREAD_WORKER_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-wasi-thread-worker.mjs"
 JS_API_README="$ROOT_DIR/scripts/wasm/README.md"
 WASM_NPM_PACKAGE_SYNC="$ROOT_DIR/packages/rom-weaver-wasm/scripts/sync-dist.mjs"
 PTHREAD_COUNT="${PTHREAD_COUNT:-16}"
@@ -88,6 +89,7 @@ export WASI_SYSROOT
 
 NON_THREADED_RUSTFLAGS="-C target-feature=+bulk-memory,+mutable-globals,+sign-ext,+reference-types"
 THREADED_RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals,+sign-ext,+reference-types"
+THREADED_RUSTFLAGS+=" -C link-arg=--export=malloc -C link-arg=--export=free"
 
 WASI_CXX_DIR="${WASI_CXX_DIR:-$WASI_SYSROOT/lib/wasm32-wasip1/noeh}"
 WASI_CXX_THREADS_DIR="${WASI_CXX_THREADS_DIR:-$WASI_SYSROOT/lib/wasm32-wasip1-threads/noeh}"
@@ -164,6 +166,10 @@ fi
 
 if [[ -f "$ZENFS_API_SOURCE" ]]; then
   cp "$ZENFS_API_SOURCE" "$OUT_DIR/rom-weaver-zenfs-api.mjs"
+fi
+
+if [[ -f "$THREAD_WORKER_SOURCE" ]]; then
+  cp "$THREAD_WORKER_SOURCE" "$OUT_DIR/rom-weaver-wasi-thread-worker.mjs"
 fi
 
 if [[ -f "$JS_API_README" ]]; then

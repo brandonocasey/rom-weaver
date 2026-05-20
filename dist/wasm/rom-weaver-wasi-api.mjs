@@ -1,7 +1,7 @@
 import { mkdtempSync, openSync, closeSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { brotliDecompressSync } from 'node:zlib';
 import { WASI } from 'node:wasi';
 
@@ -21,8 +21,22 @@ export const DEFAULT_PREOPENS = {
   '/tmp': tmpdir(),
 };
 
-export function createWasmEnvImports() {
-  return {
+const SHARED_MEMORY_INITIAL_PAGES = 24;
+const SHARED_MEMORY_MAX_PAGES = 16384;
+const THREAD_SPAWN_UNAVAILABLE = 6;
+const WASI_THREADS_WAIT_THREAD_START_MS = 5000;
+const WASI_THREAD_WORKER_PATH_CANDIDATES = [
+  join(MODULE_DIR, 'rom-weaver-wasi-thread-worker.mjs'),
+  join(MODULE_DIR, '../rom-weaver-wasi-thread-worker.mjs'),
+  join(MODULE_DIR, '../../dist/wasm/rom-weaver-wasi-thread-worker.mjs'),
+  join(MODULE_DIR, '../../../dist/wasm/rom-weaver-wasi-thread-worker.mjs'),
+];
+const DEFAULT_WASI_THREAD_WORKER_PATH = WASI_THREAD_WORKER_PATH_CANDIDATES.find(
+  (candidate) => existsSync(candidate),
+) ?? WASI_THREAD_WORKER_PATH_CANDIDATES[0];
+
+export function createWasmEnvImports(memory) {
+  const imports = {
     __cxa_allocate_exception() {
       return 0;
     },
@@ -32,6 +46,12 @@ export function createWasmEnvImports() {
       );
     },
   };
+
+  if (memory !== undefined && memory !== null) {
+    imports.memory = memory;
+  }
+
+  return imports;
 }
 
 export class RomWeaverWasiRunner {
@@ -44,6 +64,7 @@ export class RomWeaverWasiRunner {
       ...(useDefaultPreopens ? DEFAULT_PREOPENS : {}),
       ...(options.preopens ?? {}),
     };
+    this.threadWorkerPath = options.threadWorkerPath ?? DEFAULT_WASI_THREAD_WORKER_PATH;
     this._compiledModulePromise = null;
   }
 
@@ -76,8 +97,13 @@ export class RomWeaverWasiRunner {
 
     let exitCode = 1;
     let trappedError = null;
+    let threadedRuntime = null;
 
     try {
+      const moduleInfo = readWasmModuleInfo(module);
+      const sharedMemory = moduleInfo.requiresImportedSharedMemory
+        ? createThreadedSharedMemory()
+        : undefined;
       const wasi = new WASI({
         version: 'preview1',
         args: [argv0, ...normalizedArgs],
@@ -89,15 +115,33 @@ export class RomWeaverWasiRunner {
         returnOnExit: true,
       });
 
-      const instance = await WebAssembly.instantiate(module, {
-        wasi_snapshot_preview1: wasi.wasiImport,
-        env: createWasmEnvImports(),
+      threadedRuntime = await createThreadedWasiRuntime({
+        moduleInfo,
+        module,
+        wasi,
+        sharedMemory,
+        threadWorkerPath: options.threadWorkerPath ?? this.threadWorkerPath,
       });
+      const imports = {
+        wasi_snapshot_preview1: wasi.wasiImport,
+        env: createWasmEnvImports(sharedMemory),
+        ...threadedRuntime.imports,
+      };
 
+      const instance = await WebAssembly.instantiate(module, imports);
+
+      threadedRuntime.setup(instance, module);
       exitCode = wasi.start(instance);
     } catch (error) {
       trappedError = error;
     } finally {
+      if (trappedError !== null) {
+        try {
+          threadedRuntime?.dispose();
+        } catch {
+          // Ignore cleanup errors during finalization.
+        }
+      }
       closeSync(stdinFd);
       closeSync(stdoutFd);
       closeSync(stderrFd);
@@ -151,6 +195,8 @@ export class RomWeaverWasiRunner {
 
     return this._compiledModulePromise;
   }
+
+  async dispose() {}
 }
 
 export function createRomWeaverWasiRunner(options = {}) {
@@ -251,6 +297,150 @@ export function parseTraceJsonLines(text, options = {}) {
   }
 
   return { traceEvents, traceNonJsonLines };
+}
+
+function readWasmModuleInfo(module) {
+  const imports = WebAssembly.Module.imports(module);
+  let requiresWasiThreadSpawn = false;
+  let requiresImportedSharedMemory = false;
+
+  for (const input of imports) {
+    if (input.module === 'wasi' && input.name === 'thread-spawn') {
+      requiresWasiThreadSpawn = true;
+    }
+    if (input.module === 'env' && input.name === 'memory' && input.kind === 'memory') {
+      requiresImportedSharedMemory = true;
+    }
+  }
+
+  return {
+    requiresWasiThreadSpawn,
+    requiresImportedSharedMemory,
+  };
+}
+
+function createThreadedSharedMemory() {
+  return new WebAssembly.Memory({
+    initial: SHARED_MEMORY_INITIAL_PAGES,
+    maximum: SHARED_MEMORY_MAX_PAGES,
+    shared: true,
+  });
+}
+
+function createWasiThreadImports(memory) {
+  return {
+    'thread-spawn': (startArg, errorOrTid) => threadSpawnUnavailable(memory, startArg, errorOrTid),
+  };
+}
+
+function threadSpawnUnavailable(memory, _startArg, errorOrTid) {
+  if (typeof errorOrTid === 'number' && memory instanceof WebAssembly.Memory) {
+    try {
+      const struct = new Int32Array(memory.buffer, errorOrTid, 2);
+      Atomics.store(struct, 0, 1);
+      Atomics.store(struct, 1, THREAD_SPAWN_UNAVAILABLE);
+      Atomics.notify(struct, 1, 1);
+      return 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  return -THREAD_SPAWN_UNAVAILABLE;
+}
+
+async function createThreadedWasiRuntime({
+  moduleInfo,
+  module,
+  wasi,
+  sharedMemory,
+  threadWorkerPath,
+}) {
+  if (!moduleInfo.requiresWasiThreadSpawn) {
+    return {
+      imports: {},
+      setup() {},
+      dispose() {},
+    };
+  }
+
+  if (!(sharedMemory instanceof WebAssembly.Memory)) {
+    return createUnavailableThreadRuntime(sharedMemory);
+  }
+
+  const debugThreads = process.env.ROM_WEAVER_WASM_DEBUG_THREADS === '1';
+
+  try {
+    const [{ WASIThreads }, { Worker }] = await Promise.all([
+      import('@emnapi/wasi-threads'),
+      import('node:worker_threads'),
+    ]);
+    const workerUrl = pathToFileURL(resolveThreadWorkerPath(threadWorkerPath));
+    const wasiThreads = new WASIThreads({
+      wasi,
+      waitThreadStart: WASI_THREADS_WAIT_THREAD_START_MS,
+      printErr: debugThreads
+        ? (message) => {
+          process.stderr.write(`[rom-weaver-wasm pthread] ${message}\n`);
+        }
+        : undefined,
+      onCreateWorker() {
+        const worker = new Worker(workerUrl, {
+          execArgv: ['--experimental-wasi-unstable-preview1'],
+          name: 'rom-weaver-wasi-thread',
+          type: 'module',
+        });
+        if (debugThreads) {
+          worker.on('error', (error) => {
+            process.stderr.write(
+              `[rom-weaver-wasm pthread] worker error: ${String(error)}\n`,
+            );
+          });
+          worker.on('exit', (code) => {
+            process.stderr.write(`[rom-weaver-wasm pthread] worker exit: ${code}\n`);
+          });
+        }
+        return worker;
+      },
+    });
+
+    return {
+      imports: wasiThreads.getImportObject(),
+      setup(instance, compiledModule) {
+        wasiThreads.setup(instance, compiledModule, sharedMemory);
+      },
+      dispose() {
+        wasiThreads.terminateAllThreads();
+      },
+    };
+  } catch (error) {
+    if (process.env.ROM_WEAVER_WASM_DEBUG_THREADS === '1') {
+      process.stderr.write(
+        `[rom-weaver-wasm] pthread runtime unavailable; falling back to stub: ${String(error)}\n`,
+      );
+    }
+    return createUnavailableThreadRuntime(sharedMemory);
+  }
+}
+
+function createUnavailableThreadRuntime(sharedMemory) {
+  return {
+    imports: {
+      wasi: createWasiThreadImports(sharedMemory),
+    },
+    setup() {},
+    dispose() {},
+  };
+}
+
+function resolveThreadWorkerPath(overridePath) {
+  if (overridePath instanceof URL) {
+    return fileURLToPath(overridePath);
+  }
+  if (typeof overridePath === 'string' && overridePath.trim().length > 0) {
+    return resolve(overridePath);
+  }
+  return DEFAULT_WASI_THREAD_WORKER_PATH;
 }
 
 function loadWasmBytes(inputPath) {

@@ -23,6 +23,7 @@ export class RomWeaverWasiRunner {
     args?: unknown[],
     options?: RomWeaverRunJsonOptions<TEvent, TTraceEvent>,
   ): Promise<RomWeaverRunJsonResult<TEvent, TTraceEvent>>;
+  dispose(): Promise<void>;
 }
 
 export function createRomWeaverWasiRunner(options?: RomWeaverWasiRunnerOptions): RomWeaverWasiRunner;

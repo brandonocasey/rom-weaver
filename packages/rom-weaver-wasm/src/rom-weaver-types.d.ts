@@ -103,6 +103,8 @@ export interface RomWeaverWasiRunnerOptions {
   env?: RomWeaverEnv;
   preopens?: RomWeaverPreopens;
   useDefaultPreopens?: boolean;
+  threadWorkerPath?: string;
+  executionIsolation?: 'auto' | 'none' | 'worker';
 }
 
 export interface NodeFsRunnerOptions extends RomWeaverWasiRunnerOptions {
