@@ -23,6 +23,15 @@ WASM artifacts + JS wrappers:
 scripts/build-wasm-cli.sh
 ```
 
+By default this writes artifacts to `packages/rom-weaver-wasm` (generated files are gitignored).
+Pass an explicit output directory as the first argument to override.
+
+To explicitly sync those artifacts into `packages/rom-weaver-wasm`:
+
+```bash
+SYNC_WASM_PACKAGE=1 scripts/build-wasm-cli.sh /path/to/wasm-artifacts
+```
+
 See [`packages/rom-weaver-wasm/README.md`](packages/rom-weaver-wasm/README.md) for Node/OPFS usage.
 
 ## WASM Package Surface

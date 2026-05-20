@@ -197,16 +197,17 @@ await worker.terminate();
 
 ## Build And Package
 
-This package expects artifacts in `dist/wasm`.
+Build artifacts are written to this package by default:
 
 ```bash
 scripts/build-wasm-cli.sh
 ```
 
-`prepack` automatically syncs `dist/wasm` into this package:
+If you built artifacts to a custom directory, syncing into this package is explicit:
 
 ```bash
-npm run prepare:dist
+ARTIFACT_DIR="/path/to/wasm-artifacts"
+npm run prepare:dist -- "$ARTIFACT_DIR"
 npm run check
 npm pack
 ```

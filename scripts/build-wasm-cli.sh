@@ -2,13 +2,33 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="${1:-${ROOT_DIR}/dist/wasm}"
+WASM_PACKAGE_DIR="$ROOT_DIR/packages/rom-weaver-wasm"
+DEFAULT_OUT_DIR="$WASM_PACKAGE_DIR"
+OUT_DIR="${1:-${ROM_WEAVER_WASM_OUT_DIR:-$DEFAULT_OUT_DIR}}"
 JS_API_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-wasi-api.mjs"
 ZENFS_API_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-zenfs-api.mjs"
 THREAD_WORKER_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-wasi-thread-worker.mjs"
 JS_API_README="$ROOT_DIR/scripts/wasm/README.md"
 WASM_NPM_PACKAGE_SYNC="$ROOT_DIR/packages/rom-weaver-wasm/scripts/sync-dist.mjs"
 PTHREAD_COUNT="${PTHREAD_COUNT:-16}"
+SYNC_WASM_PACKAGE="${SYNC_WASM_PACKAGE:-0}"
+ALLOW_REPO_OUTPUT="${ALLOW_REPO_OUTPUT:-0}"
+
+if [[ "$OUT_DIR" != /* ]]; then
+  OUT_DIR="$PWD/$OUT_DIR"
+fi
+
+case "$OUT_DIR" in
+  "$ROOT_DIR"|"$ROOT_DIR"/*)
+    if [[ "$OUT_DIR" != "$WASM_PACKAGE_DIR" \
+      && "$OUT_DIR" != "$WASM_PACKAGE_DIR"/* \
+      && "$ALLOW_REPO_OUTPUT" != "1" ]]; then
+      echo "refusing repo output directory: $OUT_DIR" >&2
+      echo "set ALLOW_REPO_OUTPUT=1 to override" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 WASI_SDK_PATH="${WASI_SDK_PATH:-}"
 if [[ -z "$WASI_SDK_PATH" ]]; then
@@ -160,31 +180,48 @@ build_target "wasm32-wasip1-threads" "rom-weaver-cli-threaded.wasm" "$THREADED_R
 postprocess_artifact "$OUT_DIR/rom-weaver-cli.wasm" "non-threaded"
 postprocess_artifact "$OUT_DIR/rom-weaver-cli-threaded.wasm" "threaded"
 
-if [[ -f "$JS_API_SOURCE" ]]; then
-  cp "$JS_API_SOURCE" "$OUT_DIR/rom-weaver-wasi-api.mjs"
-fi
+if [[ "$OUT_DIR" == "$WASM_PACKAGE_DIR" ]]; then
+  mkdir -p "$OUT_DIR/src"
+  if [[ -f "$JS_API_SOURCE" ]]; then
+    cp "$JS_API_SOURCE" "$OUT_DIR/src/rom-weaver-wasi-api.mjs"
+  fi
+  if [[ -f "$ZENFS_API_SOURCE" ]]; then
+    cp "$ZENFS_API_SOURCE" "$OUT_DIR/src/rom-weaver-zenfs-api.mjs"
+  fi
+  if [[ -f "$THREAD_WORKER_SOURCE" ]]; then
+    cp "$THREAD_WORKER_SOURCE" "$OUT_DIR/src/rom-weaver-wasi-thread-worker.mjs"
+  fi
+else
+  if [[ -f "$JS_API_SOURCE" ]]; then
+    cp "$JS_API_SOURCE" "$OUT_DIR/rom-weaver-wasi-api.mjs"
+  fi
 
-if [[ -f "$ZENFS_API_SOURCE" ]]; then
-  cp "$ZENFS_API_SOURCE" "$OUT_DIR/rom-weaver-zenfs-api.mjs"
-fi
+  if [[ -f "$ZENFS_API_SOURCE" ]]; then
+    cp "$ZENFS_API_SOURCE" "$OUT_DIR/rom-weaver-zenfs-api.mjs"
+  fi
 
-if [[ -f "$THREAD_WORKER_SOURCE" ]]; then
-  cp "$THREAD_WORKER_SOURCE" "$OUT_DIR/rom-weaver-wasi-thread-worker.mjs"
-fi
+  if [[ -f "$THREAD_WORKER_SOURCE" ]]; then
+    cp "$THREAD_WORKER_SOURCE" "$OUT_DIR/rom-weaver-wasi-thread-worker.mjs"
+  fi
 
-if [[ -f "$JS_API_README" ]]; then
-  cp "$JS_API_README" "$OUT_DIR/README.md"
+  if [[ -f "$JS_API_README" ]]; then
+    cp "$JS_API_README" "$OUT_DIR/README.md"
+  fi
 fi
 
 cat > "$OUT_DIR/threaded.args" <<ARGS
 --threads ${PTHREAD_COUNT}
 ARGS
 
-if [[ -f "$WASM_NPM_PACKAGE_SYNC" ]]; then
-  if command -v node >/dev/null 2>&1; then
-    node "$WASM_NPM_PACKAGE_SYNC"
-  else
-    echo "warning: skipping npm package sync; node is not available" >&2
+if [[ "$SYNC_WASM_PACKAGE" == "1" ]]; then
+  if [[ "$OUT_DIR" == "$WASM_PACKAGE_DIR" ]]; then
+    echo "package sync: skipped (output directory is already packages/rom-weaver-wasm)"
+  elif [[ -f "$WASM_NPM_PACKAGE_SYNC" ]]; then
+    if command -v node >/dev/null 2>&1; then
+      node "$WASM_NPM_PACKAGE_SYNC" "$OUT_DIR"
+    else
+      echo "warning: skipping npm package sync; node is not available" >&2
+    fi
   fi
 fi
 
@@ -193,3 +230,6 @@ echo "compressed artifacts: rom-weaver-cli.wasm.br rom-weaver-cli-threaded.wasm.
 echo "threaded cli args file: threaded.args"
 echo "auto threads: host OS/runtime detection with fallback 4"
 echo "force thread count: pass --threads ${PTHREAD_COUNT}"
+if [[ "$SYNC_WASM_PACKAGE" != "1" ]]; then
+  echo "package sync: disabled (set SYNC_WASM_PACKAGE=1 to sync package artifacts)"
+fi

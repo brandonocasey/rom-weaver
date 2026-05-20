@@ -1,6 +1,6 @@
 # rom-weaver WASM JavaScript APIs (Node + Browser)
 
-This folder contains ESM wrappers for running `dist/wasm/rom-weaver-cli.wasm`.
+This folder contains ESM wrappers for running `rom-weaver-cli.wasm`.
 
 ## Files
 
@@ -10,7 +10,7 @@ This folder contains ESM wrappers for running `dist/wasm/rom-weaver-cli.wasm`.
 ## Runtime requirements
 
 - Node.js 22+
-- WASM artifact from `scripts/build-wasm-cli.sh`
+- WASM artifact from `scripts/build-wasm-cli.sh` (defaults to `packages/rom-weaver-wasm`)
 
 ## Optional dependencies for ZenFS wrapper
 
@@ -117,7 +117,7 @@ const browserResult = await browser.runJson([
 
 Options:
 
-- `wasmPath?: string` - Defaults to `dist/wasm/rom-weaver-cli.wasm` when available.
+- `wasmPath?: string` - Defaults to an auto-detected nearby `rom-weaver-cli.wasm` path.
 - `argv0?: string` - Defaults to `rom-weaver`.
 - `env?: Record<string, string>` - Extra environment variables for the WASM process.
 - `preopens?: Record<string, string>` - Guest to host directory mappings.

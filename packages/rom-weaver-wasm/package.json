@@ -61,7 +61,7 @@
   },
   "scripts": {
     "prepare:dist": "node ./scripts/sync-dist.mjs",
-    "prepack": "npm run prepare:dist",
+    "prepack": "npm run check",
     "check": "node --check ./src/index.mjs && node --check ./src/rom-weaver-wasi-api.mjs && node --check ./src/rom-weaver-zenfs-api.mjs && node --check ./src/rom-weaver-wasi-thread-worker.mjs && node --check ./src/workers/runner-worker-core.mjs && node --check ./src/workers/node-runner-worker.mjs && node --check ./src/workers/browser-runner-worker.mjs && node --check ./src/workers/worker-client-core.mjs && node --check ./src/workers/node-worker-client.mjs && node --check ./src/workers/browser-worker-client.mjs && node --check ./src/workers/worker-protocol.mjs",
     "test": "node --test ./tests/*.test.mjs"
   },

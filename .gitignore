@@ -1,2 +1,9 @@
 /target
 /.tmp/
+
+# Generated wasm artifacts
+/packages/rom-weaver-wasm/rom-weaver-cli.wasm
+/packages/rom-weaver-wasm/rom-weaver-cli.wasm.br
+/packages/rom-weaver-wasm/rom-weaver-cli-threaded.wasm
+/packages/rom-weaver-wasm/rom-weaver-cli-threaded.wasm.br
+/packages/rom-weaver-wasm/threaded.args

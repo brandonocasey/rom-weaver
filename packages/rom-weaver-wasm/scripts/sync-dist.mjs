@@ -5,7 +5,15 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = resolve(SCRIPT_DIR, '..');
 const REPO_ROOT = resolve(PACKAGE_DIR, '..', '..');
-const DIST_WASM_DIR = resolve(REPO_ROOT, 'dist', 'wasm');
+const ARTIFACTS_DIR_INPUT = process.argv[2] ?? process.env.ROM_WEAVER_WASM_ARTIFACT_DIR;
+
+if (!ARTIFACTS_DIR_INPUT) {
+  fail(
+    'Missing artifacts directory. Pass it as `npm run prepare:dist -- /path/to/wasm-artifacts` or set ROM_WEAVER_WASM_ARTIFACT_DIR.',
+  );
+}
+
+const DIST_WASM_DIR = resolve(process.cwd(), ARTIFACTS_DIR_INPUT);
 
 const REQUIRED_DIST_COPIES = [
   { src: 'rom-weaver-cli.wasm', dst: 'rom-weaver-cli.wasm' },
@@ -28,7 +36,7 @@ function main() {
 
   if (!existsSync(DIST_WASM_DIR)) {
     fail(
-      `Missing dist directory: ${DIST_WASM_DIR}. Run scripts/build-wasm-cli.sh first.`,
+      `Missing artifacts directory: ${DIST_WASM_DIR}. Run scripts/build-wasm-cli.sh and pass that output directory here.`,
     );
   }
 
@@ -37,7 +45,7 @@ function main() {
     const dst = resolve(PACKAGE_DIR, dstName);
 
     if (!existsSync(src)) {
-      fail(`Missing dist artifact: ${src}. Run scripts/build-wasm-cli.sh first.`);
+      fail(`Missing artifact: ${src}. Run scripts/build-wasm-cli.sh first.`);
     }
 
     mkdirSync(dirname(dst), { recursive: true });
@@ -60,7 +68,11 @@ function main() {
 }
 
 function relativeFromRepo(path) {
-  return path.slice(REPO_ROOT.length + 1);
+  const repoPrefix = `${REPO_ROOT}/`;
+  if (path.startsWith(repoPrefix)) {
+    return path.slice(repoPrefix.length);
+  }
+  return path;
 }
 
 function log(message) {
