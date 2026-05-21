@@ -1,5 +1,6 @@
 /target
 /.tmp/
+**/__pycache__/
 
 # Generated wasm artifacts
 /dist/wasm/
@@ -8,3 +9,5 @@
 /packages/rom-weaver-wasm/rom-weaver-cli-threaded.wasm
 /packages/rom-weaver-wasm/rom-weaver-cli-threaded.wasm.br
 /packages/rom-weaver-wasm/threaded.args
+/packages/rom-weaver-wasm/.vitest-attachments/
+/packages/rom-weaver-wasm/tests/__screenshots__/

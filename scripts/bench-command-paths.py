@@ -68,6 +68,8 @@ CONTAINER_SUFFIX = {
     "tar.xz": "tar.xz",
 }
 
+ARCHIVE_TOOLS = ["rom-weaver", "7zz"]
+
 EXPECTED_COMPRESS_SKIPS = {
     "rar": "intentionally unsupported: rar create is not supported",
     "xiso": "intentionally unsupported: xiso is trim-only and not a compress format",
@@ -81,6 +83,28 @@ EXPECTED_PATCH_CREATE_SKIPS = {
     "ninja1": "intentionally unsupported: NINJA1 patch creation is not supported",
     "bsp": "intentionally unsupported: BSP patch creation is not implemented",
     "hdiffpatch": "intentionally unsupported: HDiffPatch/HPatchZ patch creation is disabled",
+}
+
+SEVENZIP_COMPRESS_ONE_STEP = {
+    "7z": "7z",
+    "zip": "zip",
+    "zipx": "zip",
+    "tar": "tar",
+    "gz": "gzip",
+    "bz2": "bzip2",
+    "xz": "xz",
+}
+
+SEVENZIP_EXTRACT_FORMATS = {
+    "7z",
+    "zip",
+    "zipx",
+    "rar",
+    "tar",
+    "gz",
+    "bz2",
+    "xz",
+    "zst",
 }
 
 DISC_COMPRESS_INPUT_FORMATS = {"rvz", "wia", "wbfs", "tgc"}
@@ -203,6 +227,7 @@ class BenchmarkRow:
     iterations: int
     warmups: int
     samples: list[TrialSample]
+    tool: str = "rom-weaver"
 
 
 def parse_args() -> argparse.Namespace:
@@ -282,6 +307,17 @@ def parse_args() -> argparse.Namespace:
         default=Path("tests/fixtures/rar/version.rar"),
         help="RAR fixture path used when rar create is unavailable (default: tests/fixtures/rar/version.rar)",
     )
+    parser.add_argument(
+        "--archive-tools",
+        default="rom-weaver",
+        help="Archive benchmark tools to run for compress/extract (rom-weaver,7zz). Default: rom-weaver",
+    )
+    parser.add_argument(
+        "--sevenzip-bin",
+        type=Path,
+        default=Path(shutil.which("7zz") or "7zz"),
+        help="Path to 7zz binary used when archive-tools includes 7zz (default: PATH lookup for 7zz)",
+    )
     return parser.parse_args()
 
 
@@ -322,6 +358,16 @@ def ensure_binary(bin_path: Path, skip_build: bool) -> None:
     if release:
         cmd.append("--release")
     subprocess.run(cmd, check=True)
+
+
+def resolve_external_binary(bin_path: Path, flag_name: str) -> Path:
+    candidate = bin_path.expanduser()
+    if candidate.exists():
+        return candidate.resolve()
+    resolved = shutil.which(str(candidate))
+    if resolved is not None:
+        return Path(resolved)
+    raise SystemExit(f"{flag_name} binary not found: {bin_path}")
 
 
 def token(value: str) -> str:
@@ -505,6 +551,59 @@ def base_command(bin_path: Path, args: list[str]) -> list[str]:
     return [str(bin_path), "--no-progress", *args]
 
 
+def sevenzip_command(sevenzip_bin: Path, args: list[str]) -> list[str]:
+    return [str(sevenzip_bin), *args]
+
+
+def sevenzip_compress_command(
+    *,
+    sevenzip_bin: Path,
+    format_name: str,
+    input_path: Path,
+    output_path: Path,
+    threads: int,
+) -> list[str]:
+    one_step_type = SEVENZIP_COMPRESS_ONE_STEP.get(format_name)
+    if one_step_type is None:
+        raise ValueError(f"7zz compress is not configured for format: {format_name}")
+    return sevenzip_command(
+        sevenzip_bin,
+        [
+            "a",
+            "-y",
+            "-bd",
+            f"-mmt={threads}",
+            f"-t{one_step_type}",
+            str(output_path),
+            str(input_path),
+        ],
+    )
+
+
+def sevenzip_extract_command(
+    *,
+    sevenzip_bin: Path,
+    format_name: str,
+    source_path: Path,
+    output_dir: Path,
+    threads: int,
+) -> list[str]:
+    if format_name not in SEVENZIP_EXTRACT_FORMATS:
+        raise ValueError(f"7zz extract is not configured for format: {format_name}")
+
+    return sevenzip_command(
+        sevenzip_bin,
+        [
+            "x",
+            "-y",
+            "-bd",
+            f"-mmt={threads}",
+            str(source_path),
+            f"-o{output_dir}",
+        ],
+    )
+
+
 def timed_wrapper(cmd: list[str], stats_file: Path) -> list[str]:
     if not TIME_BIN.exists():
         raise FileNotFoundError(f"required timing binary not found: {TIME_BIN}")
@@ -607,6 +706,7 @@ def outcome_tail_message(outcome: RunOutcome) -> str:
 
 def summarize_row(row: BenchmarkRow) -> dict[str, Any]:
     payload: dict[str, Any] = {
+        "tool": row.tool,
         "command": row.command,
         "path_id": row.path_id,
         "status": row.status,
@@ -651,10 +751,11 @@ def run_benchmark_case(
     timeout_sec: int,
     command_factory,
     processed_bytes_factory,
+    tool: str = "rom-weaver",
 ) -> BenchmarkRow:
     samples: list[TrialSample] = []
     command_example: list[str] | None = None
-    print(f"[bench] start {command} {path_id}", flush=True)
+    print(f"[bench] start {tool} {command} {path_id}", flush=True)
 
     for warmup_index in range(warmups):
         cmd, context = command_factory(warmup_index, True)
@@ -675,6 +776,7 @@ def run_benchmark_case(
                 iterations=iterations,
                 warmups=warmups,
                 samples=samples,
+                tool=tool,
             )
         _ = processed_bytes_factory(context)
 
@@ -697,6 +799,7 @@ def run_benchmark_case(
                 iterations=iterations,
                 warmups=warmups,
                 samples=samples,
+                tool=tool,
             )
         processed_bytes = processed_bytes_factory(context)
         samples.append(
@@ -707,7 +810,7 @@ def run_benchmark_case(
             )
         )
 
-    print(f"[bench] done {command} {path_id}", flush=True)
+    print(f"[bench] done {tool} {command} {path_id}", flush=True)
     return BenchmarkRow(
         command=command,
         path_id=path_id,
@@ -717,10 +820,18 @@ def run_benchmark_case(
         iterations=iterations,
         warmups=warmups,
         samples=samples,
+        tool=tool,
     )
 
 
-def skipped_row(command: str, path_id: str, reason: str, warmups: int, iterations: int) -> BenchmarkRow:
+def skipped_row(
+    command: str,
+    path_id: str,
+    reason: str,
+    warmups: int,
+    iterations: int,
+    tool: str = "rom-weaver",
+) -> BenchmarkRow:
     return BenchmarkRow(
         command=command,
         path_id=path_id,
@@ -730,13 +841,14 @@ def skipped_row(command: str, path_id: str, reason: str, warmups: int, iteration
         iterations=iterations,
         warmups=warmups,
         samples=[],
+        tool=tool,
     )
 
 
 def print_table(rows: list[dict[str, Any]]) -> None:
     print("\nCommand Path Benchmark Summary")
-    print("command       path_id                         status      elapsed_avg_s  peak_rss_max_mib  throughput_avg_mib_s")
-    print("------------  ------------------------------  ----------  -------------  ----------------  ---------------------")
+    print("tool         command       path_id                         status      elapsed_avg_s  peak_rss_max_mib  throughput_avg_mib_s")
+    print("-----------  ------------  ------------------------------  ----------  -------------  ----------------  ---------------------")
     for row in rows:
         metrics = row.get("metrics") or {}
         elapsed_avg = metrics.get("elapsed_avg_s")
@@ -746,13 +858,14 @@ def print_table(rows: list[dict[str, Any]]) -> None:
         peak_text = f"{peak_rss:>16.2f}" if isinstance(peak_rss, (int, float)) else " " * 16 + "-"
         thr_text = f"{throughput:>21.2f}" if isinstance(throughput, (int, float)) else " " * 21 + "-"
         print(
-            f"{row['command']:<12}  {row['path_id']:<30}  {row['status']:<10}  {elapsed_text}  {peak_text}  {thr_text}"
+            f"{row.get('tool', 'rom-weaver'):<11}  {row['command']:<12}  {row['path_id']:<30}  {row['status']:<10}  {elapsed_text}  {peak_text}  {thr_text}"
         )
 
 
 def main() -> None:
     args = parse_args()
     selected_commands = parse_command_filter(args.commands)
+    selected_archive_tools = parse_value_filter(args.archive_tools, ARCHIVE_TOOLS, "--archive-tools")
     selected_container_formats = parse_value_filter(args.container_formats, CONTAINER_FORMATS, "--container-formats")
     selected_patch_formats = parse_value_filter(args.patch_formats, PATCH_FORMATS, "--patch-formats")
     selected_checksum_algorithms = parse_value_filter(args.checksum_algos, CHECKSUM_ALGORITHMS, "--checksum-algos")
@@ -766,6 +879,9 @@ def main() -> None:
         raise SystemExit("--threads must be > 0, --warmups >= 0, and --iterations > 0")
 
     ensure_binary(args.bin, args.skip_build)
+    sevenzip_bin: Path | None = None
+    if "7zz" in selected_archive_tools:
+        sevenzip_bin = resolve_external_binary(args.sevenzip_bin, "--sevenzip-bin")
 
     work_dir = args.work_dir.resolve()
     if work_dir.exists():
@@ -966,121 +1082,247 @@ def main() -> None:
 
     if "compress" in selected_commands:
         for format_name in selected_container_formats:
-            if format_name in EXPECTED_COMPRESS_SKIPS:
-                rows.append(
-                    skipped_row(
-                        "compress",
-                        f"format:{format_name}",
-                        EXPECTED_COMPRESS_SKIPS[format_name],
-                        args.warmups,
-                        args.iterations,
-                    )
-                )
-                continue
-
             input_path = compress_input_for_format(format_name)
             suffix = container_suffix(format_name)
 
-            def make_command(
-                iteration: int,
-                warmup: bool,
-                format_value: str = format_name,
-                suffix_value: str = suffix,
-                input_value: Path = input_path,
-            ):
-                run_kind = "warmup" if warmup else "run"
-                output_path = (
-                    outputs_dir
-                    / "compress"
-                    / f"{token(format_value)}-{run_kind}-{iteration}.{suffix_value}"
-                )
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                if output_path.exists():
-                    output_path.unlink()
-                cmd = base_command(
-                    args.bin,
-                    [
-                        "compress",
-                        str(input_value),
-                        "--format",
-                        format_value,
-                        "--output",
-                        str(output_path),
-                        "--threads",
-                        str(args.threads),
-                    ],
-                )
-                return cmd, output_path
+            if "rom-weaver" in selected_archive_tools:
+                if format_name in EXPECTED_COMPRESS_SKIPS:
+                    rows.append(
+                        skipped_row(
+                            "compress",
+                            f"format:{format_name}",
+                            EXPECTED_COMPRESS_SKIPS[format_name],
+                            args.warmups,
+                            args.iterations,
+                            tool="rom-weaver",
+                        )
+                    )
+                else:
+                    def make_command(
+                        iteration: int,
+                        warmup: bool,
+                        format_value: str = format_name,
+                        suffix_value: str = suffix,
+                        input_value: Path = input_path,
+                    ):
+                        run_kind = "warmup" if warmup else "run"
+                        output_path = (
+                            outputs_dir
+                            / "compress"
+                            / f"{token(format_value)}-{run_kind}-{iteration}.{suffix_value}"
+                        )
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        if output_path.exists():
+                            output_path.unlink()
+                        cmd = base_command(
+                            args.bin,
+                            [
+                                "compress",
+                                str(input_value),
+                                "--format",
+                                format_value,
+                                "--output",
+                                str(output_path),
+                                "--threads",
+                                str(args.threads),
+                            ],
+                        )
+                        return cmd, output_path
 
-            def processed_bytes(_context: Path, input_value: Path = input_path) -> int:
-                return input_value.stat().st_size
+                    def processed_bytes(_context: Path, input_value: Path = input_path) -> int:
+                        return input_value.stat().st_size
 
-            rows.append(
-                run_benchmark_case(
-                    command="compress",
-                    path_id=f"format:{format_name}",
-                    warmups=args.warmups,
-                    iterations=args.iterations,
-                    timeout_sec=args.timeout_sec,
-                    command_factory=make_command,
-                    processed_bytes_factory=processed_bytes,
+                    rows.append(
+                        run_benchmark_case(
+                            command="compress",
+                            path_id=f"format:{format_name}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_command,
+                            processed_bytes_factory=processed_bytes,
+                            tool="rom-weaver",
+                        )
+                    )
+
+            if "7zz" in selected_archive_tools:
+                assert sevenzip_bin is not None
+                if format_name not in SEVENZIP_COMPRESS_ONE_STEP:
+                    rows.append(
+                        skipped_row(
+                            "compress",
+                            f"format:{format_name}",
+                            "7zz comparator unsupported for this compress format",
+                            args.warmups,
+                            args.iterations,
+                            tool="7zz",
+                        )
+                    )
+                    continue
+
+                def make_sevenzip_compress_command(
+                    iteration: int,
+                    warmup: bool,
+                    format_value: str = format_name,
+                    suffix_value: str = suffix,
+                    input_value: Path = input_path,
+                    sevenzip_value: Path = sevenzip_bin,
+                ):
+                    run_kind = "warmup" if warmup else "run"
+                    output_path = (
+                        outputs_dir
+                        / "compress-7zz"
+                        / f"{token(format_value)}-{run_kind}-{iteration}.{suffix_value}"
+                    )
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    if output_path.exists():
+                        output_path.unlink()
+                    cmd = sevenzip_compress_command(
+                        sevenzip_bin=sevenzip_value,
+                        format_name=format_value,
+                        input_path=input_value,
+                        output_path=output_path,
+                        threads=args.threads,
+                    )
+                    return cmd, output_path
+
+                def processed_bytes(_context: Path, input_value: Path = input_path) -> int:
+                    return input_value.stat().st_size
+
+                rows.append(
+                    run_benchmark_case(
+                        command="compress",
+                        path_id=f"format:{format_name}",
+                        warmups=args.warmups,
+                        iterations=args.iterations,
+                        timeout_sec=args.timeout_sec,
+                        command_factory=make_sevenzip_compress_command,
+                        processed_bytes_factory=processed_bytes,
+                        tool="7zz",
+                    )
                 )
-            )
 
     if "extract" in selected_commands:
         for format_name in selected_container_formats:
             source = archive_sources.get(format_name)
-            if source is None:
+            if "rom-weaver" in selected_archive_tools:
+                if source is None:
+                    rows.append(
+                        skipped_row(
+                            "extract",
+                            f"format:{format_name}",
+                            "no valid source artifact available for this format",
+                            args.warmups,
+                            args.iterations,
+                            tool="rom-weaver",
+                        )
+                    )
+                else:
+                    def make_command(
+                        iteration: int,
+                        warmup: bool,
+                        format_value: str = format_name,
+                        source_value: ArchiveSource = source,
+                    ):
+                        run_kind = "warmup" if warmup else "run"
+                        out_dir = outputs_dir / "extract" / f"{token(format_value)}-{run_kind}-{iteration}"
+                        if out_dir.exists():
+                            shutil.rmtree(out_dir)
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        cmd = base_command(
+                            args.bin,
+                            [
+                                "extract",
+                                str(source_value.path),
+                                "--out-dir",
+                                str(out_dir),
+                                "--threads",
+                                str(args.threads),
+                            ],
+                        )
+                        return cmd, out_dir
+
+                    def processed_bytes(out_dir: Path, source_value: ArchiveSource = source) -> int | None:
+                        extracted = sum_file_bytes(out_dir)
+                        return extracted if extracted > 0 else source_value.payload_bytes
+
+                    rows.append(
+                        run_benchmark_case(
+                            command="extract",
+                            path_id=f"format:{format_name}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_command,
+                            processed_bytes_factory=processed_bytes,
+                            tool="rom-weaver",
+                        )
+                    )
+
+            if "7zz" in selected_archive_tools:
+                assert sevenzip_bin is not None
+                if source is None:
+                    rows.append(
+                        skipped_row(
+                            "extract",
+                            f"format:{format_name}",
+                            "no valid source artifact available for this format",
+                            args.warmups,
+                            args.iterations,
+                            tool="7zz",
+                        )
+                    )
+                    continue
+                if format_name not in SEVENZIP_EXTRACT_FORMATS:
+                    rows.append(
+                        skipped_row(
+                            "extract",
+                            f"format:{format_name}",
+                            "7zz comparator unsupported for this extract format",
+                            args.warmups,
+                            args.iterations,
+                            tool="7zz",
+                        )
+                    )
+                    continue
+
+                def make_sevenzip_extract_command(
+                    iteration: int,
+                    warmup: bool,
+                    format_value: str = format_name,
+                    source_value: ArchiveSource = source,
+                    sevenzip_value: Path = sevenzip_bin,
+                ):
+                    run_kind = "warmup" if warmup else "run"
+                    out_dir = outputs_dir / "extract-7zz" / f"{token(format_value)}-{run_kind}-{iteration}"
+                    if out_dir.exists():
+                        shutil.rmtree(out_dir)
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    cmd = sevenzip_extract_command(
+                        sevenzip_bin=sevenzip_value,
+                        format_name=format_value,
+                        source_path=source_value.path,
+                        output_dir=out_dir,
+                        threads=args.threads,
+                    )
+                    return cmd, out_dir
+
+                def processed_bytes(out_dir: Path, source_value: ArchiveSource = source) -> int | None:
+                    extracted = sum_file_bytes(out_dir)
+                    return extracted if extracted > 0 else source_value.payload_bytes
+
                 rows.append(
-                    skipped_row(
-                        "extract",
-                        f"format:{format_name}",
-                        "no valid source artifact available for this format",
-                        args.warmups,
-                        args.iterations,
+                    run_benchmark_case(
+                        command="extract",
+                        path_id=f"format:{format_name}",
+                        warmups=args.warmups,
+                        iterations=args.iterations,
+                        timeout_sec=args.timeout_sec,
+                        command_factory=make_sevenzip_extract_command,
+                        processed_bytes_factory=processed_bytes,
+                        tool="7zz",
                     )
                 )
-                continue
-
-            def make_command(
-                iteration: int,
-                warmup: bool,
-                format_value: str = format_name,
-                source_value: ArchiveSource = source,
-            ):
-                run_kind = "warmup" if warmup else "run"
-                out_dir = outputs_dir / "extract" / f"{token(format_value)}-{run_kind}-{iteration}"
-                if out_dir.exists():
-                    shutil.rmtree(out_dir)
-                out_dir.mkdir(parents=True, exist_ok=True)
-                cmd = base_command(
-                    args.bin,
-                    [
-                        "extract",
-                        str(source_value.path),
-                        "--out-dir",
-                        str(out_dir),
-                        "--threads",
-                        str(args.threads),
-                    ],
-                )
-                return cmd, out_dir
-
-            def processed_bytes(out_dir: Path, source_value: ArchiveSource = source) -> int | None:
-                extracted = sum_file_bytes(out_dir)
-                return extracted if extracted > 0 else source_value.payload_bytes
-
-            rows.append(
-                run_benchmark_case(
-                    command="extract",
-                    path_id=f"format:{format_name}",
-                    warmups=args.warmups,
-                    iterations=args.iterations,
-                    timeout_sec=args.timeout_sec,
-                    command_factory=make_command,
-                    processed_bytes_factory=processed_bytes,
-                )
-            )
 
     if "checksum" in selected_commands:
         if "raw" in selected_checksum_modes:
@@ -1347,6 +1589,8 @@ def main() -> None:
             "cwd": os.getcwd(),
             "binary": str(args.bin),
             "work_dir": str(work_dir),
+            "archive_tools": selected_archive_tools,
+            "sevenzip_bin": str(sevenzip_bin) if sevenzip_bin is not None else None,
             "commands": sorted(selected_commands),
             "container_formats": selected_container_formats,
             "patch_formats": selected_patch_formats,
