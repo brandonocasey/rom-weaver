@@ -1,5 +1,5 @@
 import UploadIcon from "lucide-react/dist/esm/icons/upload.js";
-import type { ChangeEvent, ComponentProps, ReactNode } from "react";
+import { type ChangeEvent, type ComponentProps, type ReactNode, useRef } from "react";
 import {
   fileInputClassName,
   InputProgress,
@@ -99,6 +99,7 @@ function ToolFileInputStack({
   progress?: ComponentProps<typeof InputProgress>["progress"];
   timing?: string;
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const hasFiles = fileNames.length > 0;
   const inputState = {
     disabled: !!disabled,
@@ -134,6 +135,7 @@ function ToolFileInputStack({
           id={id}
           multiple={multiple}
           onChange={onChange}
+          ref={inputRef}
           type="file"
         />
         <PatcherFileStack
@@ -150,7 +152,7 @@ function ToolFileInputStack({
                     if (target?.closest("input,label,button,select,a,summary")) return;
                     event.preventDefault();
                     event.stopPropagation();
-                    document.getElementById(id)?.click();
+                    inputRef.current?.click();
                   }}
                   title={emptyText}
                 >

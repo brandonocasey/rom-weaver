@@ -123,6 +123,7 @@ export interface RomWeaverZenFsBrowserOptions {
   tmpGuestPath?: string;
   runtimeMounts?: string[];
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
+  writableMounts?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
   program?: string;
   argv0?: string;
@@ -136,6 +137,7 @@ export interface RomWeaverZenFsBrowserOptions {
 
 export interface RomWeaverZenFsBrowserRunOptions extends RomWeaverRunOptions {
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
+  writableMounts?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
   program?: string;
   debugWasi?: boolean;

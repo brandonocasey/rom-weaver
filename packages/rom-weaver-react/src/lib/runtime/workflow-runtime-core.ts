@@ -321,11 +321,11 @@ const createWorkerChecksumRuntime = (
 });
 
 const createSharedCompressionRuntime = (
-  sevenZipZstdRuntime: Partial<WorkflowRuntime["compression"]>,
+  archiveRuntime: Partial<WorkflowRuntime["compression"]>,
   discRuntime: DiscRuntimeAdapter,
   input: {
     createBytes?: (bytes: Uint8Array, fileName: string) => Promise<PublicOutput>;
-    sevenZipZstdOptional?: boolean;
+    archiveRuntimeOptional?: boolean;
   } = {},
 ): WorkflowRuntime["compression"] => {
   type CompressionProgressHandler = NonNullable<
@@ -365,8 +365,8 @@ const createSharedCompressionRuntime = (
   const runtime: WorkflowRuntime["compression"] = {
     create: async (request) => {
       if ("entries" in request) {
-        if (!sevenZipZstdRuntime.create) throw new Error("7zip-zstd compression creation is unavailable");
-        return sevenZipZstdRuntime.create(request);
+        if (!archiveRuntime.create) throw new Error("Archive compression creation is unavailable");
+        return archiveRuntime.create(request);
       }
       if (request.format === "chd")
         return {
@@ -506,10 +506,10 @@ const createSharedCompressionRuntime = (
         ),
       ]);
     }
-    if (!sevenZipZstdRuntime.extract) throw new Error("7zip-zstd compression extraction is unavailable");
-    return sevenZipZstdRuntime.extract(request);
+    if (!archiveRuntime.extract) throw new Error("Archive compression extraction is unavailable");
+    return archiveRuntime.extract(request);
   };
-  if (!input.sevenZipZstdOptional || sevenZipZstdRuntime.extract) runtime.extract = extract;
+  if (!input.archiveRuntimeOptional || archiveRuntime.extract) runtime.extract = extract;
   runtime.list = async (request) => {
     if (request.format === "chd")
       return {
@@ -554,8 +554,8 @@ const createSharedCompressionRuntime = (
           "Z3DS compression listing is unavailable",
         ),
       };
-    const listRuntime = sevenZipZstdRuntime.list;
-    if (!listRuntime) throw new Error("7zip-zstd compression listing is unavailable");
+    const listRuntime = archiveRuntime.list;
+    if (!listRuntime) throw new Error("Archive compression listing is unavailable");
     return listRuntime(request);
   };
   return runtime;
@@ -601,9 +601,8 @@ const emitPreloadLog = (
 };
 
 const getPreloadWorkerKind = (capability: Parameters<NonNullable<WorkflowRuntimePreload["preloadCapability"]>>[0]) => {
-  if (capability === "compression") return "compression";
-  if (capability === "checksum" || capability === "patch") return "patch-checksum";
-  return "compression";
+  if (capability === "compression" || capability === "checksum" || capability === "patch") return "rom-weaver";
+  return "rom-weaver";
 };
 
 const getPreloadWasmTool = (capability: Parameters<NonNullable<WorkflowRuntimePreload["preloadCapability"]>>[0]) => {

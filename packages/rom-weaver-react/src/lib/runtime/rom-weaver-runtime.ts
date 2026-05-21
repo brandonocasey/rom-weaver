@@ -9,10 +9,6 @@ import type {
   WorkflowRuntimeLog,
 } from "../../types/workflow-runtime-adapter.ts";
 import {
-  generatePatchedFileName,
-  normalizeApplyPatchOptions,
-} from "../../workers/patch-checksum/patch/engine/patch-engine-options.ts";
-import {
   getRomWeaverFailureMessage,
   type RomWeaverRunJsonEvent,
   type RomWeaverRunJsonOptions,
@@ -23,6 +19,7 @@ import {
 const CHECKSUM_PAIR_REGEX = /([a-z0-9_-]+)=([0-9a-f]+)/gi;
 const PATH_PART_SPLIT_REGEX = /[/\\]+/;
 const PATH_FILE_CAPTURE_REGEX = /^(.+[/\\])?([^/\\]+)$/;
+const FILE_EXTENSION_CAPTURE_REGEX = /^(.+?)(\.[^./\\]*)?$/;
 const COMPRESSION_LEVEL_PROFILE_REGEX = /^(min|very-low|low|medium|high|very-high|max)$/i;
 
 const nowIso = () => new Date().toISOString();
@@ -154,12 +151,6 @@ type RomWeaverEmittedFile = {
   sizeBytes?: number;
 };
 
-type RuntimeProgressEvent = {
-  label?: string;
-  message?: string;
-  percent?: number | null;
-};
-
 const getEmittedFiles = (result: RomWeaverRunJsonResult): RomWeaverEmittedFile[] => {
   const terminal = getTerminalEvent(result);
   const details = asRecord(terminal?.details);
@@ -198,68 +189,6 @@ const toSimpleProgress = (
   message: undefined,
   percent: clampPercent(event.percent),
 });
-
-const createSyntheticProgressForwarder = (
-  onProgress: ((progress: RuntimeProgressEvent) => void) | undefined,
-  fallbackLabel: string,
-  options: { intervalMs?: number; maxPercent?: number } = {},
-) => {
-  const noop = {
-    finish: () => undefined,
-    forward: (_event: RomWeaverRunJsonEvent) => undefined,
-  };
-  if (!onProgress) return noop;
-
-  const intervalMs = Math.max(200, Math.floor(options.intervalMs ?? 450));
-  const maxPercent = Math.max(1, Math.min(99, Math.floor(options.maxPercent ?? 95)));
-  let done = false;
-  let latestLabel = fallbackLabel;
-  let sawRealIntermediate = false;
-  let syntheticPercent = 0;
-  let timerId: ReturnType<typeof globalThis.setInterval> | null = null;
-
-  const emitSynthetic = () => {
-    if (done || sawRealIntermediate) return;
-    const step = syntheticPercent < 30 ? 2 : 1;
-    const next = Math.min(maxPercent, syntheticPercent + step);
-    if (next <= syntheticPercent) return;
-    syntheticPercent = next;
-    onProgress({
-      label: latestLabel,
-      message: undefined,
-      percent: syntheticPercent,
-    });
-  };
-
-  timerId = globalThis.setInterval(emitSynthetic, intervalMs);
-
-  return {
-    finish: () => {
-      if (done) return;
-      done = true;
-      if (timerId !== null) {
-        globalThis.clearInterval(timerId);
-        timerId = null;
-      }
-    },
-    forward: (event: RomWeaverRunJsonEvent) => {
-      const progress = toSimpleProgress(event);
-      if (progress.label) latestLabel = progress.label;
-      const percent = progress.percent;
-      if (typeof percent === "number") {
-        if (percent > 0 && percent < 100) sawRealIntermediate = true;
-        if (!sawRealIntermediate && percent < syntheticPercent && percent < 100) return;
-        syntheticPercent = Math.max(syntheticPercent, percent);
-      } else if (!sawRealIntermediate && syntheticPercent > 0) {
-        return;
-      }
-      onProgress({
-        ...progress,
-        label: progress.label || latestLabel,
-      });
-    },
-  };
-};
 
 const normalizeCodecEntries = (value: unknown): string[] => {
   const out: string[] = [];
@@ -328,19 +257,31 @@ const ensureRomWeaverSuccess = (result: RomWeaverRunJsonResult, fallbackMessage:
   throw new Error(getRomWeaverFailureMessage(result, fallbackMessage));
 };
 
+const getFileNameParts = (fileName: string) => {
+  const match = getPathBaseName(fileName, "input.bin").match(FILE_EXTENSION_CAPTURE_REGEX);
+  return {
+    extension: match?.[2] || "",
+    stem: match?.[1] || getPathBaseName(fileName, "input.bin"),
+  };
+};
+
 const getPatchApplyOutputFileName = (input: RuntimePatchApplyWorkerInput) => {
-  const applyOptions = normalizeApplyPatchOptions(
-    (input.options || {}) as Parameters<typeof normalizeApplyPatchOptions>[0],
-    false,
-  );
-  return getPathBaseName(
-    generatePatchedFileName(
-      input.romFileName || "input.bin",
-      input.patchFiles.map((patch) => ({ fileName: patch.patchFileName || "patch.bin" })),
-      applyOptions,
-    ),
-    "patched.bin",
-  );
+  const options = input.options || {};
+  const outputName = typeof options.outputName === "string" ? options.outputName.trim() : "";
+  if (outputName) return getPathBaseName(outputName, "patched.bin");
+  const { extension, stem } = getFileNameParts(input.romFileName || "input.bin");
+  const outputExtension = typeof options.outputExtension === "string" ? options.outputExtension.trim() : "";
+  const normalizedOutputExtension = outputExtension
+    ? outputExtension.startsWith(".")
+      ? outputExtension
+      : `.${outputExtension}`
+    : extension;
+  const patchStem = input.patchFiles
+    .map((patch) => getFileNameParts(patch.patchFileName || "patch.bin").stem)
+    .filter((value) => !!value)
+    .join("-");
+  const suffix = options.appendOutputSuffix === false ? "" : patchStem ? `-${patchStem}` : "-patched";
+  return `${stem}${suffix}${normalizedOutputExtension || ".bin"}`;
 };
 
 const toPatchProgress = (event: RomWeaverRunJsonEvent): RuntimePatchWorkerProgress => ({
@@ -425,19 +366,14 @@ const invokeRomWeaverExtractWorker = async (
   const threadArg = toThreadArg(input.workerThreads, "1");
   if (threadArg) args.push("--threads", threadArg);
   if (isTraceEnabled(input.logLevel)) args.unshift("--trace");
-  const progressForwarder = createSyntheticProgressForwarder(
-    onProgress,
-    `extracting \`${getPathBaseName(sourcePath, sourcePath)}\``,
-    { maxPercent: 96 },
-  );
   const result = await runRomWeaverJson(
     args,
     toRomWeaverOptions({
       logLevel: input.logLevel,
-      onEvent: (event) => progressForwarder.forward(event),
+      onEvent: (event) => onProgress?.(toSimpleProgress(event)),
       onLog,
     }),
-  ).finally(() => progressForwarder.finish());
+  );
   ensureRomWeaverSuccess(result, "Compression extract failed");
   return {
     emittedFiles: getEmittedFiles(result),
@@ -657,19 +593,20 @@ const runRomWeaverChecksumWorker = async (
     args.push("--start", String(Math.floor(input.checksumStartOffset)));
 
   if (isTraceEnabled(input.logLevel)) args.unshift("--trace");
-  const progressForwarder = createSyntheticProgressForwarder(
-    onProgress,
-    `computing ${algorithms.length} checksum algorithm(s)`,
-    { maxPercent: 97 },
-  );
   const result = await runRomWeaverJson(
     args,
     toRomWeaverOptions({
       logLevel: input.logLevel,
-      onEvent: (event) => progressForwarder.forward(event),
+      onEvent: (event) => {
+        onProgress?.({
+          label: typeof event.label === "string" && event.label ? event.label : undefined,
+          message: undefined,
+          percent: clampPercent(event.percent),
+        });
+      },
       onLog,
     }),
-  ).finally(() => progressForwarder.finish());
+  );
   ensureRomWeaverSuccess(result, "Checksum calculation failed");
 
   const terminal = getLastEvent(result);

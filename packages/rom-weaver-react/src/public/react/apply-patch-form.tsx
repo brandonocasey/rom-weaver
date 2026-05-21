@@ -206,7 +206,7 @@ const createBaseApplyWorkflowSettings = (
       ...settingsInput,
       input: {
         ...settingsInput.input,
-        containerInputsEnabled,
+        containerInputsEnabled: containerInputsEnabled ?? settingsInput.input?.containerInputsEnabled,
       },
     },
     optionWorkerThreads || workerThreads,
@@ -266,10 +266,10 @@ const getSelectedInputCandidateFileName = (input: ApplyWorkflowInputState) => {
   if (!(selectedCandidate?.type === "group" && selectedCandidate.candidateIds.length)) return "";
   const childCandidateIds = new Set(selectedCandidate.candidateIds);
   const childCandidate = input.candidates.find(
-    (candidate): candidate is Extract<(typeof input.candidates)[number], { type: "file" }> =>
-      candidate.type === "file" && candidate.selectable && childCandidateIds.has(candidate.id) && !!candidate.fileName,
+    (candidate) =>
+      candidate.type === "file" && candidate.selectable && childCandidateIds.has(candidate.id) && candidate.fileName,
   );
-  return childCandidate?.fileName || "";
+  return childCandidate && childCandidate.type === "file" ? childCandidate.fileName || "" : "";
 };
 
 const getSingleSelectableInputCandidateFileName = (input: ApplyWorkflowInputState) => {

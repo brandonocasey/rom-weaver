@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { resolveAutomaticSelection } from "../../lib/input/selection.ts";
-import { ApplyWorkflow, type CandidateSelectionRequest } from "../../platform/browser/browser-api.ts";
+import { ApplyWorkflow, type CandidateSelectionRequest, CreateWorkflow } from "../../platform/browser/browser-api.ts";
 import { clampProgressPercent, normalizeProgressDisplayPercent } from "../../presentation/workflow-presentation.ts";
 import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
+import type { CreateWorkflowSourceState } from "../../types/create-workflow.ts";
 import type { ProgressEvent } from "../../types/workflow-runtime.ts";
 import type { BinarySource } from "./patcher-form.ts";
 
@@ -20,6 +21,19 @@ const useApplyWorkflow = (options: ConstructorParameters<typeof ApplyWorkflow>[0
     [],
   );
   return workflowRef.current as ApplyWorkflow;
+};
+
+const useCreateWorkflow = (options: ConstructorParameters<typeof CreateWorkflow>[0] = {}): CreateWorkflow => {
+  const workflowRef = useRef<CreateWorkflow | null>(null);
+  if (!workflowRef.current) workflowRef.current = new CreateWorkflow(options);
+  useEffect(
+    () => () => {
+      void workflowRef.current?.dispose();
+      workflowRef.current = null;
+    },
+    [],
+  );
+  return workflowRef.current as CreateWorkflow;
 };
 
 const toBrowserPublicBinarySource = (source: BinarySource) => source;
@@ -74,7 +88,7 @@ const toReactProgressEvent = (event: {
 };
 
 const getWorkflowSourceRole = (
-  source: ApplyWorkflowInputState | ApplyWorkflowPatchState | undefined,
+  source: CreateWorkflowSourceState | ApplyWorkflowInputState | ApplyWorkflowPatchState | undefined,
 ): SelectionRole | undefined => {
   if (!(source && "role" in source) || typeof source.role !== "string") return undefined;
   if (source.role === "input" || source.role === "patch" || source.role === "original" || source.role === "modified") {
@@ -84,7 +98,7 @@ const getWorkflowSourceRole = (
 };
 
 const getWorkflowArchiveName = (
-  source: ApplyWorkflowInputState | ApplyWorkflowPatchState | undefined,
+  source: CreateWorkflowSourceState | ApplyWorkflowInputState | ApplyWorkflowPatchState | undefined,
   originalName: string,
 ) => {
   if (source && "parentCompressions" in source) {
@@ -118,7 +132,7 @@ const getResolvedInputArchiveName = (
 };
 
 const toStagedInputInfo = (
-  source: ApplyWorkflowInputState | undefined | null,
+  source: CreateWorkflowSourceState | ApplyWorkflowInputState | undefined | null,
   originalName: string,
   checksums?: Record<string, string> | null,
 ) => {
@@ -147,7 +161,7 @@ const createWorkflowFormError = (code: string, message: string) => {
 };
 
 const chooseWorkflowSource = async (
-  source: ApplyWorkflowInputState | ApplyWorkflowPatchState | undefined,
+  source: CreateWorkflowSourceState | ApplyWorkflowInputState | ApplyWorkflowPatchState | undefined,
   selectFile: (request: CandidateSelectionRequest) => Promise<{ id: string }>,
   role: SelectionRole = getWorkflowSourceRole(source) || "input",
 ) => {
@@ -172,4 +186,5 @@ export {
   toReactProgressEvent,
   toStagedInputInfo,
   useApplyWorkflow,
+  useCreateWorkflow,
 };

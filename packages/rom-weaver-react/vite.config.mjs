@@ -16,8 +16,11 @@ const securityHeaders = {
   Pragma: "no-cache",
 };
 const runtimeScratchIgnorePatterns = [
+  "**/dist/**",
   "**/.rpjs-vfs",
   "**/.rpjs-vfs/**",
+  "../rom-weaver-wasm/*.wasm",
+  "../rom-weaver-wasm/*.wasm.br",
   path.join(os.tmpdir(), "rpjs-vfs*").replace(/\\/g, "/"),
 ];
 
@@ -58,8 +61,31 @@ export default defineConfig({
   css: {
     transformer: "lightningcss",
   },
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version || "0.1.0"),
+    __COMMIT_HASH__: JSON.stringify(process.env.ROM_WEAVER_COMMIT_HASH || "dev"),
+    __DIRTY_HASH__: JSON.stringify(process.env.ROM_WEAVER_DIRTY_HASH || ""),
+    __GIT_BRANCH__: JSON.stringify(process.env.ROM_WEAVER_GIT_BRANCH || "dev"),
+    __SERVICE_WORKER_ENABLED__: "false",
+    __SERVICE_WORKER_UPDATE_INTERVAL_MS__: "0",
+  },
   optimizeDeps: {
-    include: ["@bjorn3/browser_wasi_shim", "@zenfs/core", "@zenfs/dom", "react", "react-dom", "react-dom/client"],
+    include: [
+      "@bjorn3/browser_wasi_shim",
+      "@zenfs/core",
+      "@zenfs/dom",
+      "lucide-react/dist/esm/icons/github.js",
+      "lucide-react/dist/esm/icons/heart.js",
+      "lucide-react/dist/esm/icons/refresh-cw.js",
+      "lucide-react/dist/esm/icons/rotate-ccw.js",
+      "lucide-react/dist/esm/icons/save.js",
+      "lucide-react/dist/esm/icons/settings.js",
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "valibot",
+      "zustand/vanilla",
+    ],
   },
   plugins: [react(), tailwindcss()],
   preview: {

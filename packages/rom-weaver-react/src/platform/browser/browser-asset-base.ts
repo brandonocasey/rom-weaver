@@ -1,10 +1,5 @@
 type BrowserAssetRoot = typeof globalThis & {
-  __azaharZ3dsWasmBaseUrl?: string;
-  __chdmanWasmBaseUrl?: string;
-  __dolphinRvzWasmBaseUrl?: string;
-  __romWeaverSevenZipZstdWasmBaseUrl?: string;
   __romWeaverWorkerBaseUrl?: string;
-  __xdelta3WasmBaseUrl?: string;
 };
 
 const normalizeAssetBaseUrl = (value: unknown): string | null => {
@@ -30,11 +25,6 @@ const configureBrowserAssetBaseUrl = (assetBaseUrl?: string) => {
   if (!normalized) return;
   const root = globalThis as BrowserAssetRoot;
   root.__romWeaverWorkerBaseUrl = normalized;
-  root.__romWeaverSevenZipZstdWasmBaseUrl = normalized;
-  root.__xdelta3WasmBaseUrl = normalized;
-  root.__dolphinRvzWasmBaseUrl = normalized;
-  root.__chdmanWasmBaseUrl = normalized;
-  root.__azaharZ3dsWasmBaseUrl = normalized;
 };
 
 export { configureBrowserAssetBaseUrl };

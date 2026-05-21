@@ -3,11 +3,6 @@ import type { CandidateSelectionRequest, SelectionFileCandidate } from "../../ty
 import type { SourceObject, SourceRef } from "../../types/source.ts";
 import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
-import type { ArchiveReadOptions } from "../../workers/compression-7zip-zstd/archive/runtime/types.ts";
-import { extractEntryToFile as extractArchiveEntryToFile } from "../../workers/protocol/archive-runtime.ts";
-import type { CoreRomPatchFileLike } from "../../workers/protocol/patch-engine.ts";
-import { RomWeaver } from "../../workers/protocol/patch-engine.ts";
-import { BPS } from "../../workers/protocol/patch-formats.ts";
 import { createArchiveSourceBlob } from "../archive-utils.ts";
 import { RomWeaverError } from "../errors.ts";
 import { filterRomEntries } from "../input/archive-entry-filter-utils.ts";
@@ -83,6 +78,11 @@ type ArchiveFileBackedPatchFile = PatchFileInstance & {
 };
 type ValidatedPatchArchiveEntryCache = Map<string, PatchFileInstance>;
 const PATCH_ENTRY_REGEX = /\.(ips|ups|bps|aps|rup|ppf|ebp|bdf|bspatch|mod|xdelta|vcdiff)\d*$/i;
+const PATCH_MAGIC_BY_EXTENSION = {
+  bps: "BPS1",
+  ips: "PATCH",
+  ups: "UPS1",
+} as const;
 type NestedArchiveOptions = {
   archivePath?: string[];
   breadcrumbs?: string[];
@@ -354,26 +354,6 @@ const getArchiveFileBackedSource = (archiveFile: PatchFileInstance): ArchiveFile
   );
   (archiveFile as ArchiveFileBackedPatchFile)._archiveFileBackedSource = materializedSource;
   return materializedSource;
-};
-
-const extractBrowserValidatedPatchArchiveEntry = async (
-  archiveFile: PatchFileInstance,
-  entryName: string,
-  options: InputPreparationOptions,
-): Promise<PatchFileInstance | null> => {
-  const extracted = await extractArchiveEntryToFile(getArchiveFileBackedSource(archiveFile), entryName, {
-    onProgress: options?.onProgress as ArchiveReadOptions["onProgress"],
-  }).catch(() => null);
-  if (!extracted?.file) return null;
-  const patchFile = await createBlobBackedPatchFile(
-    extracted.file,
-    extracted.fileName || getBaseFileName(entryName),
-    extracted.cleanup,
-    extracted.fileHandle || undefined,
-  );
-  (patchFile as { _archiveEntryName?: string })._archiveEntryName = entryName;
-  (patchFile as { _archiveFileName?: string })._archiveFileName = archiveFile.fileName;
-  return patchFile;
 };
 
 const getCompressionFormat = (file: PatchFileInstance) => {
@@ -659,14 +639,12 @@ const isValidPatchPatchFile = async (patchFile: PatchFileInstance): Promise<bool
     patchFile.seek(0);
     const header = patchFile.readString(8);
     patchFile.seek(0);
-    if (header.startsWith(BPS.MAGIC)) {
-      await BPS.fromFileAsync(patchFile as unknown as Parameters<typeof BPS.fromFileAsync>[0], {
-        lazyTargetRead: true,
-        streamActions: true,
-      });
-      return true;
-    }
-    return !!(await RomWeaver.parsePatchFile(patchFile as unknown as CoreRomPatchFileLike));
+    const extension = String(patchFile.fileName || "")
+      .match(/\.([^.]+?)(?:\d+)?$/)?.[1]
+      ?.toLowerCase();
+    if (!extension) return false;
+    const expectedMagic = PATCH_MAGIC_BY_EXTENSION[extension as keyof typeof PATCH_MAGIC_BY_EXTENSION];
+    return expectedMagic ? header.startsWith(expectedMagic) : PATCH_ENTRY_REGEX.test(patchFile.fileName || "");
   } catch (_error) {
     return false;
   }
@@ -683,10 +661,9 @@ const filterValidPatchArchiveEntriesForSource = async (
   const validEntries = await Promise.all(
     patchEntries.map(async (entry) => {
       if (cache.has(entry.filename)) return entry;
-      const patchFile =
-        runtime.name === "browser"
-          ? await extractBrowserValidatedPatchArchiveEntry(archiveFile, entry.filename, options)
-          : await extractArchiveEntry(archiveFile, entry.filename, undefined, options, runtime).catch(() => null);
+      const patchFile = await extractArchiveEntry(archiveFile, entry.filename, undefined, options, runtime).catch(
+        () => null,
+      );
       if (!patchFile) return null;
       try {
         if (!(await isValidPatchPatchFile(patchFile))) return null;

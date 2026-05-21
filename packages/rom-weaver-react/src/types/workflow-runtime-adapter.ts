@@ -40,7 +40,7 @@ type RuntimeWorkerPathSource = {
 
 type RuntimeWorkerSourceScope =
   | "apply"
-  | "7zip-zstd"
+  | "archive"
   | "checksum"
   | "chd"
   | "create-patch"
@@ -96,7 +96,7 @@ type RuntimePublicOutputAdapter = {
   saveAs: (output: PublicOutput, destination?: unknown) => Promise<void>;
 };
 
-type RuntimeSevenZipZstdCreateInput = Extract<CompressionCreateInput, { entries: unknown }>;
+type RuntimeArchiveCreateInput = Extract<CompressionCreateInput, { entries: unknown }>;
 type RuntimeCompressionExtractInput = CompressionExtractInput;
 type RuntimeCompressionListInput = CompressionListInput;
 type RuntimeDiscCreateInputBase = Extract<CompressionCreateInput, { source: unknown }>;
@@ -309,6 +309,7 @@ type WorkflowRuntime = {
 };
 
 export type {
+  RuntimeArchiveCreateInput,
   RuntimeCompressionExtractInput,
   RuntimeCompressionListInput,
   RuntimeDiscCreateChdInput,
@@ -323,7 +324,6 @@ export type {
   RuntimePatchCreateWorkerInput,
   RuntimePatchWorkerProgress,
   RuntimePublicOutputAdapter,
-  RuntimeSevenZipZstdCreateInput,
   RuntimeWorkerIo,
   RuntimeWorkerOutput,
   RuntimeWorkerPathSource,

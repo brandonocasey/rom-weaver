@@ -2,7 +2,7 @@ import type { RomWeaverErrorDetails, WorkflowErrorCode } from "./errors.ts";
 import type { LogRecord } from "./logging.ts";
 import type { WorkflowProgress } from "./progress.ts";
 
-type WorkerKind = "7zip-zstd" | "azahar-z3ds" | "chdman" | "dolphin-rvz" | "patch-checksum";
+type WorkerKind = "rom-weaver" | "storage";
 
 type WorkerOperation =
   | "apply"

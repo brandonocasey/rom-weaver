@@ -1,6 +1,6 @@
+import type { ChecksumResult } from "../../types/checksum.ts";
 import type { JsonValue } from "../../types/runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
-import type { ChecksumResult } from "../../workers/protocol/patch-engine.ts";
 
 const HEX_PREFIX_REGEX = /^0x/;
 const HEX_DIGITS_REGEX = /^[0-9a-f]+$/i;

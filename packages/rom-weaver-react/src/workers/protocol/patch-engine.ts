@@ -1,4 +1,3 @@
-export { default as RomWeaver } from "../patch-checksum/patch/engine/patch-operations.ts";
 export type {
   ChecksumResult,
   CoreRomPatchFileLike,

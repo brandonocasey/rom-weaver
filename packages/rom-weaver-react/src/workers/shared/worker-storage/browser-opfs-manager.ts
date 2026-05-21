@@ -3,7 +3,7 @@ import {
   getManagedOpfsStorageName,
   removeManagedOpfsPath,
 } from "../../protocol/opfs-path.ts";
-import type { EmscriptenFileSystem, EmscriptenWorkerModule } from "../wasm/emscripten-types.ts";
+import type { EmscriptenFileSystem, EmscriptenWorkerModule } from "./emscripten-types.ts";
 import { getParentPath } from "./path-utils.ts";
 import { getWorkerStorageBucketRoot, WORKER_OPFS_MOUNTPOINT, WORKER_STORAGE_BUCKETS } from "./storage-layout.ts";
 import type { OpfsBackend, WorkerOpfsManager } from "./types.ts";

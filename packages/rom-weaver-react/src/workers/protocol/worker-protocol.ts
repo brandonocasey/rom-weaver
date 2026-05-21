@@ -271,7 +271,7 @@ type CreatePatchWorkerRequest = {
   workerThreads?: number | string;
 };
 
-type CompressionWorkerKind = "7zip-zstd" | "chdman" | "dolphin-rvz" | "azahar-z3ds";
+type CompressionWorkerKind = "rom-weaver";
 type CompressionWorkerOperation = "warmup" | "list" | "extract" | "create" | "cleanup";
 
 type CompressionWorkerRequest = {

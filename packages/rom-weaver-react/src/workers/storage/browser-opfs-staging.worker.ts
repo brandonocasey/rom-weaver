@@ -66,32 +66,19 @@ const createInputPath = (request: StageRequest, fileName: string) => {
 
 const writeBlobToOpfsPath = async (filePath: string, file: Blob) => {
   const fileHandle = await getManagedOpfsFileHandle(filePath, { create: true, navigatorObject: navigator });
-  if (!fileHandle || typeof fileHandle.createSyncAccessHandle !== "function")
-    throw new Error("OPFS sync access handles are not available in this browser worker");
-  let accessHandle: FileSystemSyncAccessHandle;
+  if (!fileHandle) throw new Error("OPFS file handles are not available in this browser worker");
+  const writable = await fileHandle.createWritable();
   try {
-    accessHandle = await fileHandle.createSyncAccessHandle();
-  } catch (error) {
-    throw new Error(
-      `OPFS staging createSyncAccessHandle failed for ${filePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  try {
-    accessHandle.truncate(0);
     let position = 0;
     while (position < file.size) {
       const nextPosition = Math.min(position + CHUNK_SIZE, file.size);
       const chunkBytes = new Uint8Array(await file.slice(position, nextPosition).arrayBuffer());
-      const bytesWritten = accessHandle.write(chunkBytes, { at: position });
-      position += bytesWritten;
-      if (bytesWritten < chunkBytes.byteLength) throw new Error("OPFS import wrote fewer bytes than expected");
+      await writable.write({ data: chunkBytes, position, type: "write" });
+      position = nextPosition;
     }
-    accessHandle.truncate(file.size);
-    accessHandle.flush();
+    await writable.truncate(file.size);
   } finally {
-    accessHandle.close();
+    await writable.close();
   }
 };
 

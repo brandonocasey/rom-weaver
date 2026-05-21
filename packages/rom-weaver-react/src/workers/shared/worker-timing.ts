@@ -1,5 +1,4 @@
-import { createTiming, now, type Timing } from "../../lib/progress/timing.ts";
+const now = () =>
+  typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 
-const createTimingFromStart = (startedAt: number): Timing => createTiming(now() - startedAt);
-
-export { createTimingFromStart, now, type Timing };
+export { now };

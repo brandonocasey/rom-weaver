@@ -2,6 +2,8 @@ import { createContext, useContext, useMemo } from "react";
 import type {
   ApplyPatchFormSettings,
   ApplyWorkflowSettings,
+  CreatePatchFormSettings,
+  CreateWorkflowSettings,
   RomWeaverReactSettings,
   RomWeaverSettingsProviderProps,
 } from "./public-types.ts";
@@ -13,6 +15,7 @@ type RomWeaverSettingsContextValue = {
 
 const RomWeaverSettingsContext = createContext<RomWeaverSettingsContextValue>({ settings: {} });
 const APPLY_OUTPUT_COMPRESSION_VALUES = new Set(["auto", "7z", "chd", "none", "rvz", "z3ds", "zip"]);
+const CREATE_OUTPUT_COMPRESSION_VALUES = new Set(["7z", "none", "zip"]);
 type SettingsRecord = Record<string, RuntimeValue | undefined>;
 type OutputContainerSettings = NonNullable<NonNullable<ApplyWorkflowSettings["output"]>["container"]>;
 type ApplyCompatibilitySettings = NonNullable<ApplyWorkflowSettings["compatibility"]>;
@@ -36,16 +39,18 @@ const useRomWeaverAssetBaseUrl = () => useContext(RomWeaverSettingsContext).asse
 
 const useApplySettings = () => {
   const settings = useRomWeaverSettings();
-  return useMemo(() => {
-    const applySettings = settings as ApplyPatchFormSettings;
-    return toApplyWorkflowSettings({
-      ...applySettings,
-      storage: {
-        ...(applySettings.storage || {}),
-        prefer: applySettings.storage?.prefer || "opfs",
-      },
-    });
-  }, [settings]);
+  return useMemo(() => toApplyWorkflowSettings(settings as ApplyPatchFormSettings), [settings]);
+};
+
+const normalizeCreateOutputCompression = (
+  value: RuntimeValue,
+): NonNullable<CreateWorkflowSettings["output"]>["compression"] => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (CREATE_OUTPUT_COMPRESSION_VALUES.has(normalized))
+    return normalized as NonNullable<CreateWorkflowSettings["output"]>["compression"];
+  return "none";
 };
 
 const isRecord = (value: RuntimeValue | undefined): value is SettingsRecord =>
@@ -78,7 +83,10 @@ const normalizeSevenZipCodec = (value: RuntimeValue): OutputContainerSettings["s
     ? "zstd"
     : "lzma2";
 
-const getNormalizedWorkflowSettings = (settings: ApplyPatchFormSettings, workerThreads?: RuntimeValue) => {
+const getNormalizedWorkflowSettings = (
+  settings: ApplyPatchFormSettings | CreatePatchFormSettings,
+  workerThreads?: RuntimeValue,
+) => {
   const source = toRecord(settings as RuntimeValue);
   const output = toRecord(source.output);
   const outputContainer = toRecord(output.container);
@@ -169,10 +177,46 @@ const toApplyWorkflowSettings = (
   };
 };
 
+const toCreateWorkflowSettings = (
+  settings: CreatePatchFormSettings,
+  outputName: string,
+  workerThreads?: RuntimeValue,
+): CreateWorkflowSettings => {
+  const normalized = getNormalizedWorkflowSettings(settings, workerThreads);
+  return {
+    ...settings,
+    logging: normalized.logging,
+    output: {
+      ...normalized.output,
+      compression: normalizeCreateOutputCompression(normalized.output.compression),
+      outputName,
+    },
+    workers: normalized.workers,
+  };
+};
+
+const getCreateSettingsOutputName = (settings: CreatePatchFormSettings) => settings.output?.outputName || "";
+
+const useCreateSettings = () => {
+  const settings = useRomWeaverSettings();
+  return useMemo<CreatePatchFormSettings>(
+    () =>
+      toCreateWorkflowSettings(
+        settings as CreatePatchFormSettings,
+        getCreateSettingsOutputName(settings as CreatePatchFormSettings),
+      ),
+    [settings],
+  );
+};
+
 export {
+  getCreateSettingsOutputName,
+  normalizeCreateOutputCompression,
   RomWeaverSettingsProvider,
   toApplyWorkflowSettings,
+  toCreateWorkflowSettings,
   useApplySettings,
+  useCreateSettings,
   useRomWeaverAssetBaseUrl,
   useRomWeaverSettings,
 };

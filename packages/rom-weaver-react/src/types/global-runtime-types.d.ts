@@ -21,10 +21,6 @@ declare global {
     deviceMemory?: number;
   }
 
-  interface WorkerGlobalScope {
-    __romWeaverCompressionWorkerKind?: "7zip-zstd" | "azahar-z3ds" | "chdman" | "dolphin-rvz";
-  }
-
   var WorkerGlobalScope:
     | {
         prototype: WorkerGlobalScope;
@@ -47,7 +43,6 @@ declare global {
 
   var Module: Record<string, RuntimeValue> | undefined;
   var __ROM_WEAVER_NODE_WORKER_RUNTIME: RomWeaverNodeWorkerRuntime | undefined;
-  var __romWeaverCompressionWorkerKind: "7zip-zstd" | "azahar-z3ds" | "chdman" | "dolphin-rvz" | undefined;
 }
 
 export {};

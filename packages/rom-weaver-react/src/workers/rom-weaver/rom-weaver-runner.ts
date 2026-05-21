@@ -42,6 +42,7 @@ type RomWeaverRunner = {
 
 let browserWasmUrlPromise: Promise<string> | null = null;
 let browserRunnerPromise: Promise<RomWeaverRunner> | null = null;
+const ROM_WEAVER_SCRATCH_MOUNTPOINT = "/scratch";
 
 const normalizeArgs = (args: string[]) => args.map((value) => String(value));
 
@@ -64,9 +65,10 @@ const createBrowserRunner = async (): Promise<RomWeaverRunner> => {
   const wasmUrl = await resolveBrowserWasmUrl();
   await client.init({
     opfsGuestPath: WORKER_OPFS_MOUNTPOINT,
-    runtimeMounts: [WORKER_OPFS_MOUNTPOINT],
-    scratchGuestPath: WORKER_OPFS_MOUNTPOINT,
+    runtimeMounts: [WORKER_OPFS_MOUNTPOINT, ROM_WEAVER_SCRATCH_MOUNTPOINT],
+    scratchGuestPath: ROM_WEAVER_SCRATCH_MOUNTPOINT,
     wasmUrl,
+    writableMounts: [WORKER_OPFS_MOUNTPOINT],
   });
   return {
     dispose: async () => {

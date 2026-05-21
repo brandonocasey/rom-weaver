@@ -11,17 +11,6 @@ import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
 import type { ArchiveEntry, ArchiveExtractionResult, ProgressCallback } from "../../types/runtime.ts";
 import type { DirectSource, SourceRef } from "../../types/source.ts";
 import type { CompressionEntryInfo } from "../../types/workflow-runtime.ts";
-import {
-  configure as configureArchiveCapabilities,
-  createArchive,
-  extractEntryFromFile,
-  extractEntryToFile,
-  filterValidPatchEntries as filterValidPatchArchiveEntries,
-  filterValidPatchEntriesFromFile,
-  listEntriesFromFile,
-  toArrayBuffer,
-  warmup,
-} from "../../workers/protocol/archive-runtime.ts";
 import type {
   PatchFileInstance,
   PatchFileConstructor as SharedPatchFileType,
@@ -95,16 +84,27 @@ type PatchFileSourceAccess = {
   getFilePath: () => string | null;
 };
 
+const unsupportedArchiveCapability = () => {
+  throw new Error("Legacy archive wasm runtime has been removed; use the rom-weaver runtime instead");
+};
+
+const toArrayBuffer = (data: Blob | ArrayBuffer | Uint8Array | ArrayBufferView) => {
+  if (data instanceof ArrayBuffer) return data;
+  if (ArrayBuffer.isView(data)) return data;
+  return data as unknown as ArrayBuffer;
+};
+
 const ArchiveCapabilities = {
-  configure: configureArchiveCapabilities,
-  createArchive,
-  extractEntryFromFile,
-  extractEntryToFile,
-  filterValidPatchEntries: filterValidPatchArchiveEntries,
-  filterValidPatchEntriesFromFile,
-  listEntriesFromFile,
+  configure: () => undefined,
+  createArchive: unsupportedArchiveCapability,
+  extractEntryFromFile: unsupportedArchiveCapability,
+  extractEntryToFile: unsupportedArchiveCapability,
+  filterValidPatchEntries: (_entries: ArchiveEntry[]) => [],
+  filterValidPatchEntriesFromFile: async (_source: string | Blob | { _file?: Blob | null }, entries: ArchiveEntry[]) =>
+    entries,
+  listEntriesFromFile: unsupportedArchiveCapability,
   toArrayBuffer,
-  warmup,
+  warmup: async () => undefined,
 } as RuntimeValue as ArchiveCapabilitiesWithArrayBuffer;
 const PatchFile = SharedPatchFile as RuntimeValue as ServicePatchFileConstructor;
 

@@ -55,6 +55,10 @@ export async function createRomWeaverZenFsBrowser(options = {}) {
   const runtimeMounts = normalizeRuntimeMounts(
     options.runtimeMounts ?? [opfsGuestPath, scratchGuestPath],
   );
+  const writableMounts = normalizeWritableMounts(options.writableMounts ?? [], {
+    runtimeMounts,
+    scratchGuestPath,
+  });
   if (!runtimeMounts.includes(scratchGuestPath)) {
     throw new Error(
       `runtimeMounts must include scratch guest path ${scratchGuestPath}. `
@@ -69,6 +73,7 @@ export async function createRomWeaverZenFsBrowser(options = {}) {
     scratchRootHandle,
     mountHandles: options.mountHandles,
   });
+  const runtimeMountState = new Map();
   const activeScratchRunIds = new Set();
 
   const runner = {
@@ -108,23 +113,29 @@ export async function createRomWeaverZenFsBrowser(options = {}) {
       };
 
       const syncAccessMode = runOptions.syncAccessMode ?? options.syncAccessMode;
+      const runWritableMounts = normalizeWritableMounts(
+        runOptions.writableMounts ?? writableMounts,
+        {
+          runtimeMounts,
+          scratchGuestPath,
+        },
+      );
       const {
         fds,
         closeHandles,
-        flushStderr,
-        flushStdout,
         stdoutChunks,
         stderrChunks,
       } = await buildBrowserWasiFds({
         wasiShim,
         stdin: runOptions.stdin,
-        opfsGuestPath,
         runtimeMounts,
         mountHandles,
+        scratchGuestPath,
+        writableMounts: runWritableMounts,
+        syncAccessMode,
+        runtimeMountState,
         onStderrChunk: runOptions.onStderrChunk,
         onStdoutChunk: runOptions.onStdoutChunk,
-        scratchGuestPath,
-        syncAccessMode,
       });
 
       try {
@@ -141,8 +152,6 @@ export async function createRomWeaverZenFsBrowser(options = {}) {
         });
 
         const exitCode = wasi.start(instance);
-        flushStdout();
-        flushStderr();
         const stdout = decodeChunks(stdoutChunks);
         const stderr = decodeChunks(stderrChunks);
 
@@ -154,8 +163,6 @@ export async function createRomWeaverZenFsBrowser(options = {}) {
           ok: exitCode === 0,
         };
       } catch (error) {
-        flushStdout();
-        flushStderr();
         const stdout = decodeChunks(stdoutChunks);
         const stderr = decodeChunks(stderrChunks);
 
@@ -183,17 +190,19 @@ export async function createRomWeaverZenFsBrowser(options = {}) {
         onEvent: runOptions.onEvent,
         onNonJsonLine: runOptions.onNonJsonLine,
       });
-      const traceStream = createJsonLineStream({
-        onEvent: runOptions.onTraceEvent,
-        onNonJsonLine: runOptions.onTraceNonJsonLine,
+      const traceStream = createTraceJsonLineStream({
+        onTraceEvent: runOptions.onTraceEvent,
+        onTraceNonJsonLine: runOptions.onTraceNonJsonLine,
       });
       const result = await this.run(['--json', ...normalizeArgs(args)], {
         ...runOptions,
         onStderrChunk(text) {
           traceStream.push(text);
+          runOptions.onStderrChunk?.(text);
         },
         onStdoutChunk(text) {
           jsonStream.push(text);
+          runOptions.onStdoutChunk?.(text);
         },
       });
       jsonStream.flush();
@@ -203,8 +212,8 @@ export async function createRomWeaverZenFsBrowser(options = {}) {
         ...result,
         events: jsonStream.events,
         nonJsonLines: jsonStream.nonJsonLines,
-        traceEvents: traceStream.events,
-        traceNonJsonLines: traceStream.nonJsonLines,
+        traceEvents: traceStream.traceEvents,
+        traceNonJsonLines: traceStream.traceNonJsonLines,
       };
     },
   };
@@ -240,13 +249,14 @@ export async function syncWasmerDirectoryToZenFs() {
 async function buildBrowserWasiFds({
   wasiShim,
   stdin,
-  opfsGuestPath,
   runtimeMounts,
   mountHandles,
+  scratchGuestPath,
+  writableMounts,
+  syncAccessMode,
+  runtimeMountState,
   onStdoutChunk,
   onStderrChunk,
-  scratchGuestPath,
-  syncAccessMode,
 }) {
   const closeHandles = [];
   const stdinBytes = normalizeStdin(stdin);
@@ -260,6 +270,16 @@ async function buildBrowserWasiFds({
   ];
 
   for (const mountPath of runtimeMounts) {
+    if (mountPath === scratchGuestPath) {
+      let scratchContents = runtimeMountState.get(mountPath);
+      if (!(scratchContents instanceof Map)) {
+        scratchContents = new Map();
+        runtimeMountState.set(mountPath, scratchContents);
+      }
+      fds.push(new wasiShim.PreopenDirectory(mountPath, scratchContents));
+      continue;
+    }
+
     const handle = mountHandles[mountPath];
     if (!handle) {
       throw new Error(
@@ -268,32 +288,27 @@ async function buildBrowserWasiFds({
       );
     }
 
-    const writableMount = mountPath === scratchGuestPath;
     const preopenContents = await buildOpfsInodeMap({
       wasiShim,
       directoryHandle: handle,
       closeHandles,
-      readOnly: !writableMount,
+      readOnly: mountPath !== scratchGuestPath && !writableMounts.has(mountPath),
       syncAccessMode,
     });
-    if (writableMount) {
-      fds.push(new wasiShim.PreopenDirectory(mountPath, preopenContents));
-    } else {
-      fds.push(createStrictOpfsPreopenDirectory(wasiShim, mountPath, preopenContents));
-    }
+    fds.push(createStrictOpfsPreopenDirectory(wasiShim, mountPath, preopenContents, {
+      readOnly: mountPath !== scratchGuestPath && !writableMounts.has(mountPath),
+    }));
   }
 
   return {
     fds,
     closeHandles,
-    flushStderr: () => stderrCollector.flush(),
-    flushStdout: () => stdoutCollector.flush(),
     stdoutChunks: stdoutCollector.chunks,
     stderrChunks: stderrCollector.chunks,
   };
 }
 
-function createStrictOpfsPreopenDirectory(wasiShim, mountPath, contents) {
+function createStrictOpfsPreopenDirectory(wasiShim, mountPath, contents, { readOnly }) {
   const rofsErrno = wasiShim.wasi.ERRNO_ROFS;
   const oCreat = wasiShim.wasi.OFLAGS_CREAT;
 
@@ -307,7 +322,8 @@ function createStrictOpfsPreopenDirectory(wasiShim, mountPath, contents) {
       fdFlags,
     ) {
       if (
-        (oflags & oCreat) === oCreat
+        readOnly
+        && (oflags & oCreat) === oCreat
         && !pathExistsInDirectory(contents, pathStr)
       ) {
         return { ret: rofsErrno, fd_obj: null };
@@ -322,23 +338,28 @@ function createStrictOpfsPreopenDirectory(wasiShim, mountPath, contents) {
       );
     }
 
-    path_create_directory(_path) {
+    path_create_directory(pathStr) {
+      if (!readOnly) return super.path_create_directory(pathStr);
       return rofsErrno;
     }
 
-    path_link(_pathStr, _inode, _allowDir) {
+    path_link(pathStr, inode, allowDir) {
+      if (!readOnly) return super.path_link(pathStr, inode, allowDir);
       return rofsErrno;
     }
 
-    path_unlink(_pathStr) {
+    path_unlink(pathStr) {
+      if (!readOnly) return super.path_unlink(pathStr);
       return { ret: rofsErrno, inode_obj: null };
     }
 
-    path_unlink_file(_pathStr) {
+    path_unlink_file(pathStr) {
+      if (!readOnly) return super.path_unlink_file(pathStr);
       return rofsErrno;
     }
 
-    path_remove_directory(_pathStr) {
+    path_remove_directory(pathStr) {
+      if (!readOnly) return super.path_remove_directory(pathStr);
       return rofsErrno;
     }
   }
@@ -393,12 +414,6 @@ function createOutputCollector(ConsoleStdout, onTextChunk) {
   const decoder = new TextDecoder();
   return {
     chunks,
-    flush() {
-      const trailing = decoder.decode();
-      if (typeof onTextChunk === 'function' && trailing.length > 0) {
-        onTextChunk(trailing);
-      }
-    },
     fd: new ConsoleStdout((bytes) => {
       const chunk = copyUint8Array(bytes);
       chunks.push(chunk);
@@ -412,6 +427,68 @@ function createOutputCollector(ConsoleStdout, onTextChunk) {
   };
 }
 
+function createJsonLineStream(options = {}) {
+  const events = [];
+  const nonJsonLines = [];
+  let pending = '';
+  const onEvent = typeof options.onEvent === 'function' ? options.onEvent : null;
+  const onNonJsonLine = typeof options.onNonJsonLine === 'function'
+    ? options.onNonJsonLine
+    : null;
+
+  const consumeLine = (line) => {
+    if (line.length === 0) return;
+    try {
+      const event = JSON.parse(line);
+      events.push(event);
+      onEvent?.(event);
+    } catch {
+      nonJsonLines.push(line);
+      onNonJsonLine?.(line);
+    }
+  };
+
+  return {
+    events,
+    nonJsonLines,
+    push(text) {
+      pending += String(text);
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        consumeLine(line);
+      }
+    },
+    flush() {
+      if (pending.length > 0) {
+        consumeLine(pending);
+        pending = '';
+      }
+    },
+  };
+}
+
+function createTraceJsonLineStream(options = {}) {
+  const traceEvents = [];
+  const traceNonJsonLines = [];
+  const stream = createJsonLineStream({
+    onEvent(event) {
+      traceEvents.push(event);
+      options.onTraceEvent?.(event);
+    },
+    onNonJsonLine(line) {
+      traceNonJsonLines.push(line);
+      options.onTraceNonJsonLine?.(line);
+    },
+  });
+  return {
+    traceEvents,
+    traceNonJsonLines,
+    push: (text) => stream.push(text),
+    flush: () => stream.flush(),
+  };
+}
+
 function decodeChunks(chunks) {
   const decoder = new TextDecoder();
   let output = '';
@@ -420,51 +497,6 @@ function decodeChunks(chunks) {
   }
   output += decoder.decode();
   return output;
-}
-
-function createJsonLineStream({ onEvent, onNonJsonLine } = {}) {
-  const events = [];
-  const nonJsonLines = [];
-  let pending = '';
-  const emitLine = (line) => {
-    if (line.length === 0) {
-      return;
-    }
-    try {
-      const event = JSON.parse(line);
-      events.push(event);
-      if (typeof onEvent === 'function') {
-        onEvent(event);
-      }
-    } catch {
-      nonJsonLines.push(line);
-      if (typeof onNonJsonLine === 'function') {
-        onNonJsonLine(line);
-      }
-    }
-  };
-  const push = (text) => {
-    if (typeof text !== 'string' || text.length === 0) {
-      return;
-    }
-    pending += text;
-    let splitAt = pending.indexOf('\n');
-    while (splitAt !== -1) {
-      const rawLine = pending.slice(0, splitAt);
-      pending = pending.slice(splitAt + 1);
-      emitLine(rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine);
-      splitAt = pending.indexOf('\n');
-    }
-  };
-  const flush = () => {
-    if (pending.length === 0) {
-      return;
-    }
-    const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
-    pending = '';
-    emitLine(line);
-  };
-  return { events, flush, nonJsonLines, push };
 }
 
 async function buildOpfsInodeMap({
@@ -659,6 +691,27 @@ function normalizeScratchNamespace(value) {
     }
   }
 
+  return normalized;
+}
+
+function normalizeWritableMounts(mounts, { runtimeMounts, scratchGuestPath }) {
+  if (mounts instanceof Set) {
+    return mounts;
+  }
+  if (!Array.isArray(mounts)) {
+    throw new TypeError('writableMounts must be an array of guest paths');
+  }
+
+  const normalized = new Set([scratchGuestPath]);
+  for (const mountPath of mounts) {
+    const normalizedMountPath = normalizeGuestPath(String(mountPath), {
+      label: 'writable mount guest path',
+    });
+    if (!runtimeMounts.includes(normalizedMountPath)) {
+      throw new Error(`writable mount ${normalizedMountPath} must also be listed in runtimeMounts`);
+    }
+    normalized.add(normalizedMountPath);
+  }
   return normalized;
 }
 

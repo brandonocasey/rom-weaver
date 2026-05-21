@@ -25,7 +25,6 @@ import { createWorkflowTracer } from "../workflow/workflow-tracing.ts";
 import {
   normalizePatchOptions,
   parsePatchForApply,
-  RomWeaver,
   resolvePatchTargets,
   toPublicOutput,
   verifyPatchedOutputIfRequired,
@@ -538,7 +537,6 @@ const patchWorkflowDeps = {
   prepareInput,
   prepareInputAssets,
   prepareMultipleDirectInputAssets,
-  RomWeaver,
   reportProgress,
   resolvePatchTargets,
   toPublicOutput,

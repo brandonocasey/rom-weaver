@@ -2,12 +2,16 @@ import type { ReactNode } from "react";
 import type {
   ApplySettings,
   BrowserApplyResult,
+  BrowserCreateResult,
   CandidateSelectionRequest,
+  CreateSettings,
 } from "../../platform/browser/browser-api.ts";
+import type { ProgressEvent } from "../../types/workflow-runtime.ts";
 import type { BinarySource, ApplyPatchFormProps as InternalApplyPatchFormProps, StartupState } from "./patcher-form.ts";
 
-type RomWeaverReactSettings = ApplySettings;
+type RomWeaverReactSettings = ApplySettings & CreateSettings;
 type ApplyWorkflowSettings = ApplySettings;
+type CreateWorkflowSettings = CreateSettings;
 type CandidateSelectionPrompt = CandidateSelectionRequest;
 type CandidateSelectionChoice = { id: string };
 type ApplyPatchFormSettings = ApplySettings;
@@ -22,13 +26,38 @@ type RomWeaverSettingsProviderProps = {
   settings?: Partial<RomWeaverReactSettings>;
 };
 
+type CreatePatchFormSettings = CreateSettings;
+
+type CreatePatchFormProps = {
+  assetBaseUrl?: string;
+  original?: BinarySource | null;
+  modified?: BinarySource | null;
+  defaultOriginal?: BinarySource | null;
+  defaultModified?: BinarySource | null;
+  settings?: CreatePatchFormSettings;
+  defaultSettings?: CreatePatchFormSettings;
+  patchType?: string;
+  defaultPatchType?: string;
+  disabled?: boolean;
+  workerThreads?: number | string;
+  onOriginalChange?: (file: BinarySource | null) => void;
+  onModifiedChange?: (file: BinarySource | null) => void;
+  onSettingsChange?: (settings: CreatePatchFormSettings) => void;
+  onPatchTypeChange?: (patchType: string) => void;
+  onProgress?: (event: ProgressEvent) => void;
+  onCreateComplete?: (result: BrowserCreateResult) => void;
+  onError?: (error: Error) => void;
+};
+
 export type {
   ApplyPatchFormProps,
   ApplyPatchFormSettings,
   ApplyWorkflowSettings,
-  BinarySource,
   CandidateSelectionChoice,
   CandidateSelectionPrompt,
+  CreatePatchFormProps,
+  CreatePatchFormSettings,
+  CreateWorkflowSettings,
   InternalApplyPatchFormProps,
   RomWeaverReactSettings,
   RomWeaverSettingsProviderProps,

@@ -2,7 +2,6 @@ import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { ApplyPatchForm } from "../../src/public/react/index.tsx";
-import { resetBrowserPatchWorkerClients } from "../../src/workers/protocol/patch-worker.ts";
 import { resetRomWeaverRunner, warmupRomWeaverRunner } from "../../src/workers/rom-weaver/rom-weaver-runner.ts";
 
 const POSIX_DIRECTORY_PREFIX_REGEX = /^.*\//;
@@ -140,7 +139,6 @@ beforeEach(async () => {
   mountedRoot?.unmount?.();
   mountedRoot = null;
   await new Promise((resolve) => globalThis.setTimeout(resolve, 40));
-  resetBrowserPatchWorkerClients();
   await resetRomWeaverRunner();
   await warmupRomWeaverRunner();
   await new Promise((resolve) => globalThis.setTimeout(resolve, 20));

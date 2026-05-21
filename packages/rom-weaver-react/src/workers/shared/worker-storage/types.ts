@@ -1,4 +1,4 @@
-import type { EmscriptenFileSystem, EmscriptenWorkerModule } from "../wasm/emscripten-types.ts";
+import type { EmscriptenFileSystem, EmscriptenWorkerModule } from "./emscripten-types.ts";
 
 type OpfsBackend = {
   accessHandle: FileSystemSyncAccessHandle;

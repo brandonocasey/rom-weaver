@@ -8,6 +8,7 @@ import type { CoreRomPatchFileLike, WorkerPatchFile } from "../../shared/binary/
 import PatchFile, { createPatchFileWithPrototype } from "../../shared/file-io/patch-file.ts";
 import { normalizeReadIntoRequest } from "../binary/binary-source-utils.ts";
 import { resolveSeekPosition } from "../binary/source-file-utils.ts";
+import { createBrowserOpfsStorageManager } from "./browser-opfs-manager.ts";
 import type {
   EmscriptenFileSystem,
   EmscriptenFsNode,
@@ -15,8 +16,7 @@ import type {
   EmscriptenNodeOps,
   EmscriptenStreamOps,
   EmscriptenWorkerModule,
-} from "../wasm/emscripten-types.ts";
-import { createBrowserOpfsStorageManager } from "./browser-opfs-manager.ts";
+} from "./emscripten-types.ts";
 import { getBaseName, getParentPath } from "./path-utils.ts";
 import type { OpfsBackend, WorkerOpfsManager } from "./types.ts";
 

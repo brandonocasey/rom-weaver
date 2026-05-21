@@ -31,8 +31,8 @@ import {
   readRuntimeOutputBlob,
 } from "../../storage/vfs/runtime-output.ts";
 import type {
+  RuntimeArchiveCreateInput,
   RuntimePublicOutputAdapter,
-  RuntimeSevenZipZstdCreateInput,
   RuntimeWorkerIo,
   WorkflowRuntime,
 } from "../../types/workflow-runtime-adapter.ts";
@@ -265,12 +265,12 @@ const stageCompressionEntryForRomWeaver = async (
   fileName: string,
   index: number,
 ): Promise<{ cleanup: () => Promise<void>; filePath: string }> => {
-  const source = createSevenZipZstdEntrySource(entry, fileName);
+  const source = createArchiveEntrySource(entry, fileName);
   if (!source) throw new Error(`Archive entry data was not provided: ${fileName}`);
   const staged = await workerIo.stageSource({
     fallbackFileName: fileName,
-    pathPrefix: `7zip-zstd-entry-${index + 1}`,
-    scope: "7zip-zstd",
+    pathPrefix: `archive-entry-${index + 1}`,
+    scope: "archive",
     source,
   });
 
@@ -292,7 +292,7 @@ const stageCompressionEntryForRomWeaver = async (
   };
 };
 
-const createSevenZipZstdEntrySource = (
+const createArchiveEntrySource = (
   entry: ReturnType<typeof normalizeCompressionWorkerEntries>[number],
   fileName: string,
 ): Blob | File | string | Uint8Array | ArrayBufferLike | null => {
@@ -457,7 +457,7 @@ const writeTextToBrowserVfs = async (filePath: string, text: string) => {
 };
 
 const stageBrowserCompressionEntries = async (
-  entries: RuntimeSevenZipZstdCreateInput["entries"],
+  entries: RuntimeArchiveCreateInput["entries"],
   workerIo: RuntimeWorkerIo,
 ) => {
   const normalizedEntries = normalizeCompressionWorkerEntries(entries);
@@ -489,9 +489,9 @@ const stageBrowserCompressionEntries = async (
   }
 };
 
-const createBrowserSevenZipZstdRuntime = (workerIo: RuntimeWorkerIo): Partial<WorkflowRuntime["compression"]> => ({
+const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<WorkflowRuntime["compression"]> => ({
   create: async (workflowInput) => {
-    if (!("entries" in workflowInput)) throw new Error("7zip-zstd runtime received non-7zip-zstd create input");
+    if (!("entries" in workflowInput)) throw new Error("archive runtime received non-archive create input");
     const staged = await stageBrowserCompressionEntries(workflowInput.entries, workerIo);
     try {
       const format = workflowInput.format || workflowInput.options?.compression || "7z";
@@ -521,7 +521,7 @@ const createBrowserSevenZipZstdRuntime = (workerIo: RuntimeWorkerIo): Partial<Wo
             workflowInput.options?.onLog,
           ),
           outputFileName,
-          "7zip-zstd create worker did not return browser output",
+          "archive create worker did not return browser output",
         ),
       };
     } finally {
@@ -531,8 +531,8 @@ const createBrowserSevenZipZstdRuntime = (workerIo: RuntimeWorkerIo): Partial<Wo
   extract: async (workflowInput) => {
     const archive = await workerIo.stageSource({
       fallbackFileName: "archive.bin",
-      pathPrefix: "7zip-zstd-input",
-      scope: "7zip-zstd",
+      pathPrefix: "archive-input",
+      scope: "archive",
       source: normalizeZipLikeArchiveSource(workflowInput.source),
     });
     try {
@@ -587,7 +587,7 @@ const createBrowserSevenZipZstdRuntime = (workerIo: RuntimeWorkerIo): Partial<Wo
               size: matched.sizeBytes,
             },
             entryName,
-            "7zip-zstd extract worker did not return browser output",
+            "archive extract worker did not return browser output",
           );
 
         let extracted = await runExtract();
@@ -610,8 +610,8 @@ const createBrowserSevenZipZstdRuntime = (workerIo: RuntimeWorkerIo): Partial<Wo
   list: async (workflowInput) => {
     const archive = await workerIo.stageSource({
       fallbackFileName: "archive.bin",
-      pathPrefix: "7zip-zstd-input",
-      scope: "7zip-zstd",
+      pathPrefix: "archive-input",
+      scope: "archive",
       source: normalizeZipLikeArchiveSource(workflowInput.source),
     });
     try {
@@ -913,6 +913,12 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
             ),
           )
           .filter((entry) => !!entry) || [];
+      preseedPaths.push(
+        ...getBrowserExtractOutputPathCandidates(
+          outDirPath,
+          getRvzExtractedFileName({ fileName: getPathBaseName(workerSource.filePath, workerSource.fileName) }),
+        ),
+      );
       if (outputName) preseedPaths.push(...getBrowserExtractOutputPathCandidates(outDirPath, outputName));
       preseedPaths = filterOutputCandidatesAwayFromSource(preseedPaths, workerSource.filePath);
       await ensureBrowserVfsOutputPaths(preseedPaths);
@@ -1063,9 +1069,9 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
 });
 
 const createBrowserCompressionRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["compression"] => {
-  const sevenZipZstdRuntime = createBrowserSevenZipZstdRuntime(workerIo);
+  const archiveRuntime = createBrowserArchiveRuntime(workerIo);
   const discRuntime = createBrowserDiscRuntime(workerIo);
-  return createSharedCompressionRuntime(sevenZipZstdRuntime, discRuntime, {
+  return createSharedCompressionRuntime(archiveRuntime, discRuntime, {
     createBytes: (bytes, fileName) =>
       createRuntimeOutputFromBytes(browserVfs, bytes, fileName, {
         pathPrefix: "compression-bytes",
