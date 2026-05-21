@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -343,18 +344,23 @@ impl PatchHandler for VcdiffPatchHandler {
             } else {
                 &[]
             };
-            if compare_secondary
+            let skip_auto_fast_secondary = if compare_secondary
                 && secondary_mode == XdeltaSecondaryMode::AutoFast
                 && !secondary_candidates.is_empty()
-                && baseline_loaded_for_secondary
-                    .as_ref()
-                    .is_some_and(|patch| should_skip_secondary_for_auto_fast(patch))
             {
+                match baseline_loaded_for_secondary.as_ref() {
+                    Some(patch) => should_skip_secondary_for_auto_fast(patch)?,
+                    None => false,
+                }
+            } else {
+                false
+            };
+            if skip_auto_fast_secondary {
                 secondary_candidates = &[];
             }
             let (execution, secondary_pool) = if !secondary_candidates.is_empty() {
-                let (execution, pool) =
-                    context.build_pool(ThreadCapability::parallel(Some(secondary_candidates.len())))?;
+                let (execution, pool) = context
+                    .build_pool(ThreadCapability::parallel(Some(secondary_candidates.len())))?;
                 (execution, Some(pool))
             } else {
                 (
@@ -585,49 +591,62 @@ struct CreatedPatchCandidate {
 #[derive(Debug)]
 struct LoadedXdeltaRecodePatch {
     parsed: ParsedPatch,
-    windows: Vec<LoadedXdeltaRecodeWindow>,
+    path: PathBuf,
 }
 
 #[derive(Debug)]
-struct LoadedXdeltaRecodeWindow {
+struct XdeltaRecodeWindowSections {
     data: Vec<u8>,
     inst: Vec<u8>,
     addr: Vec<u8>,
 }
 
-fn should_skip_secondary_for_auto_fast(baseline_patch: &LoadedXdeltaRecodePatch) -> bool {
+fn should_skip_secondary_for_auto_fast(baseline_patch: &LoadedXdeltaRecodePatch) -> Result<bool> {
     let mut histogram = [0u32; 256];
     let mut sampled_bytes = 0usize;
+    let mut sampled_sections = 0usize;
     let mut adjacent_matches = 0usize;
+    let mut patch_reader = BufReader::new(File::open(&baseline_patch.path)?);
 
-    for section in baseline_patch
-        .windows
-        .iter()
-        .flat_map(|window| [&window.data[..], &window.inst[..], &window.addr[..]])
-        .filter(|section| !section.is_empty())
-        .take(XDELTA_AUTO_FAST_MAX_SECTIONS)
-    {
-        let sample_len = section.len().min(XDELTA_AUTO_FAST_SAMPLE_BYTES_PER_SECTION);
-        let sample = &section[..sample_len];
-        sampled_bytes += sample.len();
-        for (index, &byte) in sample.iter().enumerate() {
-            histogram[byte as usize] = histogram[byte as usize].saturating_add(1);
-            if index > 0 && byte == sample[index - 1] {
-                adjacent_matches = adjacent_matches.saturating_add(1);
+    for window in &baseline_patch.parsed.windows {
+        for (start, len) in [
+            (window.data_start, window.data_len),
+            (window.inst_start, window.inst_len),
+            (window.addr_start, window.addr_len),
+        ] {
+            if len == 0 {
+                continue;
             }
+            let section = read_section(&mut patch_reader, start, len)?;
+            sampled_sections += 1;
+            let sample_len = section.len().min(XDELTA_AUTO_FAST_SAMPLE_BYTES_PER_SECTION);
+            let sample = &section[..sample_len];
+            sampled_bytes += sample.len();
+            for (index, &byte) in sample.iter().enumerate() {
+                histogram[byte as usize] = histogram[byte as usize].saturating_add(1);
+                if index > 0 && byte == sample[index - 1] {
+                    adjacent_matches = adjacent_matches.saturating_add(1);
+                }
+            }
+            if sampled_sections >= XDELTA_AUTO_FAST_MAX_SECTIONS {
+                break;
+            }
+        }
+        if sampled_sections >= XDELTA_AUTO_FAST_MAX_SECTIONS {
+            break;
         }
     }
 
     if sampled_bytes < XDELTA_AUTO_FAST_MIN_SAMPLED_BYTES {
-        return false;
+        return Ok(false);
     }
 
     let unique_values = histogram.iter().filter(|&&count| count > 0).count();
     let unique_ratio = unique_values as f64 / 256.0;
     let adjacent_total = sampled_bytes.saturating_sub(1).max(1);
     let repeat_ratio = adjacent_matches as f64 / adjacent_total as f64;
-    unique_ratio >= XDELTA_AUTO_FAST_MIN_UNIQUE_RATIO
-        && repeat_ratio <= XDELTA_AUTO_FAST_MAX_REPEAT_RATIO
+    Ok(unique_ratio >= XDELTA_AUTO_FAST_MIN_UNIQUE_RATIO
+        && repeat_ratio <= XDELTA_AUTO_FAST_MAX_REPEAT_RATIO)
 }
 
 fn parse_patch<R: Read + Seek>(reader: &mut R) -> Result<ParsedPatch> {
@@ -937,7 +956,11 @@ fn create_native_compress_options(
     descriptor: &FormatDescriptor,
     include_checksums: bool,
 ) -> CompressOptions {
-    let level = if is_xdelta_descriptor(descriptor) { 2 } else { 6 };
+    let level = if is_xdelta_descriptor(descriptor) {
+        2
+    } else {
+        6
+    };
     CompressOptions {
         level,
         checksum: is_xdelta_descriptor(descriptor) && include_checksums,
@@ -1002,16 +1025,10 @@ fn load_patch_for_xdelta_recode(baseline_patch_path: &Path) -> Result<LoadedXdel
         ));
     }
 
-    let mut patch_reader = BufReader::new(File::open(baseline_patch_path)?);
-    let mut windows = Vec::with_capacity(parsed.windows.len());
-    for window in &parsed.windows {
-        let data = read_section(&mut patch_reader, window.data_start, window.data_len)?;
-        let inst = read_section(&mut patch_reader, window.inst_start, window.inst_len)?;
-        let addr = read_section(&mut patch_reader, window.addr_start, window.addr_len)?;
-        windows.push(LoadedXdeltaRecodeWindow { data, inst, addr });
-    }
-
-    Ok(LoadedXdeltaRecodePatch { parsed, windows })
+    Ok(LoadedXdeltaRecodePatch {
+        parsed,
+        path: baseline_patch_path.to_path_buf(),
+    })
 }
 
 #[cfg(test)]
@@ -1030,6 +1047,17 @@ fn recode_patch_with_xdelta_options(
     )
 }
 
+fn read_xdelta_recode_window_sections<R: Read + Seek>(
+    reader: &mut R,
+    window: &WindowIndex,
+) -> Result<XdeltaRecodeWindowSections> {
+    Ok(XdeltaRecodeWindowSections {
+        data: read_section(reader, window.data_start, window.data_len)?,
+        inst: read_section(reader, window.inst_start, window.inst_len)?,
+        addr: read_section(reader, window.addr_start, window.addr_len)?,
+    })
+}
+
 fn recode_loaded_patch_with_xdelta_options(
     baseline_patch: &LoadedXdeltaRecodePatch,
     output_path: &Path,
@@ -1044,9 +1072,14 @@ fn recode_loaded_patch_with_xdelta_options(
         ));
     }
 
-    let mut recoded = Vec::new();
-    recoded.extend_from_slice(&VCDIFF_MAGIC_BYTES);
-    recoded.push(VCDIFF_VERSION_STANDARD);
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let output_file = File::create(output_path)?;
+    let mut recoded = BufWriter::with_capacity(NATIVE_CHUNK_SIZE, output_file);
+    recoded.write_all(&VCDIFF_MAGIC_BYTES)?;
+    recoded.write_all(&[VCDIFF_VERSION_STANDARD])?;
     let mut header_flags = 0u8;
     if secondary_compressor_id.is_some() {
         header_flags |= HDR_SECONDARY;
@@ -1054,21 +1087,18 @@ fn recode_loaded_patch_with_xdelta_options(
     if app_header.is_some() {
         header_flags |= HDR_APP_HEADER;
     }
-    recoded.push(header_flags);
+    recoded.write_all(&[header_flags])?;
     if let Some(id) = secondary_compressor_id {
-        recoded.push(id);
+        recoded.write_all(&[id])?;
     }
     if let Some(header) = app_header {
-        encode_varint_raw(&mut recoded, header.len() as u64);
-        recoded.extend_from_slice(header);
+        write_varint_raw(&mut recoded, header.len() as u64)?;
+        recoded.write_all(header)?;
     }
 
-    for (window, sections) in baseline_patch
-        .parsed
-        .windows
-        .iter()
-        .zip(baseline_patch.windows.iter())
-    {
+    let mut patch_reader = BufReader::new(File::open(&baseline_patch.path)?);
+    for window in &baseline_patch.parsed.windows {
+        let sections = read_xdelta_recode_window_sections(&mut patch_reader, window)?;
         let (data_out, data_comp) = recode_window_section(
             &sections.data,
             window.delta_indicator & DELTA_DATA_COMP != 0,
@@ -1096,35 +1126,42 @@ fn recode_loaded_patch_with_xdelta_options(
             secondary_compressor_id,
         );
 
-        let mut delta = Vec::new();
-        encode_varint_raw(&mut delta, window.target_window_size);
-        delta.push(delta_indicator);
-        encode_varint_raw(&mut delta, data_out.len() as u64);
-        encode_varint_raw(&mut delta, inst_out.len() as u64);
-        encode_varint_raw(&mut delta, addr_out.len() as u64);
-        if let Some(checksum) = window.checksum {
-            delta.extend_from_slice(&checksum.to_be_bytes());
-        }
-        delta.extend_from_slice(&data_out);
-        delta.extend_from_slice(&inst_out);
-        delta.extend_from_slice(&addr_out);
+        let delta_len = recoded_delta_len(
+            window,
+            data_out.len() as u64,
+            inst_out.len() as u64,
+            addr_out.len() as u64,
+        )?;
 
-        recoded.push(window_win_indicator(window));
+        recoded.write_all(&[window_win_indicator(window)])?;
         if window.source_kind.is_some() {
-            encode_varint_raw(&mut recoded, window.source_segment_size);
-            encode_varint_raw(&mut recoded, window.source_segment_position);
+            write_varint_raw(&mut recoded, window.source_segment_size)?;
+            write_varint_raw(&mut recoded, window.source_segment_position)?;
         }
-        encode_varint_raw(&mut recoded, delta.len() as u64);
-        recoded.extend_from_slice(&delta);
+        write_varint_raw(&mut recoded, delta_len)?;
+        write_varint_raw(&mut recoded, window.target_window_size)?;
+        recoded.write_all(&[delta_indicator])?;
+        write_varint_raw(&mut recoded, data_out.len() as u64)?;
+        write_varint_raw(&mut recoded, inst_out.len() as u64)?;
+        write_varint_raw(&mut recoded, addr_out.len() as u64)?;
+        if let Some(checksum) = window.checksum {
+            recoded.write_all(&checksum.to_be_bytes())?;
+        }
+        recoded.write_all(&data_out)?;
+        recoded.write_all(&inst_out)?;
+        recoded.write_all(&addr_out)?;
     }
 
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(output_path, &recoded)?;
+    recoded.flush()?;
+    let output_file = recoded.into_inner().map_err(|error| {
+        RomWeaverError::Validation(format!(
+            "native VCDIFF secondary recoder failed to flush output: {}",
+            error.into_error()
+        ))
+    })?;
     Ok(CreatedPatchCandidate {
         path: output_path.to_path_buf(),
-        size: recoded.len() as u64,
+        size: output_file.metadata()?.len(),
     })
 }
 
@@ -1133,17 +1170,91 @@ fn recode_window_section(
     original_compressed: bool,
     secondary_compressor_id: Option<u8>,
     section_kind: DjwSectionKind,
-) -> Result<(Vec<u8>, bool)> {
+) -> Result<(Cow<'_, [u8]>, bool)> {
     match secondary_compressor_id {
         Some(XDELTA_LZMA_SECONDARY_ID) => maybe_compress_xdelta_lzma_section(section),
         Some(XDELTA_DJW_SECONDARY_ID) => maybe_compress_xdelta_djw_section(section, section_kind),
         Some(XDELTA_FGK_SECONDARY_ID) => maybe_compress_xdelta_fgk_section(section),
         Some(_) => {
             ensure_supported_secondary_compressor(secondary_compressor_id)?;
-            Ok((section.to_vec(), original_compressed))
+            Ok((Cow::Borrowed(section), original_compressed))
         }
-        None => Ok((section.to_vec(), original_compressed)),
+        None => Ok((Cow::Borrowed(section), original_compressed)),
     }
+}
+
+fn recoded_delta_len(
+    window: &WindowIndex,
+    data_len: u64,
+    inst_len: u64,
+    addr_len: u64,
+) -> Result<u64> {
+    let header_len = checked_add(
+        varint_len(window.target_window_size) as u64,
+        checked_add(
+            1,
+            checked_add(
+                varint_len(data_len) as u64,
+                checked_add(
+                    varint_len(inst_len) as u64,
+                    varint_len(addr_len) as u64,
+                    "delta header size",
+                )?,
+                "delta header size",
+            )?,
+            "delta header size",
+        )?,
+        "delta header size",
+    )?;
+    let section_len = checked_add(
+        data_len,
+        checked_add(inst_len, addr_len, "delta section size")?,
+        "delta section size",
+    )?;
+    let checksum_len = if window.checksum.is_some() { 4 } else { 0 };
+    checked_add(
+        checked_add(header_len, checksum_len, "delta encoding size")?,
+        section_len,
+        "delta encoding size",
+    )
+}
+
+fn varint_len(mut value: u64) -> usize {
+    if value == 0 {
+        return 1;
+    }
+
+    let mut len = 0usize;
+    while value > 0 {
+        len += 1;
+        value /= 128;
+    }
+    len
+}
+
+fn write_varint_raw<W: Write>(writer: &mut W, mut value: u64) -> Result<()> {
+    if value == 0 {
+        writer.write_all(&[0])?;
+        return Ok(());
+    }
+
+    let mut stack = [0u8; 10];
+    let mut len = 0usize;
+    while value > 0 {
+        stack[len] = (value % 128) as u8;
+        len += 1;
+        value /= 128;
+    }
+
+    for index in (0..len).rev() {
+        let is_last = index == 0;
+        writer.write_all(&[if is_last {
+            stack[index]
+        } else {
+            stack[index] | 0x80
+        }])?;
+    }
+    Ok(())
 }
 
 fn recode_delta_indicator(
@@ -1183,9 +1294,9 @@ fn xdelta_app_header_name_component(path: &Path) -> String {
         .to_string()
 }
 
-fn maybe_compress_xdelta_lzma_section(section: &[u8]) -> Result<(Vec<u8>, bool)> {
+fn maybe_compress_xdelta_lzma_section(section: &[u8]) -> Result<(Cow<'_, [u8]>, bool)> {
     if section.len() < XDELTA_SECONDARY_MIN_INPUT {
-        return Ok((section.to_vec(), false));
+        return Ok((Cow::Borrowed(section), false));
     }
 
     let compressed = xdelta_lzma2_compress(section)?;
@@ -1194,18 +1305,18 @@ fn maybe_compress_xdelta_lzma_section(section: &[u8]) -> Result<(Vec<u8>, bool)>
     candidate.extend_from_slice(&compressed);
 
     if xdelta_secondary_candidate_is_efficient(section.len(), candidate.len()) {
-        Ok((candidate, true))
+        Ok((Cow::Owned(candidate), true))
     } else {
-        Ok((section.to_vec(), false))
+        Ok((Cow::Borrowed(section), false))
     }
 }
 
 fn maybe_compress_xdelta_djw_section(
     section: &[u8],
     section_kind: DjwSectionKind,
-) -> Result<(Vec<u8>, bool)> {
+) -> Result<(Cow<'_, [u8]>, bool)> {
     if section.len() < XDELTA_SECONDARY_MIN_INPUT {
-        return Ok((section.to_vec(), false));
+        return Ok((Cow::Borrowed(section), false));
     }
 
     let compressed = xdelta_djw_compress(section, section_kind)?;
@@ -1214,15 +1325,15 @@ fn maybe_compress_xdelta_djw_section(
     candidate.extend_from_slice(&compressed);
 
     if xdelta_secondary_candidate_is_efficient(section.len(), candidate.len()) {
-        Ok((candidate, true))
+        Ok((Cow::Owned(candidate), true))
     } else {
-        Ok((section.to_vec(), false))
+        Ok((Cow::Borrowed(section), false))
     }
 }
 
-fn maybe_compress_xdelta_fgk_section(section: &[u8]) -> Result<(Vec<u8>, bool)> {
+fn maybe_compress_xdelta_fgk_section(section: &[u8]) -> Result<(Cow<'_, [u8]>, bool)> {
     if section.len() < XDELTA_SECONDARY_MIN_INPUT {
-        return Ok((section.to_vec(), false));
+        return Ok((Cow::Borrowed(section), false));
     }
 
     let compressed = xdelta_fgk_compress(section)?;
@@ -1231,9 +1342,9 @@ fn maybe_compress_xdelta_fgk_section(section: &[u8]) -> Result<(Vec<u8>, bool)> 
     candidate.extend_from_slice(&compressed);
 
     if xdelta_secondary_candidate_is_efficient(section.len(), candidate.len()) {
-        Ok((candidate, true))
+        Ok((Cow::Owned(candidate), true))
     } else {
-        Ok((section.to_vec(), false))
+        Ok((Cow::Borrowed(section), false))
     }
 }
 
