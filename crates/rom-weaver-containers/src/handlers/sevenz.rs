@@ -4,6 +4,7 @@ struct SevenZContainerHandler {
 
 impl SevenZContainerHandler {
     const DEFAULT_CODEC_LEVEL: u32 = 6;
+    const MAX_LZMA_DICTIONARY_BYTES: u32 = 16 * 1024 * 1024;
     const LZMA2_MT_CHUNK_BYTES: u64 = 1 << 20;
     const ZSTD_LEVEL_MAP: [u32; 10] = [1, 3, 5, 7, 9, 11, 13, 15, 18, 22];
     const BROTLI_QUALITY_MAP: [u32; 10] = [0, 1, 3, 4, 5, 6, 7, 8, 10, 11];
@@ -76,21 +77,26 @@ impl SevenZContainerHandler {
             CanonicalCodec::Lzma2 => {
                 let mut method = SevenZMethodConfiguration::new(SevenZMethod::LZMA2);
                 let options = if execution.used_parallelism {
-                    SevenZLzma2Options::from_level_mt(
+                    SevenZLzma2Options::from_level_mt_with_dictionary_size(
                         level,
                         self.thread_count(execution.effective_threads),
                         Self::LZMA2_MT_CHUNK_BYTES,
+                        Self::MAX_LZMA_DICTIONARY_BYTES,
                     )
                 } else {
-                    SevenZLzma2Options::from_level(level)
+                    let mut options = SevenZLzma2Options::from_level(level);
+                    options.set_dictionary_size(Self::MAX_LZMA_DICTIONARY_BYTES);
+                    options
                 };
                 method = method.with_options(options.into());
                 method
             }
-            CanonicalCodec::Lzma => SevenZMethodConfiguration::new(SevenZMethod::LZMA)
-                .with_options(SevenZEncoderOptions::Lzma(SevenZLzmaOptions::from_level(
-                    level,
-                ))),
+            CanonicalCodec::Lzma => {
+                let mut options = SevenZLzmaOptions::from_level(level);
+                options.set_dictionary_size(Self::MAX_LZMA_DICTIONARY_BYTES);
+                SevenZMethodConfiguration::new(SevenZMethod::LZMA)
+                    .with_options(SevenZEncoderOptions::Lzma(options))
+            }
             CanonicalCodec::Store => SevenZMethodConfiguration::new(SevenZMethod::COPY),
             CanonicalCodec::Zstd => SevenZMethodConfiguration::new(SevenZMethod::ZSTD)
                 .with_options(SevenZZstdOptions::from_level(Self::map_zstd_level(level)).into()),
@@ -265,6 +271,7 @@ impl ContainerHandler for SevenZContainerHandler {
 
         let mut reader = self.open_reader(&request.source)?;
         reader.set_thread_count(self.thread_count(execution.effective_threads));
+        let archive_is_solid = reader.archive().is_solid;
         let mut preview_selections = SelectionMatcher::new(&request.selections);
         let total_selected_entries = reader
             .archive()
@@ -297,9 +304,13 @@ impl ContainerHandler for SevenZContainerHandler {
 
         reader
             .for_each_entries(|entry, source| {
+                if selected_entries_completed >= total_selected_entries {
+                    return Ok(false);
+                }
+
                 let entry_name = normalize_archive_name(entry.name());
                 if entry_name.is_empty() || !selections.matches(&entry_name) {
-                    if entry.size() > 0 {
+                    if archive_is_solid && entry.size() > 0 {
                         io::copy(source, &mut io::sink())?;
                     }
                     return Ok(true);
@@ -327,7 +338,7 @@ impl ContainerHandler for SevenZContainerHandler {
                         ),
                         Some(&execution),
                     );
-                    return Ok(true);
+                    return Ok(selected_entries_completed < total_selected_entries);
                 }
 
                 if let Some(parent) = output_path.parent() {
@@ -351,7 +362,7 @@ impl ContainerHandler for SevenZContainerHandler {
                     ),
                     Some(&execution),
                 );
-                Ok(true)
+                Ok(selected_entries_completed < total_selected_entries)
             })
             .map_err(|error| RomWeaverError::Validation(format!("7z extract failed: {error}")))?;
 
@@ -423,12 +434,7 @@ impl ContainerHandler for SevenZContainerHandler {
             }
 
             writer
-                .push_archive_entry(
-                    archive_entry,
-                    Some({
-                        File::open(&entry.source)?
-                    }),
-                )
+                .push_archive_entry(archive_entry, Some(File::open(&entry.source)?))
                 .map_err(|error| {
                     RomWeaverError::Validation(format!(
                         "7z create failed for `{}`: {error}",

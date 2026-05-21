@@ -28,6 +28,13 @@ impl LzmaOptions {
     pub fn from_level(level: u32) -> Self {
         Self(lzma_rust2::LzmaOptions::with_preset(level))
     }
+
+    /// Sets the dictionary size used when encoding.
+    ///
+    /// Will be clamped between 4096..=4294967280.
+    pub fn set_dictionary_size(&mut self, dict_size: u32) {
+        self.0.dict_size = dict_size.clamp(lzma_rust2::DICT_SIZE_MIN, lzma_rust2::DICT_SIZE_MAX);
+    }
 }
 
 #[cfg(feature = "compress")]
@@ -73,6 +80,24 @@ impl Lzma2Options {
     ///   will be (value will be clamped to have at least the size of the dictionary).
     pub fn from_level_mt(level: u32, threads: u32, chunk_size: u64) -> Self {
         let mut options = lzma_rust2::Lzma2Options::with_preset(level);
+        options.set_chunk_size(NonZeroU64::new(
+            chunk_size.max(options.lzma_options.dict_size as u64),
+        ));
+        Self { options, threads }
+    }
+
+    /// Creates LZMA2 options with a capped dictionary before deriving the MT chunk size.
+    ///
+    /// Will be clamped between 4096..=4294967280.
+    pub fn from_level_mt_with_dictionary_size(
+        level: u32,
+        threads: u32,
+        chunk_size: u64,
+        dict_size: u32,
+    ) -> Self {
+        let mut options = lzma_rust2::Lzma2Options::with_preset(level);
+        options.lzma_options.dict_size =
+            dict_size.clamp(lzma_rust2::DICT_SIZE_MIN, lzma_rust2::DICT_SIZE_MAX);
         options.set_chunk_size(NonZeroU64::new(
             chunk_size.max(options.lzma_options.dict_size as u64),
         ));

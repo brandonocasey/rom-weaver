@@ -387,7 +387,7 @@ fn parse_wasm_compress(args: Vec<String>) -> WasmCliParseResult<CompressCommand>
     let mut format: Option<String> = None;
     let mut output: Option<PathBuf> = None;
     let mut codec = Vec::new();
-    let mut level = CompressionLevelProfile::Max;
+    let mut level = CompressionLevelProfile::High;
     let mut threads = ThreadBudget::Auto;
     let mut index = 0usize;
     while index < args.len() {
@@ -672,7 +672,7 @@ fn parse_wasm_patch_apply(args: Vec<String>) -> WasmCliParseResult<PatchApplyCom
     let mut no_compress = false;
     let mut compress_format: Option<String> = None;
     let mut compress_codec = Vec::new();
-    let mut compress_level = CompressionLevelProfile::Max;
+    let mut compress_level = CompressionLevelProfile::High;
     let mut checksum_cache = Vec::new();
     let mut validate_with_checksums = Vec::new();
     let mut strip_header = false;

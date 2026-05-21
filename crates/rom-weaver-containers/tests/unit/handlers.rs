@@ -1,4 +1,3 @@
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -762,6 +761,28 @@ mod tests {
             .parse_codec(Some("zstd"), Some(10), &execution)
             .expect_err("out-of-range level should fail");
         assert!(level_error.to_string().contains("out of range (0..=9)"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn seven_z_caps_lzma_dictionary_to_16_mib() {
+        let temp_dir = temp_dir_path("seven-z-lzma-dict-cap");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let execution = test_context(&temp_dir, 8).plan_threads(ThreadCapability::parallel(None));
+        let handler = SevenZContainerHandler::new(&SEVEN_Z);
+
+        for codec in ["lzma", "lzma2"] {
+            let method = handler
+                .parse_codec(Some(codec), Some(9), &execution)
+                .expect("codec should parse");
+            let dict_size = method
+                .options
+                .as_ref()
+                .expect("codec options")
+                .get_lzma_dict_size();
+            assert_eq!(dict_size, 16 * 1024 * 1024, "{codec} dictionary cap");
+        }
 
         let _ = fs::remove_dir_all(temp_dir);
     }
