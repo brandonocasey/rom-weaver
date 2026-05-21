@@ -51,7 +51,13 @@ struct PbpDiscExtractTask {
     start_block: usize,
     block_count: usize,
     expected_len: u64,
-    temp_path: PathBuf,
+}
+
+#[derive(Debug)]
+struct PbpDiscDecodedChunk {
+    disc_index: usize,
+    task_index: usize,
+    data: Vec<u8>,
 }
 
 struct PbpContainerHandler;
@@ -583,7 +589,6 @@ impl PbpContainerHandler {
         &self,
         disc_index: usize,
         disc: &PbpDiscEntry,
-        context: &OperationContext,
     ) -> Result<Vec<PbpDiscExtractTask>> {
         let required_blocks = self.required_block_count(disc.iso_size)?;
         if required_blocks == 0 {
@@ -614,10 +619,6 @@ impl PbpContainerHandler {
                 start_block,
                 block_count,
                 expected_len,
-                temp_path: context.temp_paths().next_path(
-                    &format!("pbp-disc{}-extract-{task_index}", disc.disc_number),
-                    Some("binchunk"),
-                ),
             });
             start_block += block_count;
             task_index += 1;
@@ -630,18 +631,17 @@ impl PbpContainerHandler {
         source: &Path,
         disc: &PbpDiscEntry,
         task: &PbpDiscExtractTask,
-    ) -> Result<u64> {
-        if let Some(parent) = task.temp_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
+    ) -> Result<PbpDiscDecodedChunk> {
         let mut source_file = File::open(source).map_err(|error| {
             RomWeaverError::Validation(format!(
                 "failed to open pbp source `{}`: {error}",
                 source.display()
             ))
         })?;
-        let mut output = BufWriter::new(File::create(&task.temp_path)?);
+        let expected_len = usize::try_from(task.expected_len).map_err(|_| {
+            RomWeaverError::Validation("pbp extract chunk length overflowed usize".into())
+        })?;
+        let mut output = Vec::with_capacity(expected_len);
         let mut block = vec![0u8; Self::ISO_BLOCK_BYTES];
         let mut remaining = task.expected_len;
         let mut total_written = 0u64;
@@ -666,12 +666,11 @@ impl PbpContainerHandler {
             let to_write_usize = usize::try_from(to_write).map_err(|_| {
                 RomWeaverError::Validation("pbp block write length overflowed usize".into())
             })?;
-            output.write_all(&block[..to_write_usize])?;
+            output.extend_from_slice(&block[..to_write_usize]);
             total_written = total_written.saturating_add(to_write);
             remaining -= to_write;
         }
 
-        output.flush()?;
         if total_written != task.expected_len {
             return Err(RomWeaverError::Validation(format!(
                 "source `{}` disc {} chunk {} wrote {} bytes but expected {}",
@@ -683,32 +682,11 @@ impl PbpContainerHandler {
             )));
         }
 
-        Ok(total_written)
-    }
-
-    fn cleanup_disc_extract_tasks(&self, tasks: &[PbpDiscExtractTask]) {
-        for task in tasks {
-            let _ = fs::remove_file(&task.temp_path);
-        }
-    }
-
-    fn assemble_disc_extract_output(
-        &self,
-        tasks: &[PbpDiscExtractTask],
-        output_path: &Path,
-    ) -> Result<u64> {
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut output = BufWriter::new(File::create(output_path)?);
-        let mut total_written = 0u64;
-        for task in tasks {
-            let mut input = BufReader::new(File::open(&task.temp_path)?);
-            let copied = io::copy(&mut input, &mut output)?;
-            total_written = total_written.saturating_add(copied);
-        }
-        output.flush()?;
-        Ok(total_written)
+        Ok(PbpDiscDecodedChunk {
+            disc_index: task.disc_index,
+            task_index: task.task_index,
+            data: output,
+        })
     }
 
     fn write_cue_sheet(
@@ -905,56 +883,7 @@ impl ContainerHandler for PbpContainerHandler {
                 "requested selections resolved to no extractable pbp outputs".into(),
             ));
         }
-
-        let mut disc_extract_tasks = Vec::new();
-        let mut disc_task_ranges = BTreeMap::new();
-        for (disc_index, _write_cue, write_bin) in &extract_plan {
-            if !*write_bin {
-                continue;
-            }
-            let disc = &archive.discs[*disc_index];
-            let start = disc_extract_tasks.len();
-            let mut tasks = self.build_disc_extract_tasks(*disc_index, disc, context)?;
-            let len = tasks.len();
-            disc_extract_tasks.append(&mut tasks);
-            disc_task_ranges.insert(*disc_index, (start, len));
-        }
-
-        let (execution, decode_result) = if disc_extract_tasks.is_empty() {
-            (
-                context.plan_threads(ThreadCapability::parallel(None)),
-                Ok(Vec::new()),
-            )
-        } else {
-            let (execution, pool) = context.build_pool(ThreadCapability::parallel(Some(
-                disc_extract_tasks.len().max(1),
-            )))?;
-            let source = request.source.clone();
-            let decode_result = if execution.used_parallelism {
-                pool.install(|| {
-                    disc_extract_tasks
-                        .par_iter()
-                        .map(|task| {
-                            let disc = &archive.discs[task.disc_index];
-                            self.decode_disc_extract_task(&source, disc, task)
-                        })
-                        .collect::<Result<Vec<_>>>()
-                })
-            } else {
-                disc_extract_tasks
-                    .iter()
-                    .map(|task| {
-                        let disc = &archive.discs[task.disc_index];
-                        self.decode_disc_extract_task(&source, disc, task)
-                    })
-                    .collect::<Result<Vec<_>>>()
-            };
-            (execution, decode_result)
-        };
-        if let Err(error) = decode_result {
-            self.cleanup_disc_extract_tasks(&disc_extract_tasks);
-            return Err(error);
-        }
+        let mut execution = context.plan_threads(ThreadCapability::parallel(None));
 
         let mut produced_outputs = Vec::new();
         let mut total_written = 0u64;
@@ -964,34 +893,107 @@ impl ContainerHandler for PbpContainerHandler {
             let output = &outputs[disc_index];
             let bin_path = request.out_dir.join(&output.bin_name);
             if write_bin {
-                let (start, len) = disc_task_ranges.get(&disc_index).copied().ok_or_else(|| {
-                    RomWeaverError::Validation(format!(
-                        "pbp extract could not locate chunk plan for disc {}",
-                        disc.disc_number
-                    ))
-                })?;
-                let task_end = start.checked_add(len).ok_or_else(|| {
-                    RomWeaverError::Validation("pbp extract chunk plan overflowed".into())
-                })?;
-                let tasks = &disc_extract_tasks[start..task_end];
-                let written = match self.assemble_disc_extract_output(tasks, &bin_path) {
-                    Ok(written) => written,
-                    Err(error) => {
-                        self.cleanup_disc_extract_tasks(&disc_extract_tasks);
-                        return Err(error);
-                    }
-                };
-                if written != disc.iso_size {
-                    self.cleanup_disc_extract_tasks(&disc_extract_tasks);
-                    return Err(RomWeaverError::Validation(format!(
-                        "source `{}` disc {} extraction wrote {} bytes but expected {}",
-                        request.source.display(),
-                        disc.disc_number,
-                        written,
-                        disc.iso_size
-                    )));
+                let tasks = self.build_disc_extract_tasks(disc_index, disc)?;
+                let (disc_execution, pool) =
+                    context.build_pool(ThreadCapability::parallel(Some(tasks.len().max(1))))?;
+                execution = disc_execution;
+
+                if let Some(parent) = bin_path.parent() {
+                    fs::create_dir_all(parent)?;
                 }
-                total_written = total_written.saturating_add(written);
+                let ordered_writer = Arc::new(Mutex::new(OrderedChunkWriter::new(
+                    BufWriter::new(File::create(&bin_path)?),
+                    bounded_items_for_threads(execution.effective_threads),
+                )?));
+                let source = request.source.clone();
+                let decode_result = if execution.used_parallelism {
+                    let writer = Arc::clone(&ordered_writer);
+                    pool.install(|| {
+                        tasks.par_iter().try_for_each(|task| {
+                            let chunk = self.decode_disc_extract_task(&source, disc, task)?;
+                            let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
+                                RomWeaverError::Validation(
+                                    "pbp extract chunk length overflowed".into(),
+                                )
+                            })?;
+                            if chunk_len != task.expected_len {
+                                return Err(RomWeaverError::Validation(format!(
+                                    "pbp extract chunk {} for disc {} wrote {} bytes but expected {}",
+                                    task.task_index,
+                                    disc.disc_number,
+                                    chunk_len,
+                                    task.expected_len
+                                )));
+                            }
+                            if chunk.disc_index != task.disc_index
+                                || chunk.task_index != task.task_index
+                            {
+                                return Err(RomWeaverError::Validation(format!(
+                                    "pbp extract chunk order mismatch for disc {} task {}",
+                                    disc.disc_number,
+                                    task.task_index
+                                )));
+                            }
+                            let chunk_index = u64::try_from(task.task_index).map_err(|_| {
+                                RomWeaverError::Validation(
+                                    "pbp extract chunk index overflowed".into(),
+                                )
+                            })?;
+                            let mut ordered = writer.lock().map_err(|_| {
+                                RomWeaverError::Validation(
+                                    "pbp extract output writer lock poisoned".into(),
+                                )
+                            })?;
+                            ordered.write_chunk(chunk_index, chunk.data)
+                        })
+                    })
+                } else {
+                    tasks.iter().try_for_each(|task| {
+                        let chunk = self.decode_disc_extract_task(&source, disc, task)?;
+                        let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
+                            RomWeaverError::Validation("pbp extract chunk length overflowed".into())
+                        })?;
+                        if chunk_len != task.expected_len {
+                            return Err(RomWeaverError::Validation(format!(
+                                "pbp extract chunk {} for disc {} wrote {} bytes but expected {}",
+                                task.task_index, disc.disc_number, chunk_len, task.expected_len
+                            )));
+                        }
+                        if chunk.disc_index != task.disc_index
+                            || chunk.task_index != task.task_index
+                        {
+                            return Err(RomWeaverError::Validation(format!(
+                                "pbp extract chunk order mismatch for disc {} task {}",
+                                disc.disc_number, task.task_index
+                            )));
+                        }
+                        let chunk_index = u64::try_from(task.task_index).map_err(|_| {
+                            RomWeaverError::Validation("pbp extract chunk index overflowed".into())
+                        })?;
+                        let mut ordered = ordered_writer.lock().map_err(|_| {
+                            RomWeaverError::Validation(
+                                "pbp extract output writer lock poisoned".into(),
+                            )
+                        })?;
+                        ordered.write_chunk(chunk_index, chunk.data)
+                    })
+                };
+                if let Err(error) = decode_result {
+                    let _ = fs::remove_file(&bin_path);
+                    return Err(error);
+                }
+                let ordered = Arc::try_unwrap(ordered_writer).map_err(|_| {
+                    RomWeaverError::Validation("pbp extract output writer still in use".into())
+                })?;
+                let ordered = ordered.into_inner().map_err(|_| {
+                    RomWeaverError::Validation("pbp extract output writer lock poisoned".into())
+                })?;
+                if let Err(error) = ordered.finish() {
+                    let _ = fs::remove_file(&bin_path);
+                    return Err(error);
+                }
+
+                total_written = total_written.saturating_add(disc.iso_size);
                 produced_outputs.push(bin_path.clone());
             }
             if write_cue {
@@ -999,13 +1001,11 @@ impl ContainerHandler for PbpContainerHandler {
                 if let Err(error) =
                     self.write_cue_sheet(&cue_path, &output.bin_name, &disc.toc_tracks)
                 {
-                    self.cleanup_disc_extract_tasks(&disc_extract_tasks);
                     return Err(error);
                 }
                 produced_outputs.push(cue_path);
             }
         }
-        self.cleanup_disc_extract_tasks(&disc_extract_tasks);
 
         if selection_requested && produced_outputs.is_empty() {
             return Err(RomWeaverError::Validation(
@@ -1077,4 +1077,3 @@ impl ContainerHandler for PbpContainerHandler {
 
 type XisoSourceDevice = XdvdfsOffsetWrapper<BufReader<File>, io::Error>;
 type XisoSourceFilesystem = XdvdfsFilesystem<io::Error, XisoSourceDevice>;
-

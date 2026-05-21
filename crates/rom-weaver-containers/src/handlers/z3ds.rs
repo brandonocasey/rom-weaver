@@ -185,7 +185,12 @@ struct Z3dsExtractTask {
     index: usize,
     offset: u64,
     len: u64,
-    temp_path: PathBuf,
+}
+
+#[derive(Debug)]
+struct Z3dsDecodedExtractChunk {
+    index: usize,
+    data: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -269,7 +274,11 @@ impl Z3dsContainerHandler {
 
     fn align_16(size: usize) -> usize {
         let rem = size % 16;
-        if rem == 0 { size } else { size + (16 - rem) }
+        if rem == 0 {
+            size
+        } else {
+            size + (16 - rem)
+        }
     }
 
     fn format_magic(&self, magic: [u8; 4]) -> String {
@@ -367,11 +376,7 @@ impl Z3dsContainerHandler {
         Ok(metadata)
     }
 
-    fn build_extract_tasks(
-        &self,
-        total_len: u64,
-        context: &OperationContext,
-    ) -> Result<Vec<Z3dsExtractTask>> {
+    fn build_extract_tasks(&self, total_len: u64) -> Result<Vec<Z3dsExtractTask>> {
         if total_len == 0 {
             return Ok(Vec::new());
         }
@@ -382,14 +387,7 @@ impl Z3dsContainerHandler {
         let mut index = 0_usize;
         while offset < total_len {
             let len = (total_len - offset).min(chunk_len);
-            tasks.push(Z3dsExtractTask {
-                index,
-                offset,
-                len,
-                temp_path: context
-                    .temp_paths()
-                    .next_path(&format!("z3ds-extract-{index}"), Some("chunk")),
-            });
+            tasks.push(Z3dsExtractTask { index, offset, len });
             offset = offset.saturating_add(len);
             index += 1;
         }
@@ -402,7 +400,7 @@ impl Z3dsContainerHandler {
         payload_start: u64,
         compressed_size: u64,
         task: &Z3dsExtractTask,
-    ) -> Result<()> {
+    ) -> Result<Z3dsDecodedExtractChunk> {
         let source_file = File::open(source)?;
         let payload_reader = Z3dsPayloadReader::new(source_file, payload_start, compressed_size)?;
         let extract_end = task
@@ -418,10 +416,10 @@ impl Z3dsContainerHandler {
             .set_offset_limit(extract_end)
             .map_err(|error| self.map_zstd_error("extract limit", error))?;
 
-        if let Some(parent) = task.temp_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut output = BufWriter::new(File::create(&task.temp_path)?);
+        let capacity = usize::try_from(task.len).map_err(|_| {
+            RomWeaverError::Validation("z3ds extract chunk size exceeded supported range".into())
+        })?;
+        let mut output = Vec::with_capacity(capacity);
         let buffer_len = usize::try_from(task.len.min(Self::EXTRACT_CHUNK as u64))
             .unwrap_or(Self::EXTRACT_CHUNK)
             .max(1);
@@ -441,27 +439,13 @@ impl Z3dsContainerHandler {
                     task.index, written, task.len
                 )));
             }
-            output.write_all(&buffer[..decoded])?;
+            output.extend_from_slice(&buffer[..decoded]);
             written = written.saturating_add(decoded as u64);
         }
-        output.flush()?;
-        Ok(())
-    }
-
-    fn cleanup_extract_tasks(&self, tasks: &[Z3dsExtractTask]) {
-        for task in tasks {
-            let _ = fs::remove_file(&task.temp_path);
-        }
-    }
-
-    fn assemble_extract_output(&self, tasks: &[Z3dsExtractTask], output_path: &Path) -> Result<()> {
-        let mut output = BufWriter::new(File::create(output_path)?);
-        for task in tasks {
-            let mut input = BufReader::new(File::open(&task.temp_path)?);
-            io::copy(&mut input, &mut output)?;
-        }
-        output.flush()?;
-        Ok(())
+        Ok(Z3dsDecodedExtractChunk {
+            index: task.index,
+            data: output,
+        })
     }
 
     fn build_create_tasks(
@@ -646,44 +630,83 @@ impl ContainerHandler for Z3dsContainerHandler {
         let mut file = File::open(&request.source)?;
         let header = self.read_header(&request.source, &mut file)?;
         let payload_start = header.payload_offset();
-        let tasks = self.build_extract_tasks(header.uncompressed_size, context)?;
+        let tasks = self.build_extract_tasks(header.uncompressed_size)?;
         let (execution, pool) =
             context.build_pool(ThreadCapability::parallel(Some(tasks.len().max(1))))?;
 
         fs::create_dir_all(&request.out_dir)?;
         let output_path = request.out_dir.join(&output_name);
 
+        let ordered_writer = Arc::new(Mutex::new(OrderedChunkWriter::new(
+            BufWriter::new(File::create(&output_path)?),
+            bounded_items_for_threads(execution.effective_threads),
+        )?));
         let source = request.source.clone();
         let decode_result = if execution.used_parallelism {
+            let writer = Arc::clone(&ordered_writer);
             pool.install(|| {
-                tasks
-                    .par_iter()
-                    .map(|task| {
-                        self.extract_chunk_task(
-                            &source,
-                            payload_start,
-                            header.compressed_size,
-                            task,
+                tasks.par_iter().try_for_each(|task| {
+                    let chunk = self.extract_chunk_task(
+                        &source,
+                        payload_start,
+                        header.compressed_size,
+                        task,
+                    )?;
+                    let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
+                        RomWeaverError::Validation("z3ds extract chunk length overflowed".into())
+                    })?;
+                    if chunk_len != task.len {
+                        return Err(RomWeaverError::Validation(format!(
+                            "z3ds extract chunk {} wrote {} bytes but expected {}",
+                            task.index, chunk_len, task.len
+                        )));
+                    }
+                    let chunk_index = u64::try_from(chunk.index).map_err(|_| {
+                        RomWeaverError::Validation("z3ds extract chunk index overflowed".into())
+                    })?;
+                    let mut ordered = writer.lock().map_err(|_| {
+                        RomWeaverError::Validation(
+                            "z3ds extract output writer lock poisoned".into(),
                         )
-                    })
-                    .collect::<Result<Vec<_>>>()
+                    })?;
+                    ordered.write_chunk(chunk_index, chunk.data)
+                })
             })
         } else {
-            tasks
-                .iter()
-                .map(|task| {
-                    self.extract_chunk_task(&source, payload_start, header.compressed_size, task)
-                })
-                .collect::<Result<Vec<_>>>()
+            tasks.iter().try_for_each(|task| {
+                let chunk =
+                    self.extract_chunk_task(&source, payload_start, header.compressed_size, task)?;
+                let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
+                    RomWeaverError::Validation("z3ds extract chunk length overflowed".into())
+                })?;
+                if chunk_len != task.len {
+                    return Err(RomWeaverError::Validation(format!(
+                        "z3ds extract chunk {} wrote {} bytes but expected {}",
+                        task.index, chunk_len, task.len
+                    )));
+                }
+                let chunk_index = u64::try_from(chunk.index).map_err(|_| {
+                    RomWeaverError::Validation("z3ds extract chunk index overflowed".into())
+                })?;
+                let mut ordered = ordered_writer.lock().map_err(|_| {
+                    RomWeaverError::Validation("z3ds extract output writer lock poisoned".into())
+                })?;
+                ordered.write_chunk(chunk_index, chunk.data)
+            })
         };
         if let Err(error) = decode_result {
-            self.cleanup_extract_tasks(&tasks);
+            let _ = fs::remove_file(&output_path);
             return Err(error);
         }
-
-        let assemble_result = self.assemble_extract_output(&tasks, &output_path);
-        self.cleanup_extract_tasks(&tasks);
-        assemble_result?;
+        let ordered = Arc::try_unwrap(ordered_writer)
+            .map_err(|_| RomWeaverError::Validation("z3ds extract writer still in use".into()))?;
+        let ordered = ordered.into_inner().map_err(|_| {
+            RomWeaverError::Validation("z3ds extract output writer lock poisoned".into())
+        })?;
+        if let Err(error) = ordered.finish() {
+            let _ = fs::remove_file(&output_path);
+            return Err(error);
+        }
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
@@ -854,4 +877,3 @@ impl ContainerHandler for Z3dsContainerHandler {
         }
     }
 }
-

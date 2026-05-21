@@ -173,31 +173,6 @@ impl TarContainerHandler {
         resolve_container_codec_backend(self.descriptor.name, codec_name)
     }
 
-    fn decode_to_staged_tar(
-        &self,
-        source: &Path,
-        context: &OperationContext,
-        staged_label: &str,
-    ) -> Result<(PathBuf, Option<ThreadExecution>)> {
-        let staged_tar = context.temp_paths().next_path(staged_label, Some("tar"));
-        if let Some(parent) = staged_tar.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let backend = self.codec_backend()?;
-        let decode_report = backend.decode(
-            &CodecOperationRequest {
-                input: source.to_path_buf(),
-                output: staged_tar.clone(),
-                level: None,
-            },
-            context,
-        )?;
-        if decode_report.status != OperationStatus::Succeeded {
-            return Err(RomWeaverError::Unsupported(decode_report.label));
-        }
-        Ok((staged_tar, decode_report.thread_execution))
-    }
-
     fn append_entries<W: Write>(
         &self,
         builder: &mut TarBuilder<W>,
@@ -570,15 +545,53 @@ impl TarContainerHandler {
         }
     }
 
-    fn open_reader(&self, source: &Path) -> Result<Box<dyn Read>> {
-        let file = File::open(source)?;
+    fn xz_thread_count(effective_threads: usize) -> u32 {
+        match u32::try_from(effective_threads) {
+            Ok(count) => count.clamp(1, 256),
+            Err(_) => 256,
+        }
+    }
+
+    fn open_reader_with_execution(
+        &self,
+        source: &Path,
+        execution: Option<&mut ThreadExecution>,
+    ) -> Result<Box<dyn Read>> {
         let reader: Box<dyn Read> = match self.compression {
-            TarCompression::None => Box::new(BufReader::new(file)),
-            TarCompression::Gzip => Box::new(MultiGzDecoder::new(BufReader::new(file))),
-            TarCompression::Bzip2 => Box::new(Bzip2Decoder::new(BufReader::new(file))),
-            TarCompression::Xz => Box::new(XzReader::new(BufReader::new(file), false)),
+            TarCompression::None => Box::new(BufReader::new(File::open(source)?)),
+            TarCompression::Gzip => {
+                Box::new(MultiGzDecoder::new(BufReader::new(File::open(source)?)))
+            }
+            TarCompression::Bzip2 => {
+                Box::new(Bzip2Decoder::new(BufReader::new(File::open(source)?)))
+            }
+            TarCompression::Xz => {
+                if let Some(execution) = execution {
+                    if execution.used_parallelism {
+                        let workers = Self::xz_thread_count(execution.effective_threads);
+                        let source_reader = BufReader::new(File::open(source)?);
+                        match XzReaderMt::new(source_reader, false, workers) {
+                            Ok(reader) => Box::new(reader),
+                            Err(error) => {
+                                execution.apply_pool_fallback(format!(
+                                    "tar.xz decoder rejected multithread setting: {error}"
+                                ));
+                                Box::new(XzReader::new(BufReader::new(File::open(source)?), false))
+                            }
+                        }
+                    } else {
+                        Box::new(XzReader::new(BufReader::new(File::open(source)?), false))
+                    }
+                } else {
+                    Box::new(XzReader::new(BufReader::new(File::open(source)?), false))
+                }
+            }
         };
         Ok(reader)
+    }
+
+    fn open_reader(&self, source: &Path) -> Result<Box<dyn Read>> {
+        self.open_reader_with_execution(source, None)
     }
 
     fn extract_thread_capability(&self) -> ThreadCapability {
@@ -599,8 +612,7 @@ impl TarContainerHandler {
         }
     }
 
-    fn inspect_uncompressed_archive(&self, source: &Path) -> Result<(usize, usize, usize, u64)> {
-        let reader = BufReader::new(File::open(source)?);
+    fn inspect_archive_reader<R: Read>(&self, reader: R) -> Result<(usize, usize, usize, u64)> {
         let mut archive = TarArchive::new(reader);
         let mut files = 0usize;
         let mut directories = 0usize;
@@ -620,8 +632,11 @@ impl TarContainerHandler {
         Ok((entries_total, files, directories, logical_bytes))
     }
 
-    fn list_uncompressed_entries(&self, source: &Path) -> Result<Vec<String>> {
-        let reader = BufReader::new(File::open(source)?);
+    fn inspect_uncompressed_archive(&self, source: &Path) -> Result<(usize, usize, usize, u64)> {
+        self.inspect_archive_reader(BufReader::new(File::open(source)?))
+    }
+
+    fn list_entries_from_reader<R: Read>(&self, reader: R) -> Result<Vec<String>> {
         let mut archive = TarArchive::new(reader);
         let mut entries = Vec::new();
         for entry in archive.entries()? {
@@ -634,6 +649,86 @@ impl TarContainerHandler {
             }
         }
         Ok(entries)
+    }
+
+    fn list_uncompressed_entries(&self, source: &Path) -> Result<Vec<String>> {
+        self.list_entries_from_reader(BufReader::new(File::open(source)?))
+    }
+
+    fn extract_compressed_archive_streaming(
+        &self,
+        request: &ContainerExtractRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        let mut execution = context.plan_threads(self.extract_thread_capability());
+        let reader = self.open_reader_with_execution(&request.source, Some(&mut execution))?;
+        let mut archive = TarArchive::new(reader);
+        let mut selections = SelectionMatcher::new(&request.selections);
+        let mut extracted_files = 0usize;
+        let mut written_bytes = 0u64;
+
+        for (index, entry) in archive.entries()?.enumerate() {
+            let mut entry = entry?;
+            let raw_path = entry.path()?;
+            let relative = sanitize_archive_relative_path(raw_path.as_ref())?;
+            let archive_name = archive_path_to_name(&relative)?;
+            if !selections.matches(&archive_name) {
+                continue;
+            }
+
+            let output_path = request.out_dir.join(&relative);
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_dir() {
+                fs::create_dir_all(&output_path)?;
+                continue;
+            }
+            if !entry_type.is_file() {
+                return Err(RomWeaverError::Validation(format!(
+                    "{} extract does not support {} entries yet (`{}`)",
+                    self.descriptor.name,
+                    entry_type.as_byte(),
+                    archive_name
+                )));
+            }
+
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let expected_size = entry.size();
+            let mut output = BufWriter::new(File::create(&output_path)?);
+            let copied = io::copy(&mut entry, &mut output).map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "{} extract failed while reading entry {} (`{}`): {error}",
+                    self.descriptor.name, index, archive_name
+                ))
+            })?;
+            if copied != expected_size {
+                return Err(RomWeaverError::Validation(format!(
+                    "{} extract failed while reading entry {} (`{}`): expected {} bytes, copied {} bytes",
+                    self.descriptor.name, index, archive_name, expected_size, copied
+                )));
+            }
+            output.flush()?;
+            extracted_files = extracted_files.saturating_add(1);
+            written_bytes = written_bytes.saturating_add(copied);
+        }
+
+        selections.ensure_all_matched()?;
+
+        Ok(OperationReport::succeeded(
+            OperationFamily::Container,
+            Some(self.descriptor.name.to_string()),
+            "extract",
+            format!(
+                "extracted `{}` to `{}` ({} file(s), {} bytes written)",
+                request.source.display(),
+                request.out_dir.display(),
+                extracted_files,
+                written_bytes
+            ),
+            Some(100.0),
+            Some(execution),
+        ))
     }
 
     fn looks_like_tar_archive(&self, source: &Path) -> bool {
@@ -668,14 +763,10 @@ impl ContainerHandler for TarContainerHandler {
             if matches!(self.compression, TarCompression::None) {
                 self.inspect_uncompressed_archive(&request.source)?
             } else {
-                let staged_result = (|| -> Result<(usize, usize, usize, u64)> {
-                    let (staged_tar, _) =
-                        self.decode_to_staged_tar(&request.source, context, "tar-inspect-stage")?;
-                    let inspected = self.inspect_uncompressed_archive(&staged_tar);
-                    let _ = fs::remove_file(&staged_tar);
-                    inspected
-                })();
-                staged_result?
+                let mut execution = context.plan_threads(self.extract_thread_capability());
+                let reader =
+                    self.open_reader_with_execution(&request.source, Some(&mut execution))?;
+                self.inspect_archive_reader(reader)?
             };
 
         Ok(OperationReport::succeeded(
@@ -699,14 +790,9 @@ impl ContainerHandler for TarContainerHandler {
         if matches!(self.compression, TarCompression::None) {
             return self.list_uncompressed_entries(&request.source);
         }
-        let staged_result = (|| -> Result<Vec<String>> {
-            let (staged_tar, _) =
-                self.decode_to_staged_tar(&request.source, context, "tar-list-stage")?;
-            let entries = self.list_uncompressed_entries(&staged_tar);
-            let _ = fs::remove_file(&staged_tar);
-            entries
-        })();
-        staged_result
+        let mut execution = context.plan_threads(self.extract_thread_capability());
+        let reader = self.open_reader_with_execution(&request.source, Some(&mut execution))?;
+        self.list_entries_from_reader(reader)
     }
 
     fn extract(
@@ -719,20 +805,7 @@ impl ContainerHandler for TarContainerHandler {
         if matches!(self.compression, TarCompression::None) {
             return self.extract_uncompressed_archive(&request.source, request, context);
         }
-        let staged_label = match self.compression {
-            TarCompression::None => unreachable!(),
-            TarCompression::Gzip => "tar-gz-extract-stage",
-            TarCompression::Bzip2 => "tar-bz2-extract-stage",
-            TarCompression::Xz => "tar-xz-extract-stage",
-        };
-        let staged_result = (|| -> Result<OperationReport> {
-            let (staged_tar, _) =
-                self.decode_to_staged_tar(&request.source, context, staged_label)?;
-            let extracted = self.extract_uncompressed_archive(&staged_tar, request, context);
-            let _ = fs::remove_file(&staged_tar);
-            extracted
-        })();
-        staged_result
+        self.extract_compressed_archive_streaming(request, context)
     }
 
     fn create(

@@ -3,7 +3,12 @@ struct CsoExtractTask {
     index: usize,
     offset: u64,
     len: u64,
-    temp_path: PathBuf,
+}
+
+#[derive(Debug)]
+struct CsoDecodedExtractChunk {
+    index: usize,
+    data: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -181,11 +186,7 @@ impl CsoContainerHandler {
         }
     }
 
-    fn build_extract_tasks(
-        &self,
-        logical_bytes: u64,
-        context: &OperationContext,
-    ) -> Vec<CsoExtractTask> {
+    fn build_extract_tasks(&self, logical_bytes: u64) -> Vec<CsoExtractTask> {
         if logical_bytes == 0 {
             return Vec::new();
         }
@@ -194,21 +195,18 @@ impl CsoContainerHandler {
         let mut index = 0_usize;
         while offset < logical_bytes {
             let len = (logical_bytes - offset).min(CSO_EXTRACT_TASK_BYTES);
-            tasks.push(CsoExtractTask {
-                index,
-                offset,
-                len,
-                temp_path: context
-                    .temp_paths()
-                    .next_path(&format!("cso-extract-{index}"), Some("chunk")),
-            });
+            tasks.push(CsoExtractTask { index, offset, len });
             offset = offset.saturating_add(len);
             index += 1;
         }
         tasks
     }
 
-    fn decode_extract_task(&self, source: &Path, task: &CsoExtractTask) -> Result<()> {
+    fn decode_extract_task(
+        &self,
+        source: &Path,
+        task: &CsoExtractTask,
+    ) -> Result<CsoDecodedExtractChunk> {
         let read_len = usize::try_from(task.len).map_err(|_| {
             RomWeaverError::Validation("cso extract task length overflowed usize".into())
         })?;
@@ -224,30 +222,10 @@ impl CsoContainerHandler {
                     task.offset
                 ))
             })?;
-
-        if let Some(parent) = task.temp_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut output = BufWriter::new(File::create(&task.temp_path)?);
-        output.write_all(&decoded)?;
-        output.flush()?;
-        Ok(())
-    }
-
-    fn cleanup_extract_tasks(&self, tasks: &[CsoExtractTask]) {
-        for task in tasks {
-            let _ = fs::remove_file(&task.temp_path);
-        }
-    }
-
-    fn assemble_extract_output(&self, tasks: &[CsoExtractTask], output_path: &Path) -> Result<()> {
-        let mut output = BufWriter::new(File::create(output_path)?);
-        for task in tasks {
-            let mut input = BufReader::new(File::open(&task.temp_path)?);
-            io::copy(&mut input, &mut output)?;
-        }
-        output.flush()?;
-        Ok(())
+        Ok(CsoDecodedExtractChunk {
+            index: task.index,
+            data: decoded,
+        })
     }
 
     fn build_create_tasks(
@@ -556,39 +534,75 @@ impl ContainerHandler for CsoContainerHandler {
         let output_path = request.out_dir.join(&output_name);
         let reader = self.open_reader(&request.source)?;
         let logical_bytes = reader.file_size();
-        let tasks = self.build_extract_tasks(logical_bytes, context);
-        let (execution, decode_result) = if tasks.is_empty() {
-            (
-                context.plan_threads(ThreadCapability::parallel(None)),
-                Ok(Vec::new()),
-            )
-        } else {
-            let (execution, pool) =
-                context.build_pool(ThreadCapability::parallel(Some(tasks.len().max(1))))?;
-            let source = request.source.clone();
-            let decode_result = if execution.used_parallelism {
-                pool.install(|| {
-                    tasks
-                        .par_iter()
-                        .map(|task| self.decode_extract_task(&source, task))
-                        .collect::<Result<Vec<_>>>()
+        let tasks = self.build_extract_tasks(logical_bytes);
+        let (execution, pool) =
+            context.build_pool(ThreadCapability::parallel(Some(tasks.len().max(1))))?;
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let ordered_writer = Arc::new(Mutex::new(OrderedChunkWriter::new(
+            BufWriter::new(File::create(&output_path)?),
+            bounded_items_for_threads(execution.effective_threads),
+        )?));
+        let source = request.source.clone();
+        let decode_result = if execution.used_parallelism {
+            let writer = Arc::clone(&ordered_writer);
+            pool.install(|| {
+                tasks.par_iter().try_for_each(|task| {
+                    let chunk = self.decode_extract_task(&source, task)?;
+                    let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
+                        RomWeaverError::Validation("cso extract chunk length overflowed".into())
+                    })?;
+                    if chunk_len != task.len {
+                        return Err(RomWeaverError::Validation(format!(
+                            "cso extract chunk {} wrote {} bytes but expected {}",
+                            task.index, chunk_len, task.len
+                        )));
+                    }
+                    let chunk_index = u64::try_from(chunk.index).map_err(|_| {
+                        RomWeaverError::Validation("cso extract chunk index overflowed".into())
+                    })?;
+                    let mut ordered = writer.lock().map_err(|_| {
+                        RomWeaverError::Validation("cso extract output writer lock poisoned".into())
+                    })?;
+                    ordered.write_chunk(chunk_index, chunk.data)
                 })
-            } else {
-                tasks
-                    .iter()
-                    .map(|task| self.decode_extract_task(&source, task))
-                    .collect::<Result<Vec<_>>>()
-            };
-            (execution, decode_result)
+            })
+        } else {
+            tasks.iter().try_for_each(|task| {
+                let chunk = self.decode_extract_task(&source, task)?;
+                let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
+                    RomWeaverError::Validation("cso extract chunk length overflowed".into())
+                })?;
+                if chunk_len != task.len {
+                    return Err(RomWeaverError::Validation(format!(
+                        "cso extract chunk {} wrote {} bytes but expected {}",
+                        task.index, chunk_len, task.len
+                    )));
+                }
+                let chunk_index = u64::try_from(chunk.index).map_err(|_| {
+                    RomWeaverError::Validation("cso extract chunk index overflowed".into())
+                })?;
+                let mut ordered = ordered_writer.lock().map_err(|_| {
+                    RomWeaverError::Validation("cso extract output writer lock poisoned".into())
+                })?;
+                ordered.write_chunk(chunk_index, chunk.data)
+            })
         };
         if let Err(error) = decode_result {
-            self.cleanup_extract_tasks(&tasks);
+            let _ = fs::remove_file(&output_path);
             return Err(error);
         }
-
-        let assemble_result = self.assemble_extract_output(&tasks, &output_path);
-        self.cleanup_extract_tasks(&tasks);
-        assemble_result?;
+        let ordered = Arc::try_unwrap(ordered_writer)
+            .map_err(|_| RomWeaverError::Validation("cso extract writer still in use".into()))?;
+        let ordered = ordered.into_inner().map_err(|_| {
+            RomWeaverError::Validation("cso extract output writer lock poisoned".into())
+        })?;
+        if let Err(error) = ordered.finish() {
+            let _ = fs::remove_file(&output_path);
+            return Err(error);
+        }
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
@@ -695,4 +709,3 @@ impl ContainerHandler for CsoContainerHandler {
         }
     }
 }
-

@@ -5,20 +5,20 @@ use std::{
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
     sync::{
-        Arc,
         atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc, Mutex,
     },
 };
 
 use bzip2::read::MultiBzDecoder as Bzip2Decoder;
 use ciso::{read::CSOReader as CsoReader, split::SplitFileReader};
 use flacenc::{component::BitRepr as _, error::Verify as _};
-use flate2::{Compression as GzipCompression, read::MultiGzDecoder, write::DeflateEncoder};
+use flate2::{read::MultiGzDecoder, write::DeflateEncoder, Compression as GzipCompression};
 use lz4_flex::frame::{
     BlockMode as Lz4BlockMode, BlockSize as Lz4BlockSize, FrameEncoder as Lz4FrameEncoder,
     FrameInfo as Lz4FrameInfo,
 };
-use lzma_rust2::{LzmaOptions, LzmaWriter, XzReader};
+use lzma_rust2::{LzmaOptions, LzmaWriter, XzReader, XzReaderMt};
 use nod::{
     common::{Compression as NodCompression, Format as NodFormat},
     read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
@@ -31,19 +31,17 @@ use nod::{
 use rars::ArchiveReader as RarRsArchiveReader;
 use rayon::prelude::*;
 use rom_weaver_codecs::{
-    CanonicalCodec, CodecRegistry, RequestedCodec, decode_deflate_into_buffer,
-    normalize_codec_label, parse_requested_codec,
+    decode_deflate_into_buffer, normalize_codec_label, parse_requested_codec, CanonicalCodec,
+    CodecRegistry, RequestedCodec,
 };
 use rom_weaver_core::{
-    CodecBackend, CodecOperationRequest, ContainerCapabilities, ContainerCreateRequest,
-    ContainerExtractRequest, ContainerHandler, ContainerInspectRequest, FormatDescriptor,
-    OperationContext, OperationFamily, OperationReport, OperationStatus, ProbeConfidence,
-    ProgressEvent, Result, RomWeaverError, ThreadCapability, ThreadExecution,
+    bounded_items_for_threads, CodecBackend, CodecOperationRequest, ContainerCapabilities,
+    ContainerCreateRequest, ContainerExtractRequest, ContainerHandler, ContainerInspectRequest,
+    FormatDescriptor, OperationContext, OperationFamily, OperationReport, OperationStatus,
+    OrderedChunkWriter, ProbeConfidence, ProgressEvent, Result, RomWeaverError, ThreadCapability,
+    ThreadExecution,
 };
 use sevenz_rust::{
-    ArchiveEntry as SevenZArchiveEntry, ArchiveReader as SevenZReader,
-    ArchiveWriter as SevenZWriter, EncoderConfiguration as SevenZMethodConfiguration,
-    EncoderMethod as SevenZMethod, Password as SevenZPassword,
     encoder_options::{
         BrotliOptions as SevenZBrotliOptions, Bzip2Options as SevenZBzip2Options,
         DeflateOptions as SevenZDeflateOptions, EncoderOptions as SevenZEncoderOptions,
@@ -51,6 +49,9 @@ use sevenz_rust::{
         LzmaOptions as SevenZLzmaOptions, PpmdOptions as SevenZPpmdOptions,
         ZstandardOptions as SevenZZstdOptions,
     },
+    ArchiveEntry as SevenZArchiveEntry, ArchiveReader as SevenZReader,
+    ArchiveWriter as SevenZWriter, EncoderConfiguration as SevenZMethodConfiguration,
+    EncoderMethod as SevenZMethod, Password as SevenZPassword,
 };
 use sha1::{Digest, Sha1};
 use tar::{Archive as TarArchive, Builder as TarBuilder};
@@ -59,8 +60,8 @@ use xdvdfs::{
 };
 use zeekstd::{Decoder as ZeekstdDecoder, SeekTable as ZeekstdSeekTable};
 use zip::{
-    CompressionMethod as ZipCompressionMethod, ZipArchive as ZipFileArchive,
-    ZipWriter as ZipFileWriter, write::SimpleFileOptions as ZipFileOptions,
+    write::SimpleFileOptions as ZipFileOptions, CompressionMethod as ZipCompressionMethod,
+    ZipArchive as ZipFileArchive, ZipWriter as ZipFileWriter,
 };
 use zstd::bulk::compress as zstd_compress;
 
@@ -655,7 +656,11 @@ fn character_class_matches(class: &[char], value: char) -> bool {
         index += 1;
     }
 
-    if negated { !matched } else { matched }
+    if negated {
+        !matched
+    } else {
+        matched
+    }
 }
 
 #[derive(Debug, Default)]
