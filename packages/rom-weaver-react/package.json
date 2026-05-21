@@ -16,9 +16,9 @@
     "./webapp": "./src/webapp/main.tsx"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev-server.mjs",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
+    "preview": "node scripts/dev-server.mjs preview",
     "lint": "npm run lint:code && npm run lint:types",
     "lint:code": "biome check package.json index.html vite.config.mjs vitest.config.base.mjs vitest.browser.config.mjs tsconfig.base.json tsconfig.json src tests --diagnostic-level=error",
     "lint:types": "tsc -p tsconfig.json --noEmit",

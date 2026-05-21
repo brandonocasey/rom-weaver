@@ -1,0 +1,509 @@
+#!/usr/bin/env node
+
+import childProcess from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+import { createServer as createViteServer } from "vite";
+
+const WILDCARD_HOST_REGEX = /^0\.0\.0\.0(?::\d+)?$/;
+const PARENT_DIRECTORY_PREFIX_REGEX = /^(\.\.[/\\])+/;
+
+const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DEFAULT_DEV_PORT = 5173;
+const DEFAULT_PREVIEW_PORT = 4173;
+const CERT_VALID_DAYS = parseInt(process.env.DEV_CERT_DAYS || "30", 10);
+const MIME_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".gif": "image/gif",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".wasm": "application/wasm",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
+};
+
+const SECURITY_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+  "Cross-Origin-Embedder-Policy": "require-corp",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  Expires: "0",
+  Pragma: "no-cache",
+};
+
+const parseArguments = (argv) => {
+  const args = argv.slice();
+  const options = {
+    host: process.env.HOST || "0.0.0.0",
+    mode: "dev",
+    open: false,
+    port: null,
+  };
+
+  if (args[0] && !args[0].startsWith("-")) options.mode = args.shift();
+
+  while (args.length > 0) {
+    const arg = args.shift();
+    if (arg === "--") continue;
+    if (arg === "--host") {
+      options.host = args.shift() || options.host;
+      continue;
+    }
+    if (arg.startsWith("--host=")) {
+      options.host = arg.slice("--host=".length) || options.host;
+      continue;
+    }
+    if (arg === "--port" || arg === "-p") {
+      options.port = parseInt(args.shift() || "", 10);
+      continue;
+    }
+    if (arg.startsWith("--port=")) {
+      options.port = parseInt(arg.slice("--port=".length), 10);
+      continue;
+    }
+    if (arg === "--open" || arg === "-o") {
+      options.open = true;
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      options.help = true;
+      continue;
+    }
+    options.help = true;
+  }
+
+  if (options.mode !== "dev" && options.mode !== "preview") options.help = true;
+  if (!Number.isFinite(options.port)) options.port = parseInt(process.env.PORT || "", 10);
+  if (!Number.isFinite(options.port)) options.port = options.mode === "preview" ? DEFAULT_PREVIEW_PORT : DEFAULT_DEV_PORT;
+
+  return options;
+};
+
+const printUsage = () => {
+  console.log("Usage: node scripts/dev-server.mjs [dev|preview] [--host 0.0.0.0] [--port 5173] [--open]");
+};
+
+const setSecurityHeaders = (res) => {
+  for (const name of Object.keys(SECURITY_HEADERS)) {
+    res.setHeader(name, SECURITY_HEADERS[name]);
+  }
+};
+
+const send = (res, status, headers, body) => {
+  setSecurityHeaders(res);
+  res.writeHead(status, headers || {});
+  res.end(body);
+};
+
+const getLanAddresses = () => {
+  const addresses = [];
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const address of interfaces[name] || []) {
+      if (address && address.family === "IPv4" && !address.internal && addresses.indexOf(address.address) === -1)
+        addresses.push(address.address);
+    }
+  }
+  return addresses;
+};
+
+const getCertificatePaths = () => {
+  const certId = crypto.createHash("sha1").update(ROOT_DIR).digest("hex").slice(0, 12);
+  const certDirectory = path.join(os.tmpdir(), `rom-weaver-react-dev-cert-${certId}`);
+  return {
+    cert: path.join(certDirectory, "localhost.crt"),
+    config: path.join(certDirectory, "openssl.cnf"),
+    directory: certDirectory,
+    key: path.join(certDirectory, "localhost.key"),
+  };
+};
+
+const writeOpenSslConfig = (configPath, lanAddresses) => {
+  const altNames = ["DNS.1 = localhost", "IP.1 = 127.0.0.1", "IP.2 = ::1"];
+  lanAddresses.forEach((address, index) => {
+    altNames.push(`IP.${index + 3} = ${address}`);
+  });
+  fs.writeFileSync(
+    configPath,
+    `${[
+      "[req]",
+      "default_bits = 2048",
+      "prompt = no",
+      "default_md = sha256",
+      "distinguished_name = dn",
+      "x509_extensions = v3_req",
+      "",
+      "[dn]",
+      "CN = localhost",
+      "",
+      "[v3_req]",
+      "basicConstraints = CA:FALSE",
+      "keyUsage = digitalSignature, keyEncipherment",
+      "extendedKeyUsage = serverAuth",
+      "subjectAltName = @alt_names",
+      "",
+      "[alt_names]",
+    ]
+      .concat(altNames)
+      .join("\n")}\n`,
+  );
+};
+
+const ensureCertificate = (lanAddresses) => {
+  const paths = getCertificatePaths();
+  fs.mkdirSync(paths.directory, { recursive: true });
+  writeOpenSslConfig(paths.config, lanAddresses);
+
+  if (!(fs.existsSync(paths.key) && fs.existsSync(paths.cert))) {
+    const result = childProcess.spawnSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-days",
+        String(Number.isFinite(CERT_VALID_DAYS) && CERT_VALID_DAYS > 0 ? CERT_VALID_DAYS : 30),
+        "-keyout",
+        paths.key,
+        "-out",
+        paths.cert,
+        "-config",
+        paths.config,
+      ],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if (result.status !== 0)
+      throw new Error(
+        `Unable to create a self-signed certificate with openssl.\n${result.stderr || result.stdout || ""}`,
+      );
+  }
+
+  return {
+    cert: fs.readFileSync(paths.cert),
+    key: fs.readFileSync(paths.key),
+    paths,
+  };
+};
+
+const getRedirectHost = (req, port) => {
+  const hostHeader = req.headers.host || `localhost:${port}`;
+  if (WILDCARD_HOST_REGEX.test(hostHeader)) return `localhost:${port}`;
+  return hostHeader;
+};
+
+const handleRedirect = (req, res, port) => {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    send(res, 405, { Allow: "GET, HEAD" }, "Method Not Allowed");
+    return;
+  }
+  const location = `https://${getRedirectHost(req, port)}${req.url || "/"}`;
+  send(
+    res,
+    308,
+    {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/plain; charset=utf-8",
+      Location: location,
+    },
+    req.method === "HEAD" ? null : `Redirecting to ${location}\n`,
+  );
+};
+
+const createPortMuxServer = (httpsServer, httpRedirectServer) =>
+  net.createServer((socket) => {
+    const routeSocket = () => {
+      const chunk = socket.read(1);
+      if (!chunk) {
+        socket.once("readable", routeSocket);
+        return;
+      }
+      socket.unshift(chunk);
+      if (chunk[0] === 22) httpsServer.emit("connection", socket);
+      else httpRedirectServer.emit("connection", socket);
+      socket.resume();
+    };
+    socket.pause();
+    socket.once("readable", routeSocket);
+  });
+
+const listen = (server, port, host) =>
+  new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.off("listening", onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  });
+
+const closeNodeServer = (server) =>
+  new Promise((resolve) => {
+    if (!server?.listening) {
+      resolve();
+      return;
+    }
+    server.close(() => {
+      resolve();
+    });
+  });
+
+const formatStartupError = (error, options) => {
+  if (!error || error.code !== "EADDRINUSE") return error?.stack ? error.stack : String(error || "Unknown error");
+
+  const host = options?.host || "0.0.0.0";
+  const port = Number.isFinite(options?.port) ? options.port : "unknown";
+  const nextPort = Number.isFinite(options?.port) ? options.port + 1 : "YOUR_PORT";
+  const mode = options?.mode === "preview" ? "preview" : "dev";
+  const suggestion =
+    process.platform === "win32" ? `  netstat -ano | findstr :${port}` : `  lsof -nP -iTCP:${port} -sTCP:LISTEN`;
+
+  return [
+    `Port ${port} on ${host} is already in use.`,
+    "Use one of these fixes:",
+    `  1) Stop the process holding the port (${suggestion.trim()}).`,
+    `  2) Start on another port: npm run ${mode} -- --port ${nextPort}`,
+    "",
+    `Original error: ${error.message || "EADDRINUSE"}`,
+  ].join("\n");
+};
+
+const installShutdown = (servers, viteServer) => {
+  let closing = false;
+  const close = async (signal) => {
+    if (closing) return;
+    closing = true;
+    try {
+      if (viteServer) await viteServer.close();
+      await Promise.all(servers.map(closeNodeServer));
+    } finally {
+      process.exit(signal ? 0 : process.exitCode || 0);
+    }
+  };
+
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
+};
+
+const getLocalUrl = (port) => `https://localhost:${port}/`;
+
+const openBrowser = (targetUrl) => {
+  const command =
+    process.platform === "darwin"
+      ? "open"
+      : (() => {
+          if (process.platform === "win32") return "cmd";
+          return "xdg-open";
+        })();
+  const args = process.platform === "win32" ? ["/c", "start", "", targetUrl] : [targetUrl];
+  const child = childProcess.spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.on("error", (err) => {
+    console.warn(`Unable to open browser: ${err?.message ? err.message : err}`);
+  });
+  child.unref();
+};
+
+const printUrls = (title, port, lanAddresses, certificatePath) => {
+  console.log(title);
+  console.log(`  https://localhost:${port}/`);
+  for (const address of lanAddresses) {
+    console.log(`  https://${address}:${port}/`);
+  }
+  console.log(`Plain HTTP on port ${port} redirects to HTTPS on the same port.`);
+  console.log(`Self-signed certificate: ${certificatePath}`);
+};
+
+const startDevServer = async (options) => {
+  const lanAddresses = getLanAddresses();
+  const certificate = ensureCertificate(lanAddresses);
+  let viteServer = null;
+  const httpsServer = https.createServer(
+    {
+      cert: certificate.cert,
+      key: certificate.key,
+    },
+    (req, res) => {
+      setSecurityHeaders(res);
+      if (!viteServer) {
+        send(res, 503, { "Content-Type": "text/plain; charset=utf-8" }, "Vite dev server is starting");
+        return;
+      }
+      viteServer.middlewares(req, res);
+    },
+  );
+  const httpRedirectServer = http.createServer((req, res) => {
+    handleRedirect(req, res, options.port);
+  });
+  const portMuxServer = createPortMuxServer(httpsServer, httpRedirectServer);
+
+  await listen(portMuxServer, options.port, options.host);
+  try {
+    viteServer = await createViteServer({
+      configFile: path.join(ROOT_DIR, "vite.config.mjs"),
+      root: ROOT_DIR,
+      server: {
+        headers: SECURITY_HEADERS,
+        hmr: {
+          protocol: "wss",
+          server: httpsServer,
+        },
+        host: options.host,
+        https: false,
+        middlewareMode: { server: httpsServer },
+        open: false,
+        port: options.port,
+        strictPort: true,
+      },
+    });
+  } catch (err) {
+    await closeNodeServer(portMuxServer);
+    throw err;
+  }
+  installShutdown([portMuxServer, httpsServer, httpRedirectServer], viteServer);
+  printUrls("RomWeaver React Vite dev server:", options.port, lanAddresses, certificate.paths.cert);
+  if (options.open) openBrowser(getLocalUrl(options.port));
+};
+
+const getContentType = (filePath) => MIME_TYPES[path.extname(filePath).toLowerCase()] || "application/octet-stream";
+
+const resolveDistRequestPath = (distDir, requestUrl) => {
+  const parsed = new URL(requestUrl || "/", "https://localhost");
+  const decodedPath = decodeURIComponent(parsed.pathname || "/");
+  const normalizedPath = path.normalize(decodedPath).replace(PARENT_DIRECTORY_PREFIX_REGEX, "");
+  const filePath = path.join(distDir, normalizedPath);
+  const resolvedPath = path.resolve(filePath);
+  if (resolvedPath !== distDir && !resolvedPath.startsWith(distDir + path.sep)) return null;
+  return resolvedPath;
+};
+
+const readPreviewFile = (filePath, fallbackPath, allowFallback, callback) => {
+  fs.stat(filePath, (statError, stats) => {
+    let resolvedPath = filePath;
+    if (!statError && stats.isDirectory()) resolvedPath = path.join(filePath, "index.html");
+
+    fs.readFile(resolvedPath, (readError, data) => {
+      if (!readError) {
+        callback(null, resolvedPath, data);
+        return;
+      }
+      if (!allowFallback) {
+        callback(readError);
+        return;
+      }
+      fs.readFile(fallbackPath, (fallbackError, fallbackData) => {
+        if (fallbackError) {
+          callback(readError);
+          return;
+        }
+        callback(null, fallbackPath, fallbackData);
+      });
+    });
+  });
+};
+
+const handlePreviewRequest = (distDir, req, res) => {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    send(res, 405, { Allow: "GET, HEAD" }, "Method Not Allowed");
+    return;
+  }
+
+  let filePath;
+  try {
+    filePath = resolveDistRequestPath(distDir, req.url);
+  } catch (_err) {
+    send(res, 400, { "Content-Type": "text/plain; charset=utf-8" }, "Bad Request");
+    return;
+  }
+
+  if (!filePath) {
+    send(res, 403, { "Content-Type": "text/plain; charset=utf-8" }, "Forbidden");
+    return;
+  }
+
+  const fallbackPath = path.join(distDir, "index.html");
+  const acceptHeader = req.headers.accept || "";
+  const allowFallback = acceptHeader.includes("text/html") || !path.extname(filePath);
+  readPreviewFile(filePath, fallbackPath, allowFallback, (readError, resolvedPath, data) => {
+    if (readError) {
+      send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found");
+      return;
+    }
+    send(
+      res,
+      200,
+      {
+        "Cache-Control": path.basename(resolvedPath) === "index.html" ? "no-cache" : "public, max-age=31536000, immutable",
+        "Content-Type": getContentType(resolvedPath),
+      },
+      req.method === "HEAD" ? null : data,
+    );
+  });
+};
+
+const startPreviewServer = async (options) => {
+  const distDir = path.join(ROOT_DIR, "dist");
+  if (!fs.existsSync(path.join(distDir, "index.html")))
+    throw new Error("The dist directory does not exist. Run npm run build before npm run preview.");
+
+  const lanAddresses = getLanAddresses();
+  const certificate = ensureCertificate(lanAddresses);
+  const httpsServer = https.createServer(
+    {
+      cert: certificate.cert,
+      key: certificate.key,
+    },
+    (req, res) => {
+      handlePreviewRequest(distDir, req, res);
+    },
+  );
+  const httpRedirectServer = http.createServer((req, res) => {
+    handleRedirect(req, res, options.port);
+  });
+  const portMuxServer = createPortMuxServer(httpsServer, httpRedirectServer);
+
+  await listen(portMuxServer, options.port, options.host);
+  installShutdown([portMuxServer, httpsServer, httpRedirectServer], null);
+  printUrls("RomWeaver React Vite preview server:", options.port, lanAddresses, certificate.paths.cert);
+  if (options.open) openBrowser(getLocalUrl(options.port));
+};
+
+const options = parseArguments(process.argv.slice(2));
+if (options.help) {
+  printUsage();
+  process.exit(options.mode === "dev" || options.mode === "preview" ? 0 : 1);
+}
+
+try {
+  if (options.mode === "preview") await startPreviewServer(options);
+  else await startDevServer(options);
+} catch (err) {
+  console.error(formatStartupError(err, options));
+  process.exitCode = 1;
+}
