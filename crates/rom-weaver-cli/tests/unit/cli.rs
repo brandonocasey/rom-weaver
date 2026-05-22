@@ -139,6 +139,24 @@ mod tests {
         );
         assert_eq!(
             CliApp::resolve_compression_level_for_profile(
+                "chd",
+                Some("cdfl"),
+                None,
+                CompressionLevelProfile::Max,
+            ),
+            Some(9)
+        );
+        assert_eq!(
+            CliApp::resolve_compression_level_for_profile(
+                "chd",
+                Some("flac"),
+                None,
+                CompressionLevelProfile::VeryHigh,
+            ),
+            Some(8)
+        );
+        assert_eq!(
+            CliApp::resolve_compression_level_for_profile(
                 "zst",
                 Some("zstd"),
                 None,

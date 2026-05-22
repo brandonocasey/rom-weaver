@@ -56,6 +56,7 @@
             &self,
             pcm_bytes: &[u8],
             byte_order: FlacSampleByteOrder,
+            compression_level: i32,
         ) -> Result<Vec<u8>> {
             let samples = self.pcm_i16_interleaved_to_samples(pcm_bytes, byte_order)?;
             let samples_per_channel = samples.len() / Self::FLAC_CHANNELS;
@@ -65,7 +66,8 @@
                 )));
             }
             let block_size = samples_per_channel.min(32_767);
-            let config = flacenc::config::Encoder::default()
+            let config = self
+                .build_flac_encoder_config(compression_level)
                 .into_verified()
                 .map_err(|error| {
                     RomWeaverError::Validation(format!(
@@ -94,6 +96,36 @@
                 })?;
             }
             Ok(sink.as_slice().to_vec())
+        }
+
+        fn build_flac_encoder_config(&self, compression_level: i32) -> flacenc::config::Encoder {
+            let mut config = flacenc::config::Encoder::default();
+            if compression_level <= 0 {
+                return config;
+            }
+
+            let level = compression_level.clamp(Self::FLAC_LEVEL_MIN, Self::FLAC_LEVEL_MAX);
+            let (use_midside, use_lpc, fixed_max_order, lpc_order, prc_max_parameter, partitions) =
+                match level {
+                    1 => (false, false, 1, 6, 9, 8),
+                    2 => (true, false, 2, 8, 10, 12),
+                    3 => (true, true, 3, 8, 11, 16),
+                    4 => (true, true, 4, 10, 12, 24),
+                    5 => (true, true, 4, 10, 13, 32),
+                    6 => (true, true, 4, 12, 14, 40),
+                    7 => (true, true, 4, 16, 14, 48),
+                    8 => (true, true, 4, 20, 14, 56),
+                    _ => (true, true, 4, 24, 14, 64),
+                };
+
+            config.stereo_coding.use_midside = use_midside;
+            config.subframe_coding.use_lpc = use_lpc;
+            config.subframe_coding.fixed.max_order = fixed_max_order;
+            config.subframe_coding.fixed.order_sel =
+                flacenc::config::OrderSel::ApproxEnt { partitions };
+            config.subframe_coding.qlpc.lpc_order = lpc_order;
+            config.subframe_coding.prc.max_parameter = prc_max_parameter;
+            config
         }
 
         fn encode_huffman_identity_payload(&self, hunk: &[u8]) -> Vec<u8> {
@@ -457,9 +489,11 @@
                 ChdCodec::FLAC => {
                     let mut encoded = Vec::new();
                     encoded.push(b'L');
-                    encoded.extend(
-                        self.encode_flac_frame_stream(hunk, FlacSampleByteOrder::LittleEndian)?,
-                    );
+                    encoded.extend(self.encode_flac_frame_stream(
+                        hunk,
+                        FlacSampleByteOrder::LittleEndian,
+                        compression_level,
+                    )?);
                     Ok(encoded)
                 }
                 other => Err(RomWeaverError::Unsupported(format!(
@@ -548,7 +582,11 @@
                     compressed
                 }
                 ChdCodec::CD_FLAC => {
-                    self.encode_flac_frame_stream(&sectors, FlacSampleByteOrder::BigEndian)?
+                    self.encode_flac_frame_stream(
+                        &sectors,
+                        FlacSampleByteOrder::BigEndian,
+                        compression_level,
+                    )?
                 }
                 other => {
                     return Err(RomWeaverError::Unsupported(format!(
@@ -567,7 +605,13 @@
                     })?
                 }
                 ChdCodec::CD_ZLIB | ChdCodec::CD_LZMA | ChdCodec::CD_FLAC => {
-                    let mut encoder = DeflateEncoder::new(Vec::new(), GzipCompression::default());
+                    let compression = if primary_codec == ChdCodec::CD_FLAC && compression_level > 0
+                    {
+                        GzipCompression::new(compression_level.clamp(1, 9) as u32)
+                    } else {
+                        GzipCompression::default()
+                    };
+                    let mut encoder = DeflateEncoder::new(Vec::new(), compression);
                     encoder.write_all(&subcode).map_err(|error| {
                         RomWeaverError::Validation(format!(
                             "cd subcode zlib compression failed: {error}"

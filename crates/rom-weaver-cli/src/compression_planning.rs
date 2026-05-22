@@ -230,13 +230,14 @@ impl CliApp {
         if codec.eq_ignore_ascii_case("cdzl") || codec.eq_ignore_ascii_case("cdlz") {
             return Some(ProfileCodecKind::Standard);
         }
+        if codec.eq_ignore_ascii_case("flac") || codec.eq_ignore_ascii_case("cdfl") {
+            return Some(ProfileCodecKind::Standard);
+        }
         if codec.eq_ignore_ascii_case("store")
             || codec.eq_ignore_ascii_case("none")
             || codec.eq_ignore_ascii_case("uncompressed")
             || codec.eq_ignore_ascii_case("huffman")
             || codec.eq_ignore_ascii_case("huff")
-            || codec.eq_ignore_ascii_case("flac")
-            || codec.eq_ignore_ascii_case("cdfl")
             || codec.eq_ignore_ascii_case("avhuff")
             || codec.eq_ignore_ascii_case("avhu")
         {

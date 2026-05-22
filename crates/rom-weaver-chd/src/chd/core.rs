@@ -14,6 +14,8 @@
         const ZSTD_LEVEL_MIN: i32 = -7;
         const LZMA_LEVEL_MIN: i32 = 0;
         const LZMA_LEVEL_MAX: i32 = 9;
+        const FLAC_LEVEL_MIN: i32 = 0;
+        const FLAC_LEVEL_MAX: i32 = 9;
         const CHD_V5_HEADER_BYTES: u64 = 124;
         const CHD_V5_MAP_TYPE_COMPRESSED_MAX: u8 = 3;
         const CHD_V5_MAP_TYPE_UNCOMPRESSED: u8 = 4;
@@ -437,10 +439,11 @@
                 ChdCodec::LZMA | ChdCodec::CD_LZMA => {
                     Some((Self::LZMA_LEVEL_MIN, Self::LZMA_LEVEL_MAX))
                 }
+                ChdCodec::FLAC | ChdCodec::CD_FLAC => {
+                    Some((Self::FLAC_LEVEL_MIN, Self::FLAC_LEVEL_MAX))
+                }
                 ChdCodec::NONE
                 | ChdCodec::HUFFMAN
-                | ChdCodec::FLAC
-                | ChdCodec::CD_FLAC
                 | ChdCodec::AVHUFF => None,
                 _ => None,
             };

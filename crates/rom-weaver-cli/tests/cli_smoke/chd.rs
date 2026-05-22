@@ -745,7 +745,7 @@ fn chd_compress_accepts_cd_codec_aliases() {
 }
 
 #[test]
-fn chd_compress_and_extract_cdfl_round_trip() {
+fn chd_compress_and_extract_cdfl_with_level_round_trip() {
     let temp = setup_temp_dir();
     let frames = 8_u32;
     let source = (0..(frames as usize * 2352))
@@ -767,7 +767,7 @@ fn chd_compress_and_extract_cdfl_round_trip() {
             "--output",
             chd_path.path().to_str().expect("path"),
             "--codec",
-            "cdfl",
+            "cdfl:9",
             "--json",
         ])
         .assert()
@@ -1488,4 +1488,3 @@ fn wia_extract_supports_single_output_selection() {
             .contains("requested selections were not found")
     );
 }
-
