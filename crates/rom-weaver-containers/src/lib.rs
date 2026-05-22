@@ -3,7 +3,7 @@ use std::{
     collections::BTreeSet,
     ffi::CString,
     fs::{self, File, OpenOptions},
-    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     os::raw::c_uint,
     path::{Component, Path, PathBuf},
     ptr,
@@ -16,13 +16,12 @@ use std::{
 use akv::reader::ArchiveReader as LibarchiveReadArchive;
 use bzip2::read::MultiBzDecoder as Bzip2Decoder;
 use ciso::{read::CSOReader as CsoReader, split::SplitFileReader};
-use flacenc::{component::BitRepr as _, error::Verify as _};
-use flate2::{Compression as GzipCompression, read::MultiGzDecoder, write::DeflateEncoder};
+use flate2::read::MultiGzDecoder;
 use lz4_flex::frame::{
     BlockMode as Lz4BlockMode, BlockSize as Lz4BlockSize, FrameEncoder as Lz4FrameEncoder,
     FrameInfo as Lz4FrameInfo,
 };
-use lzma_rust2::{LzmaOptions, LzmaWriter, XzReader, XzReaderMt};
+use lzma_rust2::{XzReader, XzReaderMt};
 use nod::{
     common::{Compression as NodCompression, Format as NodFormat},
     read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
@@ -34,6 +33,9 @@ use nod::{
 };
 use rars::ArchiveReader as RarRsArchiveReader;
 use rayon::prelude::*;
+#[cfg(test)]
+use rom_weaver_chd::ChdCodec;
+use rom_weaver_chd::ChdContainerHandler;
 use rom_weaver_codecs::{
     CanonicalCodec, CodecRegistry, RequestedCodec, decode_deflate_into_buffer,
     normalize_codec_label, parse_requested_codec,
@@ -68,7 +70,6 @@ use sevenz_rust::{
         ZstandardOptions as SevenZZstdOptions,
     },
 };
-use sha1::{Digest, Sha1};
 use tar::Archive as TarArchive;
 use xdvdfs::{
     blockdev::OffsetWrapper as XdvdfsOffsetWrapper, write::fs::XDVDFSFilesystem as XdvdfsFilesystem,
@@ -160,12 +161,6 @@ const PBP: FormatDescriptor = FormatDescriptor {
     name: "pbp",
     aliases: &[],
     extensions: &[".pbp"],
-};
-const CHD: FormatDescriptor = FormatDescriptor {
-    family: OperationFamily::Container,
-    name: "chd",
-    aliases: &["chd-cd", "chd-dvd", "chd-raw", "chd-hd"],
-    extensions: &[".chd"],
 };
 const GCZ: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Container,
@@ -338,7 +333,7 @@ impl ContainerRegistry {
             }
         }
         CompressFormatRecommendation {
-            format_name: CHD.name,
+            format_name: "chd",
             reason: "not-wii-gc-or-unrecognized",
         }
     }
@@ -353,61 +348,6 @@ const XZ_SIGNATURE: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 const ZSTD_SIGNATURE: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 const CSO_SIGNATURE: [u8; 4] = [b'C', b'I', b'S', b'O'];
 const PBP_SIGNATURE: [u8; 4] = [0x00, b'P', b'B', b'P'];
-const CHD_SIGNATURE: [u8; 8] = *b"MComprHD";
-const CHD_MAX_COMPRESSORS: usize = 4;
-const CHD_METADATA_FLAG_CHECKSUM: u8 = 0x01;
-const CD_FRAME_SIZE: u32 = 2352 + 96;
-const HARD_DISK_METADATA_TAG: u32 = make_tag(b'G', b'D', b'D', b'D');
-const CDROM_TRACK_METADATA2_TAG: u32 = make_tag(b'C', b'H', b'T', b'2');
-const GDROM_TRACK_METADATA_TAG: u32 = make_tag(b'C', b'H', b'G', b'D');
-const DVD_METADATA_TAG: u32 = make_tag(b'D', b'V', b'D', b' ');
-
-const fn make_tag(a: u8, b: u8, c: u8, d: u8) -> u32 {
-    ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | (d as u32)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ChdCodec(u32);
-
-impl ChdCodec {
-    const NONE: Self = Self(0);
-    const ZLIB: Self = Self(make_tag(b'z', b'l', b'i', b'b'));
-    const ZSTD: Self = Self(make_tag(b'z', b's', b't', b'd'));
-    const LZMA: Self = Self(make_tag(b'l', b'z', b'm', b'a'));
-    const HUFFMAN: Self = Self(make_tag(b'h', b'u', b'f', b'f'));
-    const AVHUFF: Self = Self(make_tag(b'a', b'v', b'h', b'u'));
-    const FLAC: Self = Self(make_tag(b'f', b'l', b'a', b'c'));
-    const CD_ZLIB: Self = Self(make_tag(b'c', b'd', b'z', b'l'));
-    const CD_ZSTD: Self = Self(make_tag(b'c', b'd', b'z', b's'));
-    const CD_LZMA: Self = Self(make_tag(b'c', b'd', b'l', b'z'));
-    const CD_FLAC: Self = Self(make_tag(b'c', b'd', b'f', b'l'));
-
-    const fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ChdMediaKind {
-    Raw,
-    HardDisk,
-    CdRom,
-    GdRom,
-    Dvd,
-    Av,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ChdHeader {
-    version: u32,
-    logical_bytes: u64,
-    hunk_bytes: u32,
-    hunk_count: u32,
-    unit_bytes: u32,
-    unit_count: u64,
-    compressed: bool,
-    compression: [ChdCodec; CHD_MAX_COMPRESSORS],
-}
 
 fn file_starts_with(source: &Path, signature: &[u8]) -> bool {
     let mut bytes = vec![0u8; signature.len()];
@@ -1800,7 +1740,5 @@ include!("handlers/wbfs.rs");
 include!("handlers/rvz.rs");
 
 include!("handlers/z3ds.rs");
-
-include!("handlers/chd.rs");
 
 include!("../tests/unit/handlers.rs");

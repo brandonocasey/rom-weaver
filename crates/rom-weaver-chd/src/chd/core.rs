@@ -177,8 +177,8 @@
             plan
         }
 
-        #[cfg(test)]
-        pub(super) fn default_cd_compression_plan_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn default_cd_compression_plan_for_tests(
             &self,
         ) -> Result<([ChdCodec; CHD_MAX_COMPRESSORS], ChdCodec)> {
             let create_kind = ChdCreateKind::Disc(DiscLayout {
@@ -189,24 +189,24 @@
             Ok((plan.codecs, plan.primary_codec))
         }
 
-        #[cfg(test)]
-        pub(super) fn default_dvd_compression_plan_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn default_dvd_compression_plan_for_tests(
             &self,
         ) -> Result<([ChdCodec; CHD_MAX_COMPRESSORS], ChdCodec)> {
             let plan = self.resolve_compression_plan(None, &ChdCreateKind::Dvd)?;
             Ok((plan.codecs, plan.primary_codec))
         }
 
-        #[cfg(test)]
-        pub(super) fn default_raw_compression_plan_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn default_raw_compression_plan_for_tests(
             &self,
         ) -> Result<([ChdCodec; CHD_MAX_COMPRESSORS], ChdCodec)> {
             let plan = self.resolve_compression_plan(None, &ChdCreateKind::Raw)?;
             Ok((plan.codecs, plan.primary_codec))
         }
 
-        #[cfg(test)]
-        pub(super) fn explicit_compression_plan_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn explicit_compression_plan_for_tests(
             &self,
             codecs: &str,
         ) -> Result<([ChdCodec; CHD_MAX_COMPRESSORS], ChdCodec)> {
@@ -214,8 +214,8 @@
             Ok((plan.codecs, plan.primary_codec))
         }
 
-        #[cfg(test)]
-        pub(super) fn rust_backend_can_create_with_codec_list_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn rust_backend_can_create_with_codec_list_for_tests(
             &self,
             codecs: &str,
         ) -> Result<bool> {
@@ -227,8 +227,8 @@
             ))
         }
 
-        #[cfg(test)]
-        pub(super) fn create_raw_store_with_rust_backend_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn create_raw_store_with_rust_backend_for_tests(
             &self,
             source: &Path,
             output: &Path,
@@ -237,8 +237,8 @@
             self.create_uncompressed_rust_raw(source, output, logical_bytes, &ChdCreateKind::Raw)
         }
 
-        #[cfg(test)]
-        pub(super) fn create_raw_with_rust_backend_codec_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn create_raw_with_rust_backend_codec_for_tests(
             &self,
             source: &Path,
             output: &Path,
@@ -268,8 +268,8 @@
             }
         }
 
-        #[cfg(test)]
-        pub(super) fn extract_raw_with_rust_backend_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn extract_raw_with_rust_backend_for_tests(
             &self,
             source: &Path,
             output: &Path,
@@ -286,13 +286,13 @@
             session.extract_to_file(output, thread_count).map(|_| ())
         }
 
-        #[cfg(test)]
-        pub(super) fn encode_raw_flac_payload_for_tests(&self, hunk: &[u8]) -> Result<Vec<u8>> {
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn encode_raw_flac_payload_for_tests(&self, hunk: &[u8]) -> Result<Vec<u8>> {
             self.compress_rust_hunk(&ChdCreateKind::Raw, ChdCodec::FLAC, 0, hunk)
         }
 
-        #[cfg(test)]
-        pub(super) fn encode_cd_flac_payload_for_tests(&self, hunk: &[u8]) -> Result<Vec<u8>> {
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn encode_cd_flac_payload_for_tests(&self, hunk: &[u8]) -> Result<Vec<u8>> {
             self.compress_rust_cd_hunk(ChdCodec::CD_FLAC, 0, hunk)
         }
 

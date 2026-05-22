@@ -1,0 +1,391 @@
+use std::collections::BTreeMap;
+use std::{
+    collections::BTreeSet,
+    fs::{self, File},
+    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use flacenc::{component::BitRepr as _, error::Verify as _};
+use flate2::{Compression as GzipCompression, write::DeflateEncoder};
+use lzma_rust2::{LzmaOptions, LzmaWriter};
+use rayon::prelude::*;
+use rom_weaver_codecs::{CanonicalCodec, RequestedCodec, parse_requested_codec};
+use rom_weaver_core::{
+    ContainerCapabilities, ContainerCreateRequest, ContainerExtractRequest, ContainerHandler,
+    ContainerInspectRequest, FormatDescriptor, OperationContext, OperationFamily, OperationReport,
+    ProbeConfidence, Result, RomWeaverError, ThreadCapability,
+};
+use sha1::{Digest, Sha1};
+use zstd::bulk::compress as zstd_compress;
+
+const CHD: FormatDescriptor = FormatDescriptor {
+    family: OperationFamily::Container,
+    name: "chd",
+    aliases: &["chd-cd", "chd-dvd", "chd-raw", "chd-hd"],
+    extensions: &[".chd"],
+};
+
+const CHD_SIGNATURE: [u8; 8] = *b"MComprHD";
+const CHD_MAX_COMPRESSORS: usize = 4;
+const CHD_METADATA_FLAG_CHECKSUM: u8 = 0x01;
+const CD_FRAME_SIZE: u32 = 2352 + 96;
+const HARD_DISK_METADATA_TAG: u32 = make_tag(b'G', b'D', b'D', b'D');
+const CDROM_TRACK_METADATA2_TAG: u32 = make_tag(b'C', b'H', b'T', b'2');
+const GDROM_TRACK_METADATA_TAG: u32 = make_tag(b'C', b'H', b'G', b'D');
+const DVD_METADATA_TAG: u32 = make_tag(b'D', b'V', b'D', b' ');
+
+const fn make_tag(a: u8, b: u8, c: u8, d: u8) -> u32 {
+    ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | (d as u32)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChdCodec(u32);
+
+impl ChdCodec {
+    pub const NONE: Self = Self(0);
+    pub const ZLIB: Self = Self(make_tag(b'z', b'l', b'i', b'b'));
+    pub const ZSTD: Self = Self(make_tag(b'z', b's', b't', b'd'));
+    pub const LZMA: Self = Self(make_tag(b'l', b'z', b'm', b'a'));
+    pub const HUFFMAN: Self = Self(make_tag(b'h', b'u', b'f', b'f'));
+    pub const AVHUFF: Self = Self(make_tag(b'a', b'v', b'h', b'u'));
+    pub const FLAC: Self = Self(make_tag(b'f', b'l', b'a', b'c'));
+    pub const CD_ZLIB: Self = Self(make_tag(b'c', b'd', b'z', b'l'));
+    pub const CD_ZSTD: Self = Self(make_tag(b'c', b'd', b'z', b's'));
+    pub const CD_LZMA: Self = Self(make_tag(b'c', b'd', b'l', b'z'));
+    pub const CD_FLAC: Self = Self(make_tag(b'c', b'd', b'f', b'l'));
+
+    const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChdMediaKind {
+    Raw,
+    HardDisk,
+    CdRom,
+    GdRom,
+    Dvd,
+    Av,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChdHeader {
+    version: u32,
+    logical_bytes: u64,
+    hunk_bytes: u32,
+    hunk_count: u32,
+    unit_bytes: u32,
+    unit_count: u64,
+    compressed: bool,
+    compression: [ChdCodec; CHD_MAX_COMPRESSORS],
+}
+
+fn file_starts_with(source: &Path, signature: &[u8]) -> bool {
+    let mut bytes = vec![0u8; signature.len()];
+    if let Ok(mut file) = File::open(source) {
+        return file.read_exact(&mut bytes).is_ok() && bytes == signature;
+    }
+    false
+}
+
+#[derive(Clone, Debug)]
+enum SelectionPatternKind {
+    ExactOrPrefix,
+    Wildcard(WildcardPattern),
+}
+
+#[derive(Clone, Debug)]
+struct SelectionPattern {
+    requested: String,
+    kind: SelectionPatternKind,
+}
+
+impl SelectionPattern {
+    fn new(requested: String) -> Self {
+        if Self::contains_glob_syntax(&requested) {
+            let wildcard = WildcardPattern::new(&requested);
+            return Self {
+                requested,
+                kind: SelectionPatternKind::Wildcard(wildcard),
+            };
+        }
+        Self {
+            requested,
+            kind: SelectionPatternKind::ExactOrPrefix,
+        }
+    }
+
+    fn contains_glob_syntax(value: &str) -> bool {
+        value
+            .bytes()
+            .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b'{' | b']' | b'}'))
+    }
+
+    fn matches(&self, entry_name: &str) -> bool {
+        match &self.kind {
+            SelectionPatternKind::ExactOrPrefix => {
+                entry_name == self.requested
+                    || entry_name.starts_with(&format!("{}/", self.requested))
+            }
+            SelectionPatternKind::Wildcard(pattern) => pattern.matches(entry_name),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WildcardPattern {
+    segments: Vec<PathPatternSegment>,
+}
+
+#[derive(Clone, Debug)]
+enum PathPatternSegment {
+    AnyDepth,
+    OneSegment(String),
+}
+
+impl WildcardPattern {
+    fn new(pattern: &str) -> Self {
+        let segments = pattern
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(|segment| {
+                if segment == "**" {
+                    PathPatternSegment::AnyDepth
+                } else {
+                    PathPatternSegment::OneSegment(segment.to_string())
+                }
+            })
+            .collect::<Vec<_>>();
+        Self { segments }
+    }
+
+    fn matches(&self, entry_name: &str) -> bool {
+        let path_segments = entry_name
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        Self::matches_path_segments(&self.segments, &path_segments)
+    }
+
+    fn matches_path_segments(
+        pattern_segments: &[PathPatternSegment],
+        path_segments: &[&str],
+    ) -> bool {
+        match pattern_segments.split_first() {
+            None => path_segments.is_empty(),
+            Some((PathPatternSegment::AnyDepth, remaining)) => {
+                if Self::matches_path_segments(remaining, path_segments) {
+                    return true;
+                }
+                if let Some((_, tail)) = path_segments.split_first() {
+                    return Self::matches_path_segments(pattern_segments, tail);
+                }
+                false
+            }
+            Some((PathPatternSegment::OneSegment(pattern), remaining)) => {
+                let Some((segment, tail)) = path_segments.split_first() else {
+                    return false;
+                };
+                if !matches_wildcard_segment(pattern, segment) {
+                    return false;
+                }
+                Self::matches_path_segments(remaining, tail)
+            }
+        }
+    }
+}
+
+fn matches_wildcard_segment(pattern: &str, candidate: &str) -> bool {
+    let pattern_chars = pattern.chars().collect::<Vec<_>>();
+    let candidate_chars = candidate.chars().collect::<Vec<_>>();
+    matches_wildcard_segment_inner(&pattern_chars, &candidate_chars, 0, 0)
+}
+
+fn matches_wildcard_segment_inner(
+    pattern: &[char],
+    candidate: &[char],
+    pattern_index: usize,
+    candidate_index: usize,
+) -> bool {
+    let mut pattern_index = pattern_index;
+    let mut candidate_index = candidate_index;
+
+    while pattern_index < pattern.len() {
+        match pattern[pattern_index] {
+            '*' => {
+                while pattern_index < pattern.len() && pattern[pattern_index] == '*' {
+                    pattern_index += 1;
+                }
+                if pattern_index == pattern.len() {
+                    return true;
+                }
+                for next_candidate_index in candidate_index..=candidate.len() {
+                    if matches_wildcard_segment_inner(
+                        pattern,
+                        candidate,
+                        pattern_index,
+                        next_candidate_index,
+                    ) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            '?' => {
+                if candidate_index == candidate.len() {
+                    return false;
+                }
+                pattern_index += 1;
+                candidate_index += 1;
+            }
+            '[' => {
+                let Some(class_end) = find_character_class_end(pattern, pattern_index + 1) else {
+                    if candidate_index == candidate.len() || candidate[candidate_index] != '[' {
+                        return false;
+                    }
+                    pattern_index += 1;
+                    candidate_index += 1;
+                    continue;
+                };
+                if candidate_index == candidate.len() {
+                    return false;
+                }
+                if !character_class_matches(
+                    &pattern[pattern_index + 1..class_end],
+                    candidate[candidate_index],
+                ) {
+                    return false;
+                }
+                pattern_index = class_end + 1;
+                candidate_index += 1;
+            }
+            expected => {
+                if candidate_index == candidate.len() || candidate[candidate_index] != expected {
+                    return false;
+                }
+                pattern_index += 1;
+                candidate_index += 1;
+            }
+        }
+    }
+
+    candidate_index == candidate.len()
+}
+
+fn find_character_class_end(pattern: &[char], class_start: usize) -> Option<usize> {
+    let mut index = class_start;
+    while index < pattern.len() {
+        if pattern[index] == ']' {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn character_class_matches(class: &[char], value: char) -> bool {
+    if class.is_empty() {
+        return false;
+    }
+
+    let mut index = 0usize;
+    let mut negated = false;
+    if matches!(class.first(), Some('!') | Some('^')) {
+        negated = true;
+        index = 1;
+    }
+
+    let mut matched = false;
+    while index < class.len() {
+        let current = class[index];
+        if index + 2 < class.len() && class[index + 1] == '-' {
+            let range_end = class[index + 2];
+            if current <= value && value <= range_end {
+                matched = true;
+            }
+            index += 3;
+            continue;
+        }
+
+        if current == value {
+            matched = true;
+        }
+        index += 1;
+    }
+
+    if negated { !matched } else { matched }
+}
+
+#[derive(Debug, Default)]
+struct SelectionMatcher {
+    requested: Vec<SelectionPattern>,
+    matched: BTreeSet<String>,
+}
+
+impl SelectionMatcher {
+    fn new(requested: &[String]) -> Self {
+        let requested = requested
+            .iter()
+            .map(|value| normalize_archive_name(value))
+            .filter(|value| !value.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(SelectionPattern::new)
+            .collect::<Vec<_>>();
+        Self {
+            requested,
+            matched: BTreeSet::new(),
+        }
+    }
+
+    fn matches(&mut self, entry_name: &str) -> bool {
+        if self.requested.is_empty() {
+            return true;
+        }
+        let entry_name = normalize_archive_name(entry_name);
+        if entry_name.is_empty() {
+            return false;
+        }
+        for requested in &self.requested {
+            if requested.matches(&entry_name) {
+                self.matched.insert(requested.requested.clone());
+                return true;
+            }
+        }
+        false
+    }
+
+    fn ensure_all_matched(&self) -> Result<()> {
+        let missing = self
+            .requested
+            .iter()
+            .filter_map(|requested| {
+                (!self.matched.contains(&requested.requested))
+                    .then_some(requested.requested.clone())
+            })
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(RomWeaverError::Validation(format!(
+                "requested selections were not found: {}",
+                missing.join(", ")
+            )))
+        }
+    }
+}
+
+fn normalize_archive_name(name: &str) -> String {
+    name.trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_matches('/')
+        .to_string()
+}
+
+mod handler;
+
+pub use handler::ChdContainerHandler;

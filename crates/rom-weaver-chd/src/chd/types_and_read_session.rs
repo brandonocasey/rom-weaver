@@ -1,4 +1,4 @@
-    pub(super) struct ChdContainerHandler;
+    pub struct ChdContainerHandler;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct HdGeometry {
@@ -637,4 +637,3 @@
             Some((&trimmed[..end], &trimmed[end..]))
         }
     }
-

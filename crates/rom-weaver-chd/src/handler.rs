@@ -1,3 +1,5 @@
+use crate::*;
+
 mod chd_handler {
     use super::*;
 
@@ -10,4 +12,4 @@ mod chd_handler {
     include!("chd/handler_trait.rs");
 }
 
-use chd_handler::ChdContainerHandler;
+pub use chd_handler::ChdContainerHandler;

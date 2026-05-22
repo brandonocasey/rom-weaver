@@ -1,0 +1,21 @@
+[package]
+name = "rom-weaver-chd"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+default = []
+test-utils = []
+
+[dependencies]
+chd.workspace = true
+flacenc.workspace = true
+flate2.workspace = true
+lzma-rust2.workspace = true
+rayon.workspace = true
+rom-weaver-codecs = { path = "../rom-weaver-codecs" }
+rom-weaver-core = { path = "../rom-weaver-core" }
+sha1.workspace = true
+zstd.workspace = true

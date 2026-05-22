@@ -1793,6 +1793,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "rom-weaver-chd"
+version = "0.1.0"
+dependencies = [
+ "chd",
+ "flacenc",
+ "flate2",
+ "lzma-rust2",
+ "rayon",
+ "rom-weaver-codecs",
+ "rom-weaver-core",
+ "sha1",
+ "zstd",
+]
+
+[[package]]
 name = "rom-weaver-checksum"
 version = "0.1.0"
 dependencies = [
@@ -1859,18 +1874,17 @@ dependencies = [
  "chd",
  "ciso",
  "claxon",
- "flacenc",
  "flate2",
  "lz4_flex 0.11.6",
  "lzma-rust2",
  "nod",
  "rars",
  "rayon",
+ "rom-weaver-chd",
  "rom-weaver-codecs",
  "rom-weaver-core",
  "rom-weaver-libarchive-sys",
  "sevenz-rust2",
- "sha1",
  "tar",
  "xdvdfs",
  "zeekstd",

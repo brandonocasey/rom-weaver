@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/rom-weaver-chd",
     "crates/rom-weaver-checksum",
     "crates/rom-weaver-cli",
     "crates/rom-weaver-codecs",

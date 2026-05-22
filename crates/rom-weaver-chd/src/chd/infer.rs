@@ -129,8 +129,8 @@
             }
         }
 
-        #[cfg(test)]
-        pub(super) fn infer_create_kind_label_for_tests(
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn infer_create_kind_label_for_tests(
             &self,
             format: &str,
             input: &Path,
