@@ -8,6 +8,7 @@ members = [
     "crates/rom-weaver-core",
     "crates/rom-weaver-libarchive-sys",
     "crates/rom-weaver-patches",
+    "crates/rom-weaver-xdelta",
 ]
 resolver = "2"
 
@@ -40,7 +41,6 @@ nod = { version = "2.0.0-alpha.6", default-features = false, features = ["compre
 predicates = "3.1.3"
 qbsdiff = "1.4.4"
 rayon = "1.11.0"
-sevenz-rust = { package = "sevenz-rust2", version = "0.21.0", default-features = false, features = ["compress", "deflate", "bzip2", "zstd", "lz4", "brotli", "ppmd"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha1 = "0.11.0"
@@ -50,7 +50,6 @@ thiserror = "2.0.17"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 xdvdfs = { version = "0.8.3", default-features = false, features = ["std", "read", "write", "sync"] }
-zip = { version = "6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs", "bzip2", "zstd"] }
 zeekstd = "0.6.2"
 zstd-sys = { version = "2.0.16", default-features = false }
 zstd = "0.13.3"
@@ -74,5 +73,4 @@ panic = "abort"
 strip = "symbols"
 
 [patch.crates-io]
-sevenz-rust2 = { path = "vendor/sevenz-rust2-0.21.0" }
 akv = { path = "vendor/akv-0.1.0" }
