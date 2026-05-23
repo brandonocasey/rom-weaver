@@ -128,21 +128,21 @@ impl StreamContainerHandler {
         }
     }
 
-    fn backend_codec_name(&self) -> &'static str {
-        match self.compression {
-            StreamCompression::Gzip => "deflate",
-            StreamCompression::Bzip2 => "bzip2",
-            StreamCompression::Xz => "lzma2",
-            StreamCompression::Zstd => "zstd",
-        }
-    }
-
     fn libarchive_read_filter(&self) -> LibarchiveReadFilter {
         match self.compression {
             StreamCompression::Gzip => LibarchiveReadFilter::Gzip,
             StreamCompression::Bzip2 => LibarchiveReadFilter::Bzip2,
             StreamCompression::Xz => LibarchiveReadFilter::Xz,
             StreamCompression::Zstd => LibarchiveReadFilter::Zstd,
+        }
+    }
+
+    fn libarchive_create_filter(&self) -> LibarchiveCreateFilter {
+        match self.compression {
+            StreamCompression::Gzip => LibarchiveCreateFilter::Gzip,
+            StreamCompression::Bzip2 => LibarchiveCreateFilter::Bzip2,
+            StreamCompression::Xz => LibarchiveCreateFilter::Xz,
+            StreamCompression::Zstd => LibarchiveCreateFilter::Zstd,
         }
     }
 
@@ -164,9 +164,129 @@ impl StreamContainerHandler {
         }
     }
 
-    fn codec_backend(&self) -> Result<Arc<dyn CodecBackend>> {
-        let codec = self.backend_codec_name();
-        resolve_container_codec_backend(self.descriptor.name, codec)
+    fn create_io_buffer_bytes(&self) -> usize {
+        match self.compression {
+            StreamCompression::Zstd => LIBARCHIVE_CREATE_ZSTD_IO_BUFFER_BYTES,
+            StreamCompression::Gzip | StreamCompression::Bzip2 | StreamCompression::Xz => {
+                LIBARCHIVE_CREATE_IO_BUFFER_BYTES
+            }
+        }
+    }
+
+    fn extract_with_libarchive(
+        &self,
+        source: &Path,
+        output_path: &Path,
+        context: &OperationContext,
+        execution: &ThreadExecution,
+    ) -> Result<u64> {
+        let format_name = self.descriptor.name;
+        let total_bytes =
+            inspect_stream_with_libarchive(source, format_name, self.libarchive_read_filter())?;
+        let archive_ptr =
+            libarchive_open_read_stream(source, format_name, self.libarchive_read_filter())?;
+        let result = (|| -> Result<u64> {
+            let mut entry: *mut rom_weaver_libarchive_sys::archive_entry = ptr::null_mut();
+            let next_status = unsafe { archive_read_next_header(archive_ptr, &mut entry) };
+            if next_status == ARCHIVE_EOF {
+                return Err(RomWeaverError::Validation(format!(
+                    "{format_name} extract found no compressed payload entries"
+                )));
+            }
+            libarchive_check_status(
+                next_status,
+                archive_ptr,
+                &format!("{format_name} extract failed while reading header"),
+            )?;
+
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut output = BufWriter::new(File::create(output_path)?);
+            let progress_label = format!("extracting `{}`", format_name);
+            let emitted_progress_bucket = AtomicU8::new(0);
+            let mut copied = 0_u64;
+            let mut buffer = vec![0_u8; LIBARCHIVE_EXTRACT_IO_BUFFER_BYTES];
+            loop {
+                let read = unsafe {
+                    archive_read_data(archive_ptr, buffer.as_mut_ptr().cast(), buffer.len())
+                };
+                if read == 0 {
+                    break;
+                }
+                if read < 0 {
+                    return Err(libarchive_error(
+                        archive_ptr,
+                        &format!("{format_name} extract failed while reading payload"),
+                    ));
+                }
+                let bytes = usize::try_from(read).map_err(|_| {
+                    RomWeaverError::Validation(format!(
+                        "{format_name} extract failed: libarchive returned an invalid read length"
+                    ))
+                })?;
+                if bytes > buffer.len() {
+                    return Err(RomWeaverError::Validation(format!(
+                        "{format_name} extract failed: libarchive returned a read length larger than the buffer"
+                    )));
+                }
+                output.write_all(&buffer[..bytes])?;
+                copied = copied.saturating_add(bytes as u64).min(total_bytes);
+                maybe_emit_container_byte_progress(
+                    context,
+                    "extract",
+                    format_name,
+                    "extract",
+                    copied,
+                    total_bytes,
+                    &progress_label,
+                    Some(execution),
+                    &emitted_progress_bucket,
+                );
+            }
+            output.flush()?;
+            Ok(copied)
+        })();
+
+        match (
+            result,
+            libarchive_close_read_stream(archive_ptr, format_name),
+        ) {
+            (Ok(bytes), Ok(())) => Ok(bytes),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    fn create_with_libarchive(
+        &self,
+        request: &ContainerCreateRequest,
+        context: &OperationContext,
+        execution: &ThreadExecution,
+        level: i32,
+    ) -> Result<u64> {
+        let input = &request.inputs[0];
+        let entry_name = input
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("payload.bin")
+            .to_string();
+        let entries = vec![ArchiveInputEntry {
+            source: input.clone(),
+            archive_name: entry_name,
+            is_dir: false,
+        }];
+        let create_config = LibarchiveCreateConfig {
+            format_name: self.descriptor.name,
+            format: LibarchiveCreateFormat::Raw,
+            filter: self.libarchive_create_filter(),
+            format_compression: None,
+            compression_level: Some(level),
+            format_threads: None,
+            filter_threads: Some(execution.effective_threads.max(1)),
+            io_buffer_bytes: self.create_io_buffer_bytes(),
+        };
+        write_archive_with_libarchive(request, &entries, context, execution, create_config)
     }
 
     fn output_name(&self, source: &Path) -> String {
@@ -264,7 +384,7 @@ impl ContainerHandler for StreamContainerHandler {
         request: &ContainerExtractRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let mut execution = context.plan_threads(self.extract_thread_capability());
+        let execution = context.plan_threads(self.extract_thread_capability());
         fs::create_dir_all(&request.out_dir)?;
 
         let output_name = self.output_name(&request.source);
@@ -274,22 +394,18 @@ impl ContainerHandler for StreamContainerHandler {
         }
 
         let output_path = request.out_dir.join(&output_name);
-        let backend = self.codec_backend()?;
-        let decode_report = backend.decode(
-            &CodecOperationRequest {
-                input: request.source.clone(),
-                output: output_path.clone(),
-                level: None,
-            },
+        let written = match self.extract_with_libarchive(
+            &request.source,
+            &output_path,
             context,
-        )?;
-        if decode_report.status != OperationStatus::Succeeded {
-            return Err(RomWeaverError::Unsupported(decode_report.label));
-        }
-        if let Some(decode_execution) = decode_report.thread_execution {
-            execution = decode_execution;
-        }
-        let written = fs::metadata(&output_path)?.len();
+            &execution,
+        ) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let _ = fs::remove_file(&output_path);
+                return Err(error);
+            }
+        };
         selections.ensure_all_matched()?;
 
         Ok(OperationReport::succeeded(
@@ -319,7 +435,7 @@ impl ContainerHandler for StreamContainerHandler {
             )));
         }
 
-        let mut execution = context.plan_threads(self.create_thread_capability());
+        let execution = context.plan_threads(self.create_thread_capability());
         let level = self.parse_codec_and_level(request.codec.as_deref(), request.level)?;
         let input = &request.inputs[0];
         let metadata = fs::metadata(input)?;
@@ -336,21 +452,7 @@ impl ContainerHandler for StreamContainerHandler {
             fs::create_dir_all(parent)?;
         }
 
-        let backend = self.codec_backend()?;
-        let encode_report = backend.encode(
-            &CodecOperationRequest {
-                input: input.clone(),
-                output: request.output.clone(),
-                level: Some(level),
-            },
-            context,
-        )?;
-        if encode_report.status != OperationStatus::Succeeded {
-            return Err(RomWeaverError::Unsupported(encode_report.label));
-        }
-        if let Some(encode_execution) = encode_report.thread_execution {
-            execution = encode_execution;
-        }
+        self.create_with_libarchive(request, context, &execution, level)?;
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
