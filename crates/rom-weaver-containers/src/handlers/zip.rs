@@ -32,7 +32,7 @@ impl ZipContainerHandler {
     ) -> Result<(ZipCompressionMethod, Option<i32>)> {
         let default = match self.flavor {
             ZipContainerFlavor::Zip => ZipCompressionMethod::Deflated,
-            ZipContainerFlavor::Zipx => ZipCompressionMethod::Deflated,
+            ZipContainerFlavor::Zipx => ZipCompressionMethod::Zstd,
         };
         let method = match parse_requested_codec(codec) {
             RequestedCodec::Unspecified => default,

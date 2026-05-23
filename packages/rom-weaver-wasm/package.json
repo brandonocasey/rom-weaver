@@ -25,9 +25,9 @@
       "types": "./src/index.d.ts",
       "import": "./src/index.mjs"
     },
-    "./zenfs": {
-      "types": "./src/rom-weaver-zenfs-api.d.ts",
-      "import": "./src/rom-weaver-zenfs-api.mjs"
+    "./browser-opfs": {
+      "types": "./src/rom-weaver-browser-opfs-api.d.ts",
+      "import": "./src/rom-weaver-browser-opfs-api.mjs"
     },
     "./workers/browser-client": {
       "types": "./src/workers/browser-worker-client.d.ts",
@@ -50,7 +50,7 @@
   "scripts": {
     "prepare:dist": "node ./scripts/sync-dist.mjs",
     "prepack": "npm run check",
-    "check": "node --check ./src/index.mjs && node --check ./src/rom-weaver-runtime-utils.mjs && node --check ./src/rom-weaver-zenfs-api.mjs && node --check ./src/workers/runner-worker-core.mjs && node --check ./src/workers/browser-runner-worker.mjs && node --check ./src/workers/worker-client-core.mjs && node --check ./src/workers/browser-worker-client.mjs && node --check ./src/workers/worker-protocol.mjs",
+    "check": "node --check ./src/index.mjs && node --check ./src/rom-weaver-runtime-utils.mjs && node --check ./src/rom-weaver-browser-opfs-api.mjs && node --check ./src/workers/runner-worker-core.mjs && node --check ./src/workers/browser-runner-worker.mjs && node --check ./src/workers/worker-client-core.mjs && node --check ./src/workers/browser-worker-client.mjs && node --check ./src/workers/worker-protocol.mjs",
     "test": "npm run test:browser",
     "test:browser": "vitest --config ./vitest.browser.config.mjs run",
     "test:browser:stress:1gb": "ROM_WEAVER_WASM_STRESS_1GB=1 vitest --config ./vitest.browser.config.mjs run -t \"survives 1 GiB compress extract checksum and 100MB-class xdelta apply workload\""
@@ -59,24 +59,14 @@
     "@bjorn3/browser_wasi_shim": "^0.4.2",
     "@vitest/browser": "^4.1.7",
     "@vitest/browser-playwright": "^4.1.7",
-    "@zenfs/core": "^2.5.6",
-    "@zenfs/dom": "^1.2.9",
     "playwright": "^1.60.0",
     "vitest": "^4.1.7"
   },
   "peerDependencies": {
-    "@bjorn3/browser_wasi_shim": "^0.4.2",
-    "@zenfs/core": "^2.5.6",
-    "@zenfs/dom": "^1.2.9"
+    "@bjorn3/browser_wasi_shim": "^0.4.2"
   },
   "peerDependenciesMeta": {
     "@bjorn3/browser_wasi_shim": {
-      "optional": true
-    },
-    "@zenfs/core": {
-      "optional": true
-    },
-    "@zenfs/dom": {
       "optional": true
     }
   }

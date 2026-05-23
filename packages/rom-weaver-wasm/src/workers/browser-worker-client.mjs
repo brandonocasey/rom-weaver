@@ -25,7 +25,7 @@ export class BrowserRomWeaverWorkerClient extends RomWeaverWorkerClientCore {
   init(options = {}) {
     return this._send({
       type: 'init',
-      mode: 'browser-zenfs',
+      mode: 'browser-opfs',
       options,
     });
   }

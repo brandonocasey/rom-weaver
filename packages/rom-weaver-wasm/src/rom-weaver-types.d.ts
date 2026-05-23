@@ -111,24 +111,18 @@ export interface FileSystemDirectoryHandleLike {
 
 export type RomWeaverBrowserSyncAccessMode = 'read-only' | 'readwrite' | 'readwrite-unsafe';
 
-export interface RomWeaverZenFsBrowserOptions {
+export interface RomWeaverBrowserOpfsOptions {
   module?: WebAssembly.Module;
   wasmUrl?: string;
   opfsHandle?: FileSystemDirectoryHandleLike;
-  scratchHandle?: FileSystemDirectoryHandleLike;
-  /** Guest path for staged OPFS content. Defaults to `/work`. */
+  /** Guest path for the single staged OPFS mount. Defaults to `/work`. */
+  workGuestPath?: string;
+  /** @deprecated Use workGuestPath. */
   opfsGuestPath?: string;
-  /** Guest scratch path for temporary files. Defaults to `/scratch`. */
-  scratchGuestPath?: string;
-  /** @deprecated Use scratchGuestPath. */
-  tmpGuestPath?: string;
   runtimeMounts?: string[];
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
-  /**
-   * Mounts that should open files as writable during WASI execution.
-   * This only affects pre-prepared files; dynamic path creation stays unsupported.
-   */
-  writableMounts?: string[];
+  /** Writable guest roots. Defaults to the work mount itself. */
+  writableDirectories?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
   program?: string;
   argv0?: string;
@@ -140,9 +134,9 @@ export interface RomWeaverZenFsBrowserOptions {
   debugWasi?: boolean;
 }
 
-export interface RomWeaverZenFsBrowserRunOptions extends RomWeaverRunOptions {
+export interface RomWeaverBrowserOpfsRunOptions extends RomWeaverRunOptions {
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
-  writableMounts?: string[];
+  writableDirectories?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
   program?: string;
   debugWasi?: boolean;

@@ -5,36 +5,29 @@ This folder contains ESM wrappers for browser execution of `rom-weaver-cli.wasm`
 ## Files
 
 - `rom-weaver-runtime-utils.mjs`: shared wasm import and JSON/trace parsing helpers
-- `rom-weaver-zenfs-api.mjs`: browser OPFS + WASI wrapper
+- `rom-weaver-browser-opfs-api.mjs`: browser OPFS + WASI `/work` runner
 
-## Runtime requirements
+## Runtime Requirements
 
 - Secure-context Dedicated Worker runtime
 - `rom-weaver-cli.wasm` artifact from `scripts/build-wasm-cli.sh`
 - Browser support for OPFS + `FileSystemSyncAccessHandle`
+- `@bjorn3/browser_wasi_shim`
 
-## Optional dependencies for ZenFS wrapper
-
-If you use `rom-weaver-zenfs-api.mjs`, install:
-
-```bash
-npm install @zenfs/core @zenfs/dom @bjorn3/browser_wasi_shim
-```
-
-## Quick use (Dedicated Worker)
+## Quick Use (Dedicated Worker)
 
 ```js
-import { createRomWeaverZenFsBrowser } from './scripts/wasm/rom-weaver-zenfs-api.mjs';
+import { createRomWeaverBrowserOpfs } from './scripts/wasm/rom-weaver-browser-opfs-api.mjs';
 
-const runner = await createRomWeaverZenFsBrowser({
+const runner = await createRomWeaverBrowserOpfs({
   wasmUrl: '/wasm/rom-weaver-cli.wasm',
-  opfsGuestPath: '/opfs',
-  runtimeMounts: ['/opfs', '/tmp'],
+  opfsHandle: await navigator.storage.getDirectory(),
+  workGuestPath: '/work',
 });
 
 const result = await runner.runJson([
   'checksum',
-  '/opfs/game.bin',
+  '/work/game.bin',
   '--algo',
   'crc32',
   '--no-extract',
@@ -45,5 +38,8 @@ console.log(result.exitCode, result.ok);
 
 ## Notes
 
-- This browser wrapper is worker-only. It will throw on the main thread.
-- Node.js integration is intentionally omitted; use the native `rom-weaver` CLI directly for Node workflows.
+- WASI sees one preopened directory: `/work`.
+- Browser picker handles/files should be copied into OPFS before calling `run()`.
+- Known output paths passed by CLI flags are created in OPFS before `_start()` because WASI syscalls are synchronous.
+- Dynamic files created during a run are flushed back to OPFS after `_start()` returns; arbitrary async browser filesystem access is still unavailable during WASI execution.
+- Node.js, Electron, and Capacitor backends are intentionally out of scope for this browser wrapper.

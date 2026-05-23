@@ -6,7 +6,7 @@ WASM_PACKAGE_DIR="$ROOT_DIR/packages/rom-weaver-wasm"
 DEFAULT_OUT_DIR="$WASM_PACKAGE_DIR"
 OUT_DIR="${1:-${ROM_WEAVER_WASM_OUT_DIR:-$DEFAULT_OUT_DIR}}"
 RUNTIME_UTILS_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-runtime-utils.mjs"
-ZENFS_API_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-zenfs-api.mjs"
+BROWSER_OPFS_API_SOURCE="$ROOT_DIR/scripts/wasm/rom-weaver-browser-opfs-api.mjs"
 JS_API_README="$ROOT_DIR/scripts/wasm/README.md"
 WASM_NPM_PACKAGE_SYNC="$ROOT_DIR/packages/rom-weaver-wasm/scripts/sync-dist.mjs"
 PTHREAD_COUNT="${PTHREAD_COUNT:-8}"
@@ -189,16 +189,15 @@ if [[ "$OUT_DIR" == "$WASM_PACKAGE_DIR" ]]; then
   if [[ -f "$RUNTIME_UTILS_SOURCE" ]]; then
     cp "$RUNTIME_UTILS_SOURCE" "$OUT_DIR/src/rom-weaver-runtime-utils.mjs"
   fi
-  if [[ -f "$ZENFS_API_SOURCE" ]]; then
-    cp "$ZENFS_API_SOURCE" "$OUT_DIR/src/rom-weaver-zenfs-api.mjs"
+  if [[ -f "$BROWSER_OPFS_API_SOURCE" ]]; then
+    cp "$BROWSER_OPFS_API_SOURCE" "$OUT_DIR/src/rom-weaver-browser-opfs-api.mjs"
   fi
 else
   if [[ -f "$RUNTIME_UTILS_SOURCE" ]]; then
     cp "$RUNTIME_UTILS_SOURCE" "$OUT_DIR/rom-weaver-runtime-utils.mjs"
   fi
-
-  if [[ -f "$ZENFS_API_SOURCE" ]]; then
-    cp "$ZENFS_API_SOURCE" "$OUT_DIR/rom-weaver-zenfs-api.mjs"
+  if [[ -f "$BROWSER_OPFS_API_SOURCE" ]]; then
+    cp "$BROWSER_OPFS_API_SOURCE" "$OUT_DIR/rom-weaver-browser-opfs-api.mjs"
   fi
 
   if [[ -f "$JS_API_README" ]]; then

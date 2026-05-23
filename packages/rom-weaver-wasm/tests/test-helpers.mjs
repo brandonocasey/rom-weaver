@@ -2,7 +2,6 @@ import { expect } from 'vitest';
 import { createBrowserWorkerClient } from '../src/workers/browser-worker-client.mjs';
 
 const OPFS_GUEST_ROOT = '/work';
-const TMP_GUEST_ROOT = '/scratch';
 const TEXT_ENCODER = new TextEncoder();
 
 const VCDIFF_SOURCE_FIXTURE_URL = new URL('../../../tests/fixtures/vcdiff/secondary-source.bin', import.meta.url);
@@ -36,12 +35,11 @@ export async function withTempFixture(run, options = {}) {
     const init = await worker.init({
       wasmUrl: new URL('../rom-weaver-cli.wasm', import.meta.url).href,
       opfsHandle: fixtureHandle,
-      opfsGuestPath: OPFS_GUEST_ROOT,
-      scratchGuestPath: TMP_GUEST_ROOT,
-      runtimeMounts: [OPFS_GUEST_ROOT, TMP_GUEST_ROOT],
+      workGuestPath: OPFS_GUEST_ROOT,
+      runtimeMounts: [OPFS_GUEST_ROOT],
       ...initOptions,
     });
-    expect(init.mode).toBe('browser-zenfs');
+    expect(init.mode).toBe('browser-opfs');
 
     const sourcePath = joinGuestPath(OPFS_GUEST_ROOT, sourceFileName);
     await writeGuestFile(fixtureHandle, sourcePath, toBytes(sourceContents));
@@ -56,7 +54,7 @@ export async function withTempFixture(run, options = {}) {
 
     await run({
       dir: OPFS_GUEST_ROOT,
-      tmpDir: TMP_GUEST_ROOT,
+      workDir: OPFS_GUEST_ROOT,
       sourcePath,
       worker,
       opfsHandle: fixtureHandle,
@@ -84,14 +82,36 @@ export function getTerminalEvent(result) {
 
 export function assertRunJsonSucceeded(result, options = {}) {
   const { command } = options;
-  expect(result.exitCode).toBe(0);
-  expect(result.ok).toBe(true);
   const terminal = getTerminalEvent(result);
+  const failureMessage = [
+    `expected ${command ?? 'command'} to succeed`,
+    `exitCode=${result.exitCode}`,
+    `ok=${result.ok}`,
+    `label=${JSON.stringify(terminal?.label ?? '')}`,
+    `details=${JSON.stringify(terminal?.details ?? null)}`,
+    `stderr=${JSON.stringify(result.stderr ?? '')}`,
+    `error=${JSON.stringify(errorMessage(result.error))}`,
+    `stack=${JSON.stringify(errorStack(result.error))}`,
+  ].join(' ');
+  expect(result.exitCode, failureMessage).toBe(0);
+  expect(result.ok, failureMessage).toBe(true);
   expect(terminal.status).toBe('succeeded');
   if (typeof command === 'string') {
     expect(terminal.command).toBe(command);
   }
   return terminal;
+}
+
+function errorMessage(error) {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  if (typeof error === 'object' && typeof error.message === 'string') return error.message;
+  return String(error);
+}
+
+function errorStack(error) {
+  if (error && typeof error === 'object' && typeof error.stack === 'string') return error.stack;
+  return '';
 }
 
 export function assertFailedWithLabel(result, labelPattern, context) {
@@ -103,12 +123,12 @@ export function assertFailedWithLabel(result, labelPattern, context) {
 }
 
 export async function runProgressMatrix({ runJson, opfsHandle, dir, sourcePath, appliedOutputName }) {
-  const archivePath = joinGuestPath(TMP_GUEST_ROOT, 'archive.gz');
-  const extractDir = joinGuestPath(TMP_GUEST_ROOT, 'extract');
+  const archivePath = joinGuestPath(OPFS_GUEST_ROOT, 'archive.gz');
+  const extractDir = joinGuestPath(OPFS_GUEST_ROOT, 'extract');
   const originalPath = joinGuestPath(dir, 'original.bin');
   const modifiedPath = joinGuestPath(dir, 'modified.bin');
-  const patchPath = joinGuestPath(TMP_GUEST_ROOT, 'update.ips');
-  const appliedPath = joinGuestPath(TMP_GUEST_ROOT, appliedOutputName ?? 'applied-output.bin');
+  const patchPath = joinGuestPath(OPFS_GUEST_ROOT, 'update.ips');
+  const appliedPath = joinGuestPath(OPFS_GUEST_ROOT, appliedOutputName ?? 'applied-output.bin');
 
   await writeGuestFile(opfsHandle, originalPath, toBytes('abcdefgh'));
   await writeGuestFile(opfsHandle, modifiedPath, toBytes('a1XYZf!!!'));
@@ -200,26 +220,26 @@ export async function runProgressMatrix({ runJson, opfsHandle, dir, sourcePath, 
 
 export async function runPatchMatrix({ runJson, opfsHandle, dir, sourcePath, fixtures }) {
   const chdSourcePath = joinGuestPath(dir, 'chd-source.bin');
-  const chdPath = joinGuestPath(TMP_GUEST_ROOT, 'archive.chd');
-  const chdExtractDir = joinGuestPath(TMP_GUEST_ROOT, 'chd-extract');
-  const zipPath = joinGuestPath(TMP_GUEST_ROOT, 'archive.zip');
-  const zipExtractDir = joinGuestPath(TMP_GUEST_ROOT, 'zip-extract');
-  const sevenZPath = joinGuestPath(TMP_GUEST_ROOT, 'archive.7z');
-  const sevenZLzmaPath = joinGuestPath(TMP_GUEST_ROOT, 'archive-lzma.7z');
-  const sevenZLzma2Path = joinGuestPath(TMP_GUEST_ROOT, 'archive-lzma2.7z');
-  const sevenZLzmaExtractDir = joinGuestPath(TMP_GUEST_ROOT, '7z-lzma-extract');
-  const sevenZLzma2ExtractDir = joinGuestPath(TMP_GUEST_ROOT, '7z-lzma2-extract');
+  const chdPath = joinGuestPath(OPFS_GUEST_ROOT, 'archive.chd');
+  const chdExtractDir = joinGuestPath(OPFS_GUEST_ROOT, 'chd-extract');
+  const zipPath = joinGuestPath(OPFS_GUEST_ROOT, 'archive.zip');
+  const zipExtractDir = joinGuestPath(OPFS_GUEST_ROOT, 'zip-extract');
+  const sevenZPath = joinGuestPath(OPFS_GUEST_ROOT, 'archive.7z');
+  const sevenZLzmaPath = joinGuestPath(OPFS_GUEST_ROOT, 'archive-lzma.7z');
+  const sevenZLzma2Path = joinGuestPath(OPFS_GUEST_ROOT, 'archive-lzma2.7z');
+  const sevenZLzmaExtractDir = joinGuestPath(OPFS_GUEST_ROOT, '7z-lzma-extract');
+  const sevenZLzma2ExtractDir = joinGuestPath(OPFS_GUEST_ROOT, '7z-lzma2-extract');
   const originalPath = joinGuestPath(dir, 'original.bin');
   const modifiedPath = joinGuestPath(dir, 'modified.bin');
-  const ipsPath = joinGuestPath(TMP_GUEST_ROOT, 'update.ips');
-  const upsPath = joinGuestPath(TMP_GUEST_ROOT, 'update.ups');
-  const rupPath = joinGuestPath(TMP_GUEST_ROOT, 'update.rup');
-  const bpsPath = joinGuestPath(TMP_GUEST_ROOT, 'update.bps');
-  const appliedIpsPath = joinGuestPath(TMP_GUEST_ROOT, 'applied-ips.bin');
-  const appliedBpsPath = joinGuestPath(TMP_GUEST_ROOT, 'applied-bps.bin');
-  const appliedUpsPath = joinGuestPath(TMP_GUEST_ROOT, 'applied-ups.bin');
-  const appliedRupPath = joinGuestPath(TMP_GUEST_ROOT, 'applied-rup.bin');
-  const appliedXdeltaPath = joinGuestPath(TMP_GUEST_ROOT, 'applied-xdelta.bin');
+  const ipsPath = joinGuestPath(OPFS_GUEST_ROOT, 'update.ips');
+  const upsPath = joinGuestPath(OPFS_GUEST_ROOT, 'update.ups');
+  const rupPath = joinGuestPath(OPFS_GUEST_ROOT, 'update.rup');
+  const bpsPath = joinGuestPath(OPFS_GUEST_ROOT, 'update.bps');
+  const appliedIpsPath = joinGuestPath(OPFS_GUEST_ROOT, 'applied-ips.bin');
+  const appliedBpsPath = joinGuestPath(OPFS_GUEST_ROOT, 'applied-bps.bin');
+  const appliedUpsPath = joinGuestPath(OPFS_GUEST_ROOT, 'applied-ups.bin');
+  const appliedRupPath = joinGuestPath(OPFS_GUEST_ROOT, 'applied-rup.bin');
+  const appliedXdeltaPath = joinGuestPath(OPFS_GUEST_ROOT, 'applied-xdelta.bin');
 
   const chdSource = new Uint8Array(64 * 1024);
   for (let index = 0; index < chdSource.length; index += 1) {
@@ -411,6 +431,10 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
     'zip',
     'zipx',
     '7z',
+    'tar',
+    'tar.gz',
+    'tar.bz2',
+    'tar.xz',
     'gz',
     'bz2',
     'xz',
@@ -420,7 +444,7 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
     'z3ds',
   ];
   for (const format of containerRoundTripFormats) {
-    const archivePath = joinGuestPath(TMP_GUEST_ROOT, `roundtrip-${formatToken(format)}.${containerSuffix(format)}`);
+    const archivePath = joinGuestPath(OPFS_GUEST_ROOT, `roundtrip-${formatToken(format)}.${containerSuffix(format)}`);
     assertRunJsonSucceeded(
       await runJson([
         'compress',
@@ -435,7 +459,7 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
       { command: 'compress' },
     );
 
-    const extractDir = joinGuestPath(TMP_GUEST_ROOT, `roundtrip-${formatToken(format)}-extract`);
+    const extractDir = joinGuestPath(OPFS_GUEST_ROOT, `roundtrip-${formatToken(format)}-extract`);
     assertRunJsonSucceeded(
       await runJson([
         'extract',
@@ -451,10 +475,6 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
 
   const containerCompressFailureExpectations = new Map([
     ['rar', /rar create is not supported/i],
-    ['tar', /not implemented/i],
-    ['tar.gz', /not implemented/i],
-    ['tar.bz2', /not implemented/i],
-    ['tar.xz', /not implemented/i],
     ['pbp', /pbp create is not supported/i],
     ['gcz', /gcz compression is not supported/i],
     ['wbfs', /failed to open input/i],
@@ -462,10 +482,10 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
     ['tgc', /failed to open input/i],
     ['nfs', /nfs compression is not supported/i],
     ['rvz', /failed to open input/i],
-    ['xiso', /not registered/i],
+    ['xiso', /create is not supported|trim-only/i],
   ]);
   for (const [format, pattern] of containerCompressFailureExpectations.entries()) {
-    const archivePath = joinGuestPath(TMP_GUEST_ROOT, `compress-${formatToken(format)}.${containerSuffix(format)}`);
+    const archivePath = joinGuestPath(OPFS_GUEST_ROOT, `compress-${formatToken(format)}.${containerSuffix(format)}`);
     const compressResult = await runJson([
       'compress',
       archiveSourcePath,
@@ -481,10 +501,10 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
 
   const containerExtractFailureExpectations = new Map([
     ['rar', /archive is invalid|unsupported archive signature/i],
-    ['tar', /failed to read entire block/i],
-    ['tar.gz', /invalid gzip header/i],
-    ['tar.bz2', /bz2 header missing/i],
-    ['tar.xz', /invalid xz magic bytes/i],
+    ['tar', /failed to read entire block|unrecognized archive format|archive is invalid/i],
+    ['tar.gz', /invalid gzip header|unrecognized archive format|archive is invalid/i],
+    ['tar.bz2', /bz2 header missing|unrecognized archive format|archive is invalid/i],
+    ['tar.xz', /invalid xz magic bytes|unrecognized archive format|archive is invalid/i],
     ['pbp', /too small to be a pbp container/i],
     ['gcz', /failed to open gcz source/i],
     ['wbfs', /failed to open wbfs source/i],
@@ -492,12 +512,12 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
     ['tgc', /failed to open tgc source/i],
     ['nfs', /failed to open nfs source/i],
     ['rvz', /failed to open rvz source/i],
-    ['xiso', /xiso extract is not supported yet/i],
+    ['xiso', /xiso extract is not supported yet|not an Xbox XDVDFS image|not an XDVDFS volume/i],
   ]);
   for (const [format, pattern] of containerExtractFailureExpectations.entries()) {
     const sourcePath = joinGuestPath(dir, `extract-${formatToken(format)}.${containerSuffix(format)}`);
     await writeGuestFile(opfsHandle, sourcePath, toBytes('not-a-real-container'));
-    const outDir = joinGuestPath(TMP_GUEST_ROOT, `extract-${formatToken(format)}-out`);
+    const outDir = joinGuestPath(OPFS_GUEST_ROOT, `extract-${formatToken(format)}-out`);
     const extractResult = await runJson([
       'extract',
       sourcePath,
@@ -567,7 +587,7 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
   for (const format of patchFormats) {
     const extension = patchExtension(format);
     expect(typeof extension).toBe('string');
-    const patchPath = joinGuestPath(TMP_GUEST_ROOT, `patch-${format}.${extension}`);
+    const patchPath = joinGuestPath(OPFS_GUEST_ROOT, `patch-${format}.${extension}`);
     const createResult = await runJson([
       'patch-create',
       '--original',
@@ -629,7 +649,7 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
     );
   }
 
-  const xdeltaApplyPath = joinGuestPath(TMP_GUEST_ROOT, 'fixture-applied-xdelta.bin');
+  const xdeltaApplyPath = joinGuestPath(OPFS_GUEST_ROOT, 'fixture-applied-xdelta.bin');
   assertRunJsonSucceeded(
     await runPatchApplyNoCompress(runJson, {
       inputPath: fixtures.vcdiffSourcePath,
@@ -639,7 +659,7 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
     { command: 'patch-apply' },
   );
 
-  const vcdiffPatchPath = joinGuestPath(TMP_GUEST_ROOT, 'fixture-secondary.vcdiff');
+  const vcdiffPatchPath = joinGuestPath(OPFS_GUEST_ROOT, 'fixture-secondary.vcdiff');
   await runJson([
     'patch-create',
     '--original',
@@ -653,7 +673,7 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
     '--threads',
     '1',
   ]);
-  const vcdiffApplyPath = joinGuestPath(TMP_GUEST_ROOT, 'fixture-applied-vcdiff.bin');
+  const vcdiffApplyPath = joinGuestPath(OPFS_GUEST_ROOT, 'fixture-applied-vcdiff.bin');
   assertRunJsonSucceeded(
     await runPatchApplyNoCompress(runJson, {
       inputPath: fixtures.vcdiffSourcePath,
@@ -682,7 +702,7 @@ async function runPatchApplyNoCompress(runJson, { inputPath, patchPath, outputPa
 async function runCreatedPatchApply(runJson, { format, createResult, originalPath, patchPath }) {
   expect(createResult.ok, `patch-create ${format} should succeed`).toBe(true);
   expect(getTerminalEvent(createResult).status).toBe('succeeded');
-  const applyPath = joinGuestPath(TMP_GUEST_ROOT, `patch-applied-${format}.bin`);
+  const applyPath = joinGuestPath(OPFS_GUEST_ROOT, `patch-applied-${format}.bin`);
   const applyResult = await runPatchApplyNoCompress(runJson, {
     inputPath: originalPath,
     patchPath,

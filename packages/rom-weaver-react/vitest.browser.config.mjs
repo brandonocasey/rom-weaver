@@ -31,7 +31,7 @@ const readDownloadStream = (stream, maxBytes) =>
 
 export default mergeConfig(baseConfig, {
   optimizeDeps: {
-    include: ["@bjorn3/browser_wasi_shim", "@zenfs/core", "@zenfs/dom"],
+    include: ["@bjorn3/browser_wasi_shim"],
   },
   resolve: {
     preserveSymlinks: true,

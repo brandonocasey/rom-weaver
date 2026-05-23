@@ -32,21 +32,19 @@ To explicitly sync those artifacts into `packages/rom-weaver-wasm`:
 SYNC_WASM_PACKAGE=1 scripts/build-wasm-cli.sh /path/to/wasm-artifacts
 ```
 
-See [`packages/rom-weaver-wasm/README.md`](packages/rom-weaver-wasm/README.md) for Node/OPFS usage.
+See [`packages/rom-weaver-wasm/README.md`](packages/rom-weaver-wasm/README.md) for browser OPFS usage.
 
 ## WASM Package Surface
 
 `packages/rom-weaver-wasm` exposes:
 
-- Node WASI runner (`run` and `runJson`)
-- NodeFS mount helpers
-- ZenFS runners for Node and browser OPFS
-- dedicated Node/browser worker clients
+- Browser OPFS WASI runner (`run` and `runJson`)
+- single `/work` OPFS mount wiring for browser workers
+- dedicated browser worker client
 - TypeScript declarations
 
 Integration notes:
 
-- Node runner supports `executionIsolation: "none" | "auto" | "worker"` for latency vs isolation tradeoffs.
 - Browser OPFS runtime is Dedicated Worker only (not main-thread `window`).
 
 ## CLI Commands

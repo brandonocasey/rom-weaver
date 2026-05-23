@@ -72,8 +72,6 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       "@bjorn3/browser_wasi_shim",
-      "@zenfs/core",
-      "@zenfs/dom",
       "lucide-react/dist/esm/icons/github.js",
       "lucide-react/dist/esm/icons/heart.js",
       "lucide-react/dist/esm/icons/refresh-cw.js",

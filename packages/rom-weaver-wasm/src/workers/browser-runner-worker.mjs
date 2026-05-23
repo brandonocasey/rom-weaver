@@ -1,4 +1,4 @@
-import { createRomWeaverZenFsBrowser } from '../rom-weaver-zenfs-api.mjs';
+import { createRomWeaverBrowserOpfs } from '../rom-weaver-browser-opfs-api.mjs';
 import { createRunnerWorkerMessageQueue } from './runner-worker-core.mjs';
 
 const workerMessages = createRunnerWorkerMessageQueue({
@@ -6,17 +6,17 @@ const workerMessages = createRunnerWorkerMessageQueue({
     self.postMessage(message);
   },
   async initRunner({ mode, options }) {
-    const resolvedMode = mode ?? 'browser-zenfs';
-    if (resolvedMode !== 'browser-zenfs') {
+    const resolvedMode = mode ?? 'browser-opfs';
+    if (resolvedMode !== 'browser-opfs') {
       throw new Error(
         `unsupported browser worker mode: ${resolvedMode}. `
-          + 'Supported mode is: browser-zenfs.',
+          + 'Supported mode is: browser-opfs.',
       );
     }
 
     return {
-      runner: await createRomWeaverZenFsBrowser(options),
-      mode: resolvedMode,
+      runner: await createRomWeaverBrowserOpfs(options),
+      mode: 'browser-opfs',
     };
   },
 });

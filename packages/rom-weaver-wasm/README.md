@@ -1,42 +1,39 @@
 # rom-weaver-wasm
 
-JavaScript wrappers and WASM artifacts for `rom-weaver`.
+JavaScript wrappers and WASM artifacts for browser `rom-weaver` execution.
 
 ## What You Get
 
-- Browser OPFS runner (`createRomWeaverZenFsBrowser`) for Dedicated Workers
+- Browser OPFS runner (`createRomWeaverBrowserOpfs`) for Dedicated Workers
 - Dedicated browser worker client (`createBrowserWorkerClient`)
 - First-party TypeScript declarations
 
-Node.js integration is intentionally removed from this package.
+Node.js, Electron, and Capacitor filesystem backends are intentionally omitted from this package.
 Use the native `rom-weaver` CLI directly for Node workflows.
 
 ## Import Paths
 
 - `rom-weaver-wasm` (main entry)
-- `rom-weaver-wasm/zenfs`
+- `rom-weaver-wasm/browser-opfs`
 - `rom-weaver-wasm/workers/browser-client`
 - `rom-weaver-wasm/workers/protocol`
+
 ## Browser OPFS Runner Example
 
-`createRomWeaverZenFsBrowser` must run in a secure-context Dedicated Worker if you want true zero-copy OPFS access (`FileSystemSyncAccessHandle`).
-
+`createRomWeaverBrowserOpfs` must run in a secure-context Dedicated Worker so it can use `FileSystemSyncAccessHandle`.
 It is not a main-thread API and will throw when called from `window`.
 
 ```js
-import { createRomWeaverZenFsBrowser } from 'rom-weaver-wasm/zenfs';
+import { createRomWeaverBrowserOpfs } from 'rom-weaver-wasm/browser-opfs';
 
-const opfsHandle = await navigator.storage.getDirectory();
-
-const runner = await createRomWeaverZenFsBrowser({
+const runner = await createRomWeaverBrowserOpfs({
   wasmUrl: '/wasm/rom-weaver-cli.wasm',
-  opfsHandle,
-  opfsGuestPath: '/work',
-  runtimeMounts: ['/work', '/scratch'],
+  opfsHandle: await navigator.storage.getDirectory(),
+  workGuestPath: '/work',
 });
 
 const result = await runner.runJson(
-  ['checksum', '/work/game.bin', '--algo', 'crc32'],
+  ['checksum', '/work/game.bin', '--algo', 'crc32', '--no-extract'],
   {
     onEvent(event) {
       console.log(event);
@@ -47,12 +44,12 @@ const result = await runner.runJson(
 console.log(result.exitCode, result.ok);
 ```
 
-Scratch temp behavior:
+Runtime behavior:
 
-- Default scratch guest path is `/scratch`.
-- Unless you opt into writable mounts, `/work` stays read-only and temp output should go through `/scratch`.
-- Scratch must be writable. Runner initialization fails if writable scratch cannot be established.
-- Scratch namespaces are cleaned up best-effort after each run.
+- WASI sees a single mounted directory: `/work`.
+- Browser picker handles/files should be staged into OPFS before `run()`.
+- Known CLI output paths are created in OPFS before `_start()` because WASI Preview 1 filesystem calls are synchronous.
+- Dynamic files created during a run are flushed back to OPFS after `_start()` returns.
 - If unset, browser runs default `ROM_WEAVER_MAX_BUFFERED_PATCH_BYTES=67108864` (64 MiB) to fail early on remaining full-buffer patch paths instead of risking worker OOM.
 
 ## Dedicated Browser Worker Client Example
@@ -61,14 +58,10 @@ Scratch temp behavior:
 import { createBrowserWorkerClient } from 'rom-weaver-wasm/workers/browser-client';
 
 const worker = createBrowserWorkerClient();
-const opfsHandle = await navigator.storage.getDirectory();
-
 await worker.init({
   wasmUrl: '/wasm/rom-weaver-cli.wasm',
-  opfsHandle,
-  opfsGuestPath: '/work',
-  runtimeMounts: ['/work', '/scratch'],
-  writableMounts: ['/work'],
+  opfsHandle: await navigator.storage.getDirectory(),
+  workGuestPath: '/work',
 });
 
 const result = await worker.runJson(['checksum', '/work/game.bin', '--algo', 'crc32'], {
@@ -78,7 +71,7 @@ const result = await worker.runJson(['checksum', '/work/game.bin', '--algo', 'cr
 });
 
 console.log(result.exitCode, result.ok);
-await worker.terminate();
+worker.terminate();
 ```
 
 ## Build And Package

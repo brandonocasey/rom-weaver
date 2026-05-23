@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRomWeaverZenFsBrowser } from '../src/rom-weaver-zenfs-api.mjs';
+import { createRomWeaverBrowserOpfs } from '../src/rom-weaver-browser-opfs-api.mjs';
 import { createBrowserWorkerClient } from '../src/workers/browser-worker-client.mjs';
 import {
   assertRunJsonSucceeded,
@@ -18,8 +18,8 @@ const RUN_1GB_STRESS = typeof __ROM_WEAVER_WASM_STRESS_1GB__ !== 'undefined'
   && __ROM_WEAVER_WASM_STRESS_1GB__ === true;
 
 describe('rom-weaver-wasm browser runner parity', () => {
-  it('requires createRomWeaverZenFsBrowser to run in a dedicated worker', async () => {
-    await expect(createRomWeaverZenFsBrowser()).rejects.toThrow(/Dedicated Worker/i);
+  it('requires createRomWeaverBrowserOpfs to run in a dedicated worker', async () => {
+    await expect(createRomWeaverBrowserOpfs()).rejects.toThrow(/Dedicated Worker/i);
   });
 
   it('runJson executes checksum through browser worker runner', async () => {
@@ -44,54 +44,21 @@ describe('rom-weaver-wasm browser runner parity', () => {
     });
   });
 
-  it('scratch namespace is cleaned after each run', async () => {
+  it('uses a single writable /work mount', async () => {
     await withTempFixture(async ({ sourcePath, worker, opfsHandle }) => {
+      const outputPath = joinGuestPath('/work', 'single-mount-output.gz');
       const result = await worker.runJson([
-        'checksum',
-        sourcePath,
-        '--algo',
-        'crc32',
-        '--no-extract',
-      ]);
-      expect(result.ok).toBe(true);
-
-      const scratchNamespace = await opfsHandle.getDirectoryHandle('.rom-weaver-scratch');
-      const runEntries = [];
-      for await (const [entryName] of scratchNamespace.entries()) {
-        runEntries.push(entryName);
-      }
-      expect(runEntries).toEqual([]);
-    });
-  });
-
-  it('keeps /work mounts read-only while /scratch is writable', async () => {
-    await withTempFixture(async ({ sourcePath, worker, dir }) => {
-      const roOutput = joinGuestPath(dir, 'should-fail.gz');
-      const roResult = await worker.runJson([
         'compress',
         sourcePath,
         '--format',
         'gz',
         '--output',
-        roOutput,
+        outputPath,
         '--threads',
         '1',
       ]);
-      expect(roResult.ok).toBe(false);
-      expect(roResult.exitCode).not.toBe(0);
-
-      const scratchOutput = joinGuestPath('/scratch', 'writable.gz');
-      const scratchResult = await worker.runJson([
-        'compress',
-        sourcePath,
-        '--format',
-        'gz',
-        '--output',
-        scratchOutput,
-        '--threads',
-        '1',
-      ]);
-      assertRunJsonSucceeded(scratchResult, { command: 'compress' });
+      assertRunJsonSucceeded(result, { command: 'compress' });
+      expect(await getGuestFileSize(opfsHandle, outputPath)).toBeGreaterThan(0);
     });
   });
 
@@ -240,7 +207,7 @@ describe('rom-weaver-wasm browser runner parity', () => {
   });
 
   it('runJson stays stable across repeated wasm 7z codec create calls', async () => {
-    await withTempFixture(async ({ dir, tmpDir, worker, opfsHandle }) => {
+    await withTempFixture(async ({ dir, workDir, worker, opfsHandle }) => {
       const sourcePath = joinGuestPath(dir, 'repeat-lzma-source.bin');
       const sourceData = new Uint8Array(256 * 1024);
       for (let index = 0; index < sourceData.length; index += 1) {
@@ -250,7 +217,7 @@ describe('rom-weaver-wasm browser runner parity', () => {
 
       for (const codec of ['store', 'deflate', 'bzip2', 'zstd', 'ppmd', 'lzma', 'lzma2']) {
         for (let attempt = 0; attempt < 4; attempt += 1) {
-          const archivePath = joinGuestPath(tmpDir, `repeat-${codec}-${attempt}.7z`);
+          const archivePath = joinGuestPath(workDir, `repeat-${codec}-${attempt}.7z`);
           const resolvedCodec = codec === 'store' ? codec : `${codec}:6`;
           const command = [
             'compress',
@@ -265,20 +232,19 @@ describe('rom-weaver-wasm browser runner parity', () => {
             '1',
           ];
           const result = await worker.runJson(command);
-          expect(result.ok).toBe(true);
-          expect(result.exitCode).toBe(0);
+          assertRunJsonSucceeded(result, { command: 'compress' });
         }
       }
     });
   });
 
   it('survives large-file memory pressure workloads without worker crashes', async () => {
-    await withTempFixture(async ({ dir, tmpDir, worker, opfsHandle }) => {
+    await withTempFixture(async ({ dir, workDir, worker, opfsHandle }) => {
       const sourcePath = joinGuestPath(dir, 'large-memory-source.bin');
       await writeGuestPatternFile(opfsHandle, sourcePath, 64 * 1024 * 1024);
 
-      const archivePath = joinGuestPath(tmpDir, 'large-memory.gz');
-      const extractDir = joinGuestPath(tmpDir, 'large-memory-extract');
+      const archivePath = joinGuestPath(workDir, 'large-memory.gz');
+      const extractDir = joinGuestPath(workDir, 'large-memory-extract');
       const extractedPath = joinGuestPath(extractDir, 'large-memory');
 
       assertRunJsonSucceeded(
@@ -334,16 +300,16 @@ describe('rom-weaver-wasm browser runner parity', () => {
   it.runIf(RUN_1GB_STRESS)(
     'survives 1 GiB compress extract checksum and 100MB-class xdelta apply workload',
     async () => {
-      await withTempFixture(async ({ dir, tmpDir, worker, opfsHandle }) => {
+      await withTempFixture(async ({ dir, workDir, worker, opfsHandle }) => {
         const oneGiB = 1024 * 1024 * 1024;
         const mutatedTailBytes = 100 * 1024 * 1024;
         const sourcePath = joinGuestPath(dir, 'stress-1gb-source.bin');
         const modifiedPath = joinGuestPath(dir, 'stress-1gb-modified.bin');
-        const archivePath = joinGuestPath(tmpDir, 'stress-1gb.gz');
-        const extractDir = joinGuestPath(tmpDir, 'stress-1gb-extract');
+        const archivePath = joinGuestPath(workDir, 'stress-1gb.gz');
+        const extractDir = joinGuestPath(workDir, 'stress-1gb-extract');
         const extractedPath = joinGuestPath(extractDir, 'stress-1gb');
-        const patchPath = joinGuestPath(tmpDir, 'stress-1gb-tail.xdelta');
-        const appliedPath = joinGuestPath(tmpDir, 'stress-1gb-applied.bin');
+        const patchPath = joinGuestPath(workDir, 'stress-1gb-tail.xdelta');
+        const appliedPath = joinGuestPath(workDir, 'stress-1gb-applied.bin');
 
         await writeGuestPatternFile(opfsHandle, sourcePath, oneGiB, {
           chunkSizeBytes: 4 * 1024 * 1024,

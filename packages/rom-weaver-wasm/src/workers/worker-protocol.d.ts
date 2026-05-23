@@ -13,7 +13,7 @@ export const WORKER_RESPONSE_TYPES: readonly ['ready', 'result', 'event', 'nonJs
 export interface RomWeaverWorkerInitRequest {
   type: 'init';
   requestId: number;
-  mode?: 'browser-zenfs';
+  mode?: 'browser-opfs';
   options?: Record<string, unknown>;
 }
 

@@ -82,6 +82,8 @@ fn prepare_wasm_source_tree(libarchive_dir: &Path, out_dir: &Path) -> PathBuf {
         .expect("failed to stage libarchive source tree for wasm");
     add_wasm_archive_write_format_shim(&staged.join("libarchive"))
         .expect("failed to add wasm libarchive format shim");
+    patch_archive_util_tempdir_for_wasm(&staged.join("libarchive/archive_util.c"))
+        .expect("failed to patch libarchive temporary directory fallback for wasm");
     patch_cmakelists_for_wasm(&staged.join("libarchive/CMakeLists.txt"))
         .expect("failed to patch libarchive CMakeLists.txt for wasm");
     staged
@@ -127,6 +129,42 @@ __archive_write_entry_filetype_unsupported(struct archive *a,
 }
 "#,
     )?;
+    Ok(())
+}
+
+fn patch_archive_util_tempdir_for_wasm(archive_util_path: &Path) -> std::io::Result<()> {
+    let content = fs::read_to_string(archive_util_path)?;
+    let original = r#"	if (tmp == NULL)
+#ifdef _PATH_TMP
+		tmp = _PATH_TMP;
+#else
+                tmp = "/tmp";
+#endif
+"#;
+    let replacement = r#"	if (tmp == NULL)
+#ifdef __wasi__
+		tmp = "/work";
+#else
+#ifdef _PATH_TMP
+		tmp = _PATH_TMP;
+#else
+                tmp = "/tmp";
+#endif
+#endif
+"#;
+    if content.contains(replacement) {
+        return Ok(());
+    }
+
+    let patched = content.replace(original, replacement);
+    if patched == content {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "libarchive archive_util.c tempdir fallback block was not found",
+        ));
+    }
+
+    fs::write(archive_util_path, patched)?;
     Ok(())
 }
 
