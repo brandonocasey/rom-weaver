@@ -22,15 +22,16 @@ impl RvzContainerHandler {
     fn open_disc_with_threads(&self, source: &Path, preloader_threads: usize) -> Result<NodDiscReader> {
         let options = self.read_options(preloader_threads);
         #[cfg(target_arch = "wasm32")]
-        let result = File::open(source)
+        let result = fs::read(source)
             .map_err(|error| {
                 RomWeaverError::Validation(format!(
                     "failed to open rvz source `{}`: {error}",
                     source.display()
                 ))
             })
-            .and_then(|file| {
-                NodDiscReader::new_from_non_cloneable_read(file, &options).map_err(|error| {
+            .and_then(|bytes| {
+                let stream: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
+                NodDiscReader::new_stream(Box::new(stream), &options).map_err(|error| {
                     RomWeaverError::Validation(format!(
                         "failed to open rvz source `{}`: {error}",
                         source.display()

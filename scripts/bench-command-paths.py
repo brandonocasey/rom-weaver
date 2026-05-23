@@ -17,6 +17,7 @@ Coverage targets:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -38,6 +39,33 @@ TIME_BIN = Path("/usr/bin/time")
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parent.parent
 WASM_BUILD_SCRIPT = REPO_ROOT / "scripts" / "build-wasm-cli.sh"
+CACHE_SCHEMA_VERSION = 1
+DEFAULT_COMMANDS = "compress,extract,checksum"
+DEFAULT_BENCH_FORMATS = [
+    "chd",
+    "rvz",
+    "7z",
+    "zip",
+    "tar",
+    "tar.gz",
+    "tar.bz2",
+    "tar.xz",
+    "z3ds",
+    "gz",
+    "bz2",
+    "xz",
+    "zst",
+]
+DEFAULT_BENCH_FORMATS_CSV = ",".join(DEFAULT_BENCH_FORMATS)
+DEFAULT_ARCHIVE_TOOLS = "auto"
+CHECKSUM_MODE_VALUES = ["raw", "auto-extract", "archive-no-extract"]
+CONTAINER_FORMAT_ALIASES = {"z3d3": "z3ds"}
+DEFAULT_CHECKSUM_COMBO_ALGOS = ["crc32", "md5", "sha1"]
+DEFAULT_CHECKSUM_COMBO_ALGOS_CSV = ",".join(DEFAULT_CHECKSUM_COMBO_ALGOS)
+WASI_LIBARCHIVE_DEFLATE_FORMATS = {"7z", "zip", "zipx", "tar.gz", "gz"}
+WASI_LIBARCHIVE_DEFLATE_REASON = (
+    "known WASI limitation: libarchive deflate/gzip backend fails to initialize in the current wasm build"
+)
 
 CONTAINER_FORMATS = [
     "zip",
@@ -71,7 +99,7 @@ CONTAINER_SUFFIX = {
     "tar.xz": "tar.xz",
 }
 
-ARCHIVE_TOOLS = ["rom-weaver", "rom-weaver-wasm", "7zz"]
+ARCHIVE_TOOLS = ["rom-weaver", "rom-weaver-wasm", "7zz", "chdman", "dolphin-tool"]
 
 EXPECTED_COMPRESS_SKIPS = {
     "rar": "intentionally unsupported: rar create is not supported",
@@ -109,6 +137,14 @@ SEVENZIP_EXTRACT_FORMATS = {
     "xz",
     "zst",
 }
+
+CHDMAN_COMPRESS_FORMATS = {"chd"}
+CHDMAN_EXTRACT_FORMATS = {"chd"}
+CHDMAN_CHECKSUM_AUTO_EXTRACT_FORMATS = {"chd"}
+
+DOLPHIN_TOOL_COMPRESS_FORMATS = {"rvz"}
+DOLPHIN_TOOL_EXTRACT_FORMATS = {"rvz"}
+DOLPHIN_TOOL_CHECKSUM_AUTO_EXTRACT_FORMATS = {"rvz"}
 
 DISC_COMPRESS_INPUT_FORMATS = {"rvz", "wia", "wbfs", "tgc"}
 
@@ -273,6 +309,94 @@ class BenchmarkRow:
     warmups: int
     samples: list[TrialSample]
     tool: str = "rom-weaver"
+    from_cache: bool = False
+
+
+@dataclass
+class BenchmarkCache:
+    path: Path
+    mode: str
+    namespaces_by_tool: dict[str, str]
+    entries: dict[str, dict[str, Any]]
+    hit_count: int = 0
+    write_count: int = 0
+
+    @property
+    def can_read(self) -> bool:
+        return self.mode == "readwrite"
+
+    @property
+    def can_write(self) -> bool:
+        return self.mode in {"readwrite", "refresh"}
+
+    def _key(self, *, tool: str, command: str, path_id: str) -> str:
+        namespace = self.namespaces_by_tool.get(tool, "unknown")
+        return f"{namespace}|{tool}|{command}|{path_id}"
+
+    def load_row(self, *, tool: str, command: str, path_id: str) -> BenchmarkRow | None:
+        if not self.can_read:
+            return None
+        payload = self.entries.get(self._key(tool=tool, command=command, path_id=path_id))
+        if payload is None:
+            return None
+        self.hit_count += 1
+        return benchmark_row_from_cache_payload(payload)
+
+    def store_row(self, row: BenchmarkRow) -> None:
+        if not self.can_write:
+            return
+        payload = benchmark_row_to_cache_payload(row)
+        key = self._key(tool=row.tool, command=row.command, path_id=row.path_id)
+        self.entries[key] = payload
+        self.write_count += 1
+
+    def save(self) -> None:
+        if not self.can_write:
+            return
+        payload = {
+            "schema_version": CACHE_SCHEMA_VERSION,
+            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "entries": self.entries,
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def benchmark_row_to_cache_payload(row: BenchmarkRow) -> dict[str, Any]:
+    return {
+        "tool": row.tool,
+        "command": row.command,
+        "path_id": row.path_id,
+        "status": row.status,
+        "reason": row.reason,
+        "command_example": row.command_example,
+        "iterations": row.iterations,
+        "warmups": row.warmups,
+        "samples": [asdict(sample) for sample in row.samples],
+    }
+
+
+def benchmark_row_from_cache_payload(payload: dict[str, Any]) -> BenchmarkRow:
+    samples = [
+        TrialSample(
+            elapsed_s=float(sample["elapsed_s"]),
+            peak_rss_bytes=(int(sample["peak_rss_bytes"]) if sample.get("peak_rss_bytes") is not None else None),
+            processed_bytes=(int(sample["processed_bytes"]) if sample.get("processed_bytes") is not None else None),
+        )
+        for sample in payload.get("samples", [])
+    ]
+    return BenchmarkRow(
+        command=str(payload.get("command", "")),
+        path_id=str(payload.get("path_id", "")),
+        status=str(payload.get("status", "failed")),
+        reason=payload.get("reason"),
+        command_example=payload.get("command_example"),
+        iterations=int(payload.get("iterations", 0)),
+        warmups=int(payload.get("warmups", 0)),
+        samples=samples,
+        tool=str(payload.get("tool", "rom-weaver")),
+        from_cache=True,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -300,7 +424,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to write detailed JSON results",
     )
-    parser.add_argument("--size-mib", type=int, default=32, help="Source fixture size in MiB")
+    parser.add_argument("--size-mib", type=int, default=64, help="Source fixture size in MiB (default: 64)")
     parser.add_argument(
         "--patch-size-mib",
         type=int,
@@ -323,13 +447,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--commands",
-        default="compress,extract,checksum,patch-create,patch-apply",
-        help="Comma-separated subset of commands to run",
+        default=DEFAULT_COMMANDS,
+        help=f"Comma-separated subset of commands to run (default: {DEFAULT_COMMANDS})",
     )
     parser.add_argument(
         "--container-formats",
-        default="all",
-        help="Comma-separated subset of container formats for compress/extract/checksum auto-extract (default: all)",
+        default=DEFAULT_BENCH_FORMATS_CSV,
+        help=(
+            "Comma-separated subset of container formats for compress/extract/checksum paths "
+            f"(default: {DEFAULT_BENCH_FORMATS_CSV}; alias: z3d3 -> z3ds)"
+        ),
     )
     parser.add_argument(
         "--patch-formats",
@@ -343,8 +470,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--checksum-modes",
-        default="raw,auto-extract",
-        help="Checksum paths to run: raw, auto-extract, or both (default: raw,auto-extract)",
+        default="raw",
+        help=(
+            "Checksum paths to run: raw, auto-extract, archive-no-extract, or a comma-separated subset "
+            "(default: raw)"
+        ),
+    )
+    parser.add_argument(
+        "--checksum-combo-algos",
+        default=DEFAULT_CHECKSUM_COMBO_ALGOS_CSV,
+        help=(
+            "Comma-separated algorithms for one special multi-algorithm checksum run on raw input. "
+            "Use 'none' to disable (default: crc32,md5,sha1)"
+        ),
     )
     parser.add_argument(
         "--rar-fixture",
@@ -353,9 +491,52 @@ def parse_args() -> argparse.Namespace:
         help="RAR fixture path used when rar create is unavailable (default: tests/fixtures/rar/version.rar)",
     )
     parser.add_argument(
+        "--chd-fixture",
+        type=Path,
+        default=None,
+        help="Optional CHD fixture path used for extract/checksum source archives",
+    )
+    parser.add_argument(
+        "--rvz-fixture",
+        type=Path,
+        default=None,
+        help="Optional RVZ fixture path used for extract/checksum source archives",
+    )
+    parser.add_argument(
+        "--source-bin-fixture",
+        type=Path,
+        default=None,
+        help="Optional raw binary source fixture used for non-disc compress inputs",
+    )
+    parser.add_argument(
+        "--source-disc-fixture",
+        type=Path,
+        default=None,
+        help="Optional disc ISO source fixture used for disc compress inputs (rvz/wia/wbfs/tgc)",
+    )
+    parser.add_argument(
         "--archive-tools",
-        default="rom-weaver",
-        help="Archive benchmark tools to run for compress/extract (rom-weaver,rom-weaver-wasm,7zz). Default: rom-weaver",
+        default=DEFAULT_ARCHIVE_TOOLS,
+        help=(
+            "Archive benchmark tools to run for compress/extract "
+            "(rom-weaver,rom-weaver-wasm,7zz,chdman,dolphin-tool). "
+            "Use 'auto' to benchmark all available tools (default: auto)"
+        ),
+    )
+    parser.add_argument(
+        "--cache-file",
+        type=Path,
+        default=Path("target/bench-command-paths-cache.json"),
+        help="Per-case benchmark cache JSON path (default: target/bench-command-paths-cache.json)",
+    )
+    parser.add_argument(
+        "--cache-mode",
+        choices=["off", "readwrite", "refresh"],
+        default="readwrite",
+        help=(
+            "Benchmark cache mode: off disables cache, readwrite reuses and updates cache, "
+            "refresh reruns everything and writes updated results (default: readwrite)"
+        ),
     )
     parser.add_argument(
         "--sevenzip-bin",
@@ -378,8 +559,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--wasm-module",
         type=Path,
-        default=Path("packages/rom-weaver-wasm/rom-weaver-cli.wasm"),
+        default=Path("packages/rom-weaver-wasm/rom-weaver-cli-threaded.wasm"),
         help="Path to rom-weaver CLI wasm module used for rom-weaver-wasm archive tool",
+    )
+    parser.add_argument(
+        "--chdman-bin",
+        type=Path,
+        default=Path(shutil.which("chdman") or "chdman"),
+        help="Path to chdman binary used when archive-tools includes chdman (default: PATH lookup for chdman)",
+    )
+    parser.add_argument(
+        "--dolphin-tool-bin",
+        type=Path,
+        default=Path(shutil.which("dolphin-tool") or shutil.which("dolphintool") or "dolphin-tool"),
+        help=(
+            "Path to dolphin-tool binary used when archive-tools includes dolphin-tool "
+            "(default: PATH lookup for dolphin-tool/dolphintool)"
+        ),
     )
     return parser.parse_args()
 
@@ -395,10 +591,17 @@ def parse_command_filter(raw: str) -> set[str]:
     return values
 
 
-def parse_value_filter(raw: str, valid_values: list[str], flag_name: str) -> list[str]:
+def parse_value_filter(
+    raw: str,
+    valid_values: list[str],
+    flag_name: str,
+    aliases: dict[str, str] | None = None,
+) -> list[str]:
     values = [value.strip().lower() for value in raw.split(",") if value.strip()]
     if not values:
         raise ValueError(f"{flag_name} must include at least one value")
+    if aliases:
+        values = [aliases.get(value, value) for value in values]
     value_set = set(values)
     if value_set <= {"all", "*"}:
         return list(valid_values)
@@ -409,6 +612,32 @@ def parse_value_filter(raw: str, valid_values: list[str], flag_name: str) -> lis
     if unknown:
         raise ValueError(f"unknown values in {flag_name}: {', '.join(unknown)}")
     return [value for value in valid_values if value in value_set]
+
+
+def parse_archive_tool_filter(raw: str) -> tuple[str, list[str]]:
+    values = [value.strip().lower() for value in raw.split(",") if value.strip()]
+    if not values:
+        raise ValueError("--archive-tools must include at least one value")
+    value_set = set(values)
+    if value_set <= {"auto", "all-available"}:
+        return "auto", []
+    if "auto" in value_set or "all-available" in value_set:
+        raise ValueError("--archive-tools cannot mix auto/all-available with explicit values")
+    selected = parse_value_filter(raw, ARCHIVE_TOOLS, "--archive-tools")
+    return "explicit", selected
+
+
+def parse_optional_checksum_combo_algos(raw: str) -> list[str]:
+    trimmed = raw.strip().lower()
+    if trimmed in {"", "none", "off", "false", "0"}:
+        return []
+    return parse_value_filter(raw, CHECKSUM_ALGORITHMS, "--checksum-combo-algos")
+
+
+def wasm_expected_skip_reason(format_name: str, codec_label: str) -> str | None:
+    if format_name in WASI_LIBARCHIVE_DEFLATE_FORMATS and codec_label == "deflate":
+        return WASI_LIBARCHIVE_DEFLATE_REASON
+    return None
 
 
 def ensure_binary(bin_path: Path, skip_build: bool) -> None:
@@ -442,6 +671,94 @@ def resolve_external_binary(bin_path: Path, flag_name: str) -> Path:
     raise SystemExit(f"{flag_name} binary not found: {bin_path}")
 
 
+def try_resolve_external_binary(bin_path: Path) -> Path | None:
+    candidate = bin_path.expanduser()
+    if candidate.exists():
+        return candidate.resolve()
+    resolved = shutil.which(str(candidate))
+    if resolved is not None:
+        return Path(resolved).resolve()
+    return None
+
+
+def file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def file_fingerprint(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    resolved = path.expanduser().resolve()
+    if not resolved.exists():
+        return {"path": str(resolved), "exists": False}
+    stat_result = resolved.stat()
+    return {
+        "path": str(resolved),
+        "exists": True,
+        "size": stat_result.st_size,
+        "mtime_ns": stat_result.st_mtime_ns,
+    }
+
+
+def load_cache_entries(cache_file: Path) -> dict[str, dict[str, Any]]:
+    if not cache_file.exists():
+        return {}
+    try:
+        payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    if payload.get("schema_version") != CACHE_SCHEMA_VERSION:
+        return {}
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        return {}
+    normalized: dict[str, dict[str, Any]] = {}
+    for key, value in entries.items():
+        if isinstance(key, str) and isinstance(value, dict):
+            normalized[key] = value
+    return normalized
+
+
+def tool_cache_namespace(
+    *,
+    tool: str,
+    tool_fingerprint_payload: dict[str, Any] | None,
+    args: argparse.Namespace,
+    checksum_combo_algorithms: list[str],
+) -> str:
+    payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "tool": tool,
+        "script_sha256": file_sha256(SCRIPT_PATH),
+        "tool_fingerprint": tool_fingerprint_payload,
+        "bench_config": {
+            "size_mib": args.size_mib,
+            "patch_size_mib": args.patch_size_mib,
+            "threads": args.threads,
+            "warmups": args.warmups,
+            "iterations": args.iterations,
+            "timeout_sec": args.timeout_sec,
+            "checksum_combo_algos": checksum_combo_algorithms,
+            "source_bin_fixture": file_fingerprint(args.source_bin_fixture),
+            "source_disc_fixture": file_fingerprint(args.source_disc_fixture),
+            "rar_fixture": file_fingerprint(args.rar_fixture),
+            "chd_fixture": file_fingerprint(args.chd_fixture),
+            "rvz_fixture": file_fingerprint(args.rvz_fixture),
+        },
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return digest
+
+
 def token(value: str) -> str:
     chars = []
     for char in value.lower():
@@ -453,6 +770,17 @@ def token(value: str) -> str:
     while "--" in collapsed:
         collapsed = collapsed.replace("--", "-")
     return collapsed or "unknown"
+
+
+def checksum_multi_algo_suffix(algorithms: list[str]) -> str:
+    return "+".join(algorithms)
+
+
+def checksum_multi_algo_args(algorithms: list[str]) -> list[str]:
+    args: list[str] = []
+    for algorithm in algorithms:
+        args.extend(["--algo", algorithm])
+    return args
 
 
 def container_suffix(format_name: str) -> str:
@@ -492,6 +820,19 @@ def write_random_fixture(path: Path, size_bytes: int, seed: int) -> None:
             chunk_len = min(chunk_size, remaining)
             handle.write(rng.randbytes(chunk_len))
             remaining -= chunk_len
+
+
+def stage_fixture_file(source_path: Path, destination_path: Path) -> None:
+    source_resolved = source_path.expanduser().resolve()
+    if not source_resolved.exists():
+        raise SystemExit(f"fixture file not found: {source_resolved}")
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    if destination_path.exists():
+        destination_path.unlink()
+    try:
+        os.link(source_resolved, destination_path)
+    except OSError:
+        shutil.copy2(source_resolved, destination_path)
 
 
 def write_test_gamecube_iso_fixture(path: Path, payload_bytes: int) -> None:
@@ -734,6 +1075,160 @@ def sevenzip_extract_command(
     )
 
 
+def chdman_command(chdman_bin: Path, args: list[str]) -> list[str]:
+    return [str(chdman_bin), *args]
+
+
+def chdman_compress_command(
+    *,
+    chdman_bin: Path,
+    format_name: str,
+    input_path: Path,
+    output_path: Path,
+    threads: int,
+) -> list[str]:
+    if format_name not in CHDMAN_COMPRESS_FORMATS:
+        raise ValueError(f"chdman compress is not configured for format: {format_name}")
+    return chdman_command(
+        chdman_bin,
+        [
+            "createhd",
+            "-f",
+            "-np",
+            str(max(1, threads)),
+            "-i",
+            str(input_path),
+            "-o",
+            str(output_path),
+        ],
+    )
+
+
+def chdman_extract_command(
+    *,
+    chdman_bin: Path,
+    format_name: str,
+    source_path: Path,
+    output_path: Path,
+) -> list[str]:
+    if format_name not in CHDMAN_EXTRACT_FORMATS:
+        raise ValueError(f"chdman extract is not configured for format: {format_name}")
+    return chdman_command(
+        chdman_bin,
+        [
+            "extracthd",
+            "-f",
+            "-i",
+            str(source_path),
+            "-o",
+            str(output_path),
+        ],
+    )
+
+
+def dolphin_tool_command(dolphin_tool_bin: Path, args: list[str]) -> list[str]:
+    return [str(dolphin_tool_bin), *args]
+
+
+def dolphin_tool_rvz_compress_command(
+    *,
+    dolphin_tool_bin: Path,
+    format_name: str,
+    input_path: Path,
+    output_path: Path,
+    user_dir: Path,
+) -> list[str]:
+    if format_name not in DOLPHIN_TOOL_COMPRESS_FORMATS:
+        raise ValueError(f"dolphin-tool compress is not configured for format: {format_name}")
+    return dolphin_tool_command(
+        dolphin_tool_bin,
+        [
+            "convert",
+            "-u",
+            str(user_dir),
+            "-i",
+            str(input_path),
+            "-o",
+            str(output_path),
+            "-f",
+            "rvz",
+            "-c",
+            "zstd",
+            "-l",
+            "5",
+            "-b",
+            "131072",
+        ],
+    )
+
+
+def dolphin_tool_rvz_extract_command(
+    *,
+    dolphin_tool_bin: Path,
+    format_name: str,
+    source_path: Path,
+    output_path: Path,
+    user_dir: Path,
+) -> list[str]:
+    if format_name not in DOLPHIN_TOOL_EXTRACT_FORMATS:
+        raise ValueError(f"dolphin-tool extract is not configured for format: {format_name}")
+    return dolphin_tool_command(
+        dolphin_tool_bin,
+        [
+            "convert",
+            "-u",
+            str(user_dir),
+            "-i",
+            str(source_path),
+            "-o",
+            str(output_path),
+            "-f",
+            "iso",
+        ],
+    )
+
+
+def chdman_verify_command(
+    *,
+    chdman_bin: Path,
+    format_name: str,
+    source_path: Path,
+) -> list[str]:
+    if format_name not in CHDMAN_CHECKSUM_AUTO_EXTRACT_FORMATS:
+        raise ValueError(f"chdman checksum is not configured for format: {format_name}")
+    return chdman_command(
+        chdman_bin,
+        [
+            "verify",
+            "-i",
+            str(source_path),
+        ],
+    )
+
+
+def dolphin_tool_verify_command(
+    *,
+    dolphin_tool_bin: Path,
+    format_name: str,
+    source_path: Path,
+    user_dir: Path,
+) -> list[str]:
+    if format_name not in DOLPHIN_TOOL_CHECKSUM_AUTO_EXTRACT_FORMATS:
+        raise ValueError(f"dolphin-tool checksum is not configured for format: {format_name}")
+    return dolphin_tool_command(
+        dolphin_tool_bin,
+        [
+            "verify",
+            "-u",
+            str(user_dir),
+            "-i",
+            str(source_path),
+            "-a",
+            "sha1",
+        ],
+    )
+
+
 def timed_wrapper(cmd: list[str], stats_file: Path) -> list[str]:
     if not TIME_BIN.exists():
         raise FileNotFoundError(f"required timing binary not found: {TIME_BIN}")
@@ -840,6 +1335,7 @@ def summarize_row(row: BenchmarkRow) -> dict[str, Any]:
         "command": row.command,
         "path_id": row.path_id,
         "status": row.status,
+        "from_cache": row.from_cache,
         "reason": row.reason,
         "command_example": row.command_example,
         "iterations": row.iterations,
@@ -882,7 +1378,14 @@ def run_benchmark_case(
     command_factory,
     processed_bytes_factory,
     tool: str = "rom-weaver",
+    cache: BenchmarkCache | None = None,
 ) -> BenchmarkRow:
+    if cache is not None:
+        cached_row = cache.load_row(tool=tool, command=command, path_id=path_id)
+        if cached_row is not None:
+            print(f"[bench] cache hit {tool} {command} {path_id}", flush=True)
+            return cached_row
+
     samples: list[TrialSample] = []
     command_example: list[str] | None = None
     print(f"[bench] start {tool} {command} {path_id}", flush=True)
@@ -897,7 +1400,7 @@ def run_benchmark_case(
             if tail:
                 reason = f"{reason}: {tail}"
             print(f"[bench] failed {command} {path_id}: {reason}", flush=True)
-            return BenchmarkRow(
+            row = BenchmarkRow(
                 command=command,
                 path_id=path_id,
                 status="failed",
@@ -908,6 +1411,9 @@ def run_benchmark_case(
                 samples=samples,
                 tool=tool,
             )
+            if cache is not None:
+                cache.store_row(row)
+            return row
         _ = processed_bytes_factory(context)
 
     for iteration in range(iterations):
@@ -920,7 +1426,7 @@ def run_benchmark_case(
             if tail:
                 reason = f"{reason}: {tail}"
             print(f"[bench] failed {command} {path_id}: {reason}", flush=True)
-            return BenchmarkRow(
+            row = BenchmarkRow(
                 command=command,
                 path_id=path_id,
                 status="failed",
@@ -931,6 +1437,9 @@ def run_benchmark_case(
                 samples=samples,
                 tool=tool,
             )
+            if cache is not None:
+                cache.store_row(row)
+            return row
         processed_bytes = processed_bytes_factory(context)
         samples.append(
             TrialSample(
@@ -941,7 +1450,7 @@ def run_benchmark_case(
         )
 
     print(f"[bench] done {tool} {command} {path_id}", flush=True)
-    return BenchmarkRow(
+    row = BenchmarkRow(
         command=command,
         path_id=path_id,
         status="succeeded",
@@ -952,6 +1461,9 @@ def run_benchmark_case(
         samples=samples,
         tool=tool,
     )
+    if cache is not None:
+        cache.store_row(row)
+    return row
 
 
 def skipped_row(
@@ -977,61 +1489,172 @@ def skipped_row(
 
 def print_table(rows: list[dict[str, Any]]) -> None:
     print("\nCommand Path Benchmark Summary")
-    print("tool         command       path_id                         status      elapsed_avg_s  peak_rss_max_mib  throughput_avg_mib_s")
-    print("-----------  ------------  ------------------------------  ----------  -------------  ----------------  ---------------------")
+    print(
+        "tool         command       path_id                         status      cached  elapsed_avg_s  peak_rss_max_mib  throughput_avg_mib_s"
+    )
+    print(
+        "-----------  ------------  ------------------------------  ----------  ------  -------------  ----------------  ---------------------"
+    )
     for row in rows:
         metrics = row.get("metrics") or {}
         elapsed_avg = metrics.get("elapsed_avg_s")
         peak_rss = metrics.get("peak_rss_max_mib")
         throughput = metrics.get("throughput_avg_mib_s")
+        cached = "yes" if row.get("from_cache") else "no"
         elapsed_text = f"{elapsed_avg:>13.4f}" if isinstance(elapsed_avg, (int, float)) else " " * 13 + "-"
         peak_text = f"{peak_rss:>16.2f}" if isinstance(peak_rss, (int, float)) else " " * 16 + "-"
         thr_text = f"{throughput:>21.2f}" if isinstance(throughput, (int, float)) else " " * 21 + "-"
         print(
-            f"{row.get('tool', 'rom-weaver'):<11}  {row['command']:<12}  {row['path_id']:<30}  {row['status']:<10}  {elapsed_text}  {peak_text}  {thr_text}"
+            f"{row.get('tool', 'rom-weaver'):<11}  {row['command']:<12}  {row['path_id']:<30}  {row['status']:<10}  {cached:<6}  {elapsed_text}  {peak_text}  {thr_text}"
         )
 
 
 def main() -> None:
     args = parse_args()
     selected_commands = parse_command_filter(args.commands)
-    selected_archive_tools = parse_value_filter(args.archive_tools, ARCHIVE_TOOLS, "--archive-tools")
-    selected_container_formats = parse_value_filter(args.container_formats, CONTAINER_FORMATS, "--container-formats")
+    archive_tool_mode, explicit_archive_tools = parse_archive_tool_filter(args.archive_tools)
+    selected_container_formats = parse_value_filter(
+        args.container_formats,
+        CONTAINER_FORMATS,
+        "--container-formats",
+        aliases=CONTAINER_FORMAT_ALIASES,
+    )
     selected_patch_formats = parse_value_filter(args.patch_formats, PATCH_FORMATS, "--patch-formats")
     selected_checksum_algorithms = parse_value_filter(args.checksum_algos, CHECKSUM_ALGORITHMS, "--checksum-algos")
-    selected_checksum_modes = set(
-        parse_value_filter(args.checksum_modes, ["raw", "auto-extract"], "--checksum-modes")
-    )
+    checksum_combo_algorithms = parse_optional_checksum_combo_algos(args.checksum_combo_algos)
+    selected_checksum_modes = set(parse_value_filter(args.checksum_modes, CHECKSUM_MODE_VALUES, "--checksum-modes"))
+    needs_archive_sources = ("extract" in selected_commands) or (
+        "checksum" in selected_commands and "auto-extract" in selected_checksum_modes
+    ) or ("checksum" in selected_commands and "archive-no-extract" in selected_checksum_modes)
 
     if args.size_mib <= 0 or args.patch_size_mib <= 0:
         raise SystemExit("--size-mib and --patch-size-mib must be positive integers")
     if args.threads <= 0 or args.warmups < 0 or args.iterations <= 0:
         raise SystemExit("--threads must be > 0, --warmups >= 0, and --iterations > 0")
 
+    requested_archive_tools = list(ARCHIVE_TOOLS) if archive_tool_mode == "auto" else list(explicit_archive_tools)
     needs_rom_weaver = (
-        "rom-weaver" in selected_archive_tools
-        or "rom-weaver-wasm" in selected_archive_tools
+        "rom-weaver" in requested_archive_tools
+        or "rom-weaver-wasm" in requested_archive_tools
+        or needs_archive_sources
         or "checksum" in selected_commands
         or "patch-create" in selected_commands
         or "patch-apply" in selected_commands
     )
     rebuild_release_and_wasm(args.skip_build, needs_rom_weaver)
+    resolved_native_bin = args.bin.expanduser()
     if needs_rom_weaver:
         ensure_binary(args.bin, args.skip_build)
+        resolved_native_bin = resolved_native_bin.resolve()
+        args.bin = resolved_native_bin
+
+    selected_archive_tools: list[str]
     sevenzip_bin: Path | None = None
-    if "7zz" in selected_archive_tools:
-        sevenzip_bin = resolve_external_binary(args.sevenzip_bin, "--sevenzip-bin")
+    chdman_bin: Path | None = None
+    dolphin_tool_bin: Path | None = None
     node_bin: Path | None = None
     wasm_runner: Path | None = None
     wasm_module: Path | None = None
-    if "rom-weaver-wasm" in selected_archive_tools:
-        node_bin = resolve_external_binary(args.node_bin, "--node-bin")
-        wasm_runner = args.wasm_runner.expanduser().resolve()
-        if not wasm_runner.exists():
-            raise SystemExit(f"--wasm-runner file not found: {wasm_runner}")
-        wasm_module = args.wasm_module.expanduser().resolve()
-        if not wasm_module.exists():
-            raise SystemExit(f"--wasm-module file not found: {wasm_module}")
+
+    if archive_tool_mode == "auto":
+        selected_archive_tools = ["rom-weaver"]
+        node_candidate = try_resolve_external_binary(args.node_bin)
+        wasm_runner_candidate = args.wasm_runner.expanduser().resolve()
+        wasm_module_candidate = args.wasm_module.expanduser().resolve()
+        if node_candidate is not None and wasm_runner_candidate.exists() and wasm_module_candidate.exists():
+            node_bin = node_candidate
+            wasm_runner = wasm_runner_candidate
+            wasm_module = wasm_module_candidate
+            selected_archive_tools.append("rom-weaver-wasm")
+        else:
+            print("[bench] auto skip rom-weaver-wasm (missing node, wasm runner, or wasm module)", flush=True)
+
+        sevenzip_bin = try_resolve_external_binary(args.sevenzip_bin)
+        if sevenzip_bin is not None:
+            selected_archive_tools.append("7zz")
+        else:
+            print("[bench] auto skip 7zz (binary not found)", flush=True)
+
+        chdman_bin = try_resolve_external_binary(args.chdman_bin)
+        if chdman_bin is not None:
+            selected_archive_tools.append("chdman")
+        else:
+            print("[bench] auto skip chdman (binary not found)", flush=True)
+
+        dolphin_tool_bin = try_resolve_external_binary(args.dolphin_tool_bin)
+        if dolphin_tool_bin is not None:
+            selected_archive_tools.append("dolphin-tool")
+        else:
+            print("[bench] auto skip dolphin-tool (binary not found)", flush=True)
+    else:
+        selected_archive_tools = explicit_archive_tools
+        if "7zz" in selected_archive_tools:
+            sevenzip_bin = resolve_external_binary(args.sevenzip_bin, "--sevenzip-bin")
+        if "chdman" in selected_archive_tools:
+            chdman_bin = resolve_external_binary(args.chdman_bin, "--chdman-bin")
+        if "dolphin-tool" in selected_archive_tools:
+            dolphin_tool_bin = resolve_external_binary(args.dolphin_tool_bin, "--dolphin-tool-bin")
+        if "rom-weaver-wasm" in selected_archive_tools:
+            node_bin = resolve_external_binary(args.node_bin, "--node-bin")
+            wasm_runner = args.wasm_runner.expanduser().resolve()
+            if not wasm_runner.exists():
+                raise SystemExit(f"--wasm-runner file not found: {wasm_runner}")
+            wasm_module = args.wasm_module.expanduser().resolve()
+            if not wasm_module.exists():
+                raise SystemExit(f"--wasm-module file not found: {wasm_module}")
+
+    print(f"[bench] archive tools: {', '.join(selected_archive_tools)}", flush=True)
+
+    cache: BenchmarkCache | None = None
+    if args.cache_mode != "off":
+        cache_entries = load_cache_entries(args.cache_file)
+        namespaces_by_tool: dict[str, str] = {}
+        if needs_rom_weaver:
+            namespaces_by_tool["rom-weaver"] = tool_cache_namespace(
+                tool="rom-weaver",
+                tool_fingerprint_payload={"bin": file_fingerprint(resolved_native_bin)},
+                args=args,
+                checksum_combo_algorithms=checksum_combo_algorithms,
+            )
+        if "rom-weaver-wasm" in selected_archive_tools:
+            namespaces_by_tool["rom-weaver-wasm"] = tool_cache_namespace(
+                tool="rom-weaver-wasm",
+                tool_fingerprint_payload={
+                    "node_bin": file_fingerprint(node_bin),
+                    "wasm_runner": file_fingerprint(wasm_runner),
+                    "wasm_module": file_fingerprint(wasm_module),
+                },
+                args=args,
+                checksum_combo_algorithms=checksum_combo_algorithms,
+            )
+        if sevenzip_bin is not None:
+            namespaces_by_tool["7zz"] = tool_cache_namespace(
+                tool="7zz",
+                tool_fingerprint_payload={"sevenzip_bin": file_fingerprint(sevenzip_bin)},
+                args=args,
+                checksum_combo_algorithms=checksum_combo_algorithms,
+            )
+        if chdman_bin is not None:
+            namespaces_by_tool["chdman"] = tool_cache_namespace(
+                tool="chdman",
+                tool_fingerprint_payload={"chdman_bin": file_fingerprint(chdman_bin)},
+                args=args,
+                checksum_combo_algorithms=checksum_combo_algorithms,
+            )
+        if dolphin_tool_bin is not None:
+            namespaces_by_tool["dolphin-tool"] = tool_cache_namespace(
+                tool="dolphin-tool",
+                tool_fingerprint_payload={"dolphin_tool_bin": file_fingerprint(dolphin_tool_bin)},
+                args=args,
+                checksum_combo_algorithms=checksum_combo_algorithms,
+            )
+        cache = BenchmarkCache(
+            path=args.cache_file.expanduser().resolve(),
+            mode=args.cache_mode,
+            namespaces_by_tool=namespaces_by_tool,
+            entries=cache_entries,
+        )
+        print(f"[bench] cache mode={args.cache_mode} entries={len(cache_entries)} file={cache.path}", flush=True)
 
     work_dir = args.work_dir.resolve()
     if work_dir.exists():
@@ -1063,14 +1686,22 @@ def main() -> None:
         nonlocal source_ready
         if source_ready:
             return
-        write_random_fixture(source_path, args.size_mib * MIB, seed=0xBADC0DE)
+        if args.source_bin_fixture is not None:
+            stage_fixture_file(args.source_bin_fixture, source_path)
+            print(f"[bench] using source-bin fixture: {args.source_bin_fixture}", flush=True)
+        else:
+            write_random_fixture(source_path, args.size_mib * MIB, seed=0xBADC0DE)
         source_ready = True
 
     def ensure_disc_source_fixture() -> None:
         nonlocal disc_source_ready
         if disc_source_ready:
             return
-        write_test_gamecube_iso_fixture(disc_source_path, args.size_mib * MIB)
+        if args.source_disc_fixture is not None:
+            stage_fixture_file(args.source_disc_fixture, disc_source_path)
+            print(f"[bench] using source-disc fixture: {args.source_disc_fixture}", flush=True)
+        else:
+            write_test_gamecube_iso_fixture(disc_source_path, args.size_mib * MIB)
         disc_source_ready = True
 
     def ensure_patch_pair_fixtures() -> None:
@@ -1181,16 +1812,32 @@ def main() -> None:
     archive_sources_default: dict[str, ArchiveSource] = {}
     static_extract_fixtures = {
         "rar": args.rar_fixture,
+        "chd": args.chd_fixture,
+        "rvz": args.rvz_fixture,
     }
 
-    needs_archive_sources = ("extract" in selected_commands) or (
-        "checksum" in selected_commands and "auto-extract" in selected_checksum_modes
-    )
     if needs_archive_sources:
         for format_name in selected_container_formats:
             codec_cases = rom_weaver_codec_cases_for_format(format_name)
             for codec_label, codec_value in codec_cases:
                 print(f"[bench] prep archive source {format_name} codec:{codec_label}", flush=True)
+                fixture = static_extract_fixtures.get(format_name)
+                if fixture is not None:
+                    fixture_resolved = fixture.expanduser().resolve()
+                    if fixture_resolved.exists():
+                        source = ArchiveSource(
+                            format=format_name,
+                            path=fixture_resolved,
+                            payload_bytes=fixture_resolved.stat().st_size,
+                            source_kind="fixture",
+                        )
+                        archive_sources[(format_name, codec_label)] = source
+                        archive_sources_default.setdefault(format_name, source)
+                        print(
+                            f"[bench] prep ready {format_name} codec:{codec_label} (fixture)",
+                            flush=True,
+                        )
+                        continue
                 input_path = compress_input_for_format(format_name)
                 output_path = (
                     artifacts_dir
@@ -1226,12 +1873,11 @@ def main() -> None:
                     )
                     continue
 
-                fixture = static_extract_fixtures.get(format_name)
                 if fixture is not None and fixture.exists():
                     source = ArchiveSource(
                         format=format_name,
                         path=fixture,
-                        payload_bytes=None,
+                        payload_bytes=fixture.stat().st_size,
                         source_kind="fixture",
                     )
                     archive_sources[(format_name, codec_label)] = source
@@ -1309,6 +1955,7 @@ def main() -> None:
                                 command_factory=make_command,
                                 processed_bytes_factory=processed_bytes,
                                 tool="rom-weaver",
+                                cache=cache,
                             )
                         )
 
@@ -1330,6 +1977,20 @@ def main() -> None:
                         )
                 else:
                     for codec_label, codec_value in rom_weaver_codec_cases_for_format(format_name):
+                        skip_reason = wasm_expected_skip_reason(format_name, codec_label)
+                        if skip_reason is not None:
+                            rows.append(
+                                skipped_row(
+                                    "compress",
+                                    format_codec_path_id(format_name, codec_label),
+                                    skip_reason,
+                                    args.warmups,
+                                    args.iterations,
+                                    tool="rom-weaver-wasm",
+                                )
+                            )
+                            continue
+
                         def make_wasm_command(
                             iteration: int,
                             warmup: bool,
@@ -1378,6 +2039,7 @@ def main() -> None:
                                 command_factory=make_wasm_command,
                                 processed_bytes_factory=processed_bytes,
                                 tool="rom-weaver-wasm",
+                                cache=cache,
                             )
                         )
 
@@ -1435,8 +2097,133 @@ def main() -> None:
                         command_factory=make_sevenzip_compress_command,
                         processed_bytes_factory=processed_bytes,
                         tool="7zz",
+                        cache=cache,
                     )
                 )
+
+            if "chdman" in selected_archive_tools:
+                assert chdman_bin is not None
+                if format_name not in CHDMAN_COMPRESS_FORMATS:
+                    rows.append(
+                        skipped_row(
+                            "compress",
+                            f"format:{format_name}",
+                            "chdman comparator unsupported for this compress format",
+                            args.warmups,
+                            args.iterations,
+                            tool="chdman",
+                        )
+                    )
+                else:
+
+                    def make_chdman_compress_command(
+                        iteration: int,
+                        warmup: bool,
+                        format_value: str = format_name,
+                        suffix_value: str = suffix,
+                        input_value: Path = input_path,
+                        chdman_value: Path = chdman_bin,
+                    ):
+                        run_kind = "warmup" if warmup else "run"
+                        output_path = (
+                            outputs_dir
+                            / "compress-chdman"
+                            / f"{token(format_value)}-{run_kind}-{iteration}.{suffix_value}"
+                        )
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        if output_path.exists():
+                            output_path.unlink()
+                        cmd = chdman_compress_command(
+                            chdman_bin=chdman_value,
+                            format_name=format_value,
+                            input_path=input_value,
+                            output_path=output_path,
+                            threads=args.threads,
+                        )
+                        return cmd, output_path
+
+                    def processed_bytes(_context: Path, input_value: Path = input_path) -> int:
+                        return input_value.stat().st_size
+
+                    rows.append(
+                        run_benchmark_case(
+                            command="compress",
+                            path_id=f"format:{format_name}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_chdman_compress_command,
+                            processed_bytes_factory=processed_bytes,
+                            tool="chdman",
+                            cache=cache,
+                        )
+                    )
+
+            if "dolphin-tool" in selected_archive_tools:
+                assert dolphin_tool_bin is not None
+                if format_name not in DOLPHIN_TOOL_COMPRESS_FORMATS:
+                    rows.append(
+                        skipped_row(
+                            "compress",
+                            f"format:{format_name}",
+                            "dolphin-tool comparator unsupported for this compress format",
+                            args.warmups,
+                            args.iterations,
+                            tool="dolphin-tool",
+                        )
+                    )
+                else:
+
+                    def make_dolphin_tool_compress_command(
+                        iteration: int,
+                        warmup: bool,
+                        format_value: str = format_name,
+                        suffix_value: str = suffix,
+                        input_value: Path = input_path,
+                        dolphin_tool_value: Path = dolphin_tool_bin,
+                    ):
+                        run_kind = "warmup" if warmup else "run"
+                        output_path = (
+                            outputs_dir
+                            / "compress-dolphin-tool"
+                            / f"{token(format_value)}-{run_kind}-{iteration}.{suffix_value}"
+                        )
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        if output_path.exists():
+                            output_path.unlink()
+                        user_dir = (
+                            outputs_dir
+                            / "dolphin-tool-user"
+                            / f"compress-{token(format_value)}-{run_kind}-{iteration}"
+                        )
+                        if user_dir.exists():
+                            shutil.rmtree(user_dir, ignore_errors=True)
+                        user_dir.mkdir(parents=True, exist_ok=True)
+                        cmd = dolphin_tool_rvz_compress_command(
+                            dolphin_tool_bin=dolphin_tool_value,
+                            format_name=format_value,
+                            input_path=input_value,
+                            output_path=output_path,
+                            user_dir=user_dir,
+                        )
+                        return cmd, output_path
+
+                    def processed_bytes(_context: Path, input_value: Path = input_path) -> int:
+                        return input_value.stat().st_size
+
+                    rows.append(
+                        run_benchmark_case(
+                            command="compress",
+                            path_id=f"format:{format_name}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_dolphin_tool_compress_command,
+                            processed_bytes_factory=processed_bytes,
+                            tool="dolphin-tool",
+                            cache=cache,
+                        )
+                    )
 
     if "extract" in selected_commands:
         for format_name in selected_container_formats:
@@ -1498,8 +2285,9 @@ def main() -> None:
                             timeout_sec=args.timeout_sec,
                             command_factory=make_command,
                             processed_bytes_factory=processed_bytes,
-                                tool="rom-weaver",
-                            )
+                            tool="rom-weaver",
+                            cache=cache,
+                        )
                         )
 
             if "rom-weaver-wasm" in selected_archive_tools:
@@ -1507,6 +2295,20 @@ def main() -> None:
                 assert wasm_runner is not None
                 assert wasm_module is not None
                 for codec_label, _codec_value in rom_weaver_codec_cases_for_format(format_name):
+                    skip_reason = wasm_expected_skip_reason(format_name, codec_label)
+                    if skip_reason is not None:
+                        rows.append(
+                            skipped_row(
+                                "extract",
+                                format_codec_path_id(format_name, codec_label),
+                                skip_reason,
+                                args.warmups,
+                                args.iterations,
+                                tool="rom-weaver-wasm",
+                            )
+                        )
+                        continue
+
                     source = archive_sources.get((format_name, codec_label))
                     if source is None:
                         rows.append(
@@ -1569,6 +2371,7 @@ def main() -> None:
                             command_factory=make_wasm_extract_command,
                             processed_bytes_factory=processed_bytes,
                             tool="rom-weaver-wasm",
+                            cache=cache,
                         )
                     )
 
@@ -1635,18 +2438,217 @@ def main() -> None:
                         command_factory=make_sevenzip_extract_command,
                         processed_bytes_factory=processed_bytes,
                         tool="7zz",
+                        cache=cache,
                     )
                 )
+
+            if "chdman" in selected_archive_tools:
+                assert chdman_bin is not None
+                source = archive_sources_default.get(format_name)
+                if source is None:
+                    rows.append(
+                        skipped_row(
+                            "extract",
+                            f"format:{format_name}",
+                            "no valid source artifact available for this format",
+                            args.warmups,
+                            args.iterations,
+                            tool="chdman",
+                        )
+                    )
+                elif format_name not in CHDMAN_EXTRACT_FORMATS:
+                    rows.append(
+                        skipped_row(
+                            "extract",
+                            f"format:{format_name}",
+                            "chdman comparator unsupported for this extract format",
+                            args.warmups,
+                            args.iterations,
+                            tool="chdman",
+                        )
+                    )
+                else:
+
+                    def make_chdman_extract_command(
+                        iteration: int,
+                        warmup: bool,
+                        format_value: str = format_name,
+                        source_value: ArchiveSource = source,
+                        chdman_value: Path = chdman_bin,
+                    ):
+                        run_kind = "warmup" if warmup else "run"
+                        output_path = (
+                            outputs_dir
+                            / "extract-chdman"
+                            / f"{token(format_value)}-{run_kind}-{iteration}.bin"
+                        )
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        if output_path.exists():
+                            output_path.unlink()
+                        cmd = chdman_extract_command(
+                            chdman_bin=chdman_value,
+                            format_name=format_value,
+                            source_path=source_value.path,
+                            output_path=output_path,
+                        )
+                        return cmd, output_path
+
+                    def processed_bytes(
+                        output_path: Path,
+                        source_value: ArchiveSource = source,
+                    ) -> int | None:
+                        if output_path.exists():
+                            return output_path.stat().st_size
+                        return source_value.payload_bytes
+
+                    rows.append(
+                        run_benchmark_case(
+                            command="extract",
+                            path_id=f"format:{format_name}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_chdman_extract_command,
+                            processed_bytes_factory=processed_bytes,
+                            tool="chdman",
+                            cache=cache,
+                        )
+                    )
+
+            if "dolphin-tool" in selected_archive_tools:
+                assert dolphin_tool_bin is not None
+                source = archive_sources_default.get(format_name)
+                if source is None:
+                    rows.append(
+                        skipped_row(
+                            "extract",
+                            f"format:{format_name}",
+                            "no valid source artifact available for this format",
+                            args.warmups,
+                            args.iterations,
+                            tool="dolphin-tool",
+                        )
+                    )
+                elif format_name not in DOLPHIN_TOOL_EXTRACT_FORMATS:
+                    rows.append(
+                        skipped_row(
+                            "extract",
+                            f"format:{format_name}",
+                            "dolphin-tool comparator unsupported for this extract format",
+                            args.warmups,
+                            args.iterations,
+                            tool="dolphin-tool",
+                        )
+                    )
+                else:
+
+                    def make_dolphin_tool_extract_command(
+                        iteration: int,
+                        warmup: bool,
+                        format_value: str = format_name,
+                        source_value: ArchiveSource = source,
+                        dolphin_tool_value: Path = dolphin_tool_bin,
+                    ):
+                        run_kind = "warmup" if warmup else "run"
+                        output_path = (
+                            outputs_dir
+                            / "extract-dolphin-tool"
+                            / f"{token(format_value)}-{run_kind}-{iteration}.iso"
+                        )
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        if output_path.exists():
+                            output_path.unlink()
+                        user_dir = (
+                            outputs_dir
+                            / "dolphin-tool-user"
+                            / f"extract-{token(format_value)}-{run_kind}-{iteration}"
+                        )
+                        if user_dir.exists():
+                            shutil.rmtree(user_dir, ignore_errors=True)
+                        user_dir.mkdir(parents=True, exist_ok=True)
+                        cmd = dolphin_tool_rvz_extract_command(
+                            dolphin_tool_bin=dolphin_tool_value,
+                            format_name=format_value,
+                            source_path=source_value.path,
+                            output_path=output_path,
+                            user_dir=user_dir,
+                        )
+                        return cmd, output_path
+
+                    def processed_bytes(
+                        output_path: Path,
+                        source_value: ArchiveSource = source,
+                    ) -> int | None:
+                        if output_path.exists():
+                            return output_path.stat().st_size
+                        return source_value.payload_bytes
+
+                    rows.append(
+                        run_benchmark_case(
+                            command="extract",
+                            path_id=f"format:{format_name}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_dolphin_tool_extract_command,
+                            processed_bytes_factory=processed_bytes,
+                            tool="dolphin-tool",
+                            cache=cache,
+                        )
+                    )
 
     if "checksum" in selected_commands:
         if "raw" in selected_checksum_modes:
             ensure_source_fixture()
             for algorithm in selected_checksum_algorithms:
+                if needs_rom_weaver:
 
-                def make_command(_iteration: int, _warmup: bool, algo: str = algorithm):
-                    cmd = base_command(
-                        args.bin,
-                        [
+                    def make_command(_iteration: int, _warmup: bool, algo: str = algorithm):
+                        cmd = base_command(
+                            args.bin,
+                            [
+                                "checksum",
+                                str(source_path),
+                                "--algo",
+                                algo,
+                                "--no-extract",
+                                "--threads",
+                                str(args.threads),
+                            ],
+                        )
+                        return cmd, source_path
+
+                    def processed_bytes(_context: Path) -> int:
+                        return source_path.stat().st_size
+
+                    rows.append(
+                        run_benchmark_case(
+                            command="checksum",
+                            path_id=f"raw:algo:{algorithm}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_command,
+                            processed_bytes_factory=processed_bytes,
+                            tool="rom-weaver",
+                            cache=cache,
+                        )
+                    )
+
+                if "rom-weaver-wasm" in selected_archive_tools:
+                    assert node_bin is not None
+                    assert wasm_runner is not None
+                    assert wasm_module is not None
+
+                    def make_wasm_command(
+                        _iteration: int,
+                        _warmup: bool,
+                        algo: str = algorithm,
+                        node_bin_value: Path = node_bin,
+                        wasm_runner_value: Path = wasm_runner,
+                        wasm_module_value: Path = wasm_module,
+                    ):
+                        checksum_args = [
                             "checksum",
                             str(source_path),
                             "--algo",
@@ -1654,70 +2656,602 @@ def main() -> None:
                             "--no-extract",
                             "--threads",
                             str(args.threads),
-                        ],
-                    )
-                    return cmd, source_path
+                        ]
+                        cmd = wasm_rom_weaver_command(
+                            node_bin=node_bin_value,
+                            wasm_runner=wasm_runner_value,
+                            wasm_module=wasm_module_value,
+                            args=["--no-progress", *checksum_args],
+                        )
+                        return cmd, source_path
 
-                def processed_bytes(_context: Path) -> int:
-                    return source_path.stat().st_size
+                    def processed_bytes(_context: Path) -> int:
+                        return source_path.stat().st_size
 
-                rows.append(
-                    run_benchmark_case(
-                        command="checksum",
-                        path_id=f"algo:{algorithm}",
-                        warmups=args.warmups,
-                        iterations=args.iterations,
-                        timeout_sec=args.timeout_sec,
-                        command_factory=make_command,
-                        processed_bytes_factory=processed_bytes,
+                    rows.append(
+                        run_benchmark_case(
+                            command="checksum",
+                            path_id=f"raw:algo:{algorithm}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_wasm_command,
+                            processed_bytes_factory=processed_bytes,
+                            tool="rom-weaver-wasm",
+                            cache=cache,
+                        )
                     )
-                )
+
+            if checksum_combo_algorithms:
+                combo_suffix = checksum_multi_algo_suffix(checksum_combo_algorithms)
+                combo_algo_args = checksum_multi_algo_args(checksum_combo_algorithms)
+                if needs_rom_weaver:
+
+                    def make_combo_command(
+                        _iteration: int,
+                        _warmup: bool,
+                        algo_args: list[str] = combo_algo_args,
+                    ):
+                        cmd = base_command(
+                            args.bin,
+                            [
+                                "checksum",
+                                str(source_path),
+                                *algo_args,
+                                "--no-extract",
+                                "--threads",
+                                str(args.threads),
+                            ],
+                        )
+                        return cmd, source_path
+
+                    def processed_combo_bytes(_context: Path) -> int:
+                        return source_path.stat().st_size
+
+                    rows.append(
+                        run_benchmark_case(
+                            command="checksum",
+                            path_id=f"raw:combo:{combo_suffix}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_combo_command,
+                            processed_bytes_factory=processed_combo_bytes,
+                            tool="rom-weaver",
+                            cache=cache,
+                        )
+                    )
+
+                if "rom-weaver-wasm" in selected_archive_tools:
+                    assert node_bin is not None
+                    assert wasm_runner is not None
+                    assert wasm_module is not None
+
+                    def make_wasm_combo_command(
+                        _iteration: int,
+                        _warmup: bool,
+                        algo_args: list[str] = combo_algo_args,
+                        node_bin_value: Path = node_bin,
+                        wasm_runner_value: Path = wasm_runner,
+                        wasm_module_value: Path = wasm_module,
+                    ):
+                        checksum_args = [
+                            "checksum",
+                            str(source_path),
+                            *algo_args,
+                            "--no-extract",
+                            "--threads",
+                            str(args.threads),
+                        ]
+                        cmd = wasm_rom_weaver_command(
+                            node_bin=node_bin_value,
+                            wasm_runner=wasm_runner_value,
+                            wasm_module=wasm_module_value,
+                            args=["--no-progress", *checksum_args],
+                        )
+                        return cmd, source_path
+
+                    def processed_combo_bytes(_context: Path) -> int:
+                        return source_path.stat().st_size
+
+                    rows.append(
+                        run_benchmark_case(
+                            command="checksum",
+                            path_id=f"raw:combo:{combo_suffix}",
+                            warmups=args.warmups,
+                            iterations=args.iterations,
+                            timeout_sec=args.timeout_sec,
+                            command_factory=make_wasm_combo_command,
+                            processed_bytes_factory=processed_combo_bytes,
+                            tool="rom-weaver-wasm",
+                            cache=cache,
+                        )
+                    )
 
         if "auto-extract" in selected_checksum_modes:
             for format_name in selected_container_formats:
                 source = archive_sources_default.get(format_name)
                 if source is None:
-                    rows.append(
-                        skipped_row(
-                            "checksum",
-                            f"auto-extract:{format_name}",
-                            "no valid archive artifact available for auto-extract checksum path",
-                            args.warmups,
-                            args.iterations,
+                    if needs_rom_weaver:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"auto-extract:{format_name}",
+                                "no valid archive artifact available for auto-extract checksum path",
+                                args.warmups,
+                                args.iterations,
+                                tool="rom-weaver",
+                            )
                         )
-                    )
+                    if "rom-weaver-wasm" in selected_archive_tools:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"auto-extract:{format_name}",
+                                "no valid archive artifact available for auto-extract checksum path",
+                                args.warmups,
+                                args.iterations,
+                                tool="rom-weaver-wasm",
+                            )
+                        )
+                    if "chdman" in selected_archive_tools:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"auto-extract:{format_name}",
+                                "no valid archive artifact available for auto-extract checksum path",
+                                args.warmups,
+                                args.iterations,
+                                tool="chdman",
+                            )
+                        )
+                    if "dolphin-tool" in selected_archive_tools:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"auto-extract:{format_name}",
+                                "no valid archive artifact available for auto-extract checksum path",
+                                args.warmups,
+                                args.iterations,
+                                tool="dolphin-tool",
+                            )
+                        )
                     continue
 
-                def make_command(_iteration: int, _warmup: bool, source_value: ArchiveSource = source):
-                    cmd = base_command(
-                        args.bin,
-                        [
-                            "checksum",
-                            str(source_value.path),
-                            "--algo",
-                            "sha256",
-                            "--threads",
-                            str(args.threads),
-                        ],
-                    )
-                    return cmd, source_value
+                if needs_rom_weaver:
+                    for algorithm in selected_checksum_algorithms:
 
-                def processed_bytes(source_value: ArchiveSource) -> int | None:
-                    return source_value.payload_bytes
+                        def make_command(
+                            _iteration: int,
+                            _warmup: bool,
+                            source_value: ArchiveSource = source,
+                            algo: str = algorithm,
+                        ):
+                            cmd = base_command(
+                                args.bin,
+                                [
+                                    "checksum",
+                                    str(source_value.path),
+                                    "--algo",
+                                    algo,
+                                    "--threads",
+                                    str(args.threads),
+                                ],
+                            )
+                            return cmd, source_value
 
-                rows.append(
-                    run_benchmark_case(
-                        command="checksum",
-                        path_id=f"auto-extract:{format_name}",
-                        warmups=args.warmups,
-                        iterations=args.iterations,
-                        timeout_sec=args.timeout_sec,
-                        command_factory=make_command,
-                        processed_bytes_factory=processed_bytes,
-                    )
-                )
+                        def processed_bytes(source_value: ArchiveSource) -> int | None:
+                            return source_value.payload_bytes
 
-    created_patch_sources: dict[str, tuple[Path, Path]] = {}
+                        rows.append(
+                            run_benchmark_case(
+                                command="checksum",
+                                path_id=f"auto-extract:{format_name},algo:{algorithm}",
+                                warmups=args.warmups,
+                                iterations=args.iterations,
+                                timeout_sec=args.timeout_sec,
+                                command_factory=make_command,
+                                processed_bytes_factory=processed_bytes,
+                                tool="rom-weaver",
+                                cache=cache,
+                            )
+                        )
+
+                if "rom-weaver-wasm" in selected_archive_tools:
+                    assert node_bin is not None
+                    assert wasm_runner is not None
+                    assert wasm_module is not None
+                    for algorithm in selected_checksum_algorithms:
+
+                        def make_wasm_command(
+                            _iteration: int,
+                            _warmup: bool,
+                            source_value: ArchiveSource = source,
+                            algo: str = algorithm,
+                            node_bin_value: Path = node_bin,
+                            wasm_runner_value: Path = wasm_runner,
+                            wasm_module_value: Path = wasm_module,
+                        ):
+                            checksum_args = [
+                                "checksum",
+                                str(source_value.path),
+                                "--algo",
+                                algo,
+                                "--threads",
+                                str(args.threads),
+                            ]
+                            cmd = wasm_rom_weaver_command(
+                                node_bin=node_bin_value,
+                                wasm_runner=wasm_runner_value,
+                                wasm_module=wasm_module_value,
+                                args=["--no-progress", *checksum_args],
+                            )
+                            return cmd, source_value
+
+                        def processed_bytes(source_value: ArchiveSource) -> int | None:
+                            return source_value.payload_bytes
+
+                        rows.append(
+                            run_benchmark_case(
+                                command="checksum",
+                                path_id=f"auto-extract:{format_name},algo:{algorithm}",
+                                warmups=args.warmups,
+                                iterations=args.iterations,
+                                timeout_sec=args.timeout_sec,
+                                command_factory=make_wasm_command,
+                                processed_bytes_factory=processed_bytes,
+                                tool="rom-weaver-wasm",
+                                cache=cache,
+                            )
+                        )
+
+                if "chdman" in selected_archive_tools:
+                    assert chdman_bin is not None
+                    if format_name not in CHDMAN_CHECKSUM_AUTO_EXTRACT_FORMATS:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"auto-extract:{format_name}",
+                                "chdman comparator unsupported for this checksum auto-extract format",
+                                args.warmups,
+                                args.iterations,
+                                tool="chdman",
+                            )
+                        )
+                    else:
+
+                        def make_chdman_checksum_command(
+                            _iteration: int,
+                            _warmup: bool,
+                            format_value: str = format_name,
+                            source_value: ArchiveSource = source,
+                            chdman_value: Path = chdman_bin,
+                        ):
+                            cmd = chdman_verify_command(
+                                chdman_bin=chdman_value,
+                                format_name=format_value,
+                                source_path=source_value.path,
+                            )
+                            return cmd, source_value
+
+                        def processed_bytes(source_value: ArchiveSource) -> int | None:
+                            return source_value.payload_bytes
+
+                        rows.append(
+                            run_benchmark_case(
+                                command="checksum",
+                                path_id=f"auto-extract:{format_name}",
+                                warmups=args.warmups,
+                                iterations=args.iterations,
+                                timeout_sec=args.timeout_sec,
+                                command_factory=make_chdman_checksum_command,
+                                processed_bytes_factory=processed_bytes,
+                                tool="chdman",
+                                cache=cache,
+                            )
+                        )
+
+                if "dolphin-tool" in selected_archive_tools:
+                    assert dolphin_tool_bin is not None
+                    if format_name not in DOLPHIN_TOOL_CHECKSUM_AUTO_EXTRACT_FORMATS:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"auto-extract:{format_name}",
+                                "dolphin-tool comparator unsupported for this checksum auto-extract format",
+                                args.warmups,
+                                args.iterations,
+                                tool="dolphin-tool",
+                            )
+                        )
+                    else:
+
+                        def make_dolphin_tool_checksum_command(
+                            iteration: int,
+                            warmup: bool,
+                            format_value: str = format_name,
+                            source_value: ArchiveSource = source,
+                            dolphin_tool_value: Path = dolphin_tool_bin,
+                        ):
+                            run_kind = "warmup" if warmup else "run"
+                            user_dir = (
+                                outputs_dir
+                                / "dolphin-tool-user"
+                                / f"checksum-{token(format_value)}-{run_kind}-{iteration}"
+                            )
+                            if user_dir.exists():
+                                shutil.rmtree(user_dir, ignore_errors=True)
+                            user_dir.mkdir(parents=True, exist_ok=True)
+                            cmd = dolphin_tool_verify_command(
+                                dolphin_tool_bin=dolphin_tool_value,
+                                format_name=format_value,
+                                source_path=source_value.path,
+                                user_dir=user_dir,
+                            )
+                            return cmd, source_value
+
+                        def processed_bytes(source_value: ArchiveSource) -> int | None:
+                            return source_value.payload_bytes
+
+                        rows.append(
+                            run_benchmark_case(
+                                command="checksum",
+                                path_id=f"auto-extract:{format_name}",
+                                warmups=args.warmups,
+                                iterations=args.iterations,
+                                timeout_sec=args.timeout_sec,
+                                command_factory=make_dolphin_tool_checksum_command,
+                                processed_bytes_factory=processed_bytes,
+                                tool="dolphin-tool",
+                                cache=cache,
+                            )
+                        )
+
+        if "archive-no-extract" in selected_checksum_modes:
+            for format_name in selected_container_formats:
+                source = archive_sources_default.get(format_name)
+                if source is None:
+                    if needs_rom_weaver:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"no-extract:{format_name}",
+                                "no valid archive artifact available for checksum no-extract path",
+                                args.warmups,
+                                args.iterations,
+                                tool="rom-weaver",
+                            )
+                        )
+                    if "rom-weaver-wasm" in selected_archive_tools:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"no-extract:{format_name}",
+                                "no valid archive artifact available for checksum no-extract path",
+                                args.warmups,
+                                args.iterations,
+                                tool="rom-weaver-wasm",
+                            )
+                        )
+                    if "chdman" in selected_archive_tools:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"no-extract:{format_name}",
+                                "no valid archive artifact available for checksum no-extract path",
+                                args.warmups,
+                                args.iterations,
+                                tool="chdman",
+                            )
+                        )
+                    if "dolphin-tool" in selected_archive_tools:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"no-extract:{format_name}",
+                                "no valid archive artifact available for checksum no-extract path",
+                                args.warmups,
+                                args.iterations,
+                                tool="dolphin-tool",
+                            )
+                        )
+                    continue
+
+                if needs_rom_weaver:
+                    for algorithm in selected_checksum_algorithms:
+
+                        def make_command(
+                            _iteration: int,
+                            _warmup: bool,
+                            source_value: ArchiveSource = source,
+                            algo: str = algorithm,
+                        ):
+                            cmd = base_command(
+                                args.bin,
+                                [
+                                    "checksum",
+                                    str(source_value.path),
+                                    "--algo",
+                                    algo,
+                                    "--no-extract",
+                                    "--threads",
+                                    str(args.threads),
+                                ],
+                            )
+                            return cmd, source_value.path
+
+                        def processed_bytes(source_path_value: Path) -> int:
+                            return source_path_value.stat().st_size
+
+                        rows.append(
+                            run_benchmark_case(
+                                command="checksum",
+                                path_id=f"no-extract:{format_name},algo:{algorithm}",
+                                warmups=args.warmups,
+                                iterations=args.iterations,
+                                timeout_sec=args.timeout_sec,
+                                command_factory=make_command,
+                                processed_bytes_factory=processed_bytes,
+                                tool="rom-weaver",
+                                cache=cache,
+                            )
+                        )
+
+                if "rom-weaver-wasm" in selected_archive_tools:
+                    assert node_bin is not None
+                    assert wasm_runner is not None
+                    assert wasm_module is not None
+                    for algorithm in selected_checksum_algorithms:
+
+                        def make_wasm_command(
+                            _iteration: int,
+                            _warmup: bool,
+                            source_value: ArchiveSource = source,
+                            algo: str = algorithm,
+                            node_bin_value: Path = node_bin,
+                            wasm_runner_value: Path = wasm_runner,
+                            wasm_module_value: Path = wasm_module,
+                        ):
+                            checksum_args = [
+                                "checksum",
+                                str(source_value.path),
+                                "--algo",
+                                algo,
+                                "--no-extract",
+                                "--threads",
+                                str(args.threads),
+                            ]
+                            cmd = wasm_rom_weaver_command(
+                                node_bin=node_bin_value,
+                                wasm_runner=wasm_runner_value,
+                                wasm_module=wasm_module_value,
+                                args=["--no-progress", *checksum_args],
+                            )
+                            return cmd, source_value.path
+
+                        def processed_bytes(source_path_value: Path) -> int:
+                            return source_path_value.stat().st_size
+
+                        rows.append(
+                            run_benchmark_case(
+                                command="checksum",
+                                path_id=f"no-extract:{format_name},algo:{algorithm}",
+                                warmups=args.warmups,
+                                iterations=args.iterations,
+                                timeout_sec=args.timeout_sec,
+                                command_factory=make_wasm_command,
+                                processed_bytes_factory=processed_bytes,
+                                tool="rom-weaver-wasm",
+                                cache=cache,
+                            )
+                        )
+
+                if "chdman" in selected_archive_tools:
+                    assert chdman_bin is not None
+                    if format_name not in CHDMAN_CHECKSUM_AUTO_EXTRACT_FORMATS:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"no-extract:{format_name}",
+                                "chdman comparator unsupported for this checksum no-extract format",
+                                args.warmups,
+                                args.iterations,
+                                tool="chdman",
+                            )
+                        )
+                    else:
+
+                        def make_chdman_checksum_command(
+                            _iteration: int,
+                            _warmup: bool,
+                            format_value: str = format_name,
+                            source_value: ArchiveSource = source,
+                            chdman_value: Path = chdman_bin,
+                        ):
+                            cmd = chdman_verify_command(
+                                chdman_bin=chdman_value,
+                                format_name=format_value,
+                                source_path=source_value.path,
+                            )
+                            return cmd, source_value.path
+
+                        def processed_bytes(source_path_value: Path) -> int:
+                            return source_path_value.stat().st_size
+
+                        rows.append(
+                            run_benchmark_case(
+                                command="checksum",
+                                path_id=f"no-extract:{format_name}",
+                                warmups=args.warmups,
+                                iterations=args.iterations,
+                                timeout_sec=args.timeout_sec,
+                                command_factory=make_chdman_checksum_command,
+                                processed_bytes_factory=processed_bytes,
+                                tool="chdman",
+                                cache=cache,
+                            )
+                        )
+
+                if "dolphin-tool" in selected_archive_tools:
+                    assert dolphin_tool_bin is not None
+                    if format_name not in DOLPHIN_TOOL_CHECKSUM_AUTO_EXTRACT_FORMATS:
+                        rows.append(
+                            skipped_row(
+                                "checksum",
+                                f"no-extract:{format_name}",
+                                "dolphin-tool comparator unsupported for this checksum no-extract format",
+                                args.warmups,
+                                args.iterations,
+                                tool="dolphin-tool",
+                            )
+                        )
+                    else:
+
+                        def make_dolphin_tool_checksum_command(
+                            iteration: int,
+                            warmup: bool,
+                            format_value: str = format_name,
+                            source_value: ArchiveSource = source,
+                            dolphin_tool_value: Path = dolphin_tool_bin,
+                        ):
+                            run_kind = "warmup" if warmup else "run"
+                            user_dir = (
+                                outputs_dir
+                                / "dolphin-tool-user"
+                                / f"checksum-no-extract-{token(format_value)}-{run_kind}-{iteration}"
+                            )
+                            if user_dir.exists():
+                                shutil.rmtree(user_dir, ignore_errors=True)
+                            user_dir.mkdir(parents=True, exist_ok=True)
+                            cmd = dolphin_tool_verify_command(
+                                dolphin_tool_bin=dolphin_tool_value,
+                                format_name=format_value,
+                                source_path=source_value.path,
+                                user_dir=user_dir,
+                            )
+                            return cmd, source_value.path
+
+                        def processed_bytes(source_path_value: Path) -> int:
+                            return source_path_value.stat().st_size
+
+                        rows.append(
+                            run_benchmark_case(
+                                command="checksum",
+                                path_id=f"no-extract:{format_name}",
+                                warmups=args.warmups,
+                                iterations=args.iterations,
+                                timeout_sec=args.timeout_sec,
+                                command_factory=make_dolphin_tool_checksum_command,
+                                processed_bytes_factory=processed_bytes,
+                                tool="dolphin-tool",
+                                cache=cache,
+                            )
+                        )
+
+    patch_tools: list[str] = ["rom-weaver"]
+    if "rom-weaver-wasm" in selected_archive_tools:
+        patch_tools.append("rom-weaver-wasm")
+    created_patch_sources: dict[tuple[str, str], tuple[Path, Path]] = {}
 
     if "patch-create" in selected_commands:
         for format_name in selected_patch_formats:
@@ -1747,21 +3281,29 @@ def main() -> None:
                 patch_original = original_path
                 patch_modified = modified_path
 
-            def make_command(
-                _iteration: int,
-                _warmup: bool,
-                format_value: str = format_name,
-                extension_value: str = extension,
-                original_value: Path = patch_original,
-                modified_value: Path = patch_modified,
-            ):
-                patch_path = artifacts_dir / "patches" / f"{token(format_value)}.{extension_value}"
-                patch_path.parent.mkdir(parents=True, exist_ok=True)
-                if patch_path.exists():
-                    patch_path.unlink()
-                cmd = base_command(
-                    args.bin,
-                    [
+            for patch_tool in patch_tools:
+                if patch_tool == "rom-weaver-wasm":
+                    assert node_bin is not None
+                    assert wasm_runner is not None
+                    assert wasm_module is not None
+
+                def make_command(
+                    _iteration: int,
+                    _warmup: bool,
+                    format_value: str = format_name,
+                    extension_value: str = extension,
+                    original_value: Path = patch_original,
+                    modified_value: Path = patch_modified,
+                    tool_value: str = patch_tool,
+                    node_bin_value: Path | None = node_bin,
+                    wasm_runner_value: Path | None = wasm_runner,
+                    wasm_module_value: Path | None = wasm_module,
+                ):
+                    patch_path = artifacts_dir / "patches" / f"{token(format_value)}-{token(tool_value)}.{extension_value}"
+                    patch_path.parent.mkdir(parents=True, exist_ok=True)
+                    if patch_path.exists():
+                        patch_path.unlink()
+                    patch_args = [
                         "patch-create",
                         "--original",
                         str(original_value),
@@ -1773,32 +3315,45 @@ def main() -> None:
                         str(patch_path),
                         "--threads",
                         str(args.threads),
-                    ],
+                    ]
+                    if tool_value == "rom-weaver":
+                        cmd = base_command(args.bin, patch_args)
+                    else:
+                        assert node_bin_value is not None
+                        assert wasm_runner_value is not None
+                        assert wasm_module_value is not None
+                        cmd = wasm_rom_weaver_command(
+                            node_bin=node_bin_value,
+                            wasm_runner=wasm_runner_value,
+                            wasm_module=wasm_module_value,
+                            args=["--no-progress", *patch_args],
+                        )
+                    return cmd, patch_path
+
+                def processed_bytes(
+                    _patch_path: Path,
+                    original_value: Path = patch_original,
+                    modified_value: Path = patch_modified,
+                ) -> int:
+                    return original_value.stat().st_size + modified_value.stat().st_size
+
+                row = run_benchmark_case(
+                    command="patch-create",
+                    path_id=f"format:{format_name}",
+                    warmups=args.warmups,
+                    iterations=args.iterations,
+                    timeout_sec=args.timeout_sec,
+                    command_factory=make_command,
+                    processed_bytes_factory=processed_bytes,
+                    tool=patch_tool,
+                    cache=cache,
                 )
-                return cmd, patch_path
+                rows.append(row)
 
-            def processed_bytes(
-                _patch_path: Path,
-                original_value: Path = patch_original,
-                modified_value: Path = patch_modified,
-            ) -> int:
-                return original_value.stat().st_size + modified_value.stat().st_size
-
-            row = run_benchmark_case(
-                command="patch-create",
-                path_id=f"format:{format_name}",
-                warmups=args.warmups,
-                iterations=args.iterations,
-                timeout_sec=args.timeout_sec,
-                command_factory=make_command,
-                processed_bytes_factory=processed_bytes,
-            )
-            rows.append(row)
-
-            if row.status == "succeeded":
-                patch_path = artifacts_dir / "patches" / f"{token(format_name)}.{extension}"
-                if patch_path.exists():
-                    created_patch_sources[format_name] = (patch_path, patch_original)
+                if row.status == "succeeded":
+                    patch_path = artifacts_dir / "patches" / f"{token(format_name)}-{token(patch_tool)}.{extension}"
+                    if patch_path.exists():
+                        created_patch_sources[(patch_tool, format_name)] = (patch_path, patch_original)
 
     static_patch_apply_fixtures = {
         "xdelta": {
@@ -1814,46 +3369,56 @@ def main() -> None:
 
     if "patch-apply" in selected_commands:
         for format_name in selected_patch_formats:
-            created_patch = created_patch_sources.get(format_name)
-            if created_patch is not None and created_patch[0].exists():
-                patch_path, input_path = created_patch
-                source_kind = "generated"
-            else:
-                fixture = static_patch_apply_fixtures.get(format_name)
-                if fixture is None or not fixture["input"].exists() or not fixture["patch"].exists():
-                    rows.append(
-                        skipped_row(
-                            "patch-apply",
-                            f"format:{format_name}",
-                            "no valid patch artifact available for this format",
-                            args.warmups,
-                            args.iterations,
-                        )
-                    )
-                    continue
-                input_path = fixture["input"]
-                patch_path = fixture["patch"]
-                source_kind = "fixture"
+            for patch_tool in patch_tools:
+                if patch_tool == "rom-weaver-wasm":
+                    assert node_bin is not None
+                    assert wasm_runner is not None
+                    assert wasm_module is not None
 
-            def make_command(
-                iteration: int,
-                warmup: bool,
-                format_value: str = format_name,
-                input_value: Path = input_path,
-                patch_value: Path = patch_path,
-            ):
-                run_kind = "warmup" if warmup else "run"
-                output_path = (
-                    outputs_dir
-                    / "patch-apply"
-                    / f"{token(format_value)}-{run_kind}-{iteration}.bin"
-                )
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                if output_path.exists():
-                    output_path.unlink()
-                cmd = base_command(
-                    args.bin,
-                    [
+                created_patch = created_patch_sources.get((patch_tool, format_name))
+                if created_patch is not None and created_patch[0].exists():
+                    patch_path, input_path = created_patch
+                    source_kind = "generated"
+                else:
+                    fixture = static_patch_apply_fixtures.get(format_name)
+                    if fixture is None or not fixture["input"].exists() or not fixture["patch"].exists():
+                        rows.append(
+                            skipped_row(
+                                "patch-apply",
+                                f"format:{format_name}",
+                                "no valid patch artifact available for this format",
+                                args.warmups,
+                                args.iterations,
+                                tool=patch_tool,
+                            )
+                        )
+                        continue
+                    input_path = fixture["input"]
+                    patch_path = fixture["patch"]
+                    source_kind = "fixture"
+
+                def make_command(
+                    iteration: int,
+                    warmup: bool,
+                    format_value: str = format_name,
+                    input_value: Path = input_path,
+                    patch_value: Path = patch_path,
+                    tool_value: str = patch_tool,
+                    node_bin_value: Path | None = node_bin,
+                    wasm_runner_value: Path | None = wasm_runner,
+                    wasm_module_value: Path | None = wasm_module,
+                ):
+                    run_kind = "warmup" if warmup else "run"
+                    out_dir_name = "patch-apply" if tool_value == "rom-weaver" else "patch-apply-wasm"
+                    output_path = (
+                        outputs_dir
+                        / out_dir_name
+                        / f"{token(format_value)}-{token(tool_value)}-{run_kind}-{iteration}.bin"
+                    )
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    if output_path.exists():
+                        output_path.unlink()
+                    patch_apply_args = [
                         "patch-apply",
                         "--input",
                         str(input_value),
@@ -1869,27 +3434,40 @@ def main() -> None:
                         ),
                         "--threads",
                         str(args.threads),
-                    ],
+                    ]
+                    if tool_value == "rom-weaver":
+                        cmd = base_command(args.bin, patch_apply_args)
+                    else:
+                        assert node_bin_value is not None
+                        assert wasm_runner_value is not None
+                        assert wasm_module_value is not None
+                        cmd = wasm_rom_weaver_command(
+                            node_bin=node_bin_value,
+                            wasm_runner=wasm_runner_value,
+                            wasm_module=wasm_module_value,
+                            args=["--no-progress", *patch_apply_args],
+                        )
+                    return cmd, output_path
+
+                def processed_bytes(
+                    _context: Path,
+                    input_value: Path = input_path,
+                    patch_value: Path = patch_path,
+                ) -> int:
+                    return input_value.stat().st_size + patch_value.stat().st_size
+
+                row = run_benchmark_case(
+                    command="patch-apply",
+                    path_id=f"format:{format_name} ({source_kind})",
+                    warmups=args.warmups,
+                    iterations=args.iterations,
+                    timeout_sec=args.timeout_sec,
+                    command_factory=make_command,
+                    processed_bytes_factory=processed_bytes,
+                    tool=patch_tool,
+                    cache=cache,
                 )
-                return cmd, output_path
-
-            def processed_bytes(
-                _context: Path,
-                input_value: Path = input_path,
-                patch_value: Path = patch_path,
-            ) -> int:
-                return input_value.stat().st_size + patch_value.stat().st_size
-
-            row = run_benchmark_case(
-                command="patch-apply",
-                path_id=f"format:{format_name} ({source_kind})",
-                warmups=args.warmups,
-                iterations=args.iterations,
-                timeout_sec=args.timeout_sec,
-                command_factory=make_command,
-                processed_bytes_factory=processed_bytes,
-            )
-            rows.append(row)
+                rows.append(row)
 
     payload_rows = [summarize_row(row) for row in rows]
     status_counts: dict[str, int] = {"succeeded": 0, "failed": 0, "skipped": 0}
@@ -1905,6 +3483,8 @@ def main() -> None:
             "work_dir": str(work_dir),
             "archive_tools": selected_archive_tools,
             "sevenzip_bin": str(sevenzip_bin) if sevenzip_bin is not None else None,
+            "chdman_bin": str(chdman_bin) if chdman_bin is not None else None,
+            "dolphin_tool_bin": str(dolphin_tool_bin) if dolphin_tool_bin is not None else None,
             "node_bin": str(node_bin) if node_bin is not None else None,
             "wasm_runner": str(wasm_runner) if wasm_runner is not None else None,
             "wasm_module": str(wasm_module) if wasm_module is not None else None,
@@ -1912,8 +3492,13 @@ def main() -> None:
             "container_formats": selected_container_formats,
             "patch_formats": selected_patch_formats,
             "checksum_algorithms": selected_checksum_algorithms,
+            "checksum_combo_algorithms": checksum_combo_algorithms,
             "checksum_modes": sorted(selected_checksum_modes),
             "rar_fixture": str(args.rar_fixture),
+            "chd_fixture": str(args.chd_fixture) if args.chd_fixture is not None else None,
+            "rvz_fixture": str(args.rvz_fixture) if args.rvz_fixture is not None else None,
+            "source_bin_fixture": str(args.source_bin_fixture) if args.source_bin_fixture is not None else None,
+            "source_disc_fixture": str(args.source_disc_fixture) if args.source_disc_fixture is not None else None,
             "threads": args.threads,
             "warmups": args.warmups,
             "iterations": args.iterations,
@@ -1922,6 +3507,12 @@ def main() -> None:
             "timeout_sec": args.timeout_sec,
             "python": sys.version,
             "platform": platform.platform(),
+            "cache": {
+                "mode": args.cache_mode,
+                "file": str(args.cache_file.expanduser().resolve()),
+                "hits": cache.hit_count if cache is not None else 0,
+                "writes": cache.write_count if cache is not None else 0,
+            },
         },
         "status_counts": status_counts,
         "rows": payload_rows,
@@ -1936,6 +3527,10 @@ def main() -> None:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f"\nWrote JSON results: {args.json_out}")
+
+    if cache is not None:
+        cache.save()
+        print(f"[bench] cache saved hits={cache.hit_count} writes={cache.write_count} file={cache.path}", flush=True)
 
     print("\nJSON:")
     print(json.dumps(payload))

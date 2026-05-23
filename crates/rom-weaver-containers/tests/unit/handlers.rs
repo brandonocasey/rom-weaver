@@ -911,7 +911,7 @@ mod tests {
     }
 
     #[test]
-    fn zip_zstd_levels_pass_through_to_libarchive() {
+    fn zip_zstd_levels_preserve_requested_values() {
         let cases = [
             (-7, -7),
             (0, 0),
@@ -927,7 +927,7 @@ mod tests {
             assert_eq!(
                 ZipContainerHandler::map_zstd_level_to_zip_level(zstd_level),
                 zip_level,
-                "zstd level {zstd_level} should pass through as {zip_level}"
+                "zstd level {zstd_level} should map to {zip_level}"
             );
         }
     }

@@ -1718,6 +1718,7 @@ dependencies = [
  "chd",
  "ciso",
  "claxon",
+ "crc32fast",
  "flate2",
  "lz4_flex",
  "lzma-rust2",

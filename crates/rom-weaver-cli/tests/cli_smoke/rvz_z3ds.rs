@@ -424,7 +424,7 @@ fn z3ds_extract_reports_parallel_threads_for_large_file() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "z3ds");
     assert_eq!(json["requested_threads"], 8);
-    assert_eq!(json["effective_threads"], 2);
+    assert_eq!(json["effective_threads"], 8);
     assert_eq!(json["thread_mode"], "fixed");
     assert_eq!(json["used_parallelism"], true);
     assert_eq!(json["status"], "succeeded");
