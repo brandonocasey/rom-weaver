@@ -187,18 +187,9 @@
                 fs::create_dir_all(parent)?;
             }
 
-            let mut staged_input = None;
-            let (source_path, logical_bytes) = match &create_kind {
-                ChdCreateKind::Disc(layout) => {
-                    let temp_path = self.materialize_disc_image(layout)?;
-                    let logical_bytes = fs::metadata(&temp_path)?.len();
-                    staged_input = Some(temp_path);
-                    (
-                        staged_input.as_ref().expect("staged disc input"),
-                        logical_bytes,
-                    )
-                }
-                _ => (input, input_bytes),
+            let logical_bytes = match &create_kind {
+                ChdCreateKind::Disc(layout) => layout.logical_bytes()?,
+                _ => input_bytes,
             };
             let create_progress = self.progress_bytes_callback(
                 context,
@@ -217,25 +208,57 @@
                                 .to_string(),
                         ));
                     }
-                    self.create_uncompressed_rust_raw(
-                        source_path,
-                        &request.output,
-                        logical_bytes,
-                        &create_kind,
-                        Some(&create_progress),
-                    )?
+                    match &create_kind {
+                        ChdCreateKind::Disc(layout) => {
+                            let mut source = DiscImageReader::new(layout);
+                            let source_label = format!("disc layout from `{}`", input.display());
+                            self.create_uncompressed_rust_stream(
+                                &mut source,
+                                &source_label,
+                                &request.output,
+                                logical_bytes,
+                                &create_kind,
+                                Some(&create_progress),
+                            )?
+                        }
+                        _ => self.create_uncompressed_rust_raw(
+                            input,
+                            &request.output,
+                            logical_bytes,
+                            &create_kind,
+                            Some(&create_progress),
+                        )?,
+                    }
                 } else {
-                    self.create_compressed_rust_raw(
-                        source_path,
-                        &request.output,
-                        logical_bytes,
-                        &create_kind,
-                        compression_plan.codecs,
-                        compression_level,
-                        execution.effective_threads,
-                        request.parent.as_deref(),
-                        Some(&create_progress),
-                    )?
+                    match &create_kind {
+                        ChdCreateKind::Disc(layout) => {
+                            let mut source = DiscImageReader::new(layout);
+                            let source_label = format!("disc layout from `{}`", input.display());
+                            self.create_compressed_rust_stream(
+                                &mut source,
+                                &source_label,
+                                &request.output,
+                                logical_bytes,
+                                &create_kind,
+                                compression_plan.codecs,
+                                compression_level,
+                                execution.effective_threads,
+                                request.parent.as_deref(),
+                                Some(&create_progress),
+                            )?
+                        }
+                        _ => self.create_compressed_rust_raw(
+                            input,
+                            &request.output,
+                            logical_bytes,
+                            &create_kind,
+                            compression_plan.codecs,
+                            compression_level,
+                            execution.effective_threads,
+                            request.parent.as_deref(),
+                            Some(&create_progress),
+                        )?,
+                    }
                 };
                 Ok((header, self.media_kind_from_create_kind(&create_kind)))
             };
@@ -245,18 +268,14 @@
                 compression_plan.codecs,
                 compression_plan.primary_codec,
             );
-            let create_result = if !should_attempt_rust {
+            let (header, media_kind) = if !should_attempt_rust {
                 Err(RomWeaverError::Unsupported(format!(
                     "chd codec list is invalid for {} media",
                     self.media_label(self.media_kind_from_create_kind(&create_kind))
                 )))
             } else {
                 rust_create()
-            };
-            if let Some(path) = staged_input.as_ref() {
-                let _ = fs::remove_file(path);
-            }
-            let (header, media_kind) = create_result?;
+            }?;
 
             Ok(OperationReport::succeeded(
                 OperationFamily::Container,

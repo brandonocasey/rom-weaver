@@ -14,6 +14,26 @@
         tracks: Vec<DiscTrack>,
     }
 
+    impl DiscLayout {
+        fn logical_bytes(&self) -> Result<u64> {
+            self.tracks.iter().try_fold(0_u64, |total, track| {
+                let track_bytes = u64::from(track.frames)
+                    .checked_mul(u64::from(ChdContainerHandler::CD_FRAME_BYTES))
+                    .ok_or_else(|| {
+                        RomWeaverError::Validation(format!(
+                            "disc track {} is too large for current chd support",
+                            track.number
+                        ))
+                    })?;
+                total.checked_add(track_bytes).ok_or_else(|| {
+                    RomWeaverError::Validation(
+                        "disc logical size exceeded current chd limits".to_string(),
+                    )
+                })
+            })
+        }
+    }
+
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct AvProfile {
         frame_bytes: u32,
@@ -72,6 +92,128 @@
     enum FlacSampleByteOrder {
         LittleEndian,
         BigEndian,
+    }
+
+    struct DiscImageReader<'a> {
+        tracks: &'a [DiscTrack],
+        track_index: usize,
+        track_initialized: bool,
+        track_reader: Option<BufReader<File>>,
+        track_data_frames_remaining: u32,
+        track_pad_frames_remaining: u32,
+        frame: Vec<u8>,
+        frame_cursor: usize,
+        frame_len: usize,
+        data: Vec<u8>,
+    }
+
+    impl<'a> DiscImageReader<'a> {
+        fn new(layout: &'a DiscLayout) -> Self {
+            Self {
+                tracks: &layout.tracks,
+                track_index: 0,
+                track_initialized: false,
+                track_reader: None,
+                track_data_frames_remaining: 0,
+                track_pad_frames_remaining: 0,
+                frame: vec![0_u8; ChdContainerHandler::CD_FRAME_BYTES as usize],
+                frame_cursor: 0,
+                frame_len: 0,
+                data: Vec::new(),
+            }
+        }
+
+        fn load_next_frame(&mut self) -> io::Result<bool> {
+            loop {
+                if self.track_index >= self.tracks.len() {
+                    self.track_reader = None;
+                    return Ok(false);
+                }
+
+                if !self.track_initialized {
+                    let track = &self.tracks[self.track_index];
+                    self.track_data_frames_remaining = track.frames.saturating_sub(track.pad_frames);
+                    self.track_pad_frames_remaining = track.pad_frames;
+                    self.track_initialized = true;
+                }
+
+                if self.track_data_frames_remaining == 0 && self.track_pad_frames_remaining == 0 {
+                    self.track_index += 1;
+                    self.track_initialized = false;
+                    self.track_reader = None;
+                    continue;
+                }
+
+                let track = &self.tracks[self.track_index];
+                if self.track_data_frames_remaining > 0 {
+                    if self.track_reader.is_none() {
+                        let mut reader = BufReader::new(File::open(&track.file_path)?);
+                        reader.seek(SeekFrom::Start(track.file_offset_bytes))?;
+                        self.track_reader = Some(reader);
+                    }
+                    let data_len = track.mode.data_bytes();
+                    if self.data.len() != data_len {
+                        self.data.resize(data_len, 0);
+                    }
+                    self.track_reader
+                        .as_mut()
+                        .expect("track reader should be initialized")
+                        .read_exact(&mut self.data)?;
+                    if track.swap_audio_on_read {
+                        track.mode.swap_audio_bytes(&mut self.data);
+                    }
+                    self.frame.fill(0);
+                    self.frame[..data_len].copy_from_slice(&self.data);
+                    self.frame_cursor = 0;
+                    self.frame_len = self.frame.len();
+                    self.track_data_frames_remaining -= 1;
+                    if self.track_data_frames_remaining == 0 && self.track_pad_frames_remaining == 0
+                    {
+                        self.track_index += 1;
+                        self.track_initialized = false;
+                        self.track_reader = None;
+                    }
+                    return Ok(true);
+                }
+
+                self.frame.fill(0);
+                self.frame_cursor = 0;
+                self.frame_len = self.frame.len();
+                self.track_pad_frames_remaining -= 1;
+                if self.track_data_frames_remaining == 0 && self.track_pad_frames_remaining == 0 {
+                    self.track_index += 1;
+                    self.track_initialized = false;
+                    self.track_reader = None;
+                }
+                return Ok(true);
+            }
+        }
+    }
+
+    impl Read for DiscImageReader<'_> {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            if output.is_empty() {
+                return Ok(0);
+            }
+
+            let mut written = 0_usize;
+            while written < output.len() {
+                if self.frame_cursor >= self.frame_len && !self.load_next_frame()? {
+                    break;
+                }
+                let available = self.frame_len.saturating_sub(self.frame_cursor);
+                if available == 0 {
+                    break;
+                }
+                let write_len = available.min(output.len() - written);
+                output[written..written + write_len].copy_from_slice(
+                    &self.frame[self.frame_cursor..self.frame_cursor + write_len],
+                );
+                self.frame_cursor += write_len;
+                written += write_len;
+            }
+            Ok(written)
+        }
     }
 
     impl DiscTrackMode {
@@ -420,6 +562,74 @@
                 .map_err(RomWeaverError::Validation)
                 .map(|_| self.header),
             }
+        }
+
+        fn stream_with_progress<F>(
+            &self,
+            on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
+            mut on_bytes: F,
+        ) -> Result<()>
+        where
+            F: FnMut(&[u8]) -> Result<()>,
+        {
+            match &self.backend {
+                ChdReadBackend::Rust { .. } => Self::stream_with_rust(
+                    &self.source,
+                    self.parent_source.as_deref(),
+                    self.header.logical_bytes,
+                    on_progress,
+                    &mut on_bytes,
+                )
+                .map_err(RomWeaverError::Validation),
+            }
+        }
+
+        fn stream_with_rust<F>(
+            source: &Path,
+            parent_source: Option<&Path>,
+            logical_bytes: u64,
+            on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
+            on_bytes: &mut F,
+        ) -> std::result::Result<(), String>
+        where
+            F: FnMut(&[u8]) -> Result<()>,
+        {
+            let mut chd = Self::open_rust_chd(source, parent_source)
+                .map_err(|error| format!("failed to decode `{}`: {error}", source.display()))?;
+            let mut remaining = logical_bytes;
+            let mut hunk_buffer = chd.get_hunksized_buffer();
+            let mut compressed_buffer = Vec::new();
+            for hunk_index in 0..chd.header().hunk_count() {
+                if remaining == 0 {
+                    break;
+                }
+                let mut hunk = chd.hunk(hunk_index).map_err(|error| {
+                    format!(
+                        "failed to decode hunk {} of `{}`: {error}",
+                        hunk_index,
+                        source.display()
+                    )
+                })?;
+                hunk.read_hunk_in(&mut compressed_buffer, &mut hunk_buffer)
+                    .map_err(|error| {
+                        format!(
+                            "failed to read hunk {} of `{}`: {error}",
+                            hunk_index,
+                            source.display()
+                        )
+                    })?;
+                let write_len = usize::try_from(remaining.min(hunk_buffer.len() as u64))
+                    .map_err(|_| "decoded CHD chunk exceeded addressable memory".to_string())?;
+                on_bytes(&hunk_buffer[..write_len]).map_err(|error| match error {
+                    RomWeaverError::Validation(message) => message,
+                    other => other.to_string(),
+                })?;
+                remaining -= write_len as u64;
+                if let Some(on_progress) = on_progress {
+                    on_progress(write_len as u64);
+                }
+            }
+            Ok(())
         }
 
         fn extract_to_file_with_rust(

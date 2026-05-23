@@ -618,84 +618,43 @@
             Ok(DiscLayout { kind, tracks })
         }
 
-        fn create_temp_file_path(&self, stem: &str, extension: &str) -> PathBuf {
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|value| value.as_nanos())
-                .unwrap_or_default();
-            Self::runtime_temp_dir().join(format!(
-                "rom-weaver-{stem}-{}-{timestamp}{extension}",
-                Self::runtime_process_id()
-            ))
-        }
-
-        fn runtime_temp_dir() -> PathBuf {
-            #[cfg(target_family = "wasm")]
-            {
-                if let Some(path) = std::env::var_os("ROM_WEAVER_TMPDIR")
-                    && !path.is_empty()
-                {
-                    return PathBuf::from(path);
-                }
-
-                return PathBuf::from("/tmp");
-            }
-
-            #[cfg(not(target_family = "wasm"))]
-            {
-                std::env::temp_dir()
-            }
-        }
-
-        fn runtime_process_id() -> u32 {
-            #[cfg(target_family = "wasm")]
-            {
-                return 1;
-            }
-
-            #[cfg(not(target_family = "wasm"))]
-            {
-                std::process::id()
-            }
-        }
-
         fn track_output_name(&self, stem: &str, track_number: u32) -> String {
             format!("{stem}.track{track_number:02}.bin")
         }
 
-        fn materialize_disc_image(&self, layout: &DiscLayout) -> Result<PathBuf> {
-            let temp_path = self.create_temp_file_path(
-                match layout.kind {
-                    DiscKind::CdRom => "cd-input",
-                    DiscKind::GdRom => "gd-input",
-                },
-                ".bin",
-            );
-            let mut writer = BufWriter::new(File::create(&temp_path)?);
-            let mut frame = vec![0_u8; Self::CD_FRAME_BYTES as usize];
-            let zero_frame = frame.clone();
-
-            for track in &layout.tracks {
-                let mut reader = BufReader::new(File::open(&track.file_path)?);
-                reader.seek(SeekFrom::Start(track.file_offset_bytes))?;
-                let mut data = vec![0_u8; track.mode.data_bytes()];
-                let data_frames = track.frames.saturating_sub(track.pad_frames);
-                for _ in 0..data_frames {
-                    reader.read_exact(&mut data)?;
-                    if track.swap_audio_on_read {
-                        track.mode.swap_audio_bytes(&mut data);
+        fn stream_chd_frames_with_progress<F>(
+            &self,
+            chd: &ChdReadSession,
+            on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
+            mut on_frame: F,
+        ) -> Result<()>
+        where
+            F: FnMut(&[u8]) -> Result<()>,
+        {
+            let frame_len = Self::CD_FRAME_BYTES as usize;
+            let mut frame = vec![0_u8; frame_len];
+            let mut filled = 0_usize;
+            chd.stream_with_progress(on_progress, |chunk| {
+                let mut offset = 0_usize;
+                while offset < chunk.len() {
+                    let copy_len = (frame_len - filled).min(chunk.len() - offset);
+                    frame[filled..filled + copy_len]
+                        .copy_from_slice(&chunk[offset..offset + copy_len]);
+                    filled += copy_len;
+                    offset += copy_len;
+                    if filled == frame_len {
+                        on_frame(&frame)?;
+                        filled = 0;
                     }
-                    frame.fill(0);
-                    frame[..data.len()].copy_from_slice(&data);
-                    writer.write_all(&frame)?;
                 }
-                for _ in 0..track.pad_frames {
-                    writer.write_all(&zero_frame)?;
-                }
+                Ok(())
+            })?;
+            if filled != 0 {
+                return Err(RomWeaverError::Validation(
+                    "cd/gd chd payload ended with a partial frame".to_string(),
+                ));
             }
-
-            writer.flush()?;
-            Ok(temp_path)
+            Ok(())
         }
 
         fn extract_cd(
@@ -723,7 +682,6 @@
                 .filter(|value| !value.is_empty())
                 .unwrap_or("output");
             let cue_path = request.out_dir.join(format!("{stem}.cue"));
-            let temp_path = self.create_temp_file_path("cd-extract", ".bin");
             let extract_progress = self.progress_bytes_callback(
                 context,
                 &execution,
@@ -732,16 +690,6 @@
                 header.logical_bytes,
                 format!("extracting `{}`", CHD.name),
             );
-            let extract_result = chd.extract_to_file_with_progress(
-                &temp_path,
-                execution.effective_threads,
-                Some(&extract_progress),
-            );
-            if extract_result.is_err() {
-                let _ = fs::remove_file(&temp_path);
-            }
-            let _ = extract_result?;
-
             let first_data_bytes = layout
                 .tracks
                 .first()
@@ -786,8 +734,6 @@
             selections.ensure_all_matched()?;
 
             let build_result: Result<(bool, Vec<PathBuf>, bool)> = (|| {
-                let mut reader = BufReader::new(File::open(&temp_path)?);
-                let mut frame = vec![0_u8; Self::CD_FRAME_BYTES as usize];
                 let mut omitted_subcode = false;
                 let mut produced_outputs = Vec::new();
                 let mut cue_writer = if write_cue {
@@ -867,23 +813,63 @@
                                 )?;
                             }
                         }
+                        output_frame_offset = output_frame_offset
+                            .saturating_add(track.frames.saturating_sub(track.pad_frames));
+                    }
 
-                        let data_frames = track.frames.saturating_sub(track.pad_frames);
-                        for _ in 0..data_frames {
-                            reader.read_exact(&mut frame)?;
-                            let data = &mut frame[..track.mode.data_bytes()];
-                            if write_single_bin && track.has_subcode {
-                                omitted_subcode = true;
+                    let expected_frames = layout
+                        .tracks
+                        .iter()
+                        .fold(0_u64, |total, track| total.saturating_add(u64::from(track.frames)));
+                    let mut processed_frames = 0_u64;
+                    let mut track_index = 0_usize;
+                    let mut data_frames_remaining = 0_u32;
+                    let mut pad_frames_remaining = 0_u32;
+                    self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
+                        loop {
+                            if track_index >= layout.tracks.len() {
+                                return Err(RomWeaverError::Validation(
+                                    "cd chd yielded more frames than described by metadata"
+                                        .to_string(),
+                                ));
                             }
-                            track.mode.swap_audio_bytes(data);
-                            if let Some(writer) = bin_writer.as_mut() {
-                                writer.write_all(data)?;
+                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                let track = &layout.tracks[track_index];
+                                data_frames_remaining = track.frames.saturating_sub(track.pad_frames);
+                                pad_frames_remaining = track.pad_frames;
                             }
+                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                track_index += 1;
+                                continue;
+                            }
+
+                            let track = &layout.tracks[track_index];
+                            if data_frames_remaining > 0 {
+                                let data = &frame[..track.mode.data_bytes()];
+                                if write_single_bin && track.has_subcode {
+                                    omitted_subcode = true;
+                                }
+                                if let Some(writer) = bin_writer.as_mut() {
+                                    let mut data = data.to_vec();
+                                    track.mode.swap_audio_bytes(&mut data);
+                                    writer.write_all(&data)?;
+                                }
+                                data_frames_remaining -= 1;
+                            } else {
+                                pad_frames_remaining -= 1;
+                            }
+                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                track_index += 1;
+                            }
+                            processed_frames = processed_frames.saturating_add(1);
+                            break;
                         }
-                        for _ in 0..track.pad_frames {
-                            reader.read_exact(&mut frame)?;
-                        }
-                        output_frame_offset = output_frame_offset.saturating_add(data_frames);
+                        Ok(())
+                    })?;
+                    if processed_frames != expected_frames || track_index != layout.tracks.len() {
+                        return Err(RomWeaverError::Validation(
+                            "cd chd ended before all track frames were decoded".to_string(),
+                        ));
                     }
                     if let Some(writer) = bin_writer.as_mut() {
                         writer.flush()?;
@@ -892,7 +878,6 @@
                     for (track_index, track) in layout.tracks.iter().enumerate() {
                         let track_name = &split_track_names[track_index];
                         let track_selected = write_split_tracks[track_index];
-                        let track_path = request.out_dir.join(track_name);
                         if let Some(writer) = cue_writer.as_mut() {
                             if track_selected {
                                 writer.write_all(
@@ -938,29 +923,76 @@
                                 }
                             }
                         }
+                    }
 
-                        let mut track_writer = if track_selected {
+                    let mut track_writers = Vec::with_capacity(layout.tracks.len());
+                    for (track_index, track_name) in split_track_names.iter().enumerate() {
+                        if write_split_tracks[track_index] {
+                            let track_path = request.out_dir.join(track_name);
                             produced_outputs.push(track_path.clone());
-                            Some(BufWriter::new(File::create(track_path)?))
+                            track_writers.push(Some(BufWriter::new(File::create(track_path)?)));
                         } else {
-                            None
-                        };
-                        let data_frames = track.frames.saturating_sub(track.pad_frames);
-                        for _ in 0..data_frames {
-                            reader.read_exact(&mut frame)?;
-                            let data = &mut frame[..track.mode.data_bytes()];
-                            if track_selected && track.has_subcode {
-                                omitted_subcode = true;
-                            }
-                            track.mode.swap_audio_bytes(data);
-                            if let Some(writer) = track_writer.as_mut() {
-                                writer.write_all(data)?;
-                            }
+                            track_writers.push(None);
                         }
-                        for _ in 0..track.pad_frames {
-                            reader.read_exact(&mut frame)?;
+                    }
+
+                    let expected_frames = layout
+                        .tracks
+                        .iter()
+                        .fold(0_u64, |total, track| total.saturating_add(u64::from(track.frames)));
+                    let mut processed_frames = 0_u64;
+                    let mut track_index = 0_usize;
+                    let mut data_frames_remaining = 0_u32;
+                    let mut pad_frames_remaining = 0_u32;
+                    self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
+                        loop {
+                            if track_index >= layout.tracks.len() {
+                                return Err(RomWeaverError::Validation(
+                                    "cd chd yielded more frames than described by metadata"
+                                        .to_string(),
+                                ));
+                            }
+                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                let track = &layout.tracks[track_index];
+                                data_frames_remaining = track.frames.saturating_sub(track.pad_frames);
+                                pad_frames_remaining = track.pad_frames;
+                            }
+                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                track_index += 1;
+                                continue;
+                            }
+
+                            let track = &layout.tracks[track_index];
+                            if data_frames_remaining > 0 {
+                                if write_split_tracks[track_index] {
+                                    let mut data = frame[..track.mode.data_bytes()].to_vec();
+                                    if track.has_subcode {
+                                        omitted_subcode = true;
+                                    }
+                                    track.mode.swap_audio_bytes(&mut data);
+                                    if let Some(writer) = track_writers[track_index].as_mut() {
+                                        writer.write_all(&data)?;
+                                    }
+                                }
+                                data_frames_remaining -= 1;
+                            } else {
+                                pad_frames_remaining -= 1;
+                            }
+                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                track_index += 1;
+                            }
+                            processed_frames = processed_frames.saturating_add(1);
+                            break;
                         }
-                        if let Some(writer) = track_writer.as_mut() {
+                        Ok(())
+                    })?;
+                    if processed_frames != expected_frames || track_index != layout.tracks.len() {
+                        return Err(RomWeaverError::Validation(
+                            "cd chd ended before all track frames were decoded".to_string(),
+                        ));
+                    }
+                    for writer in &mut track_writers {
+                        if let Some(writer) = writer.as_mut() {
                             writer.flush()?;
                         }
                     }
@@ -972,7 +1004,6 @@
                 Ok((omitted_subcode, produced_outputs, wrote_single_bin_output))
             })();
 
-            let _ = fs::remove_file(&temp_path);
             let (omitted_subcode, produced_outputs, wrote_single_bin_output) = build_result?;
             if selection_requested && produced_outputs.is_empty() {
                 return Err(RomWeaverError::Validation(
@@ -1072,7 +1103,6 @@
                 .filter(|value| !value.is_empty())
                 .unwrap_or("output");
             let gdi_path = request.out_dir.join(format!("{stem}.gdi"));
-            let temp_path = self.create_temp_file_path("gd-extract", ".bin");
             let extract_progress = self.progress_bytes_callback(
                 context,
                 &execution,
@@ -1081,15 +1111,6 @@
                 header.logical_bytes,
                 format!("extracting `{}`", CHD.name),
             );
-            let extract_result = chd.extract_to_file_with_progress(
-                &temp_path,
-                execution.effective_threads,
-                Some(&extract_progress),
-            );
-            if extract_result.is_err() {
-                let _ = fs::remove_file(&temp_path);
-            }
-            let _ = extract_result?;
 
             let selection_requested = !request.selections.is_empty();
             let gdi_name = format!("{stem}.gdi");
@@ -1110,12 +1131,10 @@
             selections.ensure_all_matched()?;
 
             let build_result: Result<(bool, Vec<PathBuf>)> = (|| {
-                let mut reader = BufReader::new(File::open(&temp_path)?);
-                let mut frame = vec![0_u8; Self::CD_FRAME_BYTES as usize];
                 let mut omitted_subcode = false;
-                let mut physframeofs = 0_u32;
                 let mut produced_outputs = Vec::new();
                 let mut gdi_lines = Vec::new();
+                let mut physframeofs = 0_u32;
 
                 for (track_index, track) in layout.tracks.iter().enumerate() {
                     let (track_type, sector_size) = track.mode.gdi_track_descriptor()?;
@@ -1127,32 +1146,78 @@
                             track.number, physframeofs, track_type, sector_size, track_name
                         ));
                     }
-                    let track_path = request.out_dir.join(track_name);
-                    let mut track_writer = if track_selected {
+                    physframeofs = physframeofs.saturating_add(track.frames);
+                }
+
+                let mut track_writers = Vec::with_capacity(layout.tracks.len());
+                for (track_index, track_name) in track_names.iter().enumerate() {
+                    if write_tracks[track_index] {
+                        let track_path = request.out_dir.join(track_name);
                         produced_outputs.push(track_path.clone());
-                        Some(BufWriter::new(File::create(track_path)?))
+                        track_writers.push(Some(BufWriter::new(File::create(track_path)?)));
                     } else {
-                        None
-                    };
-                    let data_frames = track.frames.saturating_sub(track.pad_frames);
-                    for _ in 0..data_frames {
-                        reader.read_exact(&mut frame)?;
-                        let data = &mut frame[..track.mode.data_bytes()];
-                        if track_selected && track.has_subcode {
-                            omitted_subcode = true;
-                        }
-                        track.mode.swap_audio_bytes(data);
-                        if let Some(writer) = track_writer.as_mut() {
-                            writer.write_all(data)?;
-                        }
+                        track_writers.push(None);
                     }
-                    for _ in 0..track.pad_frames {
-                        reader.read_exact(&mut frame)?;
+                }
+
+                let expected_frames = layout
+                    .tracks
+                    .iter()
+                    .fold(0_u64, |total, track| total.saturating_add(u64::from(track.frames)));
+                let mut processed_frames = 0_u64;
+                let mut track_index = 0_usize;
+                let mut data_frames_remaining = 0_u32;
+                let mut pad_frames_remaining = 0_u32;
+                self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
+                    loop {
+                        if track_index >= layout.tracks.len() {
+                            return Err(RomWeaverError::Validation(
+                                "gd chd yielded more frames than described by metadata".to_string(),
+                            ));
+                        }
+                        if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                            let track = &layout.tracks[track_index];
+                            data_frames_remaining = track.frames.saturating_sub(track.pad_frames);
+                            pad_frames_remaining = track.pad_frames;
+                        }
+                        if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                            track_index += 1;
+                            continue;
+                        }
+
+                        let track = &layout.tracks[track_index];
+                        if data_frames_remaining > 0 {
+                            if write_tracks[track_index] {
+                                let mut data = frame[..track.mode.data_bytes()].to_vec();
+                                if track.has_subcode {
+                                    omitted_subcode = true;
+                                }
+                                track.mode.swap_audio_bytes(&mut data);
+                                if let Some(writer) = track_writers[track_index].as_mut() {
+                                    writer.write_all(&data)?;
+                                }
+                            }
+                            data_frames_remaining -= 1;
+                        } else {
+                            pad_frames_remaining -= 1;
+                        }
+                        if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                            track_index += 1;
+                        }
+                        processed_frames = processed_frames.saturating_add(1);
+                        break;
                     }
-                    if let Some(writer) = track_writer.as_mut() {
+                    Ok(())
+                })?;
+                if processed_frames != expected_frames || track_index != layout.tracks.len() {
+                    return Err(RomWeaverError::Validation(
+                        "gd chd ended before all track frames were decoded".to_string(),
+                    ));
+                }
+                for writer in &mut track_writers {
+                    if let Some(writer) = writer.as_mut() {
                         writer.flush()?;
                     }
-                    physframeofs = physframeofs.saturating_add(track.frames);
                 }
 
                 if write_gdi {
@@ -1169,7 +1234,6 @@
                 Ok((omitted_subcode, produced_outputs))
             })();
 
-            let _ = fs::remove_file(&temp_path);
             let (omitted_subcode, produced_outputs) = build_result?;
             if selection_requested && produced_outputs.is_empty() {
                 return Err(RomWeaverError::Validation(

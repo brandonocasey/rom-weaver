@@ -1920,17 +1920,15 @@
             &self,
             output_file: &mut File,
             output_path: &Path,
-            source_path: &Path,
-            logical_bytes: u64,
+            raw_sha1: &[u8; Self::CHD_SHA1_BYTES],
             metadata_entries: &[RustMetadataEntry],
         ) -> Result<()> {
-            let raw_sha1 = Self::sha1_file_prefix(source_path, logical_bytes)?;
-            let overall_sha1 = Self::compute_overall_sha1(&raw_sha1, metadata_entries);
+            let overall_sha1 = Self::compute_overall_sha1(raw_sha1, metadata_entries);
             self.patch_chd_header_bytes(
                 output_file,
                 output_path,
                 Self::CHD_V5_HEADER_RAW_SHA1_OFFSET,
-                &raw_sha1,
+                raw_sha1,
                 "raw sha1",
             )?;
             self.patch_chd_header_bytes(
@@ -1968,42 +1966,6 @@
             let mut out = [0_u8; Self::CHD_SHA1_BYTES];
             out.copy_from_slice(&digest);
             out
-        }
-
-        fn sha1_file_prefix(
-            source_path: &Path,
-            logical_bytes: u64,
-        ) -> Result<[u8; Self::CHD_SHA1_BYTES]> {
-            let mut reader = BufReader::new(File::open(source_path).map_err(|error| {
-                RomWeaverError::Validation(format!(
-                    "failed to open `{}` for CHD sha1: {error}",
-                    source_path.display()
-                ))
-            })?);
-            let mut sha1 = Sha1::new();
-            let mut remaining = logical_bytes;
-            let mut buffer = [0_u8; 64 * 1024];
-            while remaining > 0 {
-                let read_len =
-                    usize::try_from(remaining.min(buffer.len() as u64)).map_err(|_| {
-                        RomWeaverError::Validation("CHD sha1 read length overflow".to_string())
-                    })?;
-                reader
-                    .read_exact(&mut buffer[..read_len])
-                    .map_err(|error| {
-                        RomWeaverError::Validation(format!(
-                            "failed to read `{}` for CHD sha1: {error}",
-                            source_path.display()
-                        ))
-                    })?;
-                sha1.update(&buffer[..read_len]);
-                remaining = remaining.saturating_sub(read_len as u64);
-            }
-
-            let digest = sha1.finalize();
-            let mut out = [0_u8; Self::CHD_SHA1_BYTES];
-            out.copy_from_slice(&digest);
-            Ok(out)
         }
 
         fn patch_chd_header_u64(

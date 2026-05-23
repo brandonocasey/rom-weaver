@@ -7,6 +7,29 @@
             create_kind: &ChdCreateKind,
             on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
         ) -> Result<ChdHeader> {
+            let mut source = BufReader::new(File::open(input).map_err(|error| {
+                RomWeaverError::Validation(format!("failed to open `{}`: {error}", input.display()))
+            })?);
+            let source_label = input.display().to_string();
+            self.create_uncompressed_rust_stream(
+                &mut source,
+                &source_label,
+                output,
+                logical_bytes,
+                create_kind,
+                on_progress,
+            )
+        }
+
+        fn create_uncompressed_rust_stream(
+            &self,
+            source: &mut dyn Read,
+            source_label: &str,
+            output: &Path,
+            logical_bytes: u64,
+            create_kind: &ChdCreateKind,
+            on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
+        ) -> Result<ChdHeader> {
             if matches!(create_kind, ChdCreateKind::Av(_)) {
                 return Err(RomWeaverError::Unsupported(
                     "rust chd create currently supports only raw/dvd/hd/disc `store` mode".into(),
@@ -104,11 +127,9 @@
                 }
             }
 
-            let mut reader = BufReader::new(File::open(input).map_err(|error| {
-                RomWeaverError::Validation(format!("failed to open `{}`: {error}", input.display()))
-            })?);
             let mut buffer = vec![0_u8; usize::try_from(hunk_bytes).unwrap_or(4096)];
             let mut remaining = logical_bytes;
+            let mut raw_sha1 = Sha1::new();
             for _ in 0..hunk_count {
                 buffer.fill(0);
                 let read_len =
@@ -117,14 +138,14 @@
                             "decoded CHD chunk exceeded addressable memory".to_string(),
                         )
                     })?;
-                reader
+                source
                     .read_exact(&mut buffer[..read_len])
                     .map_err(|error| {
                         RomWeaverError::Validation(format!(
-                            "failed to read source `{}`: {error}",
-                            input.display()
+                            "failed to read source `{source_label}`: {error}",
                         ))
                     })?;
+                raw_sha1.update(&buffer[..read_len]);
                 output_file.write_all(&buffer).map_err(|error| {
                     RomWeaverError::Validation(format!(
                         "failed to write CHD data to `{}`: {error}",
@@ -148,11 +169,13 @@
                     "metadata",
                 )?;
             }
+            let raw_sha1 = raw_sha1.finalize();
+            let mut raw_sha1_bytes = [0_u8; Self::CHD_SHA1_BYTES];
+            raw_sha1_bytes.copy_from_slice(&raw_sha1);
             self.patch_chd_header_sha1s(
                 &mut output_file,
                 output,
-                input,
-                logical_bytes,
+                &raw_sha1_bytes,
                 &metadata_entries,
             )?;
             output_file.flush().map_err(|error| {
@@ -279,6 +302,37 @@
             parent_source: Option<&Path>,
             on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
         ) -> Result<ChdHeader> {
+            let mut source = BufReader::new(File::open(input).map_err(|error| {
+                RomWeaverError::Validation(format!("failed to open `{}`: {error}", input.display()))
+            })?);
+            let source_label = input.display().to_string();
+            self.create_compressed_rust_stream(
+                &mut source,
+                &source_label,
+                output,
+                logical_bytes,
+                create_kind,
+                codecs,
+                compression_level,
+                thread_count,
+                parent_source,
+                on_progress,
+            )
+        }
+
+        fn create_compressed_rust_stream(
+            &self,
+            source: &mut dyn Read,
+            source_label: &str,
+            output: &Path,
+            logical_bytes: u64,
+            create_kind: &ChdCreateKind,
+            codecs: [ChdCodec; CHD_MAX_COMPRESSORS],
+            compression_level: i32,
+            thread_count: usize,
+            parent_source: Option<&Path>,
+            on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
+        ) -> Result<ChdHeader> {
             let mut active_codecs = Vec::new();
             for (index, codec) in codecs.into_iter().enumerate() {
                 if codec == ChdCodec::NONE {
@@ -362,9 +416,6 @@
                     ))
                 })?;
 
-            let mut source = BufReader::new(File::open(input).map_err(|error| {
-                RomWeaverError::Validation(format!("failed to open `{}`: {error}", input.display()))
-            })?);
             let effective_threads = thread_count.max(1).min(hunk_count_usize.max(1));
             let pool = if effective_threads > 1 {
                 Some(
@@ -389,6 +440,7 @@
                 HashMap::<HunkHashKey, u64>::with_capacity(hunk_count_usize);
             let parent_hunks_by_hash = parent_reuse.as_ref().map(|value| &value.by_hash);
             let mut next_hunk = 0usize;
+            let mut raw_sha1 = Sha1::new();
             while next_hunk < hunk_count_usize {
                 let this_batch = (hunk_count_usize - next_hunk).min(batch_size);
                 enum BatchHunkEntry {
@@ -407,10 +459,10 @@
                         })?;
                     source.read_exact(&mut hunk[..read_len]).map_err(|error| {
                         RomWeaverError::Validation(format!(
-                            "failed to read source `{}`: {error}",
-                            input.display()
+                            "failed to read source `{source_label}`: {error}",
                         ))
                     })?;
+                    raw_sha1.update(&hunk[..read_len]);
                     remaining = remaining.saturating_sub(read_len as u64);
                     if let Some(on_progress) = on_progress {
                         on_progress(read_len as u64);
@@ -607,11 +659,13 @@
                     "metadata",
                 )?;
             }
+            let raw_sha1 = raw_sha1.finalize();
+            let mut raw_sha1_bytes = [0_u8; Self::CHD_SHA1_BYTES];
+            raw_sha1_bytes.copy_from_slice(&raw_sha1);
             self.patch_chd_header_sha1s(
                 &mut output_file,
                 output,
-                input,
-                logical_bytes,
+                &raw_sha1_bytes,
                 &metadata_entries,
             )?;
             output_file.flush().map_err(|error| {
