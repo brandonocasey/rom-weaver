@@ -137,6 +137,15 @@ impl StreamContainerHandler {
         }
     }
 
+    fn libarchive_read_filter(&self) -> LibarchiveReadFilter {
+        match self.compression {
+            StreamCompression::Gzip => LibarchiveReadFilter::Gzip,
+            StreamCompression::Bzip2 => LibarchiveReadFilter::Bzip2,
+            StreamCompression::Xz => LibarchiveReadFilter::Xz,
+            StreamCompression::Zstd => LibarchiveReadFilter::Zstd,
+        }
+    }
+
     fn extract_thread_capability(&self) -> ThreadCapability {
         match self.compression {
             StreamCompression::Gzip
@@ -158,53 +167,6 @@ impl StreamContainerHandler {
     fn codec_backend(&self) -> Result<Arc<dyn CodecBackend>> {
         let codec = self.backend_codec_name();
         resolve_container_codec_backend(self.descriptor.name, codec)
-    }
-
-    fn xz_thread_count(effective_threads: usize) -> u32 {
-        match u32::try_from(effective_threads) {
-            Ok(count) => count.clamp(1, 256),
-            Err(_) => 256,
-        }
-    }
-
-    fn open_reader_with_execution(
-        &self,
-        source: &Path,
-        execution: Option<&mut ThreadExecution>,
-    ) -> Result<Box<dyn Read>> {
-        let reader: Box<dyn Read> = match self.compression {
-            StreamCompression::Gzip => {
-                Box::new(MultiGzDecoder::new(BufReader::new(File::open(source)?)))
-            }
-            StreamCompression::Bzip2 => {
-                Box::new(Bzip2Decoder::new(BufReader::new(File::open(source)?)))
-            }
-            StreamCompression::Xz => {
-                if let Some(execution) = execution {
-                    if execution.used_parallelism {
-                        let workers = Self::xz_thread_count(execution.effective_threads);
-                        let source_reader = BufReader::new(File::open(source)?);
-                        match XzReaderMt::new(source_reader, false, workers) {
-                            Ok(reader) => Box::new(reader),
-                            Err(error) => {
-                                execution.apply_pool_fallback(format!(
-                                    "xz decoder rejected multithread setting: {error}"
-                                ));
-                                Box::new(XzReader::new(BufReader::new(File::open(source)?), false))
-                            }
-                        }
-                    } else {
-                        Box::new(XzReader::new(BufReader::new(File::open(source)?), false))
-                    }
-                } else {
-                    Box::new(XzReader::new(BufReader::new(File::open(source)?), false))
-                }
-            }
-            StreamCompression::Zstd => Box::new(zstd::stream::Decoder::new(BufReader::new(
-                File::open(source)?,
-            ))?),
-        };
-        Ok(reader)
     }
 
     fn output_name(&self, source: &Path) -> String {
@@ -267,12 +229,14 @@ impl ContainerHandler for StreamContainerHandler {
     fn inspect(
         &self,
         request: &ContainerInspectRequest,
-        context: &OperationContext,
+        _context: &OperationContext,
     ) -> Result<OperationReport> {
         let compressed_bytes = fs::metadata(&request.source)?.len();
-        let mut execution = context.plan_threads(self.extract_thread_capability());
-        let mut reader = self.open_reader_with_execution(&request.source, Some(&mut execution))?;
-        let logical_bytes = io::copy(&mut reader, &mut io::sink())?;
+        let logical_bytes = inspect_stream_with_libarchive(
+            &request.source,
+            self.descriptor.name,
+            self.libarchive_read_filter(),
+        )?;
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,

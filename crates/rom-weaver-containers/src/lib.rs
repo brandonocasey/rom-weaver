@@ -8,20 +8,17 @@ use std::{
     path::{Component, Path, PathBuf},
     ptr,
     sync::{
+        atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering},
         Arc, Mutex,
-        atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
 use akv::reader::ArchiveReader as LibarchiveReadArchive;
-use bzip2::read::MultiBzDecoder as Bzip2Decoder;
 use ciso::{read::CSOReader as CsoReader, split::SplitFileReader};
-use flate2::read::MultiGzDecoder;
 use lz4_flex::frame::{
     BlockMode as Lz4BlockMode, BlockSize as Lz4BlockSize, FrameEncoder as Lz4FrameEncoder,
     FrameInfo as Lz4FrameInfo,
 };
-use lzma_rust2::{XzReader, XzReaderMt};
 use nod::{
     common::{Compression as NodCompression, Format as NodFormat},
     read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
@@ -35,30 +32,35 @@ use rayon::prelude::*;
 use rom_weaver_chd::ChdCodec;
 use rom_weaver_chd::ChdContainerHandler;
 use rom_weaver_codecs::{
-    CanonicalCodec, CodecRegistry, RequestedCodec, decode_deflate_into_buffer,
-    normalize_codec_label, parse_requested_codec,
+    decode_deflate_into_buffer, normalize_codec_label, parse_requested_codec, CanonicalCodec,
+    CodecRegistry, RequestedCodec,
 };
 use rom_weaver_core::{
-    CodecBackend, CodecOperationRequest, ContainerCapabilities, ContainerCreateRequest,
-    ContainerExtractRequest, ContainerHandler, ContainerInspectRequest, FormatDescriptor,
-    OperationContext, OperationFamily, OperationReport, OperationStatus, OrderedChunkWriter,
-    ProbeConfidence, ProgressEvent, Result, RomWeaverError, ThreadCapability, ThreadExecution,
-    bounded_items_for_threads,
+    bounded_items_for_threads, CodecBackend, CodecOperationRequest, ContainerCapabilities,
+    ContainerCreateRequest, ContainerExtractRequest, ContainerHandler, ContainerInspectRequest,
+    FormatDescriptor, OperationContext, OperationFamily, OperationReport, OperationStatus,
+    OrderedChunkWriter, ProbeConfidence, ProgressEvent, Result, RomWeaverError, ThreadCapability,
+    ThreadExecution,
 };
 use rom_weaver_libarchive_sys::{
+    archive, archive_entry_free, archive_entry_new, archive_entry_set_filetype,
+    archive_entry_set_pathname, archive_entry_set_perm, archive_entry_set_size, archive_errno,
+    archive_error_string, archive_read_close, archive_read_data, archive_read_free,
+    archive_read_new, archive_read_next_header, archive_read_open_filename,
+    archive_read_support_filter_bzip2, archive_read_support_filter_gzip,
+    archive_read_support_filter_xz, archive_read_support_filter_zstd,
+    archive_read_support_format_raw, archive_write_add_filter_bzip2, archive_write_add_filter_gzip,
+    archive_write_add_filter_none, archive_write_add_filter_xz, archive_write_close,
+    archive_write_data, archive_write_finish_entry, archive_write_free, archive_write_header,
+    archive_write_new, archive_write_open_filename, archive_write_set_filter_option,
+    archive_write_set_format_7zip, archive_write_set_format_option,
+    archive_write_set_format_pax_restricted, archive_write_set_format_zip, ARCHIVE_EOF,
     ARCHIVE_FORMAT_7ZIP, ARCHIVE_FORMAT_BASE_MASK, ARCHIVE_FORMAT_RAR, ARCHIVE_FORMAT_RAR_V5,
-    ARCHIVE_FORMAT_TAR, ARCHIVE_FORMAT_ZIP, ARCHIVE_OK, ARCHIVE_WARN, archive, archive_entry_free,
-    archive_entry_new, archive_entry_set_filetype, archive_entry_set_pathname,
-    archive_entry_set_perm, archive_entry_set_size, archive_errno, archive_error_string,
-    archive_write_add_filter_bzip2, archive_write_add_filter_gzip, archive_write_add_filter_none,
-    archive_write_add_filter_xz, archive_write_close, archive_write_data,
-    archive_write_finish_entry, archive_write_free, archive_write_header, archive_write_new,
-    archive_write_open_filename, archive_write_set_filter_option, archive_write_set_format_7zip,
-    archive_write_set_format_option, archive_write_set_format_pax_restricted,
-    archive_write_set_format_zip,
+    ARCHIVE_FORMAT_TAR, ARCHIVE_FORMAT_ZIP, ARCHIVE_OK, ARCHIVE_WARN,
 };
 use xdvdfs::{
-    blockdev::OffsetWrapper as XdvdfsOffsetWrapper, write::fs::XDVDFSFilesystem as XdvdfsFilesystem,
+    blockdev::OffsetWrapper as XdvdfsOffsetWrapper,
+    write::fs::XDVDFSFilesystem as XdvdfsFilesystem,
 };
 use zeekstd::{Decoder as ZeekstdDecoder, SeekTable as ZeekstdSeekTable};
 use zstd::bulk::compress as zstd_compress;
@@ -584,7 +586,11 @@ fn character_class_matches(class: &[char], value: char) -> bool {
         index += 1;
     }
 
-    if negated { !matched } else { matched }
+    if negated {
+        !matched
+    } else {
+        matched
+    }
 }
 
 #[derive(Debug, Default)]
@@ -736,6 +742,14 @@ impl LibarchiveCreateFilter {
             Self::Xz => Some("xz"),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LibarchiveReadFilter {
+    Gzip,
+    Bzip2,
+    Xz,
+    Zstd,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1357,6 +1371,153 @@ fn path_to_libarchive_cstring(path: &Path, label: &str) -> Result<CString> {
             path.display()
         ))
     })
+}
+
+fn libarchive_open_read_stream(
+    source: &Path,
+    format_name: &str,
+    filter: LibarchiveReadFilter,
+) -> Result<*mut archive> {
+    let archive_ptr = unsafe { archive_read_new() };
+    if archive_ptr.is_null() {
+        return Err(RomWeaverError::Validation(format!(
+            "{format_name} inspect failed: libarchive reader allocation returned null"
+        )));
+    }
+
+    let source_path = path_to_libarchive_cstring(source, "container source")?;
+    let setup_result = (|| -> Result<()> {
+        libarchive_check_status(
+            unsafe { archive_read_support_format_raw(archive_ptr) },
+            archive_ptr,
+            &format!("{format_name} inspect failed while enabling raw format"),
+        )?;
+        match filter {
+            LibarchiveReadFilter::Gzip => libarchive_check_status(
+                unsafe { archive_read_support_filter_gzip(archive_ptr) },
+                archive_ptr,
+                &format!("{format_name} inspect failed while enabling gzip filter"),
+            )?,
+            LibarchiveReadFilter::Bzip2 => libarchive_check_status(
+                unsafe { archive_read_support_filter_bzip2(archive_ptr) },
+                archive_ptr,
+                &format!("{format_name} inspect failed while enabling bzip2 filter"),
+            )?,
+            LibarchiveReadFilter::Xz => libarchive_check_status(
+                unsafe { archive_read_support_filter_xz(archive_ptr) },
+                archive_ptr,
+                &format!("{format_name} inspect failed while enabling xz filter"),
+            )?,
+            LibarchiveReadFilter::Zstd => libarchive_check_status(
+                unsafe { archive_read_support_filter_zstd(archive_ptr) },
+                archive_ptr,
+                &format!("{format_name} inspect failed while enabling zstd filter"),
+            )?,
+        }
+        libarchive_check_status(
+            unsafe {
+                archive_read_open_filename(
+                    archive_ptr,
+                    source_path.as_ptr(),
+                    LIBARCHIVE_EXTRACT_IO_BUFFER_BYTES,
+                )
+            },
+            archive_ptr,
+            &format!(
+                "{format_name} inspect failed while opening input `{}`",
+                source.display()
+            ),
+        )?;
+        Ok(())
+    })();
+
+    if let Err(error) = setup_result {
+        let _ = unsafe { archive_read_free(archive_ptr) };
+        return Err(error);
+    }
+    Ok(archive_ptr)
+}
+
+fn libarchive_close_read_stream(archive_ptr: *mut archive, format_name: &str) -> Result<()> {
+    let close_result = libarchive_check_status(
+        unsafe { archive_read_close(archive_ptr) },
+        archive_ptr,
+        &format!("{format_name} inspect failed while closing reader"),
+    );
+    let free_result = libarchive_check_status(
+        unsafe { archive_read_free(archive_ptr) },
+        archive_ptr,
+        &format!("{format_name} inspect failed while releasing reader"),
+    );
+    close_result.and(free_result)
+}
+
+fn inspect_stream_with_libarchive(
+    source: &Path,
+    format_name: &str,
+    filter: LibarchiveReadFilter,
+) -> Result<u64> {
+    let archive_ptr = libarchive_open_read_stream(source, format_name, filter)?;
+    let result = (|| -> Result<u64> {
+        let mut entry: *mut rom_weaver_libarchive_sys::archive_entry = ptr::null_mut();
+        let next_status = unsafe { archive_read_next_header(archive_ptr, &mut entry) };
+        if next_status == ARCHIVE_EOF {
+            return Err(RomWeaverError::Validation(format!(
+                "{format_name} inspect found no compressed payload entries"
+            )));
+        }
+        libarchive_check_status(
+            next_status,
+            archive_ptr,
+            &format!("{format_name} inspect failed while reading header"),
+        )?;
+
+        let mut total = 0_u64;
+        let mut buffer = vec![0_u8; LIBARCHIVE_EXTRACT_IO_BUFFER_BYTES];
+        loop {
+            let bytes =
+                unsafe { archive_read_data(archive_ptr, buffer.as_mut_ptr().cast(), buffer.len()) };
+            if bytes == 0 {
+                break;
+            }
+            if bytes < 0 {
+                return Err(libarchive_error(
+                    archive_ptr,
+                    &format!("{format_name} inspect failed while reading payload"),
+                ));
+            }
+            let bytes = usize::try_from(bytes).map_err(|_| {
+                RomWeaverError::Validation(format!(
+                    "{format_name} inspect failed: libarchive returned an invalid read length"
+                ))
+            })?;
+            if bytes > buffer.len() {
+                return Err(RomWeaverError::Validation(format!(
+                    "{format_name} inspect failed: libarchive returned a read length larger than the buffer"
+                )));
+            }
+            let bytes_u64 = u64::try_from(bytes).map_err(|_| {
+                RomWeaverError::Validation(format!(
+                    "{format_name} inspect failed: decoded size exceeded u64 range"
+                ))
+            })?;
+            total = total.checked_add(bytes_u64).ok_or_else(|| {
+                RomWeaverError::Validation(format!(
+                    "{format_name} inspect failed: uncompressed size overflowed u64"
+                ))
+            })?;
+        }
+        Ok(total)
+    })();
+
+    match (
+        result,
+        libarchive_close_read_stream(archive_ptr, format_name),
+    ) {
+        (Ok(bytes), Ok(())) => Ok(bytes),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
 }
 
 fn emit_container_running_progress(
