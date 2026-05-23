@@ -51,14 +51,9 @@ async function main() {
     returnOnExit: true,
   });
 
-  const envImports = {
-    ...createWasmEnvImports(),
-    __archive_write_entry_filetype_unsupported: () => 0,
-  };
-
   const instance = await WebAssembly.instantiate(module, {
     wasi_snapshot_preview1: wasi.wasiImport,
-    env: envImports,
+    env: createWasmEnvImports(),
   });
 
   const exitCode = wasi.start(instance);

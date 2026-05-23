@@ -80,6 +80,8 @@ fn prepare_wasm_source_tree(libarchive_dir: &Path, out_dir: &Path) -> PathBuf {
     }
     copy_dir_recursive(libarchive_dir, &staged)
         .expect("failed to stage libarchive source tree for wasm");
+    add_wasm_archive_write_format_shim(&staged.join("libarchive"))
+        .expect("failed to add wasm libarchive format shim");
     patch_cmakelists_for_wasm(&staged.join("libarchive/CMakeLists.txt"))
         .expect("failed to patch libarchive CMakeLists.txt for wasm");
     staged
@@ -98,6 +100,33 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> 
             fs::copy(&entry_path, &target_path)?;
         }
     }
+    Ok(())
+}
+
+fn add_wasm_archive_write_format_shim(libarchive_source_dir: &Path) -> std::io::Result<()> {
+    fs::write(
+        libarchive_source_dir.join("archive_write_set_format_wasm_shim.c"),
+        r#"#include "archive_platform.h"
+
+#include "archive.h"
+#include "archive_entry.h"
+
+/*
+ * archive_write_set_format.c pulls in setters for every write format, which is
+ * too broad for the wasm build we stage here. Some retained format writers
+ * still reference this internal helper for unsupported file-type diagnostics,
+ * so provide the small helper locally and keep normal file writes self-contained.
+ */
+void
+__archive_write_entry_filetype_unsupported(struct archive *a,
+    struct archive_entry *entry, const char *format)
+{
+	(void)a;
+	(void)entry;
+	(void)format;
+}
+"#,
+    )?;
     Ok(())
 }
 
@@ -120,14 +149,18 @@ fn patch_cmakelists_for_wasm(cmakelists_path: &Path) -> std::io::Result<()> {
         "filter_fork.h",
     ];
     let content = fs::read_to_string(cmakelists_path)?;
-    let filtered = content
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !drop_entries.iter().any(|entry| trimmed == *entry)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let mut lines = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if drop_entries.iter().any(|entry| trimmed == *entry) {
+            continue;
+        }
+        lines.push(line);
+        if trimmed == "archive_write_set_format_private.h" {
+            lines.push("  archive_write_set_format_wasm_shim.c");
+        }
+    }
+    let filtered = lines.join("\n");
     fs::write(cmakelists_path, format!("{filtered}\n"))?;
     Ok(())
 }
