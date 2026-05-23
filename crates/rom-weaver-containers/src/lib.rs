@@ -43,8 +43,8 @@ use rom_weaver_core::{
     CodecBackend, CodecOperationRequest, ContainerCapabilities, ContainerCreateRequest,
     ContainerExtractRequest, ContainerHandler, ContainerInspectRequest, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, OperationStatus, OrderedChunkWriter,
-    ProbeConfidence, ProgressEvent, Result, RomWeaverError, SharedThreadPool, ThreadCapability,
-    ThreadExecution, bounded_items_for_threads,
+    ProbeConfidence, ProgressEvent, Result, RomWeaverError, ThreadCapability, ThreadExecution,
+    bounded_items_for_threads,
 };
 use rom_weaver_libarchive_sys::{
     ARCHIVE_FORMAT_7ZIP, ARCHIVE_FORMAT_BASE_MASK, ARCHIVE_FORMAT_RAR, ARCHIVE_FORMAT_RAR_V5,

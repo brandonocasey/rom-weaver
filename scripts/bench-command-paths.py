@@ -62,11 +62,6 @@ CHECKSUM_MODE_VALUES = ["raw", "auto-extract", "archive-no-extract"]
 CONTAINER_FORMAT_ALIASES = {"z3d3": "z3ds"}
 DEFAULT_CHECKSUM_COMBO_ALGOS = ["crc32", "md5", "sha1"]
 DEFAULT_CHECKSUM_COMBO_ALGOS_CSV = ",".join(DEFAULT_CHECKSUM_COMBO_ALGOS)
-WASI_LIBARCHIVE_DEFLATE_FORMATS = {"7z", "zip", "zipx", "tar.gz", "gz"}
-WASI_LIBARCHIVE_DEFLATE_REASON = (
-    "known WASI limitation: libarchive deflate/gzip backend fails to initialize in the current wasm build"
-)
-
 CONTAINER_FORMATS = [
     "zip",
     "zipx",
@@ -632,12 +627,6 @@ def parse_optional_checksum_combo_algos(raw: str) -> list[str]:
     if trimmed in {"", "none", "off", "false", "0"}:
         return []
     return parse_value_filter(raw, CHECKSUM_ALGORITHMS, "--checksum-combo-algos")
-
-
-def wasm_expected_skip_reason(format_name: str, codec_label: str) -> str | None:
-    if format_name in WASI_LIBARCHIVE_DEFLATE_FORMATS and codec_label == "deflate":
-        return WASI_LIBARCHIVE_DEFLATE_REASON
-    return None
 
 
 def ensure_binary(bin_path: Path, skip_build: bool) -> None:
@@ -1977,20 +1966,6 @@ def main() -> None:
                         )
                 else:
                     for codec_label, codec_value in rom_weaver_codec_cases_for_format(format_name):
-                        skip_reason = wasm_expected_skip_reason(format_name, codec_label)
-                        if skip_reason is not None:
-                            rows.append(
-                                skipped_row(
-                                    "compress",
-                                    format_codec_path_id(format_name, codec_label),
-                                    skip_reason,
-                                    args.warmups,
-                                    args.iterations,
-                                    tool="rom-weaver-wasm",
-                                )
-                            )
-                            continue
-
                         def make_wasm_command(
                             iteration: int,
                             warmup: bool,
@@ -2295,20 +2270,6 @@ def main() -> None:
                 assert wasm_runner is not None
                 assert wasm_module is not None
                 for codec_label, _codec_value in rom_weaver_codec_cases_for_format(format_name):
-                    skip_reason = wasm_expected_skip_reason(format_name, codec_label)
-                    if skip_reason is not None:
-                        rows.append(
-                            skipped_row(
-                                "extract",
-                                format_codec_path_id(format_name, codec_label),
-                                skip_reason,
-                                args.warmups,
-                                args.iterations,
-                                tool="rom-weaver-wasm",
-                            )
-                        )
-                        continue
-
                     source = archive_sources.get((format_name, codec_label))
                     if source is None:
                         rows.append(
