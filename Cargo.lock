@@ -1643,10 +1643,10 @@ dependencies = [
  "chd",
  "flacenc",
  "flate2",
- "lzma-rust2",
  "rayon",
  "rom-weaver-codecs",
  "rom-weaver-core",
+ "rom-weaver-libarchive-sys",
  "sha1",
  "zstd",
 ]
