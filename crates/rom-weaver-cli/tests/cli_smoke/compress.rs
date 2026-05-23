@@ -67,18 +67,14 @@ fn compress_gcz_warns_and_rejects_output() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "gcz");
     assert_eq!(json["status"], "failed");
-    assert!(
-        json["label"]
-            .as_str()
-            .expect("label")
-            .contains("warning: gcz compression is not supported")
-    );
-    assert!(
-        json["label"]
-            .as_str()
-            .expect("label")
-            .contains("--format rvz")
-    );
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("warning: gcz compression is not supported"));
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("--format rvz"));
     assert!(!output_path.path().exists());
 }
 
@@ -331,12 +327,10 @@ fn compress_nfs_warns_and_rejects_output() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "nfs");
     assert_eq!(json["status"], "failed");
-    assert!(
-        json["label"]
-            .as_str()
-            .expect("label")
-            .contains("nfs compression is not supported")
-    );
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("nfs compression is not supported"));
     assert!(!output_path.path().exists());
 }
 
@@ -466,12 +460,10 @@ fn extract_xiso_invalid_source_emits_running_progress() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "xiso");
     assert_eq!(json["status"], "failed");
-    assert!(
-        json["label"]
-            .as_str()
-            .expect("label")
-            .contains("is not an Xbox XDVDFS image")
-    );
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("is not an Xbox XDVDFS image"));
 }
 
 #[test]
@@ -501,12 +493,10 @@ fn compress_rejects_unregistered_output_format() {
     assert_eq!(json["command"], "compress");
     assert_eq!(json["family"], "container");
     assert_eq!(json["status"], "failed");
-    assert!(
-        json["label"]
-            .as_str()
-            .expect("label")
-            .contains("requested output format is not registered")
-    );
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("requested output format is not registered"));
 }
 
 #[test]
@@ -783,12 +773,10 @@ fn compress_rejects_wua_output_format() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "wua");
     assert_eq!(json["status"], "failed");
-    assert!(
-        json["label"]
-            .as_str()
-            .expect("label")
-            .contains("requested output format is not registered")
-    );
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("requested output format is not registered"));
 }
 
 #[test]
@@ -822,12 +810,10 @@ fn compress_rejects_invalid_codec_level_value() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "failed");
-    assert!(
-        json["label"]
-            .as_str()
-            .expect("label")
-            .contains("not a valid integer")
-    );
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("not a valid integer"));
 }
 
 #[test]
@@ -1021,6 +1007,84 @@ fn archive_container_formats_round_trip() {
 
     for (format, archive_name, codec) in cases {
         run_archive_round_trip(format, archive_name, codec);
+    }
+}
+
+#[test]
+fn stream_formats_emit_incremental_running_progress() {
+    let cases = [
+        ("gz", "source.bin.gz", Some("gzip")),
+        ("bz2", "source.bin.bz2", Some("bzip2")),
+        ("xz", "source.bin.xz", Some("xz")),
+        ("zst", "source.bin.zst", Some("zstd")),
+    ];
+
+    for (format, archive_name, codec) in cases {
+        let temp = setup_temp_dir();
+        let payload = (0..(512 * 1024))
+            .map(|index| ((index * 13) % 251) as u8)
+            .collect::<Vec<_>>();
+        fs::write(temp.child("source.bin").path(), &payload).expect("fixture");
+        let archive = temp.child(archive_name);
+
+        let mut compress = Command::cargo_bin("rom-weaver").expect("binary");
+        compress
+            .arg("compress")
+            .arg(temp.child("source.bin").path())
+            .arg("--format")
+            .arg(format)
+            .arg("--output")
+            .arg(archive.path())
+            .arg("--threads")
+            .arg("8");
+        if let Some(codec) = codec {
+            compress.arg("--codec").arg(codec);
+        }
+        compress.arg("--json");
+        let compress_output = compress.assert().code(0).get_output().stdout.clone();
+        let compress_events = parse_json_lines(&compress_output);
+        assert_unique_integer_running_progress(
+            &compress_events,
+            "compress",
+            format,
+            &format!("creating `{format}`"),
+        );
+        let compress_json = compress_events.last().expect("compress terminal event");
+        assert_eq!(compress_json["status"], "succeeded");
+
+        let out_dir = temp.child("extract");
+        let extract_output = Command::cargo_bin("rom-weaver")
+            .expect("binary")
+            .args([
+                "extract",
+                archive.path().to_str().expect("path"),
+                "--select",
+                "source.bin",
+                "--out-dir",
+                out_dir.path().to_str().expect("path"),
+                "--threads",
+                "8",
+                "--json",
+            ])
+            .assert()
+            .code(0)
+            .get_output()
+            .stdout
+            .clone();
+
+        let extract_events = parse_json_lines(&extract_output);
+        assert_unique_integer_running_progress(
+            &extract_events,
+            "extract",
+            format,
+            &format!("extracting `{format}`"),
+        );
+        let extract_json = extract_events.last().expect("extract terminal event");
+        assert_eq!(extract_json["status"], "succeeded");
+        assert_eq!(
+            fs::read(out_dir.child("source.bin").path()).expect("read extract"),
+            payload
+        );
     }
 }
 
@@ -1443,12 +1507,10 @@ fn extract_recursively_handles_nested_containers() {
     assert_eq!(extract_json["family"], "container");
     assert_eq!(extract_json["format"], "7z");
     assert_eq!(extract_json["status"], "succeeded");
-    assert!(
-        extract_json["label"]
-            .as_str()
-            .expect("label")
-            .contains("recursively extracted 2 nested container(s)")
-    );
+    assert!(extract_json["label"]
+        .as_str()
+        .expect("label")
+        .contains("recursively extracted 2 nested container(s)"));
 
     assert_eq!(
         fs::read(out_dir.child("inner/disc/disc.bin").path()).expect("nested extract payload"),
