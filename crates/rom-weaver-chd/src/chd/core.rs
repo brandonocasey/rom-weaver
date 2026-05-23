@@ -21,7 +21,14 @@
         const CHD_V5_MAP_TYPE_UNCOMPRESSED: u8 = 4;
         const CHD_V5_MAP_TYPE_SELF: u8 = 5;
         const CHD_V5_MAP_TYPE_PARENT: u8 = 6;
-        const CHD_V5_MAP_TYPE_MAX: u8 = 6;
+        const CHD_V5_MAP_TYPE_RLE_SMALL: u8 = 7;
+        const CHD_V5_MAP_TYPE_RLE_LARGE: u8 = 8;
+        const CHD_V5_MAP_TYPE_SELF0: u8 = 9;
+        const CHD_V5_MAP_TYPE_SELF1: u8 = 10;
+        const CHD_V5_MAP_TYPE_PARENT_SELF: u8 = 11;
+        const CHD_V5_MAP_TYPE_PARENT0: u8 = 12;
+        const CHD_V5_MAP_TYPE_PARENT1: u8 = 13;
+        const CHD_V5_MAP_SYMBOL_COUNT: usize = 16;
         const CHD_V5_HEADER_MAP_OFFSET: u64 = 40;
         const CHD_V5_HEADER_META_OFFSET: u64 = 48;
         const CHD_V5_HEADER_RAW_SHA1_OFFSET: u64 = 64;

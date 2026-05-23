@@ -101,6 +101,14 @@
             }
         }
 
+        fn pregap_metadata_label(self) -> &'static str {
+            match self {
+                Self::Mode1Raw => "MODE1",
+                Self::Mode2Raw => "MODE2",
+                _ => self.metadata_label(),
+            }
+        }
+
         fn data_bytes(self) -> usize {
             match self {
                 Self::Mode1 | Self::Mode2Form1 => 2048,

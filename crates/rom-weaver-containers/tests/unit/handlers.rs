@@ -121,6 +121,37 @@ mod tests {
         );
     }
 
+    fn assert_chd_map_contains_self_copy(path: &Path) {
+        let mut file = File::open(path).expect("open chd");
+        let header = Header::try_read_header(&mut file).expect("read chd header");
+        let map = Map::try_read_map(&header, &mut file).expect("read chd map");
+        assert!(
+            map.iter().any(|entry| match entry {
+                MapEntry::V5Compressed(entry) => {
+                    entry.hunk_type().expect("map entry hunk type") as u8
+                        == CompressionTypeV5::CompressionSelf as u8
+                }
+                _ => false,
+            }),
+            "expected at least one self-copy map entry in `{}`",
+            path.display()
+        );
+    }
+
+    fn chd_v5_compressed_map_payload_bytes(path: &Path) -> u32 {
+        let mut file = File::open(path).expect("open chd");
+        let header = Header::try_read_header(&mut file).expect("read chd header");
+        let Header::V5Header(header) = header else {
+            panic!("expected v5 chd header");
+        };
+        file.seek(SeekFrom::Start(header.map_offset))
+            .expect("seek to chd map");
+        let mut map_bytes = [0_u8; 4];
+        file.read_exact(&mut map_bytes)
+            .expect("read compressed map length");
+        u32::from_be_bytes(map_bytes)
+    }
+
     fn decode_flac_frame_stream_to_pcm(
         encoded: &[u8],
         samples_per_channel: usize,
@@ -744,7 +775,8 @@ mod tests {
             ("tar.xz", Some("lzma2"), Some(6)),
         ] {
             let handler = registry.find_by_name(format).expect("archive handler");
-            let archive_path = temp_dir.join(format!("payload-{}.{}", format.replace('.', "-"), format));
+            let archive_path =
+                temp_dir.join(format!("payload-{}.{}", format.replace('.', "-"), format));
             handler
                 .create(
                     &ContainerCreateRequest {
@@ -772,7 +804,9 @@ mod tests {
                 "{format} list should include alpha.bin: {entries:?}"
             );
             assert!(
-                entries.iter().any(|entry| entry == "payload/nested/beta.bin"),
+                entries
+                    .iter()
+                    .any(|entry| entry == "payload/nested/beta.bin"),
                 "{format} list should include beta.bin: {entries:?}"
             );
         }
@@ -816,9 +850,11 @@ mod tests {
         let unsupported_error = handler
             .parse_codec(Some("lz4"), Some(6), &execution)
             .expect_err("unsupported codec should fail");
-        assert!(unsupported_error.to_string().contains(
-            "supported codecs are lzma2, lzma, store, zstd, deflate, bzip2, and ppmd"
-        ));
+        assert!(
+            unsupported_error.to_string().contains(
+                "supported codecs are lzma2, lzma, store, zstd, deflate, bzip2, and ppmd"
+            )
+        );
 
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -842,7 +878,11 @@ mod tests {
             );
         }
 
-        for codec in [CanonicalCodec::Lz4, CanonicalCodec::Brotli, CanonicalCodec::Huffman] {
+        for codec in [
+            CanonicalCodec::Lz4,
+            CanonicalCodec::Brotli,
+            CanonicalCodec::Huffman,
+        ] {
             assert_eq!(
                 SevenZContainerHandler::libarchive_method_name(codec),
                 None,
@@ -2932,9 +2972,9 @@ mod tests {
                 )
                 .expect_err("codec should be rejected");
             assert!(
-                error
-                    .to_string()
-                    .contains("supported codecs are lzma2, lzma, store, zstd, deflate, bzip2, and ppmd"),
+                error.to_string().contains(
+                    "supported codecs are lzma2, lzma, store, zstd, deflate, bzip2, and ppmd"
+                ),
                 "unexpected error for codec `{codec}`: {error}"
             );
         }
@@ -3389,6 +3429,50 @@ mod tests {
 
     #[cfg(not(target_family = "wasm"))]
     #[test]
+    fn chd_rust_compressed_create_compacts_repeated_map_hunks() {
+        let temp_dir = temp_dir_path("chd-rust-repeated-map");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let source_path = temp_dir.join("source.bin");
+        let archive_path = temp_dir.join("source.chd");
+        let extracted_path = temp_dir.join("extracted.bin");
+        let mut unique_hunks = Vec::with_capacity(128 * 4096);
+        for hunk_index in 0..128 {
+            unique_hunks.extend(std::iter::repeat(hunk_index as u8).take(4096));
+        }
+        let mut payload = Vec::with_capacity(unique_hunks.len() * 4);
+        for _ in 0..4 {
+            payload.extend_from_slice(&unique_hunks);
+        }
+        fs::write(&source_path, &payload).expect("write fixture");
+
+        let handler = super::ChdContainerHandler;
+        handler
+            .create_raw_with_rust_backend_codec_for_tests(
+                &source_path,
+                &archive_path,
+                ChdCodec::ZLIB,
+                6,
+                6,
+            )
+            .expect("create rust compressed chd");
+        assert_chd_map_contains_self_copy(&archive_path);
+        let map_payload_bytes = chd_v5_compressed_map_payload_bytes(&archive_path);
+        assert!(
+            map_payload_bytes < 512,
+            "expected repeated-hunk map payload to be compact, got {map_payload_bytes} bytes"
+        );
+
+        handler
+            .extract_raw_with_rust_backend_for_tests(&archive_path, &extracted_path, 6)
+            .expect("extract rust compressed chd");
+        let extracted = fs::read(&extracted_path).expect("read extracted output");
+        assert_eq!(extracted, payload);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
     fn chd_extract_with_parent_option_rejects_non_parented_chd() {
         let temp_dir = temp_dir_path("chd-parent-option-extract");
         fs::create_dir_all(&temp_dir).expect("temp dir");
@@ -3642,7 +3726,10 @@ mod tests {
         let valid_decoded = &decoded_sectors[..SECTOR_BYTES];
         assert!(valid_decoded[..12].iter().all(|byte| *byte == 0));
         assert!(valid_decoded[ECC_P_OFFSET..].iter().all(|byte| *byte == 0));
-        assert_eq!(&valid_decoded[12..ECC_P_OFFSET], &valid_sector[12..ECC_P_OFFSET]);
+        assert_eq!(
+            &valid_decoded[12..ECC_P_OFFSET],
+            &valid_sector[12..ECC_P_OFFSET]
+        );
 
         let invalid_decoded = &decoded_sectors[SECTOR_BYTES..SECTOR_BYTES * 2];
         assert_eq!(invalid_decoded, &invalid_sector);

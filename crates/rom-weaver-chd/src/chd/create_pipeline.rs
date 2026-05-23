@@ -555,7 +555,7 @@
 
             let map_offset = current_offset;
             let (map_payload, map_crc, length_bits, self_bits, parent_bits, first_offset) =
-                Self::encode_v5_compressed_map(&entries)?;
+                Self::encode_v5_compressed_map(&entries, hunk_bytes, unit_bytes)?;
             let map_bytes = u32::try_from(map_payload.len()).map_err(|_| {
                 RomWeaverError::Validation("compressed CHD map exceeded u32 size".to_string())
             })?;
