@@ -828,10 +828,7 @@
                     self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
                         loop {
                             if track_index >= layout.tracks.len() {
-                                return Err(RomWeaverError::Validation(
-                                    "cd chd yielded more frames than described by metadata"
-                                        .to_string(),
-                                ));
+                                return Ok(());
                             }
                             if data_frames_remaining == 0 && pad_frames_remaining == 0 {
                                 let track = &layout.tracks[track_index];
@@ -947,10 +944,7 @@
                     self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
                         loop {
                             if track_index >= layout.tracks.len() {
-                                return Err(RomWeaverError::Validation(
-                                    "cd chd yielded more frames than described by metadata"
-                                        .to_string(),
-                                ));
+                                return Ok(());
                             }
                             if data_frames_remaining == 0 && pad_frames_remaining == 0 {
                                 let track = &layout.tracks[track_index];
@@ -1171,9 +1165,7 @@
                 self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
                     loop {
                         if track_index >= layout.tracks.len() {
-                            return Err(RomWeaverError::Validation(
-                                "gd chd yielded more frames than described by metadata".to_string(),
-                            ));
+                            return Ok(());
                         }
                         if data_frames_remaining == 0 && pad_frames_remaining == 0 {
                             let track = &layout.tracks[track_index];
