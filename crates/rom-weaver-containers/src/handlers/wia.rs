@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 const WIA_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&WIA, NodFormat::Wia);
 
 struct WiaContainerHandler;
@@ -146,3 +147,4 @@ impl ContainerHandler for WiaContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

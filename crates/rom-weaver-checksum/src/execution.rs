@@ -202,84 +202,23 @@ fn compute_parallel_crc32(
     cancel: &CancellationToken,
     progress: &mut ChecksumProgressTracker<'_>,
 ) -> Result<BTreeMap<String, String>> {
-    if let Some(mapped) = mapped {
-        return compute_parallel_crc32_mapped(mapped.bytes(), pool, execution, cancel, progress);
-    }
-
-    compute_parallel_crc32_stream(source, range, pool, execution, cancel, progress)
-}
-
-fn compute_parallel_crc32_mapped(
-    bytes: &[u8],
-    pool: &SharedThreadPool,
-    execution: &ThreadExecution,
-    cancel: &CancellationToken,
-    progress: &mut ChecksumProgressTracker<'_>,
-) -> Result<BTreeMap<String, String>> {
-    let chunk_size = crc32_parallel_chunk_size(bytes.len() as u64, execution.effective_threads);
-    let mut partials = Vec::with_capacity(bytes.len().div_ceil(chunk_size as usize));
-    for chunk in bytes.chunks(chunk_size as usize) {
-        cancel.check()?;
-        let partial = pool.install(|| {
+    compute_parallel_chunked_checksum(
+        mapped,
+        source,
+        range,
+        pool,
+        execution,
+        cancel,
+        progress,
+        Algorithm::Crc32.name(),
+        |chunk| {
             let mut hasher = Crc32Hasher::new();
             hasher.update(chunk);
             hasher
-        });
-        partials.push(Ok(partial));
-        progress.advance(chunk.len() as u64);
-    }
-
-    let combined = combine_crc32_partials(partials)?;
-
-    let mut results = BTreeMap::new();
-    results.insert("crc32".to_string(), format!("{:08x}", combined.finalize()));
-    Ok(results)
-}
-
-fn compute_parallel_crc32_stream(
-    source: &Path,
-    range: &ResolvedRange,
-    pool: &SharedThreadPool,
-    execution: &ThreadExecution,
-    cancel: &CancellationToken,
-    progress: &mut ChecksumProgressTracker<'_>,
-) -> Result<BTreeMap<String, String>> {
-    let chunk_size = crc32_parallel_chunk_size(range.len, execution.effective_threads) as usize;
-    let mut file = File::open(source)?;
-    file.seek(SeekFrom::Start(range.start))?;
-
-    let mut remaining = range.len;
-    let estimated_chunks = range.len.div_ceil(chunk_size as u64) as usize;
-    let mut partials = Vec::with_capacity(estimated_chunks);
-    let mut buffer = vec![0u8; chunk_size];
-
-    while remaining > 0 {
-        cancel.check()?;
-        let limit = remaining.min(buffer.len() as u64) as usize;
-        let bytes_read = file.read(&mut buffer[..limit])?;
-        if bytes_read == 0 {
-            return Err(RomWeaverError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "source ended before checksum range chunk was fully read",
-            )));
-        }
-
-        let chunk = &buffer[..bytes_read];
-        let partial = pool.install(|| {
-            let mut hasher = Crc32Hasher::new();
-            hasher.update(chunk);
-            hasher
-        });
-        partials.push(Ok(partial));
-        remaining -= bytes_read as u64;
-        progress.advance(bytes_read as u64);
-    }
-
-    let combined = combine_crc32_partials(partials)?;
-
-    let mut results = BTreeMap::new();
-    results.insert("crc32".to_string(), format!("{:08x}", combined.finalize()));
-    Ok(results)
+        },
+        combine_crc32_partials,
+        |combined| format!("{:08x}", combined.finalize()),
+    )
 }
 
 fn compute_parallel_crc32c(
@@ -291,79 +230,19 @@ fn compute_parallel_crc32c(
     cancel: &CancellationToken,
     progress: &mut ChecksumProgressTracker<'_>,
 ) -> Result<BTreeMap<String, String>> {
-    if let Some(mapped) = mapped {
-        return compute_parallel_crc32c_mapped(mapped.bytes(), pool, execution, cancel, progress);
-    }
-
-    compute_parallel_crc32c_stream(source, range, pool, execution, cancel, progress)
-}
-
-fn compute_parallel_crc32c_mapped(
-    bytes: &[u8],
-    pool: &SharedThreadPool,
-    execution: &ThreadExecution,
-    cancel: &CancellationToken,
-    progress: &mut ChecksumProgressTracker<'_>,
-) -> Result<BTreeMap<String, String>> {
-    let chunk_size = crc32_parallel_chunk_size(bytes.len() as u64, execution.effective_threads);
-    let mut partials = Vec::with_capacity(bytes.len().div_ceil(chunk_size as usize));
-    for chunk in bytes.chunks(chunk_size as usize) {
-        cancel.check()?;
-        let partial = pool.install(|| (crc32c_append(0, chunk), chunk.len()));
-        partials.push(Ok(partial));
-        progress.advance(chunk.len() as u64);
-    }
-    let combined = combine_crc32c_partials(partials)?;
-
-    let mut results = BTreeMap::new();
-    results.insert(
-        Algorithm::Crc32c.name().to_string(),
-        format!("{combined:08x}"),
-    );
-    Ok(results)
-}
-
-fn compute_parallel_crc32c_stream(
-    source: &Path,
-    range: &ResolvedRange,
-    pool: &SharedThreadPool,
-    execution: &ThreadExecution,
-    cancel: &CancellationToken,
-    progress: &mut ChecksumProgressTracker<'_>,
-) -> Result<BTreeMap<String, String>> {
-    let chunk_size = crc32_parallel_chunk_size(range.len, execution.effective_threads) as usize;
-    let mut file = File::open(source)?;
-    file.seek(SeekFrom::Start(range.start))?;
-
-    let mut remaining = range.len;
-    let estimated_chunks = range.len.div_ceil(chunk_size as u64) as usize;
-    let mut partials = Vec::with_capacity(estimated_chunks);
-    let mut buffer = vec![0u8; chunk_size];
-    while remaining > 0 {
-        cancel.check()?;
-        let limit = remaining.min(buffer.len() as u64) as usize;
-        let bytes_read = file.read(&mut buffer[..limit])?;
-        if bytes_read == 0 {
-            return Err(RomWeaverError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "source ended before checksum range chunk was fully read",
-            )));
-        }
-
-        let chunk = &buffer[..bytes_read];
-        let partial = pool.install(|| (crc32c_append(0, chunk), chunk.len()));
-        partials.push(Ok(partial));
-        remaining -= bytes_read as u64;
-        progress.advance(bytes_read as u64);
-    }
-    let combined = combine_crc32c_partials(partials)?;
-
-    let mut results = BTreeMap::new();
-    results.insert(
-        Algorithm::Crc32c.name().to_string(),
-        format!("{combined:08x}"),
-    );
-    Ok(results)
+    compute_parallel_chunked_checksum(
+        mapped,
+        source,
+        range,
+        pool,
+        execution,
+        cancel,
+        progress,
+        Algorithm::Crc32c.name(),
+        |chunk| (crc32c_append(0, chunk), chunk.len()),
+        combine_crc32c_partials,
+        |combined| format!("{combined:08x}"),
+    )
 }
 
 fn compute_parallel_crc16(
@@ -375,87 +254,23 @@ fn compute_parallel_crc16(
     cancel: &CancellationToken,
     progress: &mut ChecksumProgressTracker<'_>,
 ) -> Result<BTreeMap<String, String>> {
-    if let Some(mapped) = mapped {
-        return compute_parallel_crc16_mapped(mapped.bytes(), pool, execution, cancel, progress);
-    }
-
-    compute_parallel_crc16_stream(source, range, pool, execution, cancel, progress)
-}
-
-fn compute_parallel_crc16_mapped(
-    bytes: &[u8],
-    pool: &SharedThreadPool,
-    execution: &ThreadExecution,
-    cancel: &CancellationToken,
-    progress: &mut ChecksumProgressTracker<'_>,
-) -> Result<BTreeMap<String, String>> {
-    let chunk_size = crc32_parallel_chunk_size(bytes.len() as u64, execution.effective_threads);
-    let mut partials = Vec::with_capacity(bytes.len().div_ceil(chunk_size as usize));
-    for chunk in bytes.chunks(chunk_size as usize) {
-        cancel.check()?;
-        let partial = pool.install(|| {
+    compute_parallel_chunked_checksum(
+        mapped,
+        source,
+        range,
+        pool,
+        execution,
+        cancel,
+        progress,
+        Algorithm::Crc16.name(),
+        |chunk| {
             let mut state = Crc16State::<ARC>::new();
             state.update(chunk);
             (state.get(), chunk.len())
-        });
-        partials.push(Ok(partial));
-        progress.advance(chunk.len() as u64);
-    }
-    let combined = combine_crc16_partials(partials)?;
-
-    let mut results = BTreeMap::new();
-    results.insert(
-        Algorithm::Crc16.name().to_string(),
-        format!("{combined:04x}"),
-    );
-    Ok(results)
-}
-
-fn compute_parallel_crc16_stream(
-    source: &Path,
-    range: &ResolvedRange,
-    pool: &SharedThreadPool,
-    execution: &ThreadExecution,
-    cancel: &CancellationToken,
-    progress: &mut ChecksumProgressTracker<'_>,
-) -> Result<BTreeMap<String, String>> {
-    let chunk_size = crc32_parallel_chunk_size(range.len, execution.effective_threads) as usize;
-    let mut file = File::open(source)?;
-    file.seek(SeekFrom::Start(range.start))?;
-
-    let mut remaining = range.len;
-    let estimated_chunks = range.len.div_ceil(chunk_size as u64) as usize;
-    let mut partials = Vec::with_capacity(estimated_chunks);
-    let mut buffer = vec![0u8; chunk_size];
-    while remaining > 0 {
-        cancel.check()?;
-        let limit = remaining.min(buffer.len() as u64) as usize;
-        let bytes_read = file.read(&mut buffer[..limit])?;
-        if bytes_read == 0 {
-            return Err(RomWeaverError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "source ended before checksum range chunk was fully read",
-            )));
-        }
-
-        let chunk = &buffer[..bytes_read];
-        let partial = pool.install(|| {
-            let mut state = Crc16State::<ARC>::new();
-            state.update(chunk);
-            (state.get(), chunk.len())
-        });
-        partials.push(Ok(partial));
-        remaining -= bytes_read as u64;
-        progress.advance(bytes_read as u64);
-    }
-    let combined = combine_crc16_partials(partials)?;
-
-    let mut results = BTreeMap::new();
-    results.insert(
-        Algorithm::Crc16.name().to_string(),
-        format!("{combined:04x}"),
-    );
-    Ok(results)
+        },
+        combine_crc16_partials,
+        |combined| format!("{combined:04x}"),
+    )
 }
 
 fn compute_parallel_adler32(
@@ -467,79 +282,19 @@ fn compute_parallel_adler32(
     cancel: &CancellationToken,
     progress: &mut ChecksumProgressTracker<'_>,
 ) -> Result<BTreeMap<String, String>> {
-    if let Some(mapped) = mapped {
-        return compute_parallel_adler32_mapped(mapped.bytes(), pool, execution, cancel, progress);
-    }
-
-    compute_parallel_adler32_stream(source, range, pool, execution, cancel, progress)
-}
-
-fn compute_parallel_adler32_mapped(
-    bytes: &[u8],
-    pool: &SharedThreadPool,
-    execution: &ThreadExecution,
-    cancel: &CancellationToken,
-    progress: &mut ChecksumProgressTracker<'_>,
-) -> Result<BTreeMap<String, String>> {
-    let chunk_size = crc32_parallel_chunk_size(bytes.len() as u64, execution.effective_threads);
-    let mut partials = Vec::with_capacity(bytes.len().div_ceil(chunk_size as usize));
-    for chunk in bytes.chunks(chunk_size as usize) {
-        cancel.check()?;
-        let partial = pool.install(|| (adler32_checksum(chunk), chunk.len()));
-        partials.push(Ok(partial));
-        progress.advance(chunk.len() as u64);
-    }
-    let combined = combine_adler32_partials(partials)?;
-
-    let mut results = BTreeMap::new();
-    results.insert(
-        Algorithm::Adler32.name().to_string(),
-        format!("{combined:08x}"),
-    );
-    Ok(results)
-}
-
-fn compute_parallel_adler32_stream(
-    source: &Path,
-    range: &ResolvedRange,
-    pool: &SharedThreadPool,
-    execution: &ThreadExecution,
-    cancel: &CancellationToken,
-    progress: &mut ChecksumProgressTracker<'_>,
-) -> Result<BTreeMap<String, String>> {
-    let chunk_size = crc32_parallel_chunk_size(range.len, execution.effective_threads) as usize;
-    let mut file = File::open(source)?;
-    file.seek(SeekFrom::Start(range.start))?;
-
-    let mut remaining = range.len;
-    let estimated_chunks = range.len.div_ceil(chunk_size as u64) as usize;
-    let mut partials = Vec::with_capacity(estimated_chunks);
-    let mut buffer = vec![0u8; chunk_size];
-    while remaining > 0 {
-        cancel.check()?;
-        let limit = remaining.min(buffer.len() as u64) as usize;
-        let bytes_read = file.read(&mut buffer[..limit])?;
-        if bytes_read == 0 {
-            return Err(RomWeaverError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "source ended before checksum range chunk was fully read",
-            )));
-        }
-
-        let chunk = &buffer[..bytes_read];
-        let partial = pool.install(|| (adler32_checksum(chunk), chunk.len()));
-        partials.push(Ok(partial));
-        remaining -= bytes_read as u64;
-        progress.advance(bytes_read as u64);
-    }
-    let combined = combine_adler32_partials(partials)?;
-
-    let mut results = BTreeMap::new();
-    results.insert(
-        Algorithm::Adler32.name().to_string(),
-        format!("{combined:08x}"),
-    );
-    Ok(results)
+    compute_parallel_chunked_checksum(
+        mapped,
+        source,
+        range,
+        pool,
+        execution,
+        cancel,
+        progress,
+        Algorithm::Adler32.name(),
+        |chunk| (adler32_checksum(chunk), chunk.len()),
+        combine_adler32_partials,
+        |combined| format!("{combined:08x}"),
+    )
 }
 
 fn compute_parallel_blake3(
@@ -595,6 +350,124 @@ fn compute_parallel_blake3(
         hasher.finalize().to_hex().to_string(),
     );
     Ok(results)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_parallel_chunked_checksum<T, C, PartialFn, CombineFn, FormatFn>(
+    mapped: Option<&MappedRange>,
+    source: &Path,
+    range: &ResolvedRange,
+    pool: &SharedThreadPool,
+    execution: &ThreadExecution,
+    cancel: &CancellationToken,
+    progress: &mut ChecksumProgressTracker<'_>,
+    algorithm_name: &str,
+    compute_partial: PartialFn,
+    combine_partials: CombineFn,
+    format_combined: FormatFn,
+) -> Result<BTreeMap<String, String>>
+where
+    T: Send,
+    PartialFn: Fn(&[u8]) -> T + Send + Sync + Copy,
+    CombineFn: Fn(Vec<Result<T>>) -> Result<C>,
+    FormatFn: Fn(C) -> String,
+{
+    let chunk_size = crc32_parallel_chunk_size(range.len, execution.effective_threads) as usize;
+    let partials = if let Some(mapped) = mapped {
+        collect_parallel_partials_mapped(
+            mapped.bytes(),
+            chunk_size,
+            pool,
+            cancel,
+            progress,
+            compute_partial,
+        )?
+    } else {
+        collect_parallel_partials_stream(
+            source,
+            range,
+            chunk_size,
+            pool,
+            cancel,
+            progress,
+            compute_partial,
+        )?
+    };
+    let combined = combine_partials(partials)?;
+    Ok(single_checksum_result(
+        algorithm_name,
+        format_combined(combined),
+    ))
+}
+
+fn collect_parallel_partials_mapped<T, F>(
+    bytes: &[u8],
+    chunk_size: usize,
+    pool: &SharedThreadPool,
+    cancel: &CancellationToken,
+    progress: &mut ChecksumProgressTracker<'_>,
+    compute_partial: F,
+) -> Result<Vec<Result<T>>>
+where
+    T: Send,
+    F: Fn(&[u8]) -> T + Send + Sync,
+{
+    let chunk_size = chunk_size.max(1);
+    let mut partials = Vec::with_capacity(bytes.len().div_ceil(chunk_size));
+    for chunk in bytes.chunks(chunk_size) {
+        cancel.check()?;
+        let partial = pool.install(|| compute_partial(chunk));
+        partials.push(Ok(partial));
+        progress.advance(chunk.len() as u64);
+    }
+    Ok(partials)
+}
+
+fn collect_parallel_partials_stream<T, F>(
+    source: &Path,
+    range: &ResolvedRange,
+    chunk_size: usize,
+    pool: &SharedThreadPool,
+    cancel: &CancellationToken,
+    progress: &mut ChecksumProgressTracker<'_>,
+    compute_partial: F,
+) -> Result<Vec<Result<T>>>
+where
+    T: Send,
+    F: Fn(&[u8]) -> T + Send + Sync,
+{
+    let chunk_size = chunk_size.max(1);
+    let mut file = File::open(source)?;
+    file.seek(SeekFrom::Start(range.start))?;
+
+    let mut remaining = range.len;
+    let estimated_chunks = range.len.div_ceil(chunk_size as u64) as usize;
+    let mut partials = Vec::with_capacity(estimated_chunks);
+    let mut buffer = vec![0u8; chunk_size];
+    while remaining > 0 {
+        cancel.check()?;
+        let limit = remaining.min(buffer.len() as u64) as usize;
+        let bytes_read = file.read(&mut buffer[..limit])?;
+        if bytes_read == 0 {
+            return Err(RomWeaverError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "source ended before checksum range chunk was fully read",
+            )));
+        }
+
+        let chunk = &buffer[..bytes_read];
+        let partial = pool.install(|| compute_partial(chunk));
+        partials.push(Ok(partial));
+        remaining -= bytes_read as u64;
+        progress.advance(bytes_read as u64);
+    }
+    Ok(partials)
+}
+
+fn single_checksum_result(name: &str, value: String) -> BTreeMap<String, String> {
+    let mut results = BTreeMap::new();
+    results.insert(name.to_string(), value);
+    results
 }
 
 fn combine_crc32_partials(partials: Vec<Result<Crc32Hasher>>) -> Result<Crc32Hasher> {

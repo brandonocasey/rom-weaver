@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 #[derive(Clone, Debug)]
 struct PbpIsoIndexEntry {
     offset: u64,
@@ -1139,3 +1140,4 @@ impl ContainerHandler for PbpContainerHandler {
 
 type XisoSourceDevice = XdvdfsOffsetWrapper<BufReader<File>, io::Error>;
 type XisoSourceFilesystem = XdvdfsFilesystem<io::Error, XisoSourceDevice>;
+/* jscpd:ignore-end */

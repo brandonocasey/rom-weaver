@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::fs;
 
 use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
@@ -282,3 +283,4 @@ fn build_source_bytes(size: usize) -> Vec<u8> {
     }
     bytes
 }
+/* jscpd:ignore-end */

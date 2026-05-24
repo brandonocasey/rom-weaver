@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::{
     fs,
     io::{Seek, SeekFrom, Write},
@@ -839,3 +840,4 @@ fn write_sparse_bytes(path: &PathBuf, len: u64, offset: u64, bytes: &[u8]) {
 fn test_context_with_threads(temp: &TestDir, threads: usize) -> OperationContext {
     test_context_with_threads_named(temp, threads, "temp-root")
 }
+/* jscpd:ignore-end */

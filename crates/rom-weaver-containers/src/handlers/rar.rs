@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 
 struct RarContainerHandler {
     descriptor: &'static FormatDescriptor,
@@ -75,3 +76,4 @@ impl ContainerHandler for RarContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

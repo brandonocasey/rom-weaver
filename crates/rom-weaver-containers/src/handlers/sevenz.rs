@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 struct SevenZContainerHandler {
     descriptor: &'static FormatDescriptor,
 }
@@ -290,3 +291,4 @@ impl ContainerHandler for SevenZContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

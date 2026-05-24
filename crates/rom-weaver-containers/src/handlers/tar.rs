@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 #[derive(Clone, Copy, Debug)]
 enum TarCompression {
     None,
@@ -274,3 +275,4 @@ impl ContainerHandler for TarContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

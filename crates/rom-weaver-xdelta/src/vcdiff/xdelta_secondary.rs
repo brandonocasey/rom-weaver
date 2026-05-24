@@ -484,12 +484,21 @@ impl XdeltaLzmaSectionDecoders {
         addr: &[u8],
         delta_indicator: u8,
     ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-        let data =
-            decode_xdelta_lzma_section_with_state(data, delta_indicator & DELTA_DATA_COMP != 0, &mut self.data)?;
-        let inst =
-            decode_xdelta_lzma_section_with_state(inst, delta_indicator & DELTA_INST_COMP != 0, &mut self.inst)?;
-        let addr =
-            decode_xdelta_lzma_section_with_state(addr, delta_indicator & DELTA_ADDR_COMP != 0, &mut self.addr)?;
+        let data = decode_xdelta_lzma_section_with_state(
+            data,
+            delta_indicator & DELTA_DATA_COMP != 0,
+            &mut self.data,
+        )?;
+        let inst = decode_xdelta_lzma_section_with_state(
+            inst,
+            delta_indicator & DELTA_INST_COMP != 0,
+            &mut self.inst,
+        )?;
+        let addr = decode_xdelta_lzma_section_with_state(
+            addr,
+            delta_indicator & DELTA_ADDR_COMP != 0,
+            &mut self.addr,
+        )?;
         Ok((data, inst, addr))
     }
 }
@@ -717,44 +726,14 @@ fn decode_window_with_native_engine<R: Read + Seek>(
     validate_checksums: bool,
 ) -> Result<Vec<u8>> {
     let (data, inst, addr) = read_window_sections(patch_reader, window, secondary_compressor_id)?;
-    let source_len = if window.source_kind.is_some() {
-        window.source_segment_size
-    } else {
-        0
-    };
-    let header = build_native_window_header(window, source_len);
-    let mut source: &[u8] = source_segment;
-    let mut copy_buf = Vec::new();
-
-    let decoded = oxidelta_decoder::decode_window(
-        &header,
+    decode_native_window_sections(
+        window,
         &data,
         &inst,
         &addr,
-        &mut source,
+        source_segment,
         validate_checksums,
-        &mut copy_buf,
     )
-    .map_err(|error| native_decode_error(error, window))?;
-
-    if decoded.len() as u64 != window.target_window_size {
-        return Err(RomWeaverError::Validation(format!(
-            "native VCDIFF decoder produced {} byte(s) but expected {}",
-            decoded.len(),
-            window.target_window_size
-        )));
-    }
-
-    if validate_checksums && let Some(expected) = window.checksum {
-        let actual = adler32(&decoded);
-        if actual != expected {
-            return Err(RomWeaverError::Validation(format!(
-                "target window checksum mismatch: expected 0x{expected:08X}, got 0x{actual:08X}"
-            )));
-        }
-    }
-
-    Ok(decoded)
 }
 
 fn decode_window_with_xdelta_lzma_sections<R: Read + Seek>(
@@ -772,7 +751,24 @@ fn decode_window_with_xdelta_lzma_sections<R: Read + Seek>(
     } else {
         decoders.decode_sections(&data, &inst, &addr, window.delta_indicator)?
     };
+    decode_native_window_sections(
+        window,
+        &data,
+        &inst,
+        &addr,
+        source_segment,
+        validate_checksums,
+    )
+}
 
+fn decode_native_window_sections(
+    window: &WindowIndex,
+    data: &[u8],
+    inst: &[u8],
+    addr: &[u8],
+    source_segment: &[u8],
+    validate_checksums: bool,
+) -> Result<Vec<u8>> {
     let source_len = if window.source_kind.is_some() {
         window.source_segment_size
     } else {
@@ -784,9 +780,9 @@ fn decode_window_with_xdelta_lzma_sections<R: Read + Seek>(
 
     let decoded = oxidelta_decoder::decode_window(
         &header,
-        &data,
-        &inst,
-        &addr,
+        data,
+        inst,
+        addr,
         &mut source,
         validate_checksums,
         &mut copy_buf,

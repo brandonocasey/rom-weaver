@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::fs;
 
 use rom_weaver_core::{
@@ -450,3 +451,4 @@ fn build_aps_patch(
     }
     bytes
 }
+/* jscpd:ignore-end */

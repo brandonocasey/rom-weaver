@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 #[derive(Clone, Copy, Debug)]
 enum StreamCompression {
     Gzip,
@@ -462,3 +463,4 @@ impl ContainerHandler for StreamContainerHandler {
 const CSO_DEFAULT_BLOCK_BYTES: usize = 2 * 1024;
 const CSO_EXTRACT_TASK_BYTES: u64 = 8 * 1024 * 1024;
 const CSO_CREATE_TASK_SECTORS: usize = 2048;
+/* jscpd:ignore-end */

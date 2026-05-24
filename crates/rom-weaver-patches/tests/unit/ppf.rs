@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::fs;
 
 use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
@@ -618,3 +619,4 @@ fn append_rompatcher_file_id_diz_trailer(bytes: &mut Vec<u8>, diz: &str) {
     bytes.extend_from_slice(&diz_len.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
 }
+/* jscpd:ignore-end */

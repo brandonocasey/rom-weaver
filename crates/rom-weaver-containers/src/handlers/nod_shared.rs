@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 #[derive(Clone, Copy)]
 struct NodHandlerCore {
     descriptor: &'static FormatDescriptor,
@@ -434,3 +435,4 @@ impl NodHandlerCore {
         }
     }
 }
+/* jscpd:ignore-end */

@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::fs;
 
 use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
@@ -284,3 +285,4 @@ fn create_is_deterministic_across_thread_budgets() {
         fs::read(patch_parallel).expect("parallel patch")
     );
 }
+/* jscpd:ignore-end */

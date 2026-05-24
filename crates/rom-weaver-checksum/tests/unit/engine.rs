@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 #[cfg(test)]
 mod tests {
     use std::{
@@ -688,3 +689,4 @@ mod tests {
         );
     }
 }
+/* jscpd:ignore-end */

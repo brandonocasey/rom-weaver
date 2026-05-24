@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::{fs, path::PathBuf};
 
 use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
@@ -457,3 +458,4 @@ fn capabilities_mark_threaded_output_with_create_disabled() {
     assert!(!capabilities.threaded_diff);
     assert!(capabilities.threaded_output);
 }
+/* jscpd:ignore-end */

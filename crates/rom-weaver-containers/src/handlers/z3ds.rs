@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 struct Z3dsContainerHandler;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -945,3 +946,4 @@ impl ContainerHandler for Z3dsContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

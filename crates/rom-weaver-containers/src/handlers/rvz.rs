@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 const RVZ_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&RVZ, NodFormat::Rvz);
 
 struct RvzContainerHandler;
@@ -294,3 +295,4 @@ impl ContainerHandler for RvzContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

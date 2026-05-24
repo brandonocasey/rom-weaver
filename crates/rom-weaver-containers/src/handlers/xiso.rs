@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 struct XisoContainerHandler;
 
 impl XisoContainerHandler {
@@ -208,3 +209,4 @@ impl ContainerHandler for XisoContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

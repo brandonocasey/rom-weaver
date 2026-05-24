@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 const NFS_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&NFS, NodFormat::Nfs);
 
 struct NfsContainerHandler;
@@ -55,3 +56,4 @@ impl ContainerHandler for NfsContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

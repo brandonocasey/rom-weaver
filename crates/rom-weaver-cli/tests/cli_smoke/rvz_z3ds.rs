@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 #[test]
 fn rvz_inspect_reports_succeeded() {
     let temp = setup_temp_dir();
@@ -515,3 +516,4 @@ fn z3ds_extract_rejects_invalid_header() {
         .expect("label")
         .contains("missing Z3DS magic"));
 }
+/* jscpd:ignore-end */

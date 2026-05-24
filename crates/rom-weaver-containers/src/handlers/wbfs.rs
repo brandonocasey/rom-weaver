@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 const WBFS_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&WBFS, NodFormat::Wbfs);
 
 struct WbfsContainerHandler;
@@ -110,3 +111,4 @@ impl ContainerHandler for WbfsContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

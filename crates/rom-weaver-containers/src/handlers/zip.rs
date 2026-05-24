@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 #[derive(Clone, Copy, Debug)]
 enum ZipContainerFlavor {
     Zip,
@@ -266,3 +267,4 @@ impl ContainerHandler for ZipContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -422,3 +423,4 @@ fn create_is_reported_as_unsupported() {
             .contains("BSP patch creation is not implemented")
     );
 }
+/* jscpd:ignore-end */

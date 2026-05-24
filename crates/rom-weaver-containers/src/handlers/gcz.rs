@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 const GCZ_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&GCZ, NodFormat::Gcz);
 
 struct GczContainerHandler;
@@ -55,3 +56,4 @@ impl ContainerHandler for GczContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

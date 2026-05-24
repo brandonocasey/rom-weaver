@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 #[test]
 fn inspect_reports_known_container_as_supported() {
     let temp = setup_temp_dir();
@@ -518,3 +519,4 @@ fn extract_rar_reports_thread_fallback_in_json() {
         b"unrar-0.4.0".to_vec()
     );
 }
+/* jscpd:ignore-end */

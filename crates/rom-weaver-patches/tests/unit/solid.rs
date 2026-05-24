@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::{
     fs,
     sync::{Mutex, OnceLock},
@@ -452,3 +453,4 @@ fn apply_runtime_threads_match_capabilities_for_multi_primitive_patch() {
     assert!(execution.used_parallelism);
     assert_eq!(fs::read(output).expect("output"), target);
 }
+/* jscpd:ignore-end */

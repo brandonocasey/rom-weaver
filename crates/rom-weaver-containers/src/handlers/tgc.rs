@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 const TGC_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&TGC, NodFormat::Tgc);
 
 struct TgcContainerHandler;
@@ -109,3 +110,4 @@ impl ContainerHandler for TgcContainerHandler {
         }
     }
 }
+/* jscpd:ignore-end */

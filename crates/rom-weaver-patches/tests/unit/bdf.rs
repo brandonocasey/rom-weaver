@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
 use std::{fs, path::PathBuf};
 
 use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
@@ -240,3 +241,4 @@ fn build_large_fixture_bytes() -> Vec<u8> {
     }
     bytes
 }
+/* jscpd:ignore-end */

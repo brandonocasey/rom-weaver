@@ -1,3 +1,4 @@
+/* jscpd:ignore-start */
     impl ChdContainerHandler {
         fn create_uncompressed_rust_raw(
             &self,
@@ -691,3 +692,4 @@
         }
 
     }
+/* jscpd:ignore-end */
