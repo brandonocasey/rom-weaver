@@ -198,15 +198,14 @@ struct Z3dsCreateTask {
     index: usize,
     offset: u64,
     len: u64,
-    temp_path: PathBuf,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Z3dsCompressedFrame {
     index: usize,
     decompressed_size: u32,
     compressed_size: u32,
-    temp_path: PathBuf,
+    compressed: Vec<u8>,
 }
 
 impl<R: Read + Seek> Z3dsPayloadReader<R> {
@@ -487,7 +486,6 @@ impl Z3dsContainerHandler {
     fn build_create_tasks(
         &self,
         total_len: u64,
-        context: &OperationContext,
     ) -> Result<Vec<Z3dsCreateTask>> {
         if total_len == 0 {
             return Ok(Vec::new());
@@ -503,9 +501,6 @@ impl Z3dsContainerHandler {
                 index,
                 offset,
                 len,
-                temp_path: context
-                    .temp_paths()
-                    .next_path(&format!("z3ds-create-{index}"), Some("frame")),
             });
             offset = offset.saturating_add(len);
             index += 1;
@@ -536,25 +531,12 @@ impl Z3dsContainerHandler {
             RomWeaverError::Validation("z3ds frame exceeded seekable format limits".into())
         })?;
 
-        if let Some(parent) = task.temp_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut output = BufWriter::new(File::create(&task.temp_path)?);
-        output.write_all(&compressed)?;
-        output.flush()?;
-
         Ok(Z3dsCompressedFrame {
             index: task.index,
             decompressed_size,
             compressed_size,
-            temp_path: task.temp_path.clone(),
+            compressed,
         })
-    }
-
-    fn cleanup_create_frames(&self, frames: &[Z3dsCompressedFrame]) {
-        for frame in frames {
-            let _ = fs::remove_file(&frame.temp_path);
-        }
     }
 
     fn write_seek_table(
@@ -800,7 +782,7 @@ impl ContainerHandler for Z3dsContainerHandler {
         let input_path = &request.inputs[0];
         let level = self.resolve_level(request.codec.as_deref(), request.level)?;
         let input_size = fs::metadata(input_path)?.len();
-        let create_tasks = self.build_create_tasks(input_size, context)?;
+        let create_tasks = self.build_create_tasks(input_size)?;
         let (execution, pool) =
             context.build_pool(ThreadCapability::parallel(Some(create_tasks.len().max(1))))?;
         let create_progress_label = format!("creating `{}`", Z3DS.name);
@@ -882,22 +864,7 @@ impl ContainerHandler for Z3dsContainerHandler {
                 })
                 .collect::<Result<Vec<_>>>()
         };
-        let mut frames = match compress_result {
-            Ok(frames) => frames,
-            Err(error) => {
-                let cleanup_targets = create_tasks
-                    .iter()
-                    .map(|task| Z3dsCompressedFrame {
-                        index: task.index,
-                        decompressed_size: 0,
-                        compressed_size: 0,
-                        temp_path: task.temp_path.clone(),
-                    })
-                    .collect::<Vec<_>>();
-                self.cleanup_create_frames(&cleanup_targets);
-                return Err(error);
-            }
-        };
+        let mut frames = compress_result?;
 
         frames.sort_by_key(|frame| frame.index);
 
@@ -923,45 +890,26 @@ impl ContainerHandler for Z3dsContainerHandler {
             }
             Ok((output, header))
         })();
-        let (mut output, mut header) = match output_init {
-            Ok(value) => value,
-            Err(error) => {
-                self.cleanup_create_frames(&frames);
-                return Err(error);
-            }
-        };
+        let (mut output, mut header) = output_init?;
 
         let mut compressed_frame_bytes = 0_u64;
         let mut uncompressed_bytes = 0_u64;
-        let copy_result: Result<()> = (|| {
-            for frame in &frames {
-                let mut reader = BufReader::new(File::open(&frame.temp_path)?);
-                let copied = io::copy(&mut reader, &mut output)?;
-                if copied != u64::from(frame.compressed_size) {
-                    return Err(RomWeaverError::Validation(format!(
-                        "z3ds frame {} copied {} bytes but expected {} bytes",
-                        frame.index, copied, frame.compressed_size
-                    )));
-                }
-                compressed_frame_bytes = compressed_frame_bytes.saturating_add(copied);
-                uncompressed_bytes =
-                    uncompressed_bytes.saturating_add(u64::from(frame.decompressed_size));
+        for frame in &frames {
+            let copied = u64::try_from(frame.compressed.len()).map_err(|_| {
+                RomWeaverError::Validation("z3ds compressed frame length overflowed".into())
+            })?;
+            if copied != u64::from(frame.compressed_size) {
+                return Err(RomWeaverError::Validation(format!(
+                    "z3ds frame {} buffered {} bytes but expected {} bytes",
+                    frame.index, copied, frame.compressed_size
+                )));
             }
-            Ok(())
-        })();
-        if let Err(error) = copy_result {
-            self.cleanup_create_frames(&frames);
-            return Err(error);
+            output.write_all(&frame.compressed)?;
+            compressed_frame_bytes = compressed_frame_bytes.saturating_add(copied);
+            uncompressed_bytes = uncompressed_bytes.saturating_add(u64::from(frame.decompressed_size));
         }
 
-        let seek_table_bytes = match self.write_seek_table(&mut output, &frames) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                self.cleanup_create_frames(&frames);
-                return Err(error);
-            }
-        };
-        self.cleanup_create_frames(&frames);
+        let seek_table_bytes = self.write_seek_table(&mut output, &frames)?;
 
         output.flush()?;
         header.compressed_size = compressed_frame_bytes.saturating_add(seek_table_bytes);
