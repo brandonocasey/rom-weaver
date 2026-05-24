@@ -8,11 +8,15 @@ use std::{
 
 use oxidelta::{
     compress::{
-        encoder::{CompressOptions, DeltaEncoder},
-        secondary::SecondaryCompression,
+        encoder::CompressOptions,
+        pipeline,
+        secondary::{self, SecondaryCompression},
     },
+    hash::{config, matching::MatchEngine},
     vcdiff::{
+        code_table::Instruction,
         decoder::{self as oxidelta_decoder, DecodeError as OxideltaDecodeError},
+        encoder::{SourceWindow, StreamEncoder, WindowEncoder, WindowSections},
         header::{WindowHeader as OxideltaWindowHeader, VCD_ADLER32, VCD_SOURCE, VCD_TARGET},
     },
 };
@@ -1121,24 +1125,41 @@ fn encode_patch_with_native_streaming(
 
     let output_file = File::create(output_path)?;
     let writer = BufWriter::with_capacity(NATIVE_CHUNK_SIZE, output_file);
-    let source = fs::read(source_path)?;
-    let mut encoder = DeltaEncoder::new(writer, &source, options);
+    let mut encoder = StreamEncoder::new(writer, options.checksum);
+    if let Some(backend) = options.secondary.backend() {
+        encoder.set_secondary_id(backend.id());
+    }
 
+    let source_len = fs::metadata(source_path)?.len();
+    let mut source = File::open(source_path)?;
     let mut target = BufReader::with_capacity(NATIVE_CHUNK_SIZE, File::open(target_path)?);
-    let mut input_buffer = vec![0; NATIVE_CHUNK_SIZE];
+    let mut target_offset = 0_u64;
+    let mut target_buffer = vec![0; options.window_size.max(64)];
 
     loop {
-        let bytes_read = target.read(&mut input_buffer)?;
+        let bytes_read = read_next_chunk(&mut target, &mut target_buffer)?;
         if bytes_read == 0 {
             break;
         }
 
-        encoder
-            .write_target(&input_buffer[..bytes_read])
-            .map_err(native_encode_error)?;
+        let source_offset = target_offset.min(source_len);
+        let source_window = read_source_window(
+            &mut source,
+            source_offset,
+            target_buffer.len(),
+            source_len,
+        )?;
+        encode_native_window(
+            &mut encoder,
+            &source_window,
+            source_offset,
+            &target_buffer[..bytes_read],
+            &options,
+        )?;
+        target_offset = checked_add(target_offset, bytes_read as u64, "encoded target offset")?;
     }
 
-    let (writer, _) = encoder.finish().map_err(native_encode_error)?;
+    let writer = encoder.finish()?;
     let output = writer.into_inner().map_err(|error| {
         RomWeaverError::Validation(format!(
             "native VCDIFF encoder failed to flush output: {}",
@@ -1152,8 +1173,132 @@ fn encode_patch_with_native_streaming(
     })
 }
 
-fn native_encode_error(error: oxidelta::compress::encoder::EncodeError) -> RomWeaverError {
-    RomWeaverError::Validation(format!("native VCDIFF encoder failed: {error}"))
+fn read_next_chunk(reader: &mut BufReader<File>, buffer: &mut Vec<u8>) -> Result<usize> {
+    let capacity = buffer.capacity().max(buffer.len()).max(64);
+    buffer.resize(capacity, 0);
+    let mut total = 0_usize;
+    while total < capacity {
+        let read = reader.read(&mut buffer[total..capacity])?;
+        if read == 0 {
+            break;
+        }
+        total += read;
+    }
+    buffer.truncate(total);
+    Ok(total)
+}
+
+fn read_source_window(
+    source: &mut File,
+    offset: u64,
+    max_len: usize,
+    source_len: u64,
+) -> Result<Vec<u8>> {
+    if offset >= source_len || max_len == 0 {
+        return Ok(Vec::new());
+    }
+    let len = usize::try_from((source_len - offset).min(max_len as u64))
+        .map_err(|_| RomWeaverError::Validation("source window exceeded addressable memory".into()))?;
+    let mut bytes = vec![0_u8; len];
+    source.seek(SeekFrom::Start(offset))?;
+    source.read_exact(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn encode_native_window<W: Write>(
+    encoder: &mut StreamEncoder<W>,
+    source: &[u8],
+    source_offset: u64,
+    target: &[u8],
+    options: &CompressOptions,
+) -> Result<()> {
+    let source_window = if source.is_empty() {
+        None
+    } else {
+        Some(SourceWindow {
+            len: source.len() as u64,
+            offset: source_offset,
+        })
+    };
+    let instructions = if options.level == 0 {
+        if target.is_empty() {
+            Vec::new()
+        } else {
+            vec![Instruction::Add {
+                len: target.len() as u32,
+            }]
+        }
+    } else {
+        let config = config::config_for_level(options.level);
+        let mut engine = MatchEngine::new(config, source.len() as u64, target.len().max(64));
+        if !source.is_empty() {
+            engine.index_source(&source);
+        }
+        let raw = if source.is_empty() {
+            engine.find_matches(target, None::<&&[u8]>)
+        } else {
+            engine.find_matches(target, Some(&source))
+        };
+        pipeline::optimize(&raw, target)
+    };
+
+    let mut window = WindowEncoder::new(source_window, options.checksum);
+    emit_native_instructions(&mut window, target, &instructions);
+    let sections = window.finish_sections(Some(target));
+    let encoded = assemble_native_sections(sections, options)?;
+    encoder.write_raw_window(&encoded)?;
+    Ok(())
+}
+
+fn assemble_native_sections(
+    sections: WindowSections,
+    options: &CompressOptions,
+) -> Result<Vec<u8>> {
+    if let Some(backend) = options.secondary.backend() {
+        let (data_section, inst_section, addr_section, del_ind) = secondary::compress_sections(
+            backend.as_ref(),
+            &sections.data_section,
+            &sections.inst_section,
+            &sections.addr_section,
+        )?;
+        return Ok(WindowSections {
+            source_window: sections.source_window,
+            target_len: sections.target_len,
+            checksum: sections.checksum,
+            data_section,
+            inst_section,
+            addr_section,
+        }
+        .assemble(del_ind));
+    }
+
+    Ok(sections.assemble(0))
+}
+
+fn emit_native_instructions(
+    window: &mut WindowEncoder,
+    target: &[u8],
+    instructions: &[Instruction],
+) {
+    let mut target_pos = 0_usize;
+    for instruction in instructions {
+        match *instruction {
+            Instruction::Add { len } => {
+                let len = len as usize;
+                window.add(&target[target_pos..target_pos + len]);
+                target_pos += len;
+            }
+            Instruction::Copy { len, addr, .. } => {
+                window.copy_with_auto_mode(len, addr);
+                target_pos += len as usize;
+            }
+            Instruction::Run { len } => {
+                let byte = target[target_pos];
+                window.run(len, byte);
+                target_pos += len as usize;
+            }
+        }
+    }
 }
 
 fn load_patch_for_xdelta_recode(baseline_patch_path: &Path) -> Result<LoadedXdeltaRecodePatch> {

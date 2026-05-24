@@ -7,8 +7,10 @@ import {
 } from './rom-weaver-runtime-utils.mjs';
 
 const DEFAULT_WORK_GUEST_PATH = '/work';
-const DEFAULT_MAX_BUFFERED_PATCH_BYTES = String(64 * 1024 * 1024);
+const DEFAULT_SCRATCH_FILE_POOL_SIZE = 256;
 const PATH_SEPARATOR_REGEX = /[/\\]+/;
+const SCRATCH_DIRECTORY_NAME = '.rom-weaver-opfs-scratch';
+const OPFS_COPY_CHUNK_SIZE = 8 * 1024 * 1024;
 
 export async function createRomWeaverBrowserOpfs(options = {}) {
   assertDedicatedWorkerRuntime();
@@ -40,7 +42,6 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
       const env = createRunEnv({
         baseEnv: options.env,
         runEnv: runOptions.env,
-        workGuestPath,
       });
       const envList = Object.entries(env).map(([key, value]) => `${key}=${String(value)}`);
       const mountHandles = {
@@ -64,6 +65,7 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
         stdin: runOptions.stdin,
         runtimeMounts,
         mountHandles,
+        scratchFilePoolSize: runOptions.scratchFilePoolSize ?? options.scratchFilePoolSize,
         writableRoots: normalizeWritableRoots({
           workGuestPath,
           writableDirectories: runOptions.writableDirectories,
@@ -112,6 +114,7 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
         };
       } finally {
         closeSyncFiles(closeables);
+        await cleanupBrowserOpfsMounts(mounts);
       }
     },
 
@@ -149,15 +152,11 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
   };
 }
 
-function createRunEnv({ baseEnv, runEnv, workGuestPath }) {
-  const mergedEnv = {
+function createRunEnv({ baseEnv, runEnv }) {
+  return {
     ...(baseEnv ?? {}),
     ...(runEnv ?? {}),
   };
-  if (mergedEnv.ROM_WEAVER_MAX_BUFFERED_PATCH_BYTES == null) {
-    mergedEnv.ROM_WEAVER_MAX_BUFFERED_PATCH_BYTES = DEFAULT_MAX_BUFFERED_PATCH_BYTES;
-  }
-  return mergedEnv;
 }
 
 async function buildBrowserOpfsWasiFds({
@@ -165,6 +164,7 @@ async function buildBrowserOpfsWasiFds({
   stdin,
   runtimeMounts,
   mountHandles,
+  scratchFilePoolSize,
   writableRoots,
   syncAccessMode,
   closeables,
@@ -194,6 +194,7 @@ async function buildBrowserOpfsWasiFds({
       closeables,
       directoryHandle: handle,
       mountPath,
+      scratchFilePoolSize,
       syncAccessMode,
       writableRoots,
     });
@@ -215,7 +216,14 @@ async function buildBrowserOpfsWasiFds({
 }
 
 class BrowserOpfsMount {
-  static async create({ closeables, directoryHandle, mountPath, syncAccessMode, writableRoots }) {
+  static async create({
+    closeables,
+    directoryHandle,
+    mountPath,
+    scratchFilePoolSize,
+    syncAccessMode,
+    writableRoots,
+  }) {
     const contents = await buildOpfsInodeMap({
       closeables,
       directoryHandle,
@@ -223,18 +231,49 @@ class BrowserOpfsMount {
       syncAccessMode,
       writableRoots,
     });
-    return new BrowserOpfsMount({ contents, directoryHandle, mountPath, writableRoots });
+    const scratch = await createScratchFilePool({
+      closeables,
+      directoryHandle,
+      scratchFilePoolSize,
+      syncAccessMode,
+    });
+    return new BrowserOpfsMount({
+      contents,
+      directoryHandle,
+      mountPath,
+      scratchDirectoryHandle: scratch.directoryHandle,
+      scratchFiles: scratch.files,
+      scratchPool: scratch.pool,
+      writableRoots,
+    });
   }
 
-  constructor({ contents, directoryHandle, mountPath, writableRoots }) {
+  constructor({
+    contents,
+    directoryHandle,
+    mountPath,
+    scratchDirectoryHandle,
+    scratchFiles,
+    scratchPool,
+    writableRoots,
+  }) {
     this.contents = contents;
     this.directoryHandle = directoryHandle;
     this.mountPath = mountPath;
+    this.scratchDirectoryHandle = scratchDirectoryHandle;
+    this.scratchFiles = scratchFiles;
+    this.scratchPool = scratchPool;
     this.writableRoots = writableRoots;
   }
 
   isWritablePath(guestPath) {
     return isGuestPathWithinRoots(guestPath, this.writableRoots);
+  }
+
+  takeScratchFile() {
+    const file = this.scratchPool.pop() ?? null;
+    if (file) file.truncate(0);
+    return file;
   }
 }
 
@@ -259,6 +298,7 @@ class PreparedWasiPreopenDirectory extends wasiShim.PreopenDirectory {
       }
       const created = createInMemoryEntry(this.mount.contents, pathStr, {
         directory: (oflags & wasiShim.wasi.OFLAGS_DIRECTORY) === wasiShim.wasi.OFLAGS_DIRECTORY,
+        mount: this.mount,
       });
       if (created !== wasiShim.wasi.ERRNO_SUCCESS) {
         return { ret: created, fd_obj: null };
@@ -289,7 +329,10 @@ class PreparedWasiPreopenDirectory extends wasiShim.PreopenDirectory {
     if (!this.mount.isWritablePath(guestPath)) {
       return wasiShim.wasi.ERRNO_ROFS;
     }
-    return createInMemoryEntry(this.mount.contents, pathStr, { directory: true });
+    return createInMemoryEntry(this.mount.contents, pathStr, {
+      directory: true,
+      mount: this.mount,
+    });
   }
 
   path_link(pathStr, inode, _allowDir) {
@@ -340,8 +383,9 @@ class PreparedWasiPreopenDirectory extends wasiShim.PreopenDirectory {
 }
 
 class BrowserOpfsRandomAccessFile {
-  constructor(syncHandle) {
+  constructor(syncHandle, options = {}) {
     this.syncHandle = syncHandle;
+    this.scratchName = options.scratchName ?? null;
     this.closed = false;
   }
 
@@ -381,6 +425,7 @@ class WasiRandomAccessFileInode extends wasiShim.Inode {
     super();
     this.file = file;
     this.readonly = Boolean(options.readonly);
+    this.scratchBacked = Boolean(options.scratchBacked);
   }
 
   path_open(oflags, fsRightsBase, fdFlags) {
@@ -539,7 +584,13 @@ async function flushBrowserOpfsMounts(mounts) {
 
 async function flushInMemoryEntriesToOpfs(directoryHandle, entries) {
   for (const [name, entry] of entries) {
-    if (entry instanceof WasiRandomAccessFileInode) continue;
+    if (entry instanceof WasiRandomAccessFileInode) {
+      if (entry.scratchBacked) {
+        const fileHandle = await directoryHandle.getFileHandle(name, { create: true });
+        await copyRandomAccessFileToHandle(entry.file, fileHandle);
+      }
+      continue;
+    }
 
     if (entry instanceof wasiShim.Directory) {
       const childHandle = await directoryHandle.getDirectoryHandle(name, { create: true });
@@ -645,16 +696,23 @@ function findEntryInDirectory(contents, pathStr) {
   return null;
 }
 
-function createInMemoryEntry(contents, pathStr, { directory }) {
+function createInMemoryEntry(contents, pathStr, { directory, mount }) {
   const parts = normalizeWasiRelativePathParts(pathStr);
   if (parts === null) return wasiShim.wasi.ERRNO_NOTCAPABLE;
   if (parts.length === 0) return wasiShim.wasi.ERRNO_EXIST;
   const parent = resolveParentDirectory(contents, parts);
   if (parent.ret !== wasiShim.wasi.ERRNO_SUCCESS) return parent.ret;
   if (parent.entries.has(parent.name)) return wasiShim.wasi.ERRNO_EXIST;
+  if (directory) {
+    parent.entries.set(parent.name, new wasiShim.Directory(new Map()));
+    return wasiShim.wasi.ERRNO_SUCCESS;
+  }
+
+  const file = mount?.takeScratchFile?.() ?? null;
+  if (!file) return wasiShim.wasi.ERRNO_NOSPC;
   parent.entries.set(
     parent.name,
-    directory ? new wasiShim.Directory(new Map()) : new wasiShim.File(new Uint8Array()),
+    new WasiRandomAccessFileInode(file, { scratchBacked: true }),
   );
   return wasiShim.wasi.ERRNO_SUCCESS;
 }
@@ -675,6 +733,10 @@ function setEntryInDirectory(contents, pathStr, inode) {
 
 function copyInodeContents(target, source) {
   if (!(target instanceof WasiRandomAccessFileInode) || target.readonly) return false;
+  if (source instanceof WasiRandomAccessFileInode) {
+    copyRandomAccessFileSync(source.file, target.file);
+    return true;
+  }
   const bytes = readInodeBytes(source);
   if (!bytes) return false;
   target.file.truncate(0);
@@ -687,13 +749,111 @@ function readInodeBytes(inode) {
   if (inode instanceof wasiShim.File) {
     return inode.data instanceof Uint8Array ? inode.data : new Uint8Array(inode.data ?? []);
   }
-  if (inode instanceof WasiRandomAccessFileInode) {
-    const size = Number(inode.file.size());
-    const bytes = new Uint8Array(size);
-    if (size > 0) inode.file.readAt(0, bytes);
-    return bytes;
-  }
   return null;
+}
+
+async function createScratchFilePool({
+  closeables,
+  directoryHandle,
+  scratchFilePoolSize,
+  syncAccessMode,
+}) {
+  const count = normalizeScratchFilePoolSize(scratchFilePoolSize);
+  if (count === 0) {
+    return { directoryHandle: null, files: [], pool: [] };
+  }
+
+  const scratchDirectoryHandle = await directoryHandle.getDirectoryHandle(
+    SCRATCH_DIRECTORY_NAME,
+    { create: true },
+  );
+  const token = `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
+  const files = [];
+  for (let index = 0; index < count; index += 1) {
+    const scratchName = `${token}-${index}.tmp`;
+    const fileHandle = await scratchDirectoryHandle.getFileHandle(scratchName, { create: true });
+    const syncHandle = await openSyncAccessHandle({
+      fileHandle,
+      mode: writableSyncAccessMode(syncAccessMode),
+    });
+    syncHandle.truncate(0);
+    const file = new BrowserOpfsRandomAccessFile(syncHandle, { scratchName });
+    files.push(file);
+    closeables.push(file);
+  }
+  return {
+    directoryHandle: scratchDirectoryHandle,
+    files,
+    pool: [...files],
+  };
+}
+
+function normalizeScratchFilePoolSize(value) {
+  if (value === undefined || value === null) return DEFAULT_SCRATCH_FILE_POOL_SIZE;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new TypeError('scratchFilePoolSize must be a non-negative number');
+  }
+  return Math.floor(parsed);
+}
+
+function writableSyncAccessMode(mode) {
+  return mode === 'read-only' ? undefined : mode;
+}
+
+async function cleanupBrowserOpfsMounts(mounts) {
+  for (const mount of mounts) {
+    if (!mount.scratchDirectoryHandle) continue;
+    for (const file of mount.scratchFiles) {
+      if (!file.scratchName) continue;
+      try {
+        await mount.scratchDirectoryHandle.removeEntry(file.scratchName);
+      } catch {
+        // ignore best-effort scratch cleanup failures
+      }
+    }
+  }
+}
+
+function copyRandomAccessFileSync(source, target) {
+  if (source === target) return;
+  const size = Number(source.size());
+  const buffer = new Uint8Array(OPFS_COPY_CHUNK_SIZE);
+  target.truncate(size);
+  let offset = 0;
+  while (offset < size) {
+    const length = Math.min(buffer.byteLength, size - offset);
+    const view = buffer.subarray(0, length);
+    const read = source.readAt(offset, view);
+    if (read <= 0) break;
+    target.writeAt(offset, view.subarray(0, read));
+    offset += read;
+  }
+  target.flush();
+}
+
+async function copyRandomAccessFileToHandle(source, fileHandle) {
+  const size = Number(source.size());
+  const writable = await fileHandle.createWritable({ keepExistingData: false });
+  try {
+    const buffer = new Uint8Array(OPFS_COPY_CHUNK_SIZE);
+    let offset = 0;
+    while (offset < size) {
+      const length = Math.min(buffer.byteLength, size - offset);
+      const view = buffer.subarray(0, length);
+      const read = source.readAt(offset, view);
+      if (read <= 0) break;
+      await writable.write({
+        data: view.slice(0, read),
+        position: offset,
+        type: 'write',
+      });
+      offset += read;
+    }
+    await writable.truncate(size);
+  } finally {
+    await writable.close();
+  }
 }
 
 function unlinkEntryFromDirectory(contents, pathStr) {

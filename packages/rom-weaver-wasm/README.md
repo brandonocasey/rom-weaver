@@ -50,7 +50,6 @@ Runtime behavior:
 - Browser picker handles/files should be staged into OPFS before `run()`.
 - Known CLI output paths are created in OPFS before `_start()` because WASI Preview 1 filesystem calls are synchronous.
 - Dynamic files created during a run are flushed back to OPFS after `_start()` returns.
-- If unset, browser runs default `ROM_WEAVER_MAX_BUFFERED_PATCH_BYTES=67108864` (64 MiB) to fail early on remaining full-buffer patch paths instead of risking worker OOM.
 
 ## Dedicated Browser Worker Client Example
 

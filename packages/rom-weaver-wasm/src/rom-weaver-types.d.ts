@@ -124,12 +124,11 @@ export interface RomWeaverBrowserOpfsOptions {
   /** Writable guest roots. Defaults to the work mount itself. */
   writableDirectories?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
+  /** Number of preopened OPFS scratch files available for dynamically created WASI files. */
+  scratchFilePoolSize?: number;
   program?: string;
   argv0?: string;
-  /**
-   * Base environment for every browser run.
-   * If `ROM_WEAVER_MAX_BUFFERED_PATCH_BYTES` is unset, the runner defaults it to `67108864`.
-   */
+  /** Base environment for every browser run. */
   env?: RomWeaverEnv;
   debugWasi?: boolean;
 }
@@ -138,6 +137,7 @@ export interface RomWeaverBrowserOpfsRunOptions extends RomWeaverRunOptions {
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
   writableDirectories?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
+  scratchFilePoolSize?: number;
   program?: string;
   debugWasi?: boolean;
 }

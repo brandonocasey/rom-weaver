@@ -26,6 +26,11 @@ fn migrated_payload_paths_avoid_full_buffer_reads() {
             allowlist_fragments: &[],
         },
         GuardTarget {
+            relative_path: "crates/rom-weaver-containers/src/handlers/rvz.rs",
+            forbidden: &["fs::read(", "read_to_end("],
+            allowlist_fragments: &[],
+        },
+        GuardTarget {
             relative_path: "crates/rom-weaver-cli/src/header_detection_and_finalize.rs",
             forbidden: &["fs::read(", "read_to_end("],
             allowlist_fragments: &[],
@@ -183,8 +188,23 @@ fn migrated_payload_paths_avoid_full_buffer_reads() {
         },
         GuardTarget {
             relative_path: "crates/rom-weaver-patches/src/lib.rs",
-            forbidden: &["fs::read("],
-            allowlist_fragments: &["return Ok(ReadOnlyFile::Owned(fs::read(path)?));"],
+            forbidden: &[
+                "fs::read(",
+                "read_to_end(",
+                "map_file_read_only(",
+                "ReadOnlyFile",
+            ],
+            allowlist_fragments: &[],
+        },
+        GuardTarget {
+            relative_path: "packages/rom-weaver-wasm/src/rom-weaver-browser-opfs-api.mjs",
+            forbidden: &["new wasiShim.File(new Uint8Array())"],
+            allowlist_fragments: &[],
+        },
+        GuardTarget {
+            relative_path: "scripts/wasm/rom-weaver-browser-opfs-api.mjs",
+            forbidden: &["new wasiShim.File(new Uint8Array())"],
+            allowlist_fragments: &[],
         },
     ];
 
