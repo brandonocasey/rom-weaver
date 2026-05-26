@@ -36,6 +36,7 @@ type RuntimeWorkerPathSource = {
   fileName: string;
   filePath: string;
   size?: number;
+  virtual?: boolean;
 };
 
 type RuntimeWorkerSourceScope =

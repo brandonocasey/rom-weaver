@@ -44,11 +44,22 @@ export class RomWeaverWorkerClientCore {
   _send(payload, handlers = {}) {
     const requestId = this._nextRequestId;
     this._nextRequestId += 1;
+    const streamChannel = createWorkerStreamChannel({
+      handlers,
+      payload,
+      requestId,
+    });
 
     return new Promise((resolve, reject) => {
       this._pending.set(requestId, {
-        resolve,
-        reject,
+        resolve: (value) => {
+          streamChannel?.close();
+          resolve(value);
+        },
+        reject: (error) => {
+          streamChannel?.close();
+          reject(error);
+        },
         onEvent: typeof handlers.onEvent === 'function' ? handlers.onEvent : null,
         onNonJsonLine: typeof handlers.onNonJsonLine === 'function'
           ? handlers.onNonJsonLine
@@ -65,6 +76,7 @@ export class RomWeaverWorkerClientCore {
         this._transport.postMessage(this.worker, { ...payload, requestId });
       } catch (error) {
         this._pending.delete(requestId);
+        streamChannel?.close();
         reject(toWorkerError(error, 'worker'));
       }
     });
@@ -202,6 +214,63 @@ export function createBrowserWorkerTransport() {
       worker.terminate();
     },
   };
+}
+
+function createWorkerStreamChannel({ handlers, payload, requestId }) {
+  if (
+    payload?.type !== 'runJson'
+    || typeof BroadcastChannel !== 'function'
+    || !hasAnyStreamHandler(handlers)
+  ) {
+    return null;
+  }
+
+  const name = `rom-weaver-wasm-stream:${Date.now()}:${Math.random().toString(16).slice(2)}:${requestId}`;
+  const channel = new BroadcastChannel(name);
+  channel.onmessage = (event) => {
+    const message = event?.data;
+    if (!message || typeof message !== 'object' || message.requestId !== requestId) return;
+    dispatchStreamMessage(handlers, message);
+  };
+  payload.options = {
+    ...(payload.options ?? {}),
+    __streamBroadcastChannelName: name,
+    __streamRequestId: requestId,
+  };
+
+  return {
+    close() {
+      channel.close();
+    },
+  };
+}
+
+function hasAnyStreamHandler(handlers) {
+  return Boolean(
+    typeof handlers?.onEvent === 'function'
+      || typeof handlers?.onNonJsonLine === 'function'
+      || typeof handlers?.onTraceEvent === 'function'
+      || typeof handlers?.onTraceNonJsonLine === 'function',
+  );
+}
+
+function dispatchStreamMessage(handlers, message) {
+  switch (message.type) {
+    case 'event':
+      handlers.onEvent?.(message.event);
+      return;
+    case 'nonJsonLine':
+      handlers.onNonJsonLine?.(message.line);
+      return;
+    case 'traceEvent':
+      handlers.onTraceEvent?.(message.event);
+      return;
+    case 'traceNonJsonLine':
+      handlers.onTraceNonJsonLine?.(message.line);
+      return;
+    default:
+      return;
+  }
 }
 
 function deserializeError(error) {

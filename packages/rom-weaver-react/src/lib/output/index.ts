@@ -9,13 +9,6 @@ type BrowserSaveDestination =
       fileHandle?: FileSystemFileHandle;
     };
 
-type NodeSaveDestination =
-  | string
-  | {
-      directory?: string;
-      fileName?: string;
-    };
-
 type PublicOutput<TDestination> = {
   id: string;
   fileName: string;
@@ -134,5 +127,5 @@ const wrapPublicOutput = <TDestination>(
   return publicOutput;
 };
 
-export type { BrowserSaveDestination, NodeSaveDestination, OutputTraceOptions, PublicOutput };
+export type { BrowserSaveDestination, OutputTraceOptions, PublicOutput };
 export { wrapPublicOutput };

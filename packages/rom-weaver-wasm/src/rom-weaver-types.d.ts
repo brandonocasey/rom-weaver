@@ -112,6 +112,24 @@ export interface FileSystemDirectoryHandleLike {
 
 export type RomWeaverBrowserSyncAccessMode = 'read-only' | 'readwrite' | 'readwrite-unsafe';
 
+export interface RomWeaverBrowserVirtualFile {
+  path: string;
+  proxy?: {
+    id: string;
+    maxChunkSize?: number;
+    size: number;
+    slots: Array<{
+      controlBuffer: SharedArrayBuffer;
+      dataBuffer: SharedArrayBuffer;
+    }>;
+  };
+  source?: Blob | Uint8Array | ArrayBuffer;
+  file?: Blob;
+  blob?: Blob;
+  bytes?: Uint8Array | ArrayBuffer;
+  data?: Uint8Array | ArrayBuffer;
+}
+
 export interface RomWeaverBrowserOpfsOptions {
   module?: WebAssembly.Module;
   /** URL for the non-threaded wasm artifact. Defaults to the package artifact URL. */
@@ -130,6 +148,7 @@ export interface RomWeaverBrowserOpfsOptions {
   opfsGuestPath?: string;
   runtimeMounts?: string[];
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
+  virtualFiles?: RomWeaverBrowserVirtualFile[];
   /** Writable guest roots. Defaults to the work mount itself. */
   writableDirectories?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
@@ -149,6 +168,7 @@ export interface RomWeaverBrowserOpfsOptions {
 
 export interface RomWeaverBrowserOpfsRunOptions extends RomWeaverRunOptions {
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
+  virtualFiles?: RomWeaverBrowserVirtualFile[];
   writableDirectories?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
   scratchFilePoolSize?: number;

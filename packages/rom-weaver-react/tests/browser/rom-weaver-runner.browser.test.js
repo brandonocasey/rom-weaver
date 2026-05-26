@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "vitest";
 import { browserRuntime } from "../../src/platform/browser/workflow-runtime.ts";
 import {
+  getRomWeaverFailureMessage,
   getRomWeaverRunnerMetadata,
   resetRomWeaverRunner,
   runRomWeaverJson,
@@ -39,6 +40,25 @@ test("rom-weaver runner ready metadata exposes the loaded browser wasm runtime",
   expect(ready).toEqual(metadata);
   expect(ready.threaded).toBe(canUseSharedMemory);
   expect(ready.wasmUrl).toContain(canUseSharedMemory ? "rom-weaver-cli-threaded" : "rom-weaver-cli.wasm");
+});
+
+test("rom-weaver failure messages ignore trace-only stderr", () => {
+  const traceLine =
+    "2026-05-26T04:39:38.602000Z TRACE rom_weaver_core::context: emitting progress event command=extract";
+  expect(
+    getRomWeaverFailureMessage(
+      {
+        events: [],
+        exitCode: 1,
+        nonJsonLines: [],
+        ok: false,
+        stderr: traceLine,
+        traceEvents: [],
+        traceNonJsonLines: [traceLine],
+      },
+      "Compression extract failed",
+    ),
+  ).toBe("Compression extract failed");
 });
 
 test("rom-weaver runner reads and writes staged /work OPFS paths", async () => {

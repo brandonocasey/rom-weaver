@@ -1,3 +1,4 @@
+import { getActiveBrowserVirtualFiles } from "../protocol/browser-virtual-files.ts";
 import { isBrowserRuntime } from "../shared/runtime-env.ts";
 import { WORKER_OPFS_MOUNTPOINT } from "../shared/worker-storage/storage-layout.ts";
 
@@ -36,6 +37,7 @@ type RomWeaverWorkerClient = {
 };
 
 type RomWeaverRunnerReadyMetadata = {
+  fallbackReason?: string;
   mode: string;
   threaded: boolean;
   wasmUrl: string | null;
@@ -99,7 +101,11 @@ const createBrowserRunner = async (): Promise<RomWeaverRunner> => {
   publishRomWeaverWasmDiagnostic({
     context: "rom-weaver browser runner",
     contextUrl: selectedWasmUrl,
-    reason: ready.threaded ? "cross-origin isolated" : "single-thread fallback",
+    reason: ready.threaded
+      ? "cross-origin isolated"
+      : ready.fallbackReason === "structured-clone"
+        ? "threaded clone fallback"
+        : "single-thread fallback",
     threaded: ready.threaded,
     url: ready.wasmUrl || selectedWasmUrl,
   });
@@ -131,8 +137,20 @@ const resetRomWeaverRunner = async () => {
 };
 
 const runRomWeaverJson = async (args: string[], options?: RomWeaverRunJsonOptions) => {
+  const activeVirtualFiles = getActiveBrowserVirtualFiles();
+  const configuredVirtualFiles = (options as { virtualFiles?: unknown[] } | undefined)?.virtualFiles;
+  const runOptions =
+    activeVirtualFiles.length > 0
+      ? {
+          ...(options ?? {}),
+          virtualFiles: [
+            ...activeVirtualFiles,
+            ...(Array.isArray(configuredVirtualFiles) ? configuredVirtualFiles : []),
+          ],
+        }
+      : options;
   const runner = await createRomWeaverRunner();
-  return runner.runJson(args, options);
+  return runner.runJson(args, runOptions);
 };
 
 const warmupRomWeaverRunner = async () => {
@@ -221,19 +239,25 @@ const getRomWeaverFailureMessage = (
     if (line) return line;
   }
 
-  const traceNonJsonLines = Array.isArray(result?.traceNonJsonLines) ? result.traceNonJsonLines : [];
-  for (let index = traceNonJsonLines.length - 1; index >= 0; index -= 1) {
-    const line = String(traceNonJsonLines[index] || "").trim();
-    if (line) return line;
-  }
-
-  const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
-  if (stderr) return stderr;
-
   const errorMessage = getErrorMessage((result as { error?: unknown } | null | undefined)?.error);
   if (errorMessage) return errorMessage;
 
+  const stderr = getNonTraceStderr(result);
+  if (stderr) return stderr;
+
   return fallback;
+};
+
+const TRACE_STDERR_LINE_REGEX = /^\d{4}-\d{2}-\d{2}T\S+\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+[\w:]+:/;
+
+const getNonTraceStderr = (result: Partial<RomWeaverRunJsonResult> | null | undefined) => {
+  const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
+  if (!stderr) return "";
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !TRACE_STDERR_LINE_REGEX.test(line));
+  return lines.join("\n").trim();
 };
 
 export type { RomWeaverRunJsonEvent, RomWeaverRunJsonOptions, RomWeaverRunJsonResult };

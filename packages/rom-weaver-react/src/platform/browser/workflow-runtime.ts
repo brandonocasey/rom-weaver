@@ -888,9 +888,11 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
       });
     let workerSource = await stageRvzSource();
     const ensureRvzSourceExists = async () => {
+      if (workerSource.virtual) return;
       if (await waitForBrowserVfsPath(workerSource.filePath)) return;
       await workerSource.cleanup().catch(() => undefined);
       workerSource = await stageRvzSource();
+      if (workerSource.virtual) return;
       if (await waitForBrowserVfsPath(workerSource.filePath)) return;
       throw new Error(`Browser VFS staged input is not available: ${workerSource.filePath}`);
     };
@@ -1027,25 +1029,13 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
       await workerSource.cleanup().catch(() => undefined);
     }
   },
-  listRvz: async ({ source, fileName }) => {
-    const workerSource = await workerIo.stageSource({
-      fallbackFileName: fileName,
-      pathPrefix: "rvz-input",
-      scope: "rvz",
-      source,
-    });
-    try {
-      return [
-        {
-          fileName: getRvzExtractedFileName({ fileName }),
-          filename: getRvzExtractedFileName({ fileName }),
-          name: getPathBaseName(getRvzExtractedFileName({ fileName }), getRvzExtractedFileName({ fileName })),
-        },
-      ];
-    } finally {
-      await workerSource.cleanup().catch(() => undefined);
-    }
-  },
+  listRvz: async ({ fileName }) => [
+    {
+      fileName: getRvzExtractedFileName({ fileName }),
+      filename: getRvzExtractedFileName({ fileName }),
+      name: getPathBaseName(getRvzExtractedFileName({ fileName }), getRvzExtractedFileName({ fileName })),
+    },
+  ],
   listZ3ds: async ({ source, fileName, logLevel, onLog, onProgress }) => {
     const workerSource = await workerIo.stageSource({
       fallbackFileName: fileName,

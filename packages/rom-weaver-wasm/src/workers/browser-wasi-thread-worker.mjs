@@ -22,8 +22,15 @@ const THREAD_SLOT_STATE_SHUTDOWN = 6;
 
 async function runSingleThread(payload) {
   const tid = payload?.tid ?? null;
+  const stream = createStreamPublisher(payload, tid);
   try {
-    await __runRomWeaverBrowserWasiThread(payload);
+    await __runRomWeaverBrowserWasiThread(stream
+      ? {
+        ...payload,
+        stderrLineHandler: stream.stderrLine,
+        stdoutLineHandler: stream.stdoutLine,
+      }
+      : payload);
     self.postMessage({ type: 'done', tid });
   } catch (error) {
     self.postMessage({
@@ -32,6 +39,7 @@ async function runSingleThread(payload) {
       error: serializeError(error),
     });
   } finally {
+    stream?.close();
     self.close();
   }
 }
@@ -60,15 +68,23 @@ async function runPoolWorker(payload) {
 
     const tid = Atomics.load(control, THREAD_SLOT_TID_INDEX) | 0;
     const startArg = Atomics.load(control, THREAD_SLOT_START_ARG_INDEX) | 0;
+    const stream = createStreamPublisher(payload, tid);
     Atomics.store(control, THREAD_SLOT_ERROR_INDEX, 0);
     signalThreadState(control, THREAD_SLOT_STATE_STARTING);
     try {
-      await __runRomWeaverBrowserWasiThread({
+      const threadPayload = {
         ...payload,
         startArg,
         startControlBuffer: control.buffer,
         tid,
-      });
+      };
+      await __runRomWeaverBrowserWasiThread(stream
+        ? {
+          ...threadPayload,
+          stderrLineHandler: stream.stderrLine,
+          stdoutLineHandler: stream.stdoutLine,
+        }
+        : threadPayload);
       Atomics.store(control, THREAD_SLOT_ERROR_INDEX, 0);
       signalThreadState(control, THREAD_SLOT_STATE_IDLE);
     } catch (error) {
@@ -79,7 +95,51 @@ async function runPoolWorker(payload) {
         tid,
         error: serializeError(error),
       });
+    } finally {
+      stream?.close();
     }
+  }
+}
+
+function createStreamPublisher(payload, tid) {
+  const channelName = typeof payload?.__streamBroadcastChannelName === 'string'
+    ? payload.__streamBroadcastChannelName
+    : '';
+  const requestId = Number.isInteger(payload?.__streamRequestId) ? payload.__streamRequestId : null;
+  if (!channelName || requestId === null || typeof BroadcastChannel !== 'function') return null;
+
+  const channel = new BroadcastChannel(channelName);
+  return {
+    close() {
+      channel.close();
+    },
+    stderrLine(line) {
+      publishLine(channel, requestId, tid, line, true);
+    },
+    stdoutLine(line) {
+      publishLine(channel, requestId, tid, line, false);
+    },
+  };
+}
+
+function publishLine(channel, requestId, tid, line, trace) {
+  const text = String(line ?? '');
+  if (text.length === 0) return;
+  try {
+    const event = JSON.parse(text);
+    channel.postMessage({
+      type: trace ? 'traceEvent' : 'event',
+      requestId,
+      tid,
+      event,
+    });
+  } catch {
+    channel.postMessage({
+      type: trace ? 'traceNonJsonLine' : 'nonJsonLine',
+      requestId,
+      tid,
+      line: text,
+    });
   }
 }
 

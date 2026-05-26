@@ -23,7 +23,7 @@ type VfsStat = {
 };
 
 type LargeFileVfs = {
-  readonly hostKind: "browser-opfs" | "node-fs";
+  readonly hostKind: "browser-opfs";
   readonly rootPath: AbsoluteVfsPath;
   createOutputRef: (
     path: string,

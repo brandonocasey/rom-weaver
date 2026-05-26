@@ -1,8 +1,8 @@
-import type { BrowserSaveDestination, NodeSaveDestination, PublicOutput, SaveDestination } from "./output.ts";
+import type { BrowserSaveDestination, PublicOutput, SaveDestination } from "./output.ts";
 import type { WorkflowProgress } from "./progress.ts";
 import type { CandidateSelectionRequest, SelectFile } from "./selection.ts";
 import type { ApplySettings, CreateSettings, PatchFormat } from "./settings.ts";
-import type { BrowserSourceRef, NodeSourceRef, SourceRef } from "./source.ts";
+import type { BrowserSourceRef, SourceRef } from "./source.ts";
 
 type WorkflowSizeSummary = {
   inputCompressedSize?: number;
@@ -73,13 +73,9 @@ type UnifiedCreateInput = CreateInput<SourceRef>;
 type UnifiedApplyResult = ApplyResult<SaveDestination>;
 type UnifiedCreateResult = CreateResult<SaveDestination>;
 type BrowserApplyInput = ApplyInput<BrowserSourceRef>;
-type NodeApplyInput = ApplyInput<NodeSourceRef>;
 type BrowserCreateInput = CreateInput<BrowserSourceRef>;
-type NodeCreateInput = CreateInput<NodeSourceRef>;
 type BrowserApplyResult = ApplyResult<BrowserSaveDestination>;
-type NodeApplyResult = ApplyResult<NodeSaveDestination>;
 type BrowserCreateResult = CreateResult<BrowserSaveDestination>;
-type NodeCreateResult = CreateResult<NodeSaveDestination>;
 
 export type {
   AppliedPatchInfo,
@@ -91,10 +87,6 @@ export type {
   BrowserCreateResult,
   CreateInput,
   CreateResult,
-  NodeApplyInput,
-  NodeApplyResult,
-  NodeCreateInput,
-  NodeCreateResult,
   SelectedInputInfo,
   UnifiedApplyInput,
   UnifiedApplyResult,

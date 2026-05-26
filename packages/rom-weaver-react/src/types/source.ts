@@ -15,16 +15,6 @@ type SourceObject = {
 type SourceRef = DirectSource | SourceObject;
 
 type BrowserSourceObject = SourceObject;
-type NodeSourceObject = SourceObject;
 type BrowserSourceRef = SourceRef;
-type NodeSourceRef = SourceRef;
 
-export type {
-  BrowserSourceObject,
-  BrowserSourceRef,
-  DirectSource,
-  NodeSourceObject,
-  NodeSourceRef,
-  SourceObject,
-  SourceRef,
-};
+export type { BrowserSourceObject, BrowserSourceRef, DirectSource, SourceObject, SourceRef };

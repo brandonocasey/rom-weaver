@@ -21,6 +21,7 @@ export type BrowserWorkerRunJsonOptions<TEvent = RomWeaverProgressEvent, TTraceE
 export type BrowserWorkerClientError = RomWeaverWorkerError;
 
 export interface BrowserWorkerReady {
+  fallbackReason?: 'structured-clone';
   mode: string;
   threaded: boolean;
   wasmUrl: string | null;

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createRomWeaverBrowserOpfs } from '../src/rom-weaver-browser-opfs-api.mjs';
-import { createBrowserWorkerClient } from '../src/workers/browser-worker-client.mjs';
+import {
+  BrowserRomWeaverWorkerClient,
+  createBrowserWorkerClient,
+} from '../src/workers/browser-worker-client.mjs';
 import {
   assertRunJsonSucceeded,
   getGuestFileSize,
@@ -16,9 +19,124 @@ import {
 
 const RUN_1GB_STRESS = typeof __ROM_WEAVER_WASM_STRESS_1GB__ !== 'undefined'
   && __ROM_WEAVER_WASM_STRESS_1GB__ === true;
+// Minimal WASI module: write a running JSON line, spin, then write succeeded.
+const STREAMING_WASI_MODULE_BYTES = new Uint8Array([
+  0, 97, 115, 109, 1, 0, 0, 0, 1, 12, 2, 96, 4, 127, 127, 127, 127, 1,
+  127, 96, 0, 0, 2, 35, 1, 22, 119, 97, 115, 105, 95, 115, 110, 97, 112,
+  115, 104, 111, 116, 95, 112, 114, 101, 118, 105, 101, 119, 49, 8, 102,
+  100, 95, 119, 114, 105, 116, 101, 0, 0, 3, 2, 1, 1, 5, 3, 1, 0, 1, 7,
+  19, 2, 6, 109, 101, 109, 111, 114, 121, 2, 0, 6, 95, 115, 116, 97, 114,
+  116, 0, 1, 10, 88, 1, 86, 1, 1, 127, 65, 0, 65, 32, 54, 2, 0, 65, 4,
+  65, 63, 54, 2, 0, 65, 1, 65, 0, 65, 1, 65, 8, 16, 0, 26, 65, 0, 33, 0,
+  2, 64, 3, 64, 32, 0, 65, 128, 202, 181, 238, 1, 79, 13, 1, 32, 0, 65,
+  1, 106, 33, 0, 12, 0, 11, 0, 11, 65, 0, 65, 128, 1, 54, 2, 0, 65, 4, 65,
+  62, 54, 2, 0, 65, 1, 65, 0, 65, 1, 65, 8, 16, 0, 26, 11, 11, 137, 1, 2,
+  0, 65, 32, 11, 63, 123, 34, 99, 111, 109, 109, 97, 110, 100, 34, 58, 34,
+  115, 116, 114, 101, 97, 109, 45, 116, 101, 115, 116, 34, 44, 34, 115, 116,
+  97, 116, 117, 115, 34, 58, 34, 114, 117, 110, 110, 105, 110, 103, 34, 44,
+  34, 108, 97, 98, 101, 108, 34, 58, 34, 115, 116, 97, 114, 116, 101, 100,
+  34, 125, 10, 0, 65, 128, 1, 11, 62, 123, 34, 99, 111, 109, 109, 97, 110,
+  100, 34, 58, 34, 115, 116, 114, 101, 97, 109, 45, 116, 101, 115, 116, 34,
+  44, 34, 115, 116, 97, 116, 117, 115, 34, 58, 34, 115, 117, 99, 99, 101,
+  101, 100, 101, 100, 34, 44, 34, 108, 97, 98, 101, 108, 34, 58, 34, 100,
+  111, 110, 101, 34, 125, 10,
+]);
 
 function runJsonFromWorker(worker) {
   return (args, options) => worker.runJson(args, options);
+}
+
+function delay(ms, value = null) {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(value), ms);
+  });
+}
+
+function createVirtualFileProxy(path, sourceBytes) {
+  const bytes = sourceBytes instanceof Uint8Array ? sourceBytes : toBytes(sourceBytes);
+  const id = `test-virtual-file-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const slots = Array.from({ length: 2 }, () => ({
+    controlBuffer: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 6),
+    dataBuffer: new SharedArrayBuffer(1024),
+  }));
+  let closed = false;
+  let timer = null;
+  const pump = () => {
+    if (closed) return;
+    for (const slot of slots) {
+      const control = new Int32Array(slot.controlBuffer);
+      if (Atomics.compareExchange(control, 0, 1, 3) !== 1) continue;
+      const data = new Uint8Array(slot.dataBuffer);
+      const offset = (Atomics.load(control, 1) >>> 0) + (Atomics.load(control, 2) >>> 0) * 2 ** 32;
+      const length = Math.max(0, Math.min(Atomics.load(control, 3), data.byteLength));
+      const chunk = bytes.subarray(offset, offset + length);
+      data.set(chunk);
+      Atomics.store(control, 4, chunk.byteLength);
+      Atomics.store(control, 5, 0);
+      Atomics.store(control, 0, 2);
+      Atomics.notify(control, 0, 1);
+    }
+    timer = setTimeout(pump, 0);
+  };
+  pump();
+  return {
+    close() {
+      closed = true;
+      if (timer) clearTimeout(timer);
+    },
+    virtualFile: {
+      path,
+      proxy: {
+        id,
+        maxChunkSize: 1024,
+        size: bytes.byteLength,
+        slots,
+      },
+    },
+  };
+}
+
+class CloneFailingInitWorker {
+  constructor() {
+    this.messages = [];
+    this.listeners = new Map();
+  }
+
+  postMessage(message) {
+    this.messages.push(message);
+    if (message.type === 'init' && message.options?.preferThreadedWasm !== false) {
+      throw new DOMException('The object could not be cloned.', 'DataCloneError');
+    }
+    queueMicrotask(() => {
+      this.dispatchMessage({
+        mode: 'browser-opfs',
+        requestId: message.requestId,
+        threaded: false,
+        type: message.type === 'dispose' ? 'disposed' : 'ready',
+        wasmUrl: message.options?.wasmUrl ?? null,
+      });
+    });
+  }
+
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) || new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type, listener) {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  dispatchMessage(data) {
+    for (const listener of this.listeners.get('message') || []) {
+      listener({ data });
+    }
+  }
+
+  terminate() {
+    this.listeners.clear();
+  }
 }
 
 async function runMatrix(matrixRunner, worker, options) {
@@ -100,6 +218,63 @@ describe('rom-weaver-wasm browser runner parity', () => {
       const terminal = result.events.at(-1);
       expect(terminal.status).toBe('succeeded');
       expect(terminal.command).toBe('checksum');
+    });
+  });
+
+  it('runJson reads virtual browser File inputs without OPFS staging', async () => {
+    await withTempFixture(async ({ worker }) => {
+      const virtualPath = '/work/input/direct-file/input.bin';
+      const virtual = createVirtualFileProxy(virtualPath, 'direct virtual input');
+      let result;
+      try {
+        result = await worker.runJson([
+          'checksum',
+          virtualPath,
+          '--algo',
+          'crc32',
+          '--no-extract',
+        ], {
+          virtualFiles: [virtual.virtualFile],
+        });
+      } finally {
+        virtual.close();
+      }
+
+      const terminal = assertRunJsonSucceeded(result, { command: 'checksum' });
+      expect(terminal.label).toMatch(/crc32=/i);
+    });
+  });
+
+  it('runJson streams stdout events before the wasm process completes', async () => {
+    const module = await WebAssembly.compile(STREAMING_WASI_MODULE_BYTES);
+    await withTempFixture(async ({ worker }) => {
+      let resolveFirstEvent;
+      const firstEvent = new Promise((resolve) => {
+        resolveFirstEvent = resolve;
+      });
+      const resultPromise = worker.runJson([], {
+        onEvent(event) {
+          if (event?.command === 'stream-test' && event.status === 'running') {
+            resolveFirstEvent(event);
+          }
+        },
+      });
+
+      const streamedEvent = await Promise.race([firstEvent, delay(250)]);
+      expect(streamedEvent).toMatchObject({
+        command: 'stream-test',
+        status: 'running',
+      });
+      await expect(Promise.race([resultPromise.then(() => 'settled'), delay(0, 'pending')]))
+        .resolves
+        .toBe('pending');
+
+      const result = await resultPromise;
+      assertRunJsonSucceeded(result, { command: 'stream-test' });
+    }, {
+      initOptions: {
+        module,
+      },
     });
   });
 
@@ -317,23 +492,53 @@ describe('rom-weaver-wasm browser runner parity', () => {
     await withTempFixture(async ({ dir, init, worker, opfsHandle }) => {
       expect(init.threaded).toBe(true);
       const sourcePath = joinGuestPath(dir, 'threaded-checksum-source.bin');
-      await writeGuestPatternFile(opfsHandle, sourcePath, 9 * 1024 * 1024);
+      await writeGuestPatternFile(opfsHandle, sourcePath, 32 * 1024 * 1024);
 
-      const result = await worker.runJson([
-        'checksum',
-        sourcePath,
-        '--algo',
-        'crc32',
-        '--algo',
-        'sha1',
-        '--algo',
-        'sha256',
-        '--algo',
-        'blake3',
-        '--no-extract',
-        '--threads',
-        '4',
-      ]);
+      let resolveRunningEvent;
+      const firstRunningEvent = new Promise((resolve) => {
+        resolveRunningEvent = resolve;
+      });
+      const resultPromise = worker.runJson(
+        [
+          'checksum',
+          sourcePath,
+          '--algo',
+          'crc32',
+          '--algo',
+          'sha1',
+          '--algo',
+          'sha256',
+          '--algo',
+          'blake3',
+          '--no-extract',
+          '--threads',
+          '4',
+        ],
+        {
+          onEvent(event) {
+            if (
+              event?.command === 'checksum'
+              && event.status === 'running'
+              && typeof event.percent === 'number'
+              && event.percent > 0
+              && event.percent < 100
+            ) {
+              resolveRunningEvent(event);
+            }
+          },
+        },
+      );
+
+      const streamedEvent = await Promise.race([firstRunningEvent, delay(1000)]);
+      expect(streamedEvent).toMatchObject({
+        command: 'checksum',
+        status: 'running',
+      });
+      await expect(Promise.race([resultPromise.then(() => 'settled'), delay(0, 'pending')]))
+        .resolves
+        .toBe('pending');
+
+      const result = await resultPromise;
 
       const terminal = assertRunJsonSucceeded(result, {
         command: 'checksum',
@@ -563,6 +768,35 @@ describe('rom-weaver-wasm browser worker client parity', () => {
         client._send({ type: 'init', mode: 'invalid-mode', options: {} }),
       ).rejects.toMatchObject({
         kind: 'worker',
+      });
+    } finally {
+      client.terminate();
+    }
+  });
+
+  it('browser worker client owns single-thread fallback for structured-clone init failures', async () => {
+    const worker = new CloneFailingInitWorker();
+    const client = new BrowserRomWeaverWorkerClient(worker, { defaultThreads: 4 });
+    try {
+      const ready = await client.init({
+        runtimeMounts: ['/work'],
+        threadedWasmUrl: 'threaded.wasm',
+        wasmUrl: 'single.wasm',
+        workGuestPath: '/work',
+      });
+
+      const initMessages = worker.messages.filter((message) => message.type === 'init');
+      expect(ready).toMatchObject({
+        fallbackReason: 'structured-clone',
+        mode: 'browser-opfs',
+        threaded: false,
+        wasmUrl: 'single.wasm',
+      });
+      expect(initMessages).toHaveLength(2);
+      expect(initMessages[0].options).toMatchObject({ defaultThreads: 4 });
+      expect(initMessages[1].options).toMatchObject({
+        defaultThreads: 1,
+        preferThreadedWasm: false,
       });
     } finally {
       client.terminate();

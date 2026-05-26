@@ -26,6 +26,29 @@ const loadFixtureFile = async (filePath, type = "application/octet-stream") => {
   return new File([bytes], fileNameFromPath(filePath), { type });
 };
 
+const waitForState = async (resolveState, timeout = 60000, intervalMs = 50) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    const state = resolveState();
+    if (state) return state;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, intervalMs));
+  }
+  return null;
+};
+
+const selectCandidateIfPrompted = async (label) => {
+  const selectionState = await waitForState(() => {
+    const selectedLabel =
+      document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file")?.textContent || "";
+    if (selectedLabel.includes(label)) return "selected";
+    if (document.querySelector("#rom-weaver-candidate-selection-list")) return "dialog";
+    return null;
+  });
+  expect(selectionState).not.toBeNull();
+  if (selectionState === "selected") return;
+  await page.getByRole("button", { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") }).click();
+};
+
 const createNoopActions = () => ({
   onCancelConfirmation: () => undefined,
   onCloseSettings: () => undefined,
@@ -116,8 +139,9 @@ test("WebappRoot mounts the full workflow shell and stages archive inputs", asyn
   await expect.element(page.getByRole("contentinfo")).toBeInTheDocument();
 
   await romInput.upload(await loadFixtureFile(ONE_ROM_ZIP, "application/zip"));
+  await selectCandidateIfPrompted("game.bin");
 
-  await expect.element(page.getByText("game.bin", { exact: true })).toBeInTheDocument();
+  await expect.element(page.getByText(/game\.bin/i)).toBeInTheDocument();
   await expect.element(page.getByText(CRC32_TEXT_REGEX)).toBeInTheDocument();
 
   await page.getByRole("button", { name: "Clear ROM input" }).click();
@@ -125,8 +149,8 @@ test("WebappRoot mounts the full workflow shell and stages archive inputs", asyn
 
   await page.getByLabelText(/Select ROM/i).upload(await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"));
 
-  await page.getByRole("button", { name: /game\.bin/i }).click();
+  await selectCandidateIfPrompted("game.bin");
 
-  await expect.element(page.getByText("game.bin", { exact: true })).toBeInTheDocument();
+  await expect.element(page.getByText(/game\.bin/i)).toBeInTheDocument();
   await expect.element(page.getByText(CRC32_TEXT_REGEX)).toBeInTheDocument();
 });

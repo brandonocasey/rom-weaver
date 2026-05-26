@@ -4,9 +4,10 @@ import {
   getNamedSourceFileName,
   getNamedSourceSize,
 } from "../../storage/shared/binary/source-file-utils.ts";
-import { createWorkerRequestId } from "../shared/worker-request-id.ts";
 import type { WorkerStorageBucket } from "../shared/worker-storage/storage-layout.ts";
-import { getManagedOpfsFileHandle, removeManagedOpfsPath } from "./opfs-path.ts";
+import { getWorkerStorageBucketPath, WORKER_OPFS_MOUNTPOINT } from "../shared/worker-storage/storage-layout.ts";
+import { registerBrowserVirtualFile } from "./browser-virtual-files.ts";
+import { getManagedOpfsFileHandle } from "./opfs-path.ts";
 
 type BrowserOpfsSourceRef = {
   cleanup: () => Promise<void>;
@@ -15,31 +16,7 @@ type BrowserOpfsSourceRef = {
   kind: "path";
   size?: number;
   storageKind: "opfs";
-};
-
-type WorkerAssetRoot = typeof globalThis & {
-  __romWeaverWorkerBaseUrl?: string;
-};
-
-type BrowserOpfsStageResponse = {
-  action: "stage-complete" | "stage-error";
-  error?: { message?: string };
-  fileName?: string;
-  filePath?: string;
-  requestId?: string;
-  size?: number;
-  success: boolean;
-};
-
-type BrowserOpfsStageRequest = {
-  action: "stage";
-  bucket?: WorkerStorageBucket;
-  file?: File;
-  fileHandle?: FileSystemFileHandle;
-  fileName?: string;
-  mountPoint: string;
-  pathPrefix: string;
-  requestId: string;
+  virtual?: boolean;
 };
 
 const isFileLike = (source: unknown): source is File =>
@@ -71,6 +48,42 @@ const getByteSource = (source: unknown): Uint8Array | null => {
   return bytes instanceof Uint8Array ? bytes : null;
 };
 
+const LEADING_DOTS_REGEX = /^\.+/;
+const PATH_SEPARATOR_REGEX = /[\\/]+/g;
+const UNSAFE_FILE_CHARS_REGEX = /[^A-Za-z0-9._-]+/g;
+const EDGE_UNDERSCORES_REGEX = /^_+|_+$/g;
+const TRAILING_SLASHES_REGEX = /\/+$/;
+let virtualSourceId = 0;
+
+const normalizeVirtualFileName = (fileName: string | null | undefined, fallback = "input.bin") =>
+  String(fileName || fallback)
+    .replace(PATH_SEPARATOR_REGEX, "_")
+    .replace(UNSAFE_FILE_CHARS_REGEX, "_")
+    .replace(EDGE_UNDERSCORES_REGEX, "")
+    .replace(LEADING_DOTS_REGEX, "") || fallback;
+
+const createVirtualPathNonce = () => {
+  const sequence = ++virtualSourceId;
+  const timeToken = Date.now().toString(36);
+  const randomToken = Math.random().toString(16).slice(2, 10);
+  return `${timeToken}-${sequence}-${randomToken}`;
+};
+
+const createVirtualInputPath = (
+  options: { bucket?: WorkerStorageBucket; mountPoint: string; pathPrefix: string },
+  fileName: string,
+) => {
+  const mountPoint = String(options.mountPoint || WORKER_OPFS_MOUNTPOINT).replace(TRAILING_SLASHES_REGEX, "");
+  const bucket = options.bucket || "input";
+  const pathPrefix = normalizeVirtualFileName(options.pathPrefix || "input", "input");
+  return getWorkerStorageBucketPath(
+    mountPoint,
+    bucket,
+    `${pathPrefix}-${createVirtualPathNonce()}-${normalizeVirtualFileName(fileName)}`,
+    normalizeVirtualFileName(fileName),
+  );
+};
+
 const getOpfsPathSize = async (filePath: string): Promise<number | undefined> => {
   try {
     const handle = await getManagedOpfsFileHandle(filePath, { navigatorObject: navigator });
@@ -79,55 +92,6 @@ const getOpfsPathSize = async (filePath: string): Promise<number | undefined> =>
   } catch (_error) {
     return undefined;
   }
-};
-
-let stagingWorker: Worker | null = null;
-
-const createStagingWorker = () => {
-  const root = globalThis as WorkerAssetRoot;
-  const baseUrl = typeof root.__romWeaverWorkerBaseUrl === "string" ? root.__romWeaverWorkerBaseUrl.trim() : "";
-  if (baseUrl) {
-    try {
-      return new Worker(new URL("browser-opfs-staging.worker.js", baseUrl), {
-        name: "rpjs-opfs-staging-worker",
-        type: "module",
-      });
-    } catch (_error) {
-      // Fall through to the bundled worker. Asset-base overrides are optional.
-    }
-  }
-  return new Worker(new URL("../storage/browser-opfs-staging.worker.ts", import.meta.url), {
-    name: "rpjs-opfs-staging-worker",
-    type: "module",
-  });
-};
-
-const getStagingWorker = () => {
-  if (typeof Worker !== "function") throw new Error("Browser OPFS source staging requires Worker support");
-  if (!stagingWorker) stagingWorker = createStagingWorker();
-  return stagingWorker;
-};
-
-const requestStage = (request: BrowserOpfsStageRequest): Promise<BrowserOpfsStageResponse> => {
-  const worker = getStagingWorker();
-  return new Promise((resolve, reject) => {
-    const handleMessage = (event: MessageEvent<BrowserOpfsStageResponse>) => {
-      if (event.data?.requestId !== request.requestId) return;
-      cleanup();
-      resolve(event.data);
-    };
-    const handleError = (event: ErrorEvent) => {
-      cleanup();
-      reject(new Error(event.message || "Browser OPFS staging worker failed"));
-    };
-    const cleanup = () => {
-      worker.removeEventListener("message", handleMessage);
-      worker.removeEventListener("error", handleError);
-    };
-    worker.addEventListener("message", handleMessage);
-    worker.addEventListener("error", handleError);
-    worker.postMessage(request);
-  });
 };
 
 const createBrowserOpfsSourceRef = async (
@@ -153,33 +117,39 @@ const createBrowserOpfsSourceRef = async (
       size: sizeHint ?? (await getOpfsPathSize(filePath)),
       storageKind: "opfs",
     };
-  const requestId = createWorkerRequestId("opfs-stage");
-  const request: BrowserOpfsStageRequest = {
-    action: "stage",
-    bucket: options.bucket || "input",
-    fileName,
-    mountPoint: options.mountPoint,
-    pathPrefix: options.pathPrefix,
-    requestId,
-  };
   const fileHandle = getBrowserSourceHandle(directSource) || getBrowserSourceHandle(source);
   const blob = getBrowserSourceBlob(directSource) || getBrowserSourceBlob(source);
   const bytes = getByteSource(directSource) || getByteSource(source);
-  if (fileHandle) request.fileHandle = fileHandle;
-  else if (blob) request.file = toFileLike(blob, fileName || fallbackFileName);
-  else if (bytes) request.file = new File([bytes as BlobPart], fileName || fallbackFileName);
-  else throw new Error("Browser worker inputs must be File or FileSystemFileHandle values");
+  let virtualSource: Blob | Uint8Array | null = null;
+  let virtualSize = sizeHint;
+  if (fileHandle) {
+    const file = await fileHandle.getFile();
+    virtualSource = toFileLike(file, fileName || fallbackFileName);
+    virtualSize = file.size;
+  } else if (blob) {
+    virtualSource = toFileLike(blob, fileName || fallbackFileName);
+    virtualSize = blob.size;
+  } else if (bytes) {
+    virtualSource = bytes;
+    virtualSize = bytes.byteLength;
+  } else {
+    throw new Error("Browser worker inputs must be File, Blob, Uint8Array, FileSystemFileHandle, or OPFS path values");
+  }
 
-  const response = await requestStage(request);
-  if (!(response.success && response.filePath))
-    throw new Error(response.error?.message || "Browser OPFS staging failed");
+  const virtualFileName = normalizeVirtualFileName(fileName || fallbackFileName, fallbackFileName || "input.bin");
+  const virtualPath = createVirtualInputPath(options, virtualFileName);
+  const unregister = registerBrowserVirtualFile({
+    path: virtualPath,
+    source: virtualSource,
+  });
   return {
-    cleanup: () => removeManagedOpfsPath(response.filePath as string),
-    fileName: response.fileName || fileName || fallbackFileName,
-    filePath: response.filePath,
+    cleanup: async () => unregister(),
+    fileName: virtualFileName,
+    filePath: virtualPath,
     kind: "path",
-    size: response.size,
+    size: virtualSize,
     storageKind: "opfs",
+    virtual: true,
   };
 };
 

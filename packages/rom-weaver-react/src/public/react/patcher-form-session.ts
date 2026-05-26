@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type SetStateAction, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import OutputCompressionManager from "../../lib/compression/output-compression-manager.ts";
 import { classifyPatcherInput } from "../../lib/input/input-classification.ts";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
@@ -73,6 +73,27 @@ type ApplyExecutionTimingTracker = {
   applyStartedAt: number | null;
   compressionStartedAt: number | null;
 };
+type LocalPatcherSessionState = {
+  busy: boolean;
+  completedApplyTimeMs: number | null;
+  completedCompressionTimeMs: number | null;
+  completedSizeSummary: ReturnType<typeof createOutputSizeSummary>;
+  failureMessage: string;
+  inputStaging: boolean;
+  outputErrorMessage: string;
+  outputName: string;
+  outputNameEdited: boolean;
+  patchInfoByKey: Record<string, StagedInputInfo>;
+  patchProgress: InputProgress | null;
+  patchProgressByKey: Record<string, InputProgress>;
+  patchStaging: boolean;
+  pendingDownloadFileName: string | null;
+  progress: InputProgress | null;
+  romInputs: RomInputRowState[];
+};
+type LocalPatcherSessionStatePatch =
+  | Partial<LocalPatcherSessionState>
+  | ((state: LocalPatcherSessionState) => Partial<LocalPatcherSessionState>);
 
 const getPublicOutputSize = (output: { size?: number }) => output.size || 0;
 
@@ -84,6 +105,36 @@ const waitForNextUiPaint = () =>
     }
     globalThis.setTimeout(() => resolve(), 0);
   });
+
+const createLocalPatcherSessionState = (): LocalPatcherSessionState => ({
+  busy: false,
+  completedApplyTimeMs: null,
+  completedCompressionTimeMs: null,
+  completedSizeSummary: createOutputSizeSummary(),
+  failureMessage: "",
+  inputStaging: false,
+  outputErrorMessage: "",
+  outputName: "",
+  outputNameEdited: false,
+  patchInfoByKey: {},
+  patchProgress: null,
+  patchProgressByKey: {},
+  patchStaging: false,
+  pendingDownloadFileName: null,
+  progress: null,
+  romInputs: [],
+});
+
+const localPatcherSessionStateReducer = (
+  state: LocalPatcherSessionState,
+  patch: LocalPatcherSessionStatePatch,
+): LocalPatcherSessionState => ({
+  ...state,
+  ...(typeof patch === "function" ? patch(state) : patch),
+});
+
+const resolveLocalStateUpdate = <T>(current: T, update: SetStateAction<T>): T =>
+  typeof update === "function" ? (update as (current: T) => T)(current) : update;
 
 const toError = (error: RuntimeValue): Error => (error instanceof Error ? error : new Error(String(error)));
 
@@ -452,22 +503,123 @@ const useLocalApplyPatchFormSession = ({
   const [internalInputs, setInternalInputs] = useState(defaultInputs);
   const [internalPatches, setInternalPatches] = useState(defaultPatches);
   const [internalSettings, setInternalSettings] = useState<ApplyPatchFormSettings>(defaultSettings);
-  const [busy, setBusy] = useState(false);
-  const [inputStaging, setInputStaging] = useState(false);
-  const [failureMessage, setErrorMessage] = useState("");
-  const [outputErrorMessage, setOutputErrorMessage] = useState("");
-  const [progress, setProgress] = useState<InputProgress | null>(null);
-  const [patchProgress, setPatchProgress] = useState<InputProgress | null>(null);
-  const [patchProgressByKey, setPatchProgressByKey] = useState<Record<string, InputProgress>>({});
-  const [patchStaging, setPatchStaging] = useState(false);
-  const [patchInfoByKey, setPatchInfoByKey] = useState<Record<string, StagedInputInfo>>({});
-  const [romInputs, setRomInputs] = useState<RomInputRowState[]>([]);
-  const [outputName, setOutputName] = useState("");
-  const [outputNameEdited, setOutputNameEdited] = useState(false);
-  const [completedSizeSummary, setCompletedSizeSummary] = useState(() => createOutputSizeSummary());
-  const [completedApplyTimeMs, setCompletedApplyTimeMs] = useState<number | null>(null);
-  const [completedCompressionTimeMs, setCompletedCompressionTimeMs] = useState<number | null>(null);
-  const [pendingDownloadFileName, setPendingDownloadFileName] = useState<string | null>(null);
+  const [localState, setLocalState] = useReducer(
+    localPatcherSessionStateReducer,
+    undefined,
+    createLocalPatcherSessionState,
+  );
+  const {
+    busy,
+    completedApplyTimeMs,
+    completedCompressionTimeMs,
+    completedSizeSummary,
+    failureMessage,
+    inputStaging,
+    outputErrorMessage,
+    outputName,
+    outputNameEdited,
+    patchInfoByKey,
+    patchProgress,
+    patchProgressByKey,
+    patchStaging,
+    pendingDownloadFileName,
+    progress,
+    romInputs,
+  } = localState;
+  const setBusy = useCallback(
+    (value: SetStateAction<boolean>) =>
+      setLocalState((current) => ({ busy: resolveLocalStateUpdate(current.busy, value) })),
+    [],
+  );
+  const setInputStaging = useCallback(
+    (value: SetStateAction<boolean>) =>
+      setLocalState((current) => ({ inputStaging: resolveLocalStateUpdate(current.inputStaging, value) })),
+    [],
+  );
+  const setErrorMessage = useCallback(
+    (value: SetStateAction<string>) =>
+      setLocalState((current) => ({ failureMessage: resolveLocalStateUpdate(current.failureMessage, value) })),
+    [],
+  );
+  const setOutputErrorMessage = useCallback(
+    (value: SetStateAction<string>) =>
+      setLocalState((current) => ({
+        outputErrorMessage: resolveLocalStateUpdate(current.outputErrorMessage, value),
+      })),
+    [],
+  );
+  const setProgress = useCallback(
+    (value: SetStateAction<InputProgress | null>) =>
+      setLocalState((current) => ({ progress: resolveLocalStateUpdate(current.progress, value) })),
+    [],
+  );
+  const setPatchProgress = useCallback(
+    (value: SetStateAction<InputProgress | null>) =>
+      setLocalState((current) => ({ patchProgress: resolveLocalStateUpdate(current.patchProgress, value) })),
+    [],
+  );
+  const setPatchProgressByKey = useCallback(
+    (value: SetStateAction<Record<string, InputProgress>>) =>
+      setLocalState((current) => ({
+        patchProgressByKey: resolveLocalStateUpdate(current.patchProgressByKey, value),
+      })),
+    [],
+  );
+  const setPatchStaging = useCallback(
+    (value: SetStateAction<boolean>) =>
+      setLocalState((current) => ({ patchStaging: resolveLocalStateUpdate(current.patchStaging, value) })),
+    [],
+  );
+  const setPatchInfoByKey = useCallback(
+    (value: SetStateAction<Record<string, StagedInputInfo>>) =>
+      setLocalState((current) => ({ patchInfoByKey: resolveLocalStateUpdate(current.patchInfoByKey, value) })),
+    [],
+  );
+  const setRomInputs = useCallback(
+    (value: SetStateAction<RomInputRowState[]>) =>
+      setLocalState((current) => ({ romInputs: resolveLocalStateUpdate(current.romInputs, value) })),
+    [],
+  );
+  const setOutputName = useCallback(
+    (value: SetStateAction<string>) =>
+      setLocalState((current) => ({ outputName: resolveLocalStateUpdate(current.outputName, value) })),
+    [],
+  );
+  const setOutputNameEdited = useCallback(
+    (value: SetStateAction<boolean>) =>
+      setLocalState((current) => ({
+        outputNameEdited: resolveLocalStateUpdate(current.outputNameEdited, value),
+      })),
+    [],
+  );
+  const setCompletedSizeSummary = useCallback(
+    (value: SetStateAction<ReturnType<typeof createOutputSizeSummary>>) =>
+      setLocalState((current) => ({
+        completedSizeSummary: resolveLocalStateUpdate(current.completedSizeSummary, value),
+      })),
+    [],
+  );
+  const setCompletedApplyTimeMs = useCallback(
+    (value: SetStateAction<number | null>) =>
+      setLocalState((current) => ({
+        completedApplyTimeMs: resolveLocalStateUpdate(current.completedApplyTimeMs, value),
+      })),
+    [],
+  );
+  const setCompletedCompressionTimeMs = useCallback(
+    (value: SetStateAction<number | null>) =>
+      setLocalState((current) => ({
+        completedCompressionTimeMs: resolveLocalStateUpdate(current.completedCompressionTimeMs, value),
+      })),
+    [],
+  );
+  const setPendingDownloadFileName = useCallback(
+    (value: SetStateAction<string | null>) =>
+      setLocalState((current) => ({
+        pendingDownloadFileName: resolveLocalStateUpdate(current.pendingDownloadFileName, value),
+      })),
+    [],
+  );
   const activeOutputCleanupRef = useRef<(() => Promise<void> | void) | null>(null);
   const pendingDownloadActionRef = useRef<(() => void | Promise<void>) | null>(null);
   const activeAbortControllerRef = useRef<AbortController | null>(null);

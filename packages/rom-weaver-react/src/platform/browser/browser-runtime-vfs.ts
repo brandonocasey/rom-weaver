@@ -56,6 +56,7 @@ const createBrowserRuntimeVfsIo = ({
         pathPrefix: pathPrefix || scope,
       });
     let staged = await stageFromSource();
+    if (staged.virtual) return staged;
     try {
       const stat = await assertStagedPath(staged.filePath);
       return {

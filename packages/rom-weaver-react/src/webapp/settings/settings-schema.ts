@@ -15,6 +15,7 @@ import {
 } from "./settings-compression.ts";
 import type {
   SettingsDraft,
+  SettingsDraftState,
   SettingsFieldKey,
   SettingsState,
   SettingsValidation,
@@ -29,6 +30,7 @@ import {
   getSettingsFieldMax,
   getSettingsFieldMin,
   getSettingsFieldValidationLabel,
+  isSettingsFieldDisabled,
   LOCAL_STORAGE_SETTINGS_ID,
   normalizeChoiceSetting,
   SETTINGS_FIELD_ORDER,
@@ -71,6 +73,32 @@ type CodecListOptions = NonNullable<Parameters<typeof normalizeCodecList>[1]>;
 const storedStringSchema = v.string();
 const storedBooleanSchema = v.boolean();
 const storedStringOrNumberSchema = v.union([v.string(), v.number()]);
+const BOOLEAN_SETTINGS_FIELDS = [
+  "fixChecksum",
+  "rvzScrub",
+  "erudaDevTools",
+] as const satisfies readonly SettingsFieldKey[];
+const HIDDEN_DEFAULT_SETTINGS_FIELDS = [
+  "compressionFormat",
+  "chdOutputMode",
+] as const satisfies readonly SettingsFieldKey[];
+const ALWAYS_VALIDATE_CHOICE_FIELDS = [
+  "language",
+  "logLevel",
+  "compressionProfile",
+] as const satisfies readonly SettingsFieldKey[];
+const CONDITIONAL_CHOICE_FIELDS = [
+  "rvzCompression",
+  "sevenZipCodec",
+  "zipCodec",
+] as const satisfies readonly SettingsFieldKey[];
+const CHD_CODEC_FIELDS = ["chdCreateCdCodecs", "chdCreateDvdCodecs"] as const satisfies readonly SettingsFieldKey[];
+const OPTIONAL_INTEGER_FIELDS = [
+  "rvzCompressionLevel",
+  "z3dsCompressionLevel",
+  "sevenZipLevel",
+  "zipLevel",
+] as const satisfies readonly SettingsFieldKey[];
 
 const readStoredField = <T>(schema: v.BaseSchema<unknown, T, v.BaseIssue<unknown>>, value: unknown): T | undefined => {
   const result = v.safeParse(schema, value);
@@ -206,6 +234,78 @@ const normalizeStoredWorkerThreads = (
   value: string | number | null | undefined,
   fallback = getDefaultWorkerThreads(),
 ): number => normalizeBrowserThreadCount(value, undefined, fallback);
+
+const assignSetting = <K extends SettingsFieldKey>(settings: SettingsState, fieldKey: K, value: SettingsState[K]) => {
+  settings[fieldKey] = value;
+};
+
+const isValidationFieldEnabled = (fieldKey: SettingsFieldKey, settings: SettingsState): boolean =>
+  !isSettingsFieldDisabled(fieldKey, settings as SettingsDraftState);
+
+const applyDefaultFields = (settings: SettingsState, fieldKeys: readonly SettingsFieldKey[]) => {
+  for (const fieldKey of fieldKeys) assignSetting(settings, fieldKey, getSettingsFieldDefaultValue(fieldKey));
+};
+
+const applyBooleanFields = (
+  rawDraft: SettingsDraft,
+  settings: SettingsState,
+  fieldKeys: readonly (typeof BOOLEAN_SETTINGS_FIELDS)[number][],
+) => {
+  for (const fieldKey of fieldKeys)
+    assignSetting(settings, fieldKey, !!readStoredField(storedBooleanSchema, rawDraft[fieldKey]));
+};
+
+const validateMetadataChoiceField = <K extends SettingsFieldKey>(
+  fieldKey: K,
+  rawDraft: SettingsDraft,
+  validation: SettingsValidation,
+): SettingsState[K] => validateChoiceSetting(fieldKey, rawDraft[fieldKey], validation);
+
+const normalizeMetadataChoiceField = <K extends SettingsFieldKey>(
+  fieldKey: K,
+  rawDraft: SettingsDraft,
+  settings: SettingsState,
+): SettingsState[K] => normalizeChoiceField(fieldKey, rawDraft[fieldKey], settings[fieldKey]);
+
+const validateConditionalChoiceField = <K extends SettingsFieldKey>(
+  fieldKey: K,
+  rawDraft: SettingsDraft,
+  validation: SettingsValidation,
+  settings: SettingsState,
+): SettingsState[K] =>
+  isValidationFieldEnabled(fieldKey, validation.settings)
+    ? validateMetadataChoiceField(fieldKey, rawDraft, validation)
+    : normalizeMetadataChoiceField(fieldKey, rawDraft, settings);
+
+const validateConditionalCodecField = (
+  fieldKey: SettingsFieldKey,
+  rawDraft: SettingsDraft,
+  validation: SettingsValidation,
+  settings: SettingsState,
+): string =>
+  isValidationFieldEnabled(fieldKey, validation.settings)
+    ? validateCodecList(fieldKey, rawDraft[fieldKey] as string | string[] | number | null | undefined, validation, true)
+    : normalizeCodecSetting(fieldKey, rawDraft[fieldKey], settings[fieldKey] as string, true);
+
+const validateConditionalOptionalIntegerField = (
+  fieldKey: SettingsFieldKey,
+  rawDraft: SettingsDraft,
+  validation: SettingsValidation,
+  settings: SettingsState,
+): number | "" =>
+  isValidationFieldEnabled(fieldKey, validation.settings)
+    ? normalizeOptionalIntegerOverride(fieldKey, rawDraft[fieldKey], validation)
+    : normalizeOptionalIntegerField(fieldKey, rawDraft[fieldKey], settings[fieldKey] as number | "", settings);
+
+const validateConditionalPositiveIntegerField = (
+  fieldKey: SettingsFieldKey,
+  rawDraft: SettingsDraft,
+  validation: SettingsValidation,
+  settings: SettingsState,
+): number =>
+  isValidationFieldEnabled(fieldKey, validation.settings)
+    ? normalizeIntegerSetting(fieldKey, rawDraft[fieldKey] as string | number | null | undefined, validation)
+    : normalizePositiveIntegerField(fieldKey, rawDraft[fieldKey], settings[fieldKey] as number, settings);
 
 const validateChoiceSetting = <K extends SettingsFieldKey>(
   fieldKey: K,
@@ -555,95 +655,40 @@ const validateSettingsDraft = (rawDraft: SettingsDraft, currentSettings?: Settin
     settings: copyObject(settings) as SettingsState,
   };
 
-  validation.settings.language = validateChoiceSetting("language", rawDraft.language, validation);
-  validation.settings.logLevel = validateChoiceSetting("logLevel", rawDraft.logLevel, validation);
-  validation.settings.compressionProfile = validateChoiceSetting(
-    "compressionProfile",
-    rawDraft.compressionProfile,
-    validation,
-  );
-  validation.settings.compressionFormat = getSettingsFieldDefaultValue("compressionFormat");
-  validation.settings.chdOutputMode = getSettingsFieldDefaultValue("chdOutputMode");
-  validation.settings.fixChecksum = !!readStoredField(v.boolean(), rawDraft.fixChecksum);
+  applyDefaultFields(validation.settings, HIDDEN_DEFAULT_SETTINGS_FIELDS);
+  for (const fieldKey of ALWAYS_VALIDATE_CHOICE_FIELDS)
+    assignSetting(validation.settings, fieldKey, validateMetadataChoiceField(fieldKey, rawDraft, validation));
+  applyBooleanFields(rawDraft, validation.settings, BOOLEAN_SETTINGS_FIELDS);
   validation.settings.requireInputChecksumMatch =
-    readStoredField(v.boolean(), rawDraft.requireInputChecksumMatch) !== false;
+    readStoredField(storedBooleanSchema, rawDraft.requireInputChecksumMatch) !== false;
   validation.settings.requireOutputChecksumMatch =
-    readStoredField(v.boolean(), rawDraft.requireOutputChecksumMatch) !== false;
+    readStoredField(storedBooleanSchema, rawDraft.requireOutputChecksumMatch) !== false;
 
-  const compressionFormat = validation.settings.compressionFormat;
-  const chdEnabled = compressionFormat === "auto" || compressionFormat === "chd";
-  const rvzEnabled = compressionFormat === "auto" || compressionFormat === "rvz";
-  const sevenZipEnabled = compressionFormat === "auto" || compressionFormat === "7z";
-  const zipEnabled = compressionFormat === "auto" || compressionFormat === "zip";
-
-  if (chdEnabled) {
-    validation.settings.chdCreateCdCodecs = validateCodecList(
-      "chdCreateCdCodecs",
-      rawDraft.chdCreateCdCodecs,
-      validation,
-      true,
+  for (const fieldKey of CHD_CODEC_FIELDS)
+    assignSetting(
+      validation.settings,
+      fieldKey,
+      validateConditionalCodecField(fieldKey, rawDraft, validation, settings),
     );
-    validation.settings.chdCreateDvdCodecs = validateCodecList(
-      "chdCreateDvdCodecs",
-      rawDraft.chdCreateDvdCodecs,
-      validation,
-      true,
+  for (const fieldKey of CONDITIONAL_CHOICE_FIELDS)
+    assignSetting(
+      validation.settings,
+      fieldKey,
+      validateConditionalChoiceField(fieldKey, rawDraft, validation, settings),
     );
-  } else {
-    validation.settings.chdCreateCdCodecs = normalizeCodecSetting(
-      "chdCreateCdCodecs",
-      rawDraft.chdCreateCdCodecs,
-      settings.chdCreateCdCodecs,
-      true,
+  for (const fieldKey of OPTIONAL_INTEGER_FIELDS)
+    assignSetting(
+      validation.settings,
+      fieldKey,
+      validateConditionalOptionalIntegerField(fieldKey, rawDraft, validation, settings),
     );
-    validation.settings.chdCreateDvdCodecs = normalizeCodecSetting(
-      "chdCreateDvdCodecs",
-      rawDraft.chdCreateDvdCodecs,
-      settings.chdCreateDvdCodecs,
-      true,
-    );
-  }
-
-  validation.settings.rvzCompression = rvzEnabled
-    ? validateChoiceSetting("rvzCompression", rawDraft.rvzCompression, validation)
-    : normalizeChoiceField("rvzCompression", rawDraft.rvzCompression, settings.rvzCompression);
-  validation.settings.rvzCompressionLevel = rvzEnabled
-    ? normalizeOptionalIntegerOverride("rvzCompressionLevel", rawDraft.rvzCompressionLevel, validation)
-    : normalizeOptionalIntegerField(
-        "rvzCompressionLevel",
-        rawDraft.rvzCompressionLevel,
-        settings.rvzCompressionLevel,
-        settings,
-      );
-  validation.settings.rvzBlockSize = rvzEnabled
-    ? normalizeIntegerSetting("rvzBlockSize", rawDraft.rvzBlockSize, validation)
-    : normalizePositiveIntegerField("rvzBlockSize", rawDraft.rvzBlockSize, settings.rvzBlockSize, settings);
-  validation.settings.rvzScrub = !!readStoredField(v.boolean(), rawDraft.rvzScrub);
-  validation.settings.z3dsCompressionLevel = normalizeOptionalIntegerOverride(
-    "z3dsCompressionLevel",
-    rawDraft.z3dsCompressionLevel,
+  validation.settings.rvzBlockSize = validateConditionalPositiveIntegerField(
+    "rvzBlockSize",
+    rawDraft,
     validation,
+    settings,
   );
-
-  validation.settings.sevenZipCodec = sevenZipEnabled
-    ? validateChoiceSetting("sevenZipCodec", rawDraft.sevenZipCodec, validation)
-    : normalizeChoiceField("sevenZipCodec", rawDraft.sevenZipCodec, settings.sevenZipCodec);
-  validation.settings.sevenZipLevel = sevenZipEnabled
-    ? normalizeOptionalIntegerOverride("sevenZipLevel", rawDraft.sevenZipLevel, validation)
-    : normalizeOptionalIntegerField(
-        "sevenZipLevel",
-        rawDraft.sevenZipLevel,
-        settings.sevenZipLevel,
-        validation.settings,
-      );
-  validation.settings.zipCodec = zipEnabled
-    ? validateChoiceSetting("zipCodec", rawDraft.zipCodec, validation)
-    : normalizeChoiceField("zipCodec", rawDraft.zipCodec, settings.zipCodec);
-  validation.settings.zipLevel = zipEnabled
-    ? normalizeOptionalIntegerOverride("zipLevel", rawDraft.zipLevel, validation)
-    : normalizeOptionalIntegerField("zipLevel", rawDraft.zipLevel, settings.zipLevel, settings);
   validation.settings.workerThreads = normalizeIntegerSetting("workerThreads", rawDraft.workerThreads, validation);
-  validation.settings.erudaDevTools = !!readStoredField(v.boolean(), rawDraft.erudaDevTools);
 
   return validation;
 };
