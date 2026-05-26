@@ -9,6 +9,8 @@ const RAW_ROM = "tests/fixtures/archive_sources/game.bin";
 const RAW_PATCH = "tests/fixtures/archive_sources/change.ips";
 const ONE_PATCH_7Z = "tests/fixtures/archives/one-patch.7z";
 const MULTI_ROM_ZIP = "tests/fixtures/archives/multi-rom.zip";
+const RVZ_INPUT = "tests/fixtures/browser-generated/game.rvz";
+const CHD_INPUT = "tests/fixtures/browser-generated/game-cd.chd";
 const WRONG_INPUT_BPS = "tests/fixtures/browser-generated/wrong-input-same-size.bps";
 
 let mountedRoot = null;
@@ -135,6 +137,49 @@ const clickCandidateSelectionOption = async (label) => {
   button.click();
 };
 
+const clickPatchCandidateSelectionOption = async (label) => {
+  const state = await waitForState(() => {
+    const patchFileName =
+      document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file")?.textContent || "";
+    const selectedPatchName =
+      document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file strong")?.textContent || "";
+    if (selectedPatchName.includes(label) || patchFileName === label) return { kind: "selected" };
+    const list = document.querySelector("#rom-weaver-candidate-selection-list");
+    if (list) return { kind: "dialog" };
+    const errorText = getRuntimeErrorText();
+    if (errorText) return { errorText, kind: "error" };
+    return null;
+  }, 60000);
+  expect(state).not.toBeNull();
+  expect(state?.kind, state && "errorText" in state ? state.errorText : "").not.toBe("error");
+  if (state?.kind === "selected") return;
+  if (!document.querySelector("#rom-weaver-candidate-selection-list")) return;
+  const button = Array.from(document.querySelectorAll("#rom-weaver-candidate-selection-list button")).find((entry) =>
+    entry.textContent?.includes(label),
+  );
+  if (!button) throw new Error(`Missing patch candidate selection option: ${label}`);
+  button.click();
+};
+
+const getInputStackFileName = () =>
+  document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file strong")?.textContent?.trim() ||
+  document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file")?.textContent?.trim() ||
+  "";
+
+const waitForInputStackFileName = async () => {
+  const state = await waitForState(() => {
+    if (hasStagingProgress()) return null;
+    const fileName = getInputStackFileName();
+    if (fileName && fileName.trim()) return { fileName: fileName.trim(), kind: "ready" };
+    const errorText = getRuntimeErrorText();
+    if (errorText) return { errorText, kind: "error" };
+    return null;
+  }, 60000);
+  expect(state).not.toBeNull();
+  expect(state?.kind, state && "errorText" in state ? state.errorText : "").toBe("ready");
+  return state?.fileName || "";
+};
+
 beforeEach(async () => {
   mountedRoot?.unmount?.();
   mountedRoot = null;
@@ -208,10 +253,14 @@ test("patch row shows extraction progress and extracted patch naming", async () 
     await loadFixtureFile(ONE_PATCH_7Z, "application/x-7z-compressed"),
   );
 
+  await clickPatchCandidateSelectionOption("change.ips");
+
   const patchState = await waitForState(() => {
     const patchFileName =
       document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file")?.textContent || "";
-    if (patchFileName === "change.ips") return { kind: "ready" };
+    const selectedPatchName =
+      document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file strong")?.textContent || "";
+    if (selectedPatchName.includes("change.ips") || patchFileName === "change.ips") return { kind: "ready" };
     const errorText = getRuntimeErrorText();
     if (errorText) return { errorText, kind: "error" };
     return null;
@@ -221,14 +270,67 @@ test("patch row shows extraction progress and extracted patch naming", async () 
 
   await expect
     .poll(
-      () => document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file")?.textContent || "",
+      () =>
+        document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file strong")?.textContent || "",
       { timeout: 30000 },
     )
-    .toBe("change.ips");
+    .toContain("change.ips");
 
-  expect(document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-archive")?.textContent).toBe(
-    "one-patch.7z",
+  const archiveLabel =
+    document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-archive")?.textContent || "";
+  expect(archiveLabel).toContain("one-patch.7z");
+  expect(archiveLabel).toContain("change.ips");
+  expect(archiveLabel).toMatch(/\d+(?:\.\d)? (?:B|KiB|MiB|GiB)/);
+  expect(
+    document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-archive strong")?.textContent || "",
+  ).toContain("change.ips");
+});
+
+test("RVZ rom inputs auto-extract before apply", async () => {
+  mount(createElement(ApplyPatchForm));
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RVZ_INPUT));
+
+  await waitForInputStackFileName();
+  await expect.poll(() => getInputStackFileName(), { timeout: 60000 }).toContain("game.iso");
+});
+
+test("CHD rom inputs auto-extract before apply", async () => {
+  mount(createElement(ApplyPatchForm));
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(CHD_INPUT));
+
+  await waitForInputStackFileName();
+  await expect.poll(() => getInputStackFileName(), { timeout: 60000 }).not.toMatch(/\.chd$/i);
+  await expect.poll(() => getInputStackFileName(), { timeout: 60000 }).toMatch(/game-cd\./i);
+});
+
+test("RVZ rom inputs can still run full apply workflow", async () => {
+  mount(
+    createElement(ApplyPatchForm, {
+      defaultSettings: {
+        output: {
+          compression: "none",
+        },
+      },
+    }),
   );
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RVZ_INPUT));
+  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+
+  await waitForApplyButtonEnabled();
+  await clickApplyButton();
+
+  const applyState = await waitForApplyOutcome();
+  expect(applyState).not.toBeNull();
+  expect(applyState?.kind, applyState && "errorText" in applyState ? applyState.errorText : "").toBe("download");
 });
 
 test("output compression selector keeps expected apply options", async () => {

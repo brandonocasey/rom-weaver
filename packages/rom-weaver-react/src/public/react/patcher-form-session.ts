@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import OutputCompressionManager from "../../lib/compression/output-compression-manager.ts";
+import { classifyPatcherInput } from "../../lib/input/input-classification.ts";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
 import { formatCodedErrorForDisplay } from "../../presentation/errors.ts";
 import { createBrowserLocalizer } from "../../presentation/localization/index.ts";
@@ -186,10 +187,12 @@ const getArchiveNameFromProgressDetails = (details: Record<string, unknown>) => 
 
 const getProgressStagedInputInfo = (event: ProgressEvent): StagedInputInfo => {
   const details = getProgressDetails(event);
+  const fileName = typeof details.fileName === "string" ? details.fileName : "";
+  const isPreparedFileName = details.wasDecompressed === true || details.stage === "checksum";
   return {
     archiveName: getArchiveNameFromProgressDetails(details),
     decompressionTimeMs: typeof details.decompressionTimeMs === "number" ? details.decompressionTimeMs : undefined,
-    fileName: typeof details.fileName === "string" ? details.fileName : "",
+    fileName: getInputDisplayFileName(fileName, isPreparedFileName),
     id: typeof details.sourceId === "string" ? details.sourceId : "",
     order: typeof details.order === "number" ? details.order : undefined,
     parentCompressions: getArchivePathEntriesFromProgressDetails(details),
@@ -215,6 +218,24 @@ const getChecksumProgressInfoPatch = (
     loading: true,
   };
 };
+
+const isCompressedInputFileName = (fileName: string) => {
+  if (!fileName) return false;
+  try {
+    return classifyPatcherInput({ fileName }).kind === "compression";
+  } catch (_error) {
+    return false;
+  }
+};
+
+const getInputDisplayFileName = (fileName: string | undefined, prepared = false) => {
+  const normalized = String(fileName || "");
+  if (!normalized) return "";
+  return !prepared && isCompressedInputFileName(normalized) ? "" : normalized;
+};
+
+const getPendingInputDisplayFileName = (input: BinarySource, fallback: string) =>
+  getInputDisplayFileName(getBinarySourceFileName(input, fallback));
 
 const archiveNameIncludesFileName = (archiveName: string, fileName: string) =>
   archiveName
@@ -951,7 +972,7 @@ const useLocalApplyPatchFormSession = ({
               info: {
                 ...existing?.info,
                 archiveName: existing?.info.archiveName || "",
-                fileName: existing?.info.fileName || getBinarySourceFileName(input, `Input ${index + 1}`),
+                fileName: existing?.info.fileName || getPendingInputDisplayFileName(input, `Input ${index + 1}`),
                 validationPhase: "idle",
               },
               loading: false,
@@ -1058,7 +1079,7 @@ const useLocalApplyPatchFormSession = ({
               info: {
                 ...existing?.info,
                 archiveName: existing?.info.archiveName || "",
-                fileName: existing?.info.fileName || getBinarySourceFileName(input, `Input ${index + 1}`),
+                fileName: existing?.info.fileName || getPendingInputDisplayFileName(input, `Input ${index + 1}`),
               },
               loading: true,
               order: existing?.order ?? index,
