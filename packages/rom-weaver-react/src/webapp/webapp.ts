@@ -303,7 +303,9 @@ import.meta.hot?.on("rom-weaver:reload-available", (payload) => {
   renderWebappRootIfReady();
 });
 import.meta.hot?.on("vite:beforeFullReload", (payload) => {
-  if (!shouldDeferViteReload()) return;
+  // Keep Vite full reload banner-only in dev to avoid focus-stealing unload prompts.
+  // Users can still apply the update explicitly from the top banner action.
+  shouldDeferViteReload();
   suppressNextViteReloadTimer = true;
   queueMicrotask(() => {
     suppressNextViteReloadTimer = false;
