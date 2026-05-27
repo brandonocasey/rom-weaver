@@ -5,6 +5,9 @@ import { mergeConfig } from "vitest/config";
 import baseConfig from "./vitest.config.base.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const VIRTUAL_PWA_REGISTER_STUB = fileURLToPath(
+  new URL("./tests/browser/stubs/virtual-pwa-register.js", import.meta.url),
+);
 
 const readDownloadStream = (stream, maxBytes) =>
   new Promise((resolve, reject) => {
@@ -34,6 +37,9 @@ export default mergeConfig(baseConfig, {
     include: ["@bjorn3/browser_wasi_shim"],
   },
   resolve: {
+    alias: {
+      "virtual:pwa-register": VIRTUAL_PWA_REGISTER_STUB,
+    },
     preserveSymlinks: true,
   },
   server: {

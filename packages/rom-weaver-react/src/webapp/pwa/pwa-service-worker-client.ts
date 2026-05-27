@@ -1,15 +1,5 @@
-type RegisterSWOptions = {
-  immediate?: boolean;
-  onNeedRefresh?: () => void;
-  onOfflineReady?: () => void;
-  onRegisteredSW?: (scriptUrl: string, registration?: ServiceWorkerRegistration) => void;
-  onRegisterError?: (error: unknown) => void;
-};
-
-const registerSW =
-  (_options: RegisterSWOptions = {}) =>
-  (_reloadPage?: boolean) =>
-    undefined;
+import { registerSW } from "virtual:pwa-register";
+import type { RegisterSWOptions } from "vite-plugin-pwa/types";
 
 import {
   createServiceWorkerCacheState,

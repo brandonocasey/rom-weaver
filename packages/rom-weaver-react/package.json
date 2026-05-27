@@ -15,6 +15,11 @@
     },
     "./webapp": "./src/webapp/main.tsx"
   },
+  "overrides": {
+    "vite-plugin-pwa": {
+      "vite": "$vite"
+    }
+  },
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
     "build": "vite build",
@@ -48,6 +53,10 @@
     "tailwindcss": "4.2.4",
     "typescript": "^6.0.3",
     "vite": "^8.0.0",
-    "vitest": "4.1.7"
+    "vite-plugin-pwa": "1.2.0",
+    "vitest": "4.1.7",
+    "workbox-core": "7.4.0",
+    "workbox-precaching": "7.4.0",
+    "workbox-routing": "7.4.0"
   }
 }
