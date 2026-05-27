@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from "react";
+import { createLogger } from "../../lib/logging.ts";
 import type {
   ApplyPatchFormSettings,
   ApplyWorkflowSettings,
@@ -21,6 +22,40 @@ type OutputContainerSettings = NonNullable<NonNullable<ApplyWorkflowSettings["ou
 type ApplyCompatibilitySettings = NonNullable<ApplyWorkflowSettings["compatibility"]>;
 type ApplyLoggingSettings = NonNullable<ApplyWorkflowSettings["logging"]>;
 type ApplyValidationSettings = NonNullable<ApplyWorkflowSettings["validation"]>;
+type WorkflowLogRecord = {
+  details?: Record<string, unknown>;
+  level?: string;
+  message?: string;
+  namespace?: string;
+};
+
+const workflowLoggerByNamespace = new Map<string, ReturnType<typeof createLogger>>();
+
+const getWorkflowLogger = (namespace: string) => {
+  const key = namespace || "runtime:rom-weaver";
+  const existing = workflowLoggerByNamespace.get(key);
+  if (existing) return existing;
+  const created = createLogger(key);
+  workflowLoggerByNamespace.set(key, created);
+  return created;
+};
+
+const emitDefaultWorkflowLog = (record: WorkflowLogRecord) => {
+  const level = String(record?.level || "")
+    .trim()
+    .toLowerCase();
+  const message = String(record?.message || "").trim();
+  if (!message) return;
+  const namespace = String(record?.namespace || "").trim() || "runtime:rom-weaver";
+  const details =
+    record?.details && typeof record.details === "object" && !Array.isArray(record.details) ? record.details : {};
+  const logger = getWorkflowLogger(namespace);
+  if (level === "error") logger.error(message, details);
+  else if (level === "warn") logger.warn(message, details);
+  else if (level === "info") logger.info(message, details);
+  else if (level === "debug") logger.debug(message, details);
+  else logger.trace(message, details);
+};
 
 function RomWeaverSettingsProvider({ children, settings = {}, assetBaseUrl }: RomWeaverSettingsProviderProps) {
   const normalizedAssetBaseUrl = typeof assetBaseUrl === "string" && assetBaseUrl.trim() ? assetBaseUrl.trim() : "";
@@ -95,6 +130,7 @@ const getNormalizedWorkflowSettings = (
   const compatibility = toRecord(source.compatibility);
   const validation = toRecord(source.validation);
   const logging = toRecord(source.logging);
+  const configuredLogSink = typeof logging.sink === "function" ? logging.sink : undefined;
 
   return {
     compatibility: {
@@ -106,6 +142,7 @@ const getNormalizedWorkflowSettings = (
     logging: {
       ...logging,
       level: readFirstDefined(logging.level, source.logLevel) as ApplyLoggingSettings["level"] | undefined,
+      sink: (configuredLogSink || emitDefaultWorkflowLog) as ApplyLoggingSettings["sink"] | undefined,
     },
     output: {
       ...output,

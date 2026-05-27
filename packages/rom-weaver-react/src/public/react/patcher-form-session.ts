@@ -138,6 +138,34 @@ const resolveLocalStateUpdate = <T>(current: T, update: SetStateAction<T>): T =>
 
 const toError = (error: RuntimeValue): Error => (error instanceof Error ? error : new Error(String(error)));
 
+const getErrorLogDetails = (error: Error): Record<string, unknown> => {
+  const coded = error as Error & { cause?: unknown; code?: unknown; details?: unknown };
+  const cause = coded.cause;
+  return {
+    code: typeof coded.code === "string" ? coded.code : undefined,
+    details: coded.details,
+    message: error.message,
+    name: error.name,
+    stack: error.stack,
+    cause:
+      cause instanceof Error
+        ? {
+            message: cause.message,
+            name: cause.name,
+            stack: cause.stack,
+          }
+        : cause,
+  };
+};
+
+const logUiError = (context: string, error: Error) => {
+  try {
+    console.error(`[RomWeaver UI] ${context}: ${error.message}`, getErrorLogDetails(error), error);
+  } catch (_logError) {
+    // Ignore console failures; the UI still surfaces the normalized message.
+  }
+};
+
 const getRequestedOutputName = (outputName: string): string | undefined => {
   const normalizedOutputName = outputName.trim();
   return normalizedOutputName || undefined;
@@ -1191,6 +1219,7 @@ const useLocalApplyPatchFormSession = ({
         .catch((error) => {
           if (patchStageGenerationRef.current !== generation) return;
           const normalizedError = toError(error);
+          logUiError("Patch staging failed", normalizedError);
           setErrorMessage(
             formatCodedErrorForDisplay(
               normalizedError,
@@ -1324,6 +1353,7 @@ const useLocalApplyPatchFormSession = ({
         .catch((error) => {
           if (inputStageGenerationRef.current !== generation) return;
           const normalizedError = toError(error);
+          logUiError("Input staging failed", normalizedError);
           setErrorMessage(
             formatCodedErrorForDisplay(
               normalizedError,
@@ -1626,6 +1656,7 @@ const useLocalApplyPatchFormSession = ({
             await Promise.resolve(downloadResult());
           } catch (downloadError) {
             const normalizedDownloadError = toError(downloadError);
+            logUiError("Output download failed", normalizedDownloadError);
             setOutputErrorMessage(
               formatCodedErrorForDisplay(
                 normalizedDownloadError,
@@ -1637,6 +1668,7 @@ const useLocalApplyPatchFormSession = ({
           onApplyComplete?.(result);
         } catch (error) {
           const normalizedError = toError(error);
+          logUiError("Apply workflow failed", normalizedError);
           setOutputErrorMessage(
             formatCodedErrorForDisplay(
               normalizedError,
