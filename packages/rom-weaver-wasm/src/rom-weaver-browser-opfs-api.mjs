@@ -16,6 +16,7 @@ const DEFAULT_BROWSER_THREADED_WASM_URLS = [
   new URL('./rom-weaver-cli-threaded.wasm', import.meta.url).href,
 ];
 const DEFAULT_SCRATCH_FILE_POOL_SIZE = 256;
+const DEFAULT_THREAD_SCRATCH_FILE_POOL_SIZE = 16;
 const DEFAULT_SHARED_MEMORY_INITIAL_PAGES = 256;
 const DEFAULT_SHARED_MEMORY_MAX_PAGES = 16384;
 const PATH_SEPARATOR_REGEX = /[/\\]+/;
@@ -153,6 +154,10 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
         writableDirectories: runOptions.writableDirectories,
         inherited: baseWritableRoots,
       });
+      const resolvedMainScratchFilePoolSize = runOptions.scratchFilePoolSize
+        ?? options.scratchFilePoolSize;
+      const resolvedThreadScratchFilePoolSize = resolvedMainScratchFilePoolSize
+        ?? DEFAULT_THREAD_SCRATCH_FILE_POOL_SIZE;
       const threadSpawner = createBrowserWasiThreadSpawner({
         streamBroadcastChannelName: runOptions.__streamBroadcastChannelName,
         streamRequestId: runOptions.__streamRequestId,
@@ -172,7 +177,8 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
           debugWasi: Boolean(runOptions.debugWasi ?? options.debugWasi ?? false),
           mountHandles,
           runtimeMounts,
-          scratchFilePoolSize: runOptions.scratchFilePoolSize ?? options.scratchFilePoolSize,
+          scratchFilePoolSize: resolvedMainScratchFilePoolSize,
+          threadScratchFilePoolSize: resolvedThreadScratchFilePoolSize,
           syncAccessMode: resolvedSyncAccessMode,
           virtualFiles,
           writableRoots,
@@ -193,7 +199,7 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
         stderrLineHandler: runOptions.onStderrLine,
         stdoutLineHandler: runOptions.onStdoutLine,
         virtualFiles,
-        scratchFilePoolSize: runOptions.scratchFilePoolSize ?? options.scratchFilePoolSize,
+        scratchFilePoolSize: resolvedMainScratchFilePoolSize,
         writableRoots,
         syncAccessMode: resolvedSyncAccessMode,
         closeables,
@@ -342,7 +348,7 @@ export async function __runRomWeaverBrowserWasiThread(payload = {}) {
       mountHandles: normalizeMountHandleMap({ mountHandles: runtime?.mountHandles }),
       stderrLineHandler,
       stdoutLineHandler,
-      scratchFilePoolSize: runtime?.scratchFilePoolSize,
+      scratchFilePoolSize: runtime?.threadScratchFilePoolSize ?? runtime?.scratchFilePoolSize,
       virtualFiles: normalizeVirtualFiles(runtime?.virtualFiles),
       writableRoots: Array.isArray(runtime?.writableRoots) ? runtime.writableRoots : [],
       syncAccessMode: runtime?.syncAccessMode,

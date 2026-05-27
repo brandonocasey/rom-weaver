@@ -19,6 +19,7 @@ import {
 
 const RUN_1GB_STRESS = typeof __ROM_WEAVER_WASM_STRESS_1GB__ !== 'undefined'
   && __ROM_WEAVER_WASM_STRESS_1GB__ === true;
+const SCRATCH_DIRECTORY_NAME = '.rom-weaver-opfs-scratch';
 // Minimal WASI module: write a running JSON line, spin, then write succeeded.
 const STREAMING_WASI_MODULE_BYTES = new Uint8Array([
   0, 97, 115, 109, 1, 0, 0, 0, 1, 12, 2, 96, 4, 127, 127, 127, 127, 1,
@@ -50,6 +51,29 @@ function delay(ms, value = null) {
   return new Promise((resolve) => {
     setTimeout(() => resolve(value), ms);
   });
+}
+
+async function countScratchFiles(rootHandle) {
+  try {
+    const scratchHandle = await rootHandle.getDirectoryHandle(SCRATCH_DIRECTORY_NAME, { create: false });
+    let count = 0;
+    for await (const _entry of scratchHandle.entries()) count += 1;
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
+async function observeScratchPeak(rootHandle, { isDone, timeoutMs = 20000, pollMs = 10 } = {}) {
+  const done = typeof isDone === 'function' ? isDone : () => false;
+  const deadline = Date.now() + timeoutMs;
+  let peak = 0;
+  while (!done() && Date.now() < deadline) {
+    peak = Math.max(peak, await countScratchFiles(rootHandle));
+    await delay(pollMs);
+  }
+  peak = Math.max(peak, await countScratchFiles(rootHandle));
+  return peak;
 }
 
 function createVirtualFileProxy(path, sourceBytes) {
@@ -546,6 +570,94 @@ describe('rom-weaver-wasm browser runner parity', () => {
       expect(terminal.requested_threads).toBe(4);
       expect(terminal.effective_threads).toBeGreaterThan(1);
       expect(terminal.used_parallelism).toBe(true);
+    }, {
+      initOptions: {
+        wasmUrl: new URL('../rom-weaver-cli-threaded.wasm', import.meta.url).href,
+      },
+    });
+  });
+
+  it('threaded browser runner keeps default nested-thread scratch setup below legacy 256-per-thread behavior', async () => {
+    await withTempFixture(async ({ dir, init, worker, opfsHandle }) => {
+      expect(init.threaded).toBe(true);
+      const sourcePath = joinGuestPath(dir, 'threaded-scratch-default-source.bin');
+      await writeGuestPatternFile(opfsHandle, sourcePath, 32 * 1024 * 1024);
+
+      let runSettled = false;
+      const resultPromise = worker.runJson(
+        [
+          'checksum',
+          sourcePath,
+          '--algo',
+          'crc32',
+          '--algo',
+          'sha1',
+          '--algo',
+          'sha256',
+          '--algo',
+          'blake3',
+          '--no-extract',
+          '--threads',
+          '4',
+        ],
+      ).finally(() => {
+        runSettled = true;
+      });
+      const peakScratchFiles = await observeScratchPeak(opfsHandle, {
+        isDone: () => runSettled,
+      });
+      const result = await resultPromise;
+      const terminal = assertRunJsonSucceeded(result, { command: 'checksum' });
+
+      expect(terminal.effective_threads).toBeGreaterThan(1);
+      expect(peakScratchFiles).toBeGreaterThan(256);
+      expect(peakScratchFiles).toBeLessThan(512);
+      expect(await countScratchFiles(opfsHandle)).toBe(0);
+    }, {
+      initOptions: {
+        wasmUrl: new URL('../rom-weaver-cli-threaded.wasm', import.meta.url).href,
+      },
+    });
+  });
+
+  it('threaded browser runner applies explicit scratchFilePoolSize overrides to nested thread mounts', async () => {
+    await withTempFixture(async ({ dir, init, worker, opfsHandle }) => {
+      expect(init.threaded).toBe(true);
+      const sourcePath = joinGuestPath(dir, 'threaded-scratch-override-source.bin');
+      await writeGuestPatternFile(opfsHandle, sourcePath, 32 * 1024 * 1024);
+
+      let runSettled = false;
+      const resultPromise = worker.runJson(
+        [
+          'checksum',
+          sourcePath,
+          '--algo',
+          'crc32',
+          '--algo',
+          'sha1',
+          '--algo',
+          'sha256',
+          '--algo',
+          'blake3',
+          '--no-extract',
+          '--threads',
+          '4',
+        ],
+        {
+          scratchFilePoolSize: 0,
+        },
+      ).finally(() => {
+        runSettled = true;
+      });
+      const peakScratchFiles = await observeScratchPeak(opfsHandle, {
+        isDone: () => runSettled,
+      });
+      const result = await resultPromise;
+      const terminal = assertRunJsonSucceeded(result, { command: 'checksum' });
+
+      expect(terminal.effective_threads).toBeGreaterThan(1);
+      expect(peakScratchFiles).toBe(0);
+      expect(await countScratchFiles(opfsHandle)).toBe(0);
     }, {
       initOptions: {
         wasmUrl: new URL('../rom-weaver-cli-threaded.wasm', import.meta.url).href,
