@@ -899,33 +899,6 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
     try {
       const outDirPath = getPathDirectory(workerSource.filePath);
       await ensureRvzSourceExists();
-      const listed = await runRomWeaverInspectListWorker(
-        {
-          logLevel,
-          sourcePath: workerSource.filePath,
-        },
-        undefined,
-        onLog,
-      ).catch(() => null);
-      let preseedPaths =
-        listed?.entries
-          .flatMap((entry) =>
-            getBrowserExtractOutputPathCandidates(
-              outDirPath,
-              String(entry?.fileName || entry?.filename || entry?.name || ""),
-            ),
-          )
-          .filter((entry) => !!entry) || [];
-      preseedPaths.push(
-        ...getBrowserExtractOutputPathCandidates(
-          outDirPath,
-          getRvzExtractedFileName({ fileName: getPathBaseName(workerSource.filePath, workerSource.fileName) }),
-        ),
-      );
-      if (outputName) preseedPaths.push(...getBrowserExtractOutputPathCandidates(outDirPath, outputName));
-      preseedPaths = filterOutputCandidatesAwayFromSource(preseedPaths, workerSource.filePath);
-      await ensureBrowserVfsOutputPaths(preseedPaths);
-      await ensureRvzSourceExists();
       const extracted = await invokeRomWeaverExtractWorker(
         {
           logLevel,

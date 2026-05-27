@@ -68,6 +68,7 @@ const writeBlobToOpfsPath = async (filePath: string, file: Blob) => {
   const fileHandle = await getManagedOpfsFileHandle(filePath, { create: true, navigatorObject: navigator });
   if (!fileHandle) throw new Error("OPFS file handles are not available in this browser worker");
   const writable = await fileHandle.createWritable();
+  let writeError: unknown = null;
   try {
     let position = 0;
     while (position < file.size) {
@@ -77,8 +78,15 @@ const writeBlobToOpfsPath = async (filePath: string, file: Blob) => {
       position = nextPosition;
     }
     await writable.truncate(file.size);
+  } catch (error) {
+    writeError = error;
+    throw error;
   } finally {
-    await writable.close();
+    if (writeError && typeof writable.abort === "function") {
+      await writable.abort(writeError).catch(() => undefined);
+    } else {
+      await writable.close();
+    }
   }
 };
 

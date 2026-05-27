@@ -9,6 +9,7 @@ type BrowserLargeFileVfsOptions = {
 };
 
 type FileWritableHandle = {
+  abort?: (reason?: unknown) => Promise<void>;
   close: () => Promise<void>;
   truncate: (size: number) => Promise<void>;
   write: (input: Blob | Uint8Array | { data?: Blob | Uint8Array; position?: number; type?: "write" }) => Promise<void>;
@@ -59,6 +60,26 @@ const createBrowserLargeFileVfs = (options: BrowserLargeFileVfsOptions = {}): La
   const createWritable = async (fileHandle: FileSystemFileHandle) => {
     const writable = await fileHandle.createWritable({ keepExistingData: true } as FileSystemCreateWritableOptions);
     return writable as FileWritableHandle;
+  };
+
+  const closeWritable = async (writable: FileWritableHandle, priorError: unknown) => {
+    if (priorError) {
+      if (typeof writable.abort === "function") {
+        try {
+          await writable.abort(priorError);
+        } catch {
+          // Preserve the write/truncate error that caused the stream to enter an errored state.
+        }
+      } else {
+        try {
+          await writable.close();
+        } catch {
+          // Preserve the write/truncate error that caused the stream to enter an errored state.
+        }
+      }
+      throw priorError;
+    }
+    await writable.close();
   };
 
   const createOutputRef = async (
@@ -157,10 +178,14 @@ const createBrowserLargeFileVfs = (options: BrowserLargeFileVfsOptions = {}): La
       const fileHandle = await resolveFileHandle(normalizedPath, true);
       if (!fileHandle) throw new Error(`Browser VFS file is not available: ${normalizedPath}`);
       const writable = await createWritable(fileHandle);
+      let writeError: unknown = null;
       try {
         await writable.truncate(Math.max(0, Math.floor(size || 0)));
+      } catch (error) {
+        writeError = error;
+        throw error;
       } finally {
-        await writable.close();
+        await closeWritable(writable, writeError);
       }
     },
     write: async (filePath, bytes, options) => {
@@ -171,10 +196,14 @@ const createBrowserLargeFileVfs = (options: BrowserLargeFileVfsOptions = {}): La
       const data = toUint8Array(bytes);
       const fileOffset =
         typeof options?.fileOffset === "number" && options.fileOffset > 0 ? Math.floor(options.fileOffset) : 0;
+      let writeError: unknown = null;
       try {
         await writable.write({ data, position: fileOffset, type: "write" });
+      } catch (error) {
+        writeError = error;
+        throw error;
       } finally {
-        await writable.close();
+        await closeWritable(writable, writeError);
       }
       return data.byteLength;
     },

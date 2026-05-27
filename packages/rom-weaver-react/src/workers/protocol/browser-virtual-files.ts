@@ -16,6 +16,18 @@ type BrowserVirtualFile = {
   path: string;
   proxy: BrowserVirtualFileProxy;
 };
+type AtomicsWaitAsyncResult = {
+  async: boolean;
+  value: "not-equal" | "timed-out" | Promise<"ok" | "not-equal" | "timed-out">;
+};
+type AtomicsWithWaitAsync = typeof Atomics & {
+  waitAsync?: (
+    typedArray: Int32Array,
+    index: number,
+    value: number,
+    timeout?: number,
+  ) => AtomicsWaitAsyncResult;
+};
 
 const activeVirtualFiles = new Map<string, BrowserVirtualFile>();
 const VIRTUAL_FILE_CHUNK_SIZE = 2 * 1024 * 1024;
@@ -62,17 +74,17 @@ const registerBrowserVirtualFile = ({
     },
   };
   let closed = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const pump = () => {
-    if (closed) return;
-    for (const slot of slots) handleVirtualFileSlot(source, slot);
-    timer = setTimeout(pump, 0);
-  };
-  pump();
+  for (const slot of slots)
+    void runVirtualFileSlotPump(source, slot, () => closed).catch(() => {
+      failVirtualFileSlot(slot);
+    });
   activeVirtualFiles.set(path, file);
   return () => {
     closed = true;
-    if (timer) clearTimeout(timer);
+    for (const slot of slots) {
+      const control = new Int32Array(slot.controlBuffer);
+      Atomics.notify(control, CONTROL_STATE_INDEX, 1);
+    }
     if (activeVirtualFiles.get(path) === file) activeVirtualFiles.delete(path);
   };
 };
@@ -80,15 +92,44 @@ const registerBrowserVirtualFile = ({
 const getActiveBrowserVirtualFiles = (): BrowserVirtualFile[] =>
   Array.from(activeVirtualFiles.values()).map((file) => ({ ...file }));
 
-const handleVirtualFileSlot = (source: BrowserVirtualFileSource, slot: BrowserVirtualFileSlot): void => {
+const runVirtualFileSlotPump = async (
+  source: BrowserVirtualFileSource,
+  slot: BrowserVirtualFileSlot,
+  isClosed: () => boolean,
+): Promise<void> => {
   const control = new Int32Array(slot.controlBuffer);
-  if (
-    Atomics.compareExchange(control, CONTROL_STATE_INDEX, CONTROL_STATE_REQUESTED, CONTROL_STATE_READING) !==
-    CONTROL_STATE_REQUESTED
-  )
-    return;
   const data = new Uint8Array(slot.dataBuffer);
-  void respondToVirtualFileRead(source, control, data);
+  while (!isClosed()) {
+    const state = Atomics.load(control, CONTROL_STATE_INDEX);
+    if (state !== CONTROL_STATE_REQUESTED) {
+      await waitForVirtualFileSlotChange(control, state);
+      continue;
+    }
+    if (
+      Atomics.compareExchange(control, CONTROL_STATE_INDEX, CONTROL_STATE_REQUESTED, CONTROL_STATE_READING) !==
+      CONTROL_STATE_REQUESTED
+    )
+      continue;
+    await respondToVirtualFileRead(source, control, data);
+  }
+};
+
+const waitForVirtualFileSlotChange = async (control: Int32Array, state: number): Promise<void> => {
+  const waitAsync = (Atomics as AtomicsWithWaitAsync).waitAsync;
+  if (typeof waitAsync === "function") {
+    const result = waitAsync(control, CONTROL_STATE_INDEX, state, 1000);
+    if (result.async) await result.value;
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+const failVirtualFileSlot = (slot: BrowserVirtualFileSlot) => {
+  const control = new Int32Array(slot.controlBuffer);
+  Atomics.store(control, CONTROL_BYTES_READ_INDEX, 0);
+  Atomics.store(control, CONTROL_STATUS_INDEX, CONTROL_STATUS_ERROR);
+  Atomics.store(control, CONTROL_STATE_INDEX, CONTROL_STATE_DONE);
+  Atomics.notify(control, CONTROL_STATE_INDEX, 1);
 };
 
 const respondToVirtualFileRead = async (

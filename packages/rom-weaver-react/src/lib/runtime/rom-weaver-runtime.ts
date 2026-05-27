@@ -13,10 +13,12 @@ import {
   type RomWeaverRunJsonEvent,
   type RomWeaverRunJsonOptions,
   type RomWeaverRunJsonResult,
+  resetRomWeaverRunner,
   runRomWeaverJson,
 } from "../../workers/rom-weaver/rom-weaver-runner.ts";
 
 const CHECKSUM_PAIR_REGEX = /([a-z0-9_-]+)=([0-9a-f]+)/gi;
+const LARGE_BROWSER_CHECKSUM_BYTES = 256 * 1024 * 1024;
 const PATH_PART_SPLIT_REGEX = /[/\\]+/;
 const PATH_FILE_CAPTURE_REGEX = /^(.+[/\\])?([^/\\]+)$/;
 const FILE_EXTENSION_CAPTURE_REGEX = /^(.+?)(\.[^./\\]*)?$/;
@@ -624,7 +626,7 @@ const runRomWeaverChecksumWorker = async (
     : [];
   if (!algorithms.length) throw new Error("Checksum requires at least one algorithm");
 
-  const args = ["checksum", filePath, "--no-extract"];
+  const args = ["checksum", filePath, "--no-extract", "--threads", "1"];
   for (const algorithm of algorithms) args.push("--algo", algorithm);
 
   if (
@@ -635,6 +637,13 @@ const runRomWeaverChecksumWorker = async (
     args.push("--start", String(Math.floor(input.checksumStartOffset)));
 
   if (isTraceEnabled(input.logLevel)) args.unshift("--trace");
+  if (
+    typeof input.fileSize === "number" &&
+    Number.isFinite(input.fileSize) &&
+    input.fileSize >= LARGE_BROWSER_CHECKSUM_BYTES
+  ) {
+    await resetRomWeaverRunner();
+  }
   const result = await runRomWeaverJson(
     args,
     toRomWeaverOptions({
