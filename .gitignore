@@ -1,6 +1,7 @@
 /target
 /node_modules/
 /.tmp/
+/rom-weaver/
 **/__pycache__/
 
 # Generated wasm artifacts
