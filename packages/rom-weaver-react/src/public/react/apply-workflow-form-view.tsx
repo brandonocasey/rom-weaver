@@ -298,14 +298,14 @@ function ApplyWorkflowFormView({
   return (
     <div
       aria-labelledby="tab-patcher"
-      className="grid items-start gap-4 font-['Inter_Tight','Segoe_UI',sans-serif] xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]"
+      className="grid items-start gap-4 font-['Inter_Tight','Segoe_UI',sans-serif]"
       id="rom-weaver-container"
       role="tabpanel"
     >
       <div
         aria-live={startupIsError ? "assertive" : "polite"}
         className={cx(
-          startupVisible ? "show mb-0 flex xl:col-span-2" : "hidden",
+          startupVisible ? "show mb-0 flex" : "hidden",
           noticeClasses.startup,
           startupIsError ? noticeClasses.startupError : noticeClasses.startupLoading,
         )}
@@ -317,7 +317,7 @@ function ApplyWorkflowFormView({
           {startup.message || (startupIsError ? "RomWeaver failed to load." : "Loading patcher tools...")}
         </span>
       </div>
-      <div className={cx(rowClasses.upload, "mb-0 !block xl:col-start-1")} id="rom-weaver-row-file-rom">
+      <div className={cx(rowClasses.upload, "mb-0 !block")} id="rom-weaver-row-file-rom">
         <div className={rowClasses.uploadLabel}>
           <label htmlFor="rom-weaver-input-file-rom">ROM</label>
         </div>
@@ -600,7 +600,7 @@ function ApplyWorkflowFormView({
         className={cx(
           rowClasses.base,
           rowClasses.source,
-          "mb-0 !block border-t border-[var(--rom-weaver-color-border)] pt-3 xl:col-start-1",
+          "mb-0 !block border-t border-[var(--rom-weaver-color-border)] pt-3",
         )}
         id="rom-weaver-row-patch-stack"
       >
@@ -751,7 +751,7 @@ function ApplyWorkflowFormView({
           uiState.patchDetails.description
             ? cx(
                 "show",
-                "mb-0 !block border-t border-[var(--rom-weaver-color-border)] pt-2 text-[var(--rom-weaver-color-text-soft)] xl:col-start-1",
+                "mb-0 !block border-t border-[var(--rom-weaver-color-border)] pt-2 text-[var(--rom-weaver-color-text-soft)]",
               )
             : "hidden"
         }
@@ -771,7 +771,7 @@ function ApplyWorkflowFormView({
                 "show",
                 textClasses.selectable,
                 textClasses.mono,
-                "mb-0 !block border-t border-[var(--rom-weaver-color-border)] pt-2 xl:col-start-1",
+                "mb-0 !block border-t border-[var(--rom-weaver-color-border)] pt-2",
               )
             : "hidden"
         }
@@ -788,7 +788,7 @@ function ApplyWorkflowFormView({
         </div>
       </div>
       <div
-        className={cx(rowClasses.output, "mb-0 !block xl:col-start-2 xl:row-start-2")}
+        className={cx(rowClasses.output, "mb-0 !block")}
         id="rom-weaver-row-output-file-name"
       >
         <div className={rowClasses.outputLabel}>
@@ -818,7 +818,7 @@ function ApplyWorkflowFormView({
       <div
         className={cx(
           layoutClasses.spacedStack,
-          "mt-0 border-t border-[var(--rom-weaver-color-border)] pt-3 text-left xl:col-start-2",
+          "mt-0 border-t border-[var(--rom-weaver-color-border)] pt-3 text-left",
         )}
       >
         <div
