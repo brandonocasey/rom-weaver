@@ -1,4 +1,4 @@
-use std::{fmt, str::FromStr, sync::Arc};
+use std::{fmt, str::FromStr, sync::Arc, thread};
 
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,12 @@ use tracing::trace;
 
 use crate::{Result, RomWeaverError};
 
-const DEFAULT_THREAD_COUNT: usize = 4;
+fn default_thread_count() -> usize {
+    thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .max(1)
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -32,7 +37,7 @@ impl ThreadBudget {
 
     pub fn requested_threads(self) -> usize {
         match self {
-            Self::Auto => DEFAULT_THREAD_COUNT,
+            Self::Auto => default_thread_count(),
             Self::Fixed(count) => count.max(1),
         }
     }

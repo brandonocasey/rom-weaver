@@ -129,11 +129,13 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
     },
 
     async run(args = [], runOptions = {}) {
+      const runDefaultThreads = resolveConfiguredDefaultThreads(runOptions, baseDefaultThreads);
       const normalizedArgs = withBrowserThreadLimit(
         withDefaultThreadArgs(
           normalizeArgs(args),
-          resolveConfiguredDefaultThreads(runOptions, baseDefaultThreads),
+          runDefaultThreads,
         ),
+        runDefaultThreads ?? resolveBrowserDefaultThreads(),
       );
       const trace = createRunTrace(runOptions);
       trace(
@@ -4055,24 +4057,31 @@ function withDefaultThreadArgs(args, defaultThreads) {
   return [...args, '--threads', String(defaultThreads)];
 }
 
-function withBrowserThreadLimit(args) {
+function withBrowserThreadLimit(args, defaultThreads = DEFAULT_BROWSER_THREAD_COUNT) {
   const out = [...args];
   for (let index = 0; index < out.length; index += 1) {
     const arg = String(out[index] ?? '');
     if (arg === '--threads') {
-      if (index + 1 < out.length) out[index + 1] = clampBrowserThreadArgValue(out[index + 1]);
+      if (index + 1 < out.length) out[index + 1] = clampBrowserThreadArgValue(out[index + 1], defaultThreads);
       index += 1;
       continue;
     }
     if (arg.startsWith('--threads=')) {
-      out[index] = `--threads=${clampBrowserThreadArgValue(arg.slice('--threads='.length))}`;
+      out[index] = `--threads=${clampBrowserThreadArgValue(arg.slice('--threads='.length), defaultThreads)}`;
     }
   }
   return out;
 }
 
-function clampBrowserThreadArgValue(value) {
+function clampBrowserThreadArgValue(value, defaultThreads = DEFAULT_BROWSER_THREAD_COUNT) {
   const raw = String(value ?? '').trim();
+  if (raw.toLowerCase() === 'auto') {
+    const parsedDefault = Number.parseInt(String(defaultThreads), 10);
+    if (Number.isInteger(parsedDefault) && parsedDefault > 0) {
+      return String(Math.min(parsedDefault, MAX_BROWSER_THREAD_POOL_SIZE));
+    }
+    return String(DEFAULT_BROWSER_THREAD_COUNT);
+  }
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) return raw;
   return String(Math.min(parsed, MAX_BROWSER_THREAD_POOL_SIZE));

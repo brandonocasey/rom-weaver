@@ -34,7 +34,7 @@ type SettingsState = {
   sevenZipLevel: number | "";
   zipCodec: string;
   zipLevel: number | "";
-  workerThreads: number;
+  workerThreads: number | "auto";
   erudaDevTools: boolean;
 };
 
@@ -395,7 +395,7 @@ const SETTINGS_FIELD_METADATA: { [K in SettingsFieldKey]: SettingsFieldMetadata<
     validationLabel: "7z compression level override",
   },
   workerThreads: {
-    defaultValue: getDefaultWorkerThreads,
+    defaultValue: "auto",
     disabled: ({ uiState }) => !uiState.workerThreadsEnabled,
     id: "settings-worker-threads",
     key: "workerThreads",
@@ -404,9 +404,12 @@ const SETTINGS_FIELD_METADATA: { [K in SettingsFieldKey]: SettingsFieldMetadata<
     labelDataLocalize: "Worker threads",
     max: 64,
     min: 0,
+    placeholder: "auto",
     step: 1,
     suggestion: ({ uiState }) =>
-      uiState.workerThreadsEnabled ? "Valid values: 0-64. Use 0 to disable threaded bundles." : "Valid value: 1",
+      uiState.workerThreadsEnabled
+        ? "Valid values: auto, 0-64. Use 0 to disable threaded bundles."
+        : "Valid values: auto or 1.",
     validationLabel: "Worker threads",
   },
   z3dsCompressionLevel: {

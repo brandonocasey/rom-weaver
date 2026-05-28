@@ -575,6 +575,7 @@ function SettingsFieldRow({ fieldKey, draftSettings, uiState, validation, onDraf
   }
 
   if (field.kind === "number") {
+    const inputType = fieldKey === "workerThreads" ? "text" : "number";
     return (
       <SettingsFieldRowLayout fieldKey={fieldKey} info={info}>
         <SettingsScalarInputField
@@ -584,7 +585,7 @@ function SettingsFieldRow({ fieldKey, draftSettings, uiState, validation, onDraf
           min={min}
           onDraftChange={onDraftChange}
           placeholder={placeholder}
-          type="number"
+          type={inputType}
           validation={validation}
           value={getFieldValue(fieldKey, draftSettings)}
         />

@@ -504,6 +504,49 @@ describe('rom-weaver-wasm browser runner parity', () => {
     });
   });
 
+  it('browser client normalizes explicit auto thread args to the browser default threads', async () => {
+    await withTempFixture(async ({ sourcePath, worker }) => {
+      const result = await worker.runJson([
+        'checksum',
+        sourcePath,
+        '--algo',
+        'crc32',
+        '--no-extract',
+        '--threads',
+        'auto',
+      ]);
+
+      const terminal = assertRunJsonSucceeded(result, { command: 'checksum' });
+      expect(result.args.slice(-2)).toEqual(['--threads', '3']);
+      expect(terminal.requested_threads).toBe(3);
+    }, {
+      clientOptions: {
+        defaultThreads: 3,
+      },
+    });
+  });
+
+  it('browser client normalizes explicit --threads=auto args to the browser default threads', async () => {
+    await withTempFixture(async ({ sourcePath, worker }) => {
+      const result = await worker.runJson([
+        'checksum',
+        sourcePath,
+        '--algo',
+        'crc32',
+        '--no-extract',
+        '--threads=auto',
+      ]);
+
+      const terminal = assertRunJsonSucceeded(result, { command: 'checksum' });
+      expect(result.args.slice(-1)).toEqual(['--threads=3']);
+      expect(terminal.requested_threads).toBe(3);
+    }, {
+      clientOptions: {
+        defaultThreads: 3,
+      },
+    });
+  });
+
   it('browser client accepts explicit command thread args above the default thread count', async () => {
     await withTempFixture(async ({ sourcePath, worker }) => {
       const result = await worker.runJson([

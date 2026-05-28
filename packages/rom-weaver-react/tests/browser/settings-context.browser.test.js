@@ -35,3 +35,13 @@ test("create settings keep an explicit logging sink", () => {
   expect(settings.logging?.level).toBe("debug");
   expect(settings.logging?.sink).toBe(sink);
 });
+
+test("apply settings preserve worker threads auto mode", () => {
+  const settings = toApplyWorkflowSettings({
+    workers: {
+      threads: "auto",
+    },
+  });
+
+  expect(settings.workers?.threads).toBe("auto");
+});

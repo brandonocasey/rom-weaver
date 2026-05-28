@@ -233,7 +233,13 @@ const normalizePositiveIntegerField = (
 const normalizeStoredWorkerThreads = (
   value: string | number | null | undefined,
   fallback = getDefaultWorkerThreads(),
-): number => normalizeBrowserThreadCount(value, undefined, fallback);
+): SettingsState["workerThreads"] => {
+  if (typeof value === "string" && value.trim().toLowerCase() === "auto") return "auto";
+  return normalizeBrowserThreadCount(value, undefined, fallback);
+};
+
+const resolveWorkerThreadsNumericFallback = (value: SettingsState["workerThreads"]): number =>
+  typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : getDefaultWorkerThreads();
 
 const assignSetting = <K extends SettingsFieldKey>(settings: SettingsState, fieldKey: K, value: SettingsState[K]) => {
   settings[fieldKey] = value;
@@ -364,6 +370,32 @@ const normalizeIntegerSetting = (
       max,
       min,
     }) as number;
+  }
+};
+
+const normalizeWorkerThreadsSetting = (
+  value: string | number | null | undefined,
+  validation: SettingsValidation,
+  settings: SettingsState = validation.settings,
+): SettingsState["workerThreads"] => {
+  const parsedValue = v.safeParse(storedStringOrNumberSchema, value);
+  const normalizedRaw = String(parsedValue.success ? parsedValue.output : value ?? "")
+    .trim()
+    .toLowerCase();
+  if (normalizedRaw === "auto") return "auto";
+  const { max, min } = getNumericFieldRange("workerThreads", settings);
+  try {
+    const parsed = parseIntegerInRange(parsedValue.success ? parsedValue.output : value, {
+      failureMessage: getFieldValidationMessage("workerThreads", `valid values: auto, ${min}-${max}.`),
+      max,
+      min,
+      requireExactString: true,
+    }) as number;
+    return normalizeStoredWorkerThreads(parsed, resolveWorkerThreadsNumericFallback(settings.workerThreads));
+  } catch {
+    validation.messages.push(getFieldValidationMessage("workerThreads", `valid values: auto, ${min}-${max}.`));
+    validation.invalidFields.push(getSettingsFieldId("workerThreads"));
+    return settings.workerThreads;
   }
 };
 
@@ -565,7 +597,10 @@ const loadSettings = (storage?: StorageLike): SettingsState => {
 
     const workerThreads = readStoredField(storedStringOrNumberSchema, loadedSettings.workerThreads);
     if (workerThreads !== undefined)
-      settings.workerThreads = normalizeStoredWorkerThreads(workerThreads, settings.workerThreads);
+      settings.workerThreads = normalizeStoredWorkerThreads(
+        workerThreads,
+        resolveWorkerThreadsNumericFallback(settings.workerThreads),
+      );
 
     const erudaDevTools = readStoredField(storedBooleanSchema, loadedSettings.erudaDevTools);
     if (erudaDevTools !== undefined) settings.erudaDevTools = erudaDevTools;
@@ -688,7 +723,7 @@ const validateSettingsDraft = (rawDraft: SettingsDraft, currentSettings?: Settin
     validation,
     settings,
   );
-  validation.settings.workerThreads = normalizeIntegerSetting("workerThreads", rawDraft.workerThreads, validation);
+  validation.settings.workerThreads = normalizeWorkerThreadsSetting(rawDraft.workerThreads, validation);
 
   return validation;
 };
@@ -832,7 +867,10 @@ const normalizeRuntimeSharedSettingsSource = (source?: Record<string, unknown> |
       settings.zipLevel,
     );
   if (typeof source.workerThreads === "number" || typeof source.workerThreads === "string")
-    settings.workerThreads = normalizeStoredWorkerThreads(source.workerThreads, settings.workerThreads);
+    settings.workerThreads = normalizeStoredWorkerThreads(
+      source.workerThreads,
+      resolveWorkerThreadsNumericFallback(settings.workerThreads),
+    );
 
   return settings;
 };
