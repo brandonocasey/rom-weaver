@@ -22,6 +22,7 @@ type ApplyWorkflowResolvedInput = {
   checksumTimeMs?: number;
   parentCompressions: ApplyWorkflowParentCompression[];
   selected: boolean;
+  selectedCandidateId?: string;
   order?: number;
   groupId?: string;
   size?: number;

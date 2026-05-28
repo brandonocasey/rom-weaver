@@ -199,6 +199,7 @@ const cloneResolvedInputState = (
   order: state.order,
   parentCompressions: parentCompressions.map((entry) => ({ ...entry })),
   selected,
+  selectedCandidateId: state.selectedCandidateId,
   size: state.size,
   sourceSize: state.sourceSize,
   wasDecompressed: state.wasDecompressed,
