@@ -625,6 +625,7 @@
         fn stream_chd_frames_with_progress<F>(
             &self,
             chd: &ChdReadSession,
+            thread_count: usize,
             on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
             mut on_frame: F,
         ) -> Result<()>
@@ -634,7 +635,7 @@
             let frame_len = Self::CD_FRAME_BYTES as usize;
             let mut frame = vec![0_u8; frame_len];
             let mut filled = 0_usize;
-            chd.stream_with_progress(on_progress, |chunk| {
+            chd.stream_with_progress(thread_count, on_progress, |chunk| {
                 let mut offset = 0_usize;
                 while offset < chunk.len() {
                     let copy_len = (frame_len - filled).min(chunk.len() - offset);
@@ -823,44 +824,50 @@
                     let mut track_index = 0_usize;
                     let mut data_frames_remaining = 0_u32;
                     let mut pad_frames_remaining = 0_u32;
-                    self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
-                        loop {
-                            if track_index >= layout.tracks.len() {
-                                return Ok(());
-                            }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                let track = &layout.tracks[track_index];
-                                data_frames_remaining = track.frames.saturating_sub(track.pad_frames);
-                                pad_frames_remaining = track.pad_frames;
-                            }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                track_index += 1;
-                                continue;
-                            }
+                    self.stream_chd_frames_with_progress(
+                        &chd,
+                        execution.effective_threads,
+                        Some(&extract_progress),
+                        |frame| {
+                            loop {
+                                if track_index >= layout.tracks.len() {
+                                    return Ok(());
+                                }
+                                if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                    let track = &layout.tracks[track_index];
+                                    data_frames_remaining =
+                                        track.frames.saturating_sub(track.pad_frames);
+                                    pad_frames_remaining = track.pad_frames;
+                                }
+                                if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                    track_index += 1;
+                                    continue;
+                                }
 
-                            let track = &layout.tracks[track_index];
-                            if data_frames_remaining > 0 {
-                                let data = &frame[..track.mode.data_bytes()];
-                                if write_single_bin && track.has_subcode {
-                                    omitted_subcode = true;
+                                let track = &layout.tracks[track_index];
+                                if data_frames_remaining > 0 {
+                                    let data = &frame[..track.mode.data_bytes()];
+                                    if write_single_bin && track.has_subcode {
+                                        omitted_subcode = true;
+                                    }
+                                    if let Some(writer) = bin_writer.as_mut() {
+                                        let mut data = data.to_vec();
+                                        track.mode.swap_audio_bytes(&mut data);
+                                        writer.write_all(&data)?;
+                                    }
+                                    data_frames_remaining -= 1;
+                                } else {
+                                    pad_frames_remaining -= 1;
                                 }
-                                if let Some(writer) = bin_writer.as_mut() {
-                                    let mut data = data.to_vec();
-                                    track.mode.swap_audio_bytes(&mut data);
-                                    writer.write_all(&data)?;
+                                if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                    track_index += 1;
                                 }
-                                data_frames_remaining -= 1;
-                            } else {
-                                pad_frames_remaining -= 1;
+                                processed_frames = processed_frames.saturating_add(1);
+                                break;
                             }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                track_index += 1;
-                            }
-                            processed_frames = processed_frames.saturating_add(1);
-                            break;
-                        }
-                        Ok(())
-                    })?;
+                            Ok(())
+                        },
+                    )?;
                     if processed_frames != expected_frames || track_index != layout.tracks.len() {
                         return Err(RomWeaverError::Validation(
                             "cd chd ended before all track frames were decoded".to_string(),
@@ -930,45 +937,51 @@
                     let mut track_index = 0_usize;
                     let mut data_frames_remaining = 0_u32;
                     let mut pad_frames_remaining = 0_u32;
-                    self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
-                        loop {
-                            if track_index >= layout.tracks.len() {
-                                return Ok(());
-                            }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                let track = &layout.tracks[track_index];
-                                data_frames_remaining = track.frames.saturating_sub(track.pad_frames);
-                                pad_frames_remaining = track.pad_frames;
-                            }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                track_index += 1;
-                                continue;
-                            }
-
-                            let track = &layout.tracks[track_index];
-                            if data_frames_remaining > 0 {
-                                if write_split_tracks[track_index] {
-                                    let mut data = frame[..track.mode.data_bytes()].to_vec();
-                                    if track.has_subcode {
-                                        omitted_subcode = true;
-                                    }
-                                    track.mode.swap_audio_bytes(&mut data);
-                                    if let Some(writer) = track_writers[track_index].as_mut() {
-                                        writer.write_all(&data)?;
-                                    }
+                    self.stream_chd_frames_with_progress(
+                        &chd,
+                        execution.effective_threads,
+                        Some(&extract_progress),
+                        |frame| {
+                            loop {
+                                if track_index >= layout.tracks.len() {
+                                    return Ok(());
                                 }
-                                data_frames_remaining -= 1;
-                            } else {
-                                pad_frames_remaining -= 1;
+                                if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                    let track = &layout.tracks[track_index];
+                                    data_frames_remaining =
+                                        track.frames.saturating_sub(track.pad_frames);
+                                    pad_frames_remaining = track.pad_frames;
+                                }
+                                if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                    track_index += 1;
+                                    continue;
+                                }
+
+                                let track = &layout.tracks[track_index];
+                                if data_frames_remaining > 0 {
+                                    if write_split_tracks[track_index] {
+                                        let mut data = frame[..track.mode.data_bytes()].to_vec();
+                                        if track.has_subcode {
+                                            omitted_subcode = true;
+                                        }
+                                        track.mode.swap_audio_bytes(&mut data);
+                                        if let Some(writer) = track_writers[track_index].as_mut() {
+                                            writer.write_all(&data)?;
+                                        }
+                                    }
+                                    data_frames_remaining -= 1;
+                                } else {
+                                    pad_frames_remaining -= 1;
+                                }
+                                if data_frames_remaining == 0 && pad_frames_remaining == 0 {
+                                    track_index += 1;
+                                }
+                                processed_frames = processed_frames.saturating_add(1);
+                                break;
                             }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                track_index += 1;
-                            }
-                            processed_frames = processed_frames.saturating_add(1);
-                            break;
-                        }
-                        Ok(())
-                    })?;
+                            Ok(())
+                        },
+                    )?;
                     if processed_frames != expected_frames || track_index != layout.tracks.len() {
                         return Err(RomWeaverError::Validation(
                             "cd chd ended before all track frames were decoded".to_string(),
@@ -1149,7 +1162,11 @@
                 let mut track_index = 0_usize;
                 let mut data_frames_remaining = 0_u32;
                 let mut pad_frames_remaining = 0_u32;
-                self.stream_chd_frames_with_progress(&chd, Some(&extract_progress), |frame| {
+                self.stream_chd_frames_with_progress(
+                    &chd,
+                    execution.effective_threads,
+                    Some(&extract_progress),
+                    |frame| {
                     loop {
                         if track_index >= layout.tracks.len() {
                             return Ok(());
@@ -1186,8 +1203,9 @@
                         processed_frames = processed_frames.saturating_add(1);
                         break;
                     }
-                    Ok(())
-                })?;
+                        Ok(())
+                    },
+                )?;
                 if processed_frames != expected_frames || track_index != layout.tracks.len() {
                     return Err(RomWeaverError::Validation(
                         "gd chd ended before all track frames were decoded".to_string(),
