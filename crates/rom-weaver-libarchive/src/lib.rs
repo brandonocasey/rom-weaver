@@ -31,6 +31,8 @@ use sys::{
     archive_write_set_format_raw, archive_write_set_format_zip,
 };
 
+const REGULAR_ARCHIVE_READ_BLOCK_BYTES: usize = 2 * 1024 * 1024;
+
 #[derive(Clone, Copy, Debug)]
 pub enum WriteFormat {
     Zip,
@@ -881,9 +883,9 @@ fn open_regular_archive_reader(
     format_name: &str,
 ) -> Result<RegularArchiveReader<'static>> {
     let file = File::open(source)?;
-    RegularArchiveReader::open_io(file).map_err(|error| {
-        RomWeaverError::Validation(format!("{format_name} archive is invalid: {error}"))
-    })
+    RegularArchiveReader::open_io_with_bufsize::<_, REGULAR_ARCHIVE_READ_BLOCK_BYTES>(file).map_err(
+        |error| RomWeaverError::Validation(format!("{format_name} archive is invalid: {error}")),
+    )
 }
 
 fn close_regular_archive_reader(

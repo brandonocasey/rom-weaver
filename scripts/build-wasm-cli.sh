@@ -100,6 +100,9 @@ export CC_wasm32_wasip1="$WASI_CLANG --sysroot=$WASI_SYSROOT"
 export CXX_wasm32_wasip1="$WASI_CLANGXX --sysroot=$WASI_SYSROOT"
 export AR_wasm32_wasip1="$WASI_AR"
 export RANLIB_wasm32_wasip1="$WASI_RANLIB"
+WASI_SIMD_CFLAGS="-msimd128 -O3 -flto=thin"
+export CFLAGS_wasm32_wasip1="${CFLAGS_wasm32_wasip1:-} ${WASI_SIMD_CFLAGS}"
+export CXXFLAGS_wasm32_wasip1="${CXXFLAGS_wasm32_wasip1:-} ${WASI_SIMD_CFLAGS}"
 
 export WASI_CLANG
 export WASI_CLANGXX
@@ -108,7 +111,7 @@ export CXX_wasm32_wasip1_threads="$ROOT_DIR/scripts/wasm/wasm32-wasip1-threads-c
 export AR_wasm32_wasip1_threads="$WASI_AR"
 export RANLIB_wasm32_wasip1_threads="$WASI_RANLIB"
 export WASI_SYSROOT
-WASI_THREADS_CFLAGS="-matomics -mbulk-memory"
+WASI_THREADS_CFLAGS="-matomics -mbulk-memory ${WASI_SIMD_CFLAGS}"
 export CFLAGS_wasm32_wasip1_threads="${CFLAGS_wasm32_wasip1_threads:-} ${WASI_THREADS_CFLAGS}"
 export CXXFLAGS_wasm32_wasip1_threads="${CXXFLAGS_wasm32_wasip1_threads:-} ${WASI_THREADS_CFLAGS}"
 

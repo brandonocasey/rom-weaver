@@ -144,6 +144,28 @@ fn is_wasm_threads_target() -> bool {
         .unwrap_or(false)
 }
 
+fn wasm_cmake_flags(target: &str) -> Vec<String> {
+    let mut flags = vec![
+        "-ffunction-sections".to_string(),
+        "-fdata-sections".to_string(),
+        format!("--target={target}"),
+        "-msimd128".to_string(),
+        "-O3".to_string(),
+        "-flto=thin".to_string(),
+        "-w".to_string(),
+    ];
+    if target == "wasm32-wasip1-threads" {
+        flags.push("-matomics".to_string());
+        flags.push("-mbulk-memory".to_string());
+    }
+    if let Ok(sysroot) = env::var("WASI_SYSROOT")
+        && !sysroot.trim().is_empty()
+    {
+        flags.push(format!("--sysroot={sysroot}"));
+    }
+    flags
+}
+
 fn target_tool_env(tool: &str) -> Option<String> {
     let target = env::var("TARGET").ok()?;
     let target_key = target.replace('-', "_");
@@ -299,34 +321,27 @@ fn build_libarchive(libarchive_dir: &Path) {
         .define("ENABLE_UNZIP", "OFF")
         .define("ENABLE_WERROR", "OFF");
 
+    if is_wasm32_target() {
+        let target = env::var("TARGET").unwrap_or_else(|_| "wasm32-wasip1".to_string());
+        let target_flags = wasm_cmake_flags(&target);
+        let joined = target_flags.join(" ");
+        cmake_config
+            .define("CMAKE_C_COMPILER_TARGET", target.as_str())
+            .define("CMAKE_CXX_COMPILER_TARGET", target.as_str())
+            .define("CMAKE_ASM_COMPILER_TARGET", target.as_str())
+            .define("CMAKE_C_FLAGS", joined.as_str())
+            .define("CMAKE_CXX_FLAGS", joined.as_str())
+            .define("CMAKE_ASM_FLAGS", joined.as_str());
+    }
+
     if is_wasm_threads_target() {
-        let mut thread_flags = vec![
-            "-ffunction-sections".to_string(),
-            "-fdata-sections".to_string(),
-            "--target=wasm32-wasip1-threads".to_string(),
-            "-matomics".to_string(),
-            "-mbulk-memory".to_string(),
-            "-w".to_string(),
-        ];
-        if let Ok(sysroot) = env::var("WASI_SYSROOT")
-            && !sysroot.trim().is_empty()
-        {
-            thread_flags.push(format!("--sysroot={sysroot}"));
-        }
-        let joined = thread_flags.join(" ");
         cmake_config
             .no_default_flags(true)
             // The libarchive CMake probe for lzma_stream_encoder_mt is a
             // cross-compile try-compile that currently fails for WASI threads,
             // even though liblzma-sys is built with its parallel API enabled.
             // Force the detected define so xz filters can use liblzma MT.
-            .define("HAVE_LZMA_STREAM_ENCODER_MT", "1")
-            .define("CMAKE_C_COMPILER_TARGET", "wasm32-wasip1-threads")
-            .define("CMAKE_CXX_COMPILER_TARGET", "wasm32-wasip1-threads")
-            .define("CMAKE_ASM_COMPILER_TARGET", "wasm32-wasip1-threads")
-            .define("CMAKE_C_FLAGS", joined.as_str())
-            .define("CMAKE_CXX_FLAGS", joined.as_str())
-            .define("CMAKE_ASM_FLAGS", joined.as_str());
+            .define("HAVE_LZMA_STREAM_ENCODER_MT", "1");
     }
 
     if is_wasm32_target() {

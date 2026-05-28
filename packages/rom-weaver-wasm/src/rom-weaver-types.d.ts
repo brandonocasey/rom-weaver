@@ -149,6 +149,8 @@ export interface RomWeaverBrowserOpfsOptions {
   runtimeMounts?: string[];
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
   virtualFiles?: RomWeaverBrowserVirtualFile[];
+  /** When true, mount tables start empty and only hydrated paths/virtual files are present. */
+  virtualOnlyMounts?: boolean;
   /** Writable guest roots. Defaults to the work mount itself. */
   writableDirectories?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
@@ -169,6 +171,8 @@ export interface RomWeaverBrowserOpfsOptions {
 export interface RomWeaverBrowserOpfsRunOptions extends RomWeaverRunOptions {
   mountHandles?: Record<string, FileSystemDirectoryHandleLike>;
   virtualFiles?: RomWeaverBrowserVirtualFile[];
+  /** When true, mount tables start empty and only hydrated paths/virtual files are present. */
+  virtualOnlyMounts?: boolean;
   writableDirectories?: string[];
   syncAccessMode?: RomWeaverBrowserSyncAccessMode;
   scratchFilePoolSize?: number;

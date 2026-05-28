@@ -22,6 +22,11 @@ const DEFAULT_SHARED_MEMORY_MAX_PAGES = 16384;
 const PATH_SEPARATOR_REGEX = /[/\\]+/;
 const SCRATCH_DIRECTORY_NAME = '.rom-weaver-opfs-scratch';
 const OPFS_COPY_CHUNK_SIZE = 8 * 1024 * 1024;
+const RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES = 1024 * 1024;
+const RANDOM_ACCESS_READ_CACHE_BLOCK_COUNT = 4;
+const RANDOM_ACCESS_READ_CACHE_MAX_REQUEST_BYTES = 256 * 1024;
+const OPFS_SEQUENTIAL_WRITE_BUFFER_BYTES = 4 * 1024 * 1024;
+const OPFS_SEQUENTIAL_DIRECT_WRITE_MIN_BYTES = 1024 * 1024;
 const DEFAULT_BROWSER_THREAD_COUNT = 4;
 const DEFAULT_BROWSER_THREAD_POOL_SIZE = 4;
 const MAX_BROWSER_THREAD_POOL_SIZE = 64;
@@ -62,6 +67,8 @@ const THREAD_SLOT_STATE_RUNNING = 3;
 const THREAD_SLOT_STATE_FAILED = 5;
 const THREAD_SLOT_STATE_SHUTDOWN = 6;
 const THREAD_WORKER_READY_TIMEOUT_MS = 5000;
+const THREAD_WORKER_BUSY_RETRY_INTERVAL_MS = 25;
+const THREAD_WORKER_BUSY_RETRY_TIMEOUT_MS = 30000;
 const WASI_ERRNO_AGAIN = 6;
 const WASI_ERRNO_ENOSYS = 52;
 const THREAD_WORKER_MOUNT_CACHE = createBrowserOpfsMountCache();
@@ -189,6 +196,8 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
         writableDirectories: runOptions.writableDirectories,
         inherited: baseWritableRoots,
       });
+      const resolvedVirtualOnlyMounts =
+        Boolean(runOptions.virtualOnlyMounts ?? options.virtualOnlyMounts ?? false);
       const resolvedMainScratchFilePoolSize = runOptions.scratchFilePoolSize
         ?? options.scratchFilePoolSize;
       const resolvedThreadScratchFilePoolSize = resolvedMainScratchFilePoolSize
@@ -246,6 +255,7 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
         mountCache,
         runCloseables: closeables,
         trace,
+        virtualOnlyMounts: resolvedVirtualOnlyMounts,
       });
       trace(`[browser-opfs] build wasi fds done fds=${fds.length} mounts=${mounts.length}`);
 
@@ -257,7 +267,7 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
           fds,
           { debug: Boolean(runOptions.debugWasi ?? options.debugWasi ?? false) },
         );
-        installDirectWasiFileReadImports(wasi);
+        installDirectWasiFileIoImports(wasi, trace);
 
         const instance = await WebAssembly.instantiate(module, {
           wasi_snapshot_preview1: wasi.wasiImport,
@@ -281,6 +291,8 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
         trace('[browser-opfs] waitForWorkers start');
         await threadSpawner.waitForWorkers();
         trace('[browser-opfs] waitForWorkers done');
+        traceFlushOpenWasiFileDescriptors(trace, fds, '[browser-opfs] flush fd write buffers');
+        traceDirectWasiFileIoStats(trace, wasi, '[browser-opfs] direct file io');
         trace('[browser-opfs] flush mounts start');
         await flushBrowserOpfsMounts(mounts);
         trace('[browser-opfs] flush mounts done');
@@ -452,7 +464,7 @@ export async function __runRomWeaverBrowserWasiThread(payload = {}) {
       built.fds,
       { debug: Boolean(debugWasi ?? runtime?.debugWasi ?? false) },
     );
-    installDirectWasiFileReadImports(threadWasi);
+    installDirectWasiFileIoImports(threadWasi, trace);
     const nestedThreadSpawner = createBrowserWasiThreadSpawner({
       allowWorkerPool: false,
       streamBroadcastChannelName: payload.__streamBroadcastChannelName,
@@ -489,6 +501,8 @@ export async function __runRomWeaverBrowserWasiThread(payload = {}) {
     trace(`[browser-opfs-thread] nested waitForWorkers start tid=${tid ?? 'unknown'}`);
     await nestedThreadSpawner.waitForWorkers();
     trace(`[browser-opfs-thread] nested waitForWorkers done tid=${tid ?? 'unknown'}`);
+    traceFlushOpenWasiFileDescriptors(trace, built.fds, `[browser-opfs-thread] flush fd write buffers tid=${tid ?? 'unknown'}`);
+    traceDirectWasiFileIoStats(trace, threadWasi, `[browser-opfs-thread] direct file io tid=${tid ?? 'unknown'}`);
     await flushBrowserOpfsMounts(mounts);
     runSucceeded = true;
   } catch (error) {
@@ -793,14 +807,16 @@ async function buildBrowserOpfsWasiFds({
     fds.push(new PreparedWasiPreopenDirectory(cwdMount, { preopenName: '.' }));
   }
   if (virtualOnlyMounts) {
-    trace?.('[browser-opfs] sync mounted input paths skipped for virtual-only mount');
-  } else {
-    await syncMountedInputPathsFromOpfs({
-      args,
-      mounts,
-      mountHandles,
-      runtimeMounts,
-    });
+    trace?.('[browser-opfs] sync mounted input paths start for virtual-only mount');
+  }
+  await syncMountedInputPathsFromOpfs({
+    args,
+    mounts,
+    mountHandles,
+    runtimeMounts,
+  });
+  if (virtualOnlyMounts) {
+    trace?.('[browser-opfs] sync mounted input paths done for virtual-only mount');
   }
   trace?.(`[browser-opfs] build fds leave fds=${fds.length} mounts=${mounts.length}`);
 
@@ -814,11 +830,14 @@ async function buildBrowserOpfsWasiFds({
   };
 }
 
-function installDirectWasiFileReadImports(wasi) {
+function installDirectWasiFileIoImports(wasi, trace) {
   const imports = wasi?.wasiImport;
-  if (!imports || imports.__romWeaverDirectFileRead) return;
+  if (!imports || imports.__romWeaverDirectFileIo) return;
+  const stats = createDirectWasiFileIoStats();
   const originalFdRead = imports.fd_read;
   const originalFdPread = imports.fd_pread;
+  const originalFdWrite = imports.fd_write;
+  const originalFdPwrite = imports.fd_pwrite;
   imports.fd_read = (fd, iovsPtr, iovsLen, nreadPtr) => {
     const fdObj = wasi.fds?.[fd];
     if (!fdObj || typeof fdObj.fd_read_into !== 'function') {
@@ -830,6 +849,7 @@ function installDirectWasiFileReadImports(wasi) {
       iovsPtr,
       nreadPtr,
       original: () => originalFdRead(fd, iovsPtr, iovsLen, nreadPtr),
+      stats,
       wasi,
     });
   };
@@ -845,10 +865,101 @@ function installDirectWasiFileReadImports(wasi) {
       nreadPtr,
       offset,
       original: () => originalFdPread(fd, iovsPtr, iovsLen, offset, nreadPtr),
+      stats,
       wasi,
     });
   };
-  imports.__romWeaverDirectFileRead = true;
+  imports.fd_write = (fd, iovsPtr, iovsLen, nwrittenPtr) => {
+    const fdObj = wasi.fds?.[fd];
+    if (!fdObj || typeof fdObj.fd_write !== 'function') {
+      return originalFdWrite(fd, iovsPtr, iovsLen, nwrittenPtr);
+    }
+    return directWasiFileWrite({
+      fdObj,
+      iovsLen,
+      iovsPtr,
+      nwrittenPtr,
+      original: () => originalFdWrite(fd, iovsPtr, iovsLen, nwrittenPtr),
+      stats,
+      wasi,
+    });
+  };
+  imports.fd_pwrite = (fd, iovsPtr, iovsLen, offset, nwrittenPtr) => {
+    const fdObj = wasi.fds?.[fd];
+    if (!fdObj || typeof fdObj.fd_pwrite !== 'function') {
+      return originalFdPwrite(fd, iovsPtr, iovsLen, offset, nwrittenPtr);
+    }
+    return directWasiFileWrite({
+      fdObj,
+      iovsLen,
+      iovsPtr,
+      nwrittenPtr,
+      offset,
+      original: () => originalFdPwrite(fd, iovsPtr, iovsLen, offset, nwrittenPtr),
+      stats,
+      wasi,
+    });
+  };
+  imports.__romWeaverDirectFileIoStats = stats;
+  imports.__romWeaverDirectFileIo = true;
+  trace?.('[browser-opfs] direct file io imports installed');
+}
+
+function createDirectWasiFileIoStats() {
+  return {
+    readBytes: 0,
+    readCalls: 0,
+    readMs: 0,
+    writeBytes: 0,
+    writeCalls: 0,
+    writeMs: 0,
+  };
+}
+
+function traceDirectWasiFileIoStats(trace, wasi, label) {
+  if (typeof trace !== 'function') return;
+  const stats = wasi?.wasiImport?.__romWeaverDirectFileIoStats;
+  if (!stats || (stats.readCalls === 0 && stats.writeCalls === 0)) return;
+  trace(
+    `${label} readCalls=${stats.readCalls} readBytes=${stats.readBytes} readMs=${stats.readMs.toFixed(1)} readMiBps=${formatIoMiBps(stats.readBytes, stats.readMs)} writeCalls=${stats.writeCalls} writeBytes=${stats.writeBytes} writeMs=${stats.writeMs.toFixed(1)} writeMiBps=${formatIoMiBps(stats.writeBytes, stats.writeMs)}`,
+  );
+}
+
+function formatIoMiBps(bytes, elapsedMs) {
+  if (!(elapsedMs > 0) || !(bytes > 0)) return '0.0';
+  return ((bytes / 1048576) / (elapsedMs / 1000)).toFixed(1);
+}
+
+function traceFlushOpenWasiFileDescriptors(trace, fds, label) {
+  const startMs = monotonicNowMs();
+  let flushedCount = 0;
+  let flushedBytes = 0;
+  if (Array.isArray(fds)) {
+    for (const fd of fds) {
+      if (!fd || typeof fd.pendingWriteBufferLength !== 'function' || typeof fd.flushPendingWrite !== 'function') {
+        continue;
+      }
+      const pendingBytes = fd.pendingWriteBufferLength();
+      if (pendingBytes <= 0) continue;
+      const ret = fd.flushPendingWrite();
+      if (ret !== wasiShim.wasi.ERRNO_SUCCESS) {
+        throw new Error(`failed to flush buffered WASI fd writes: errno=${ret}`);
+      }
+      flushedCount += 1;
+      flushedBytes += pendingBytes;
+    }
+  }
+  if (flushedCount > 0) {
+    const elapsedMs = monotonicNowMs() - startMs;
+    trace?.(`${label} count=${flushedCount} bytes=${flushedBytes} ms=${elapsedMs.toFixed(1)} MiBps=${formatIoMiBps(flushedBytes, elapsedMs)}`);
+  }
+}
+
+function monotonicNowMs() {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
 }
 
 function directWasiFileRead({
@@ -858,6 +969,7 @@ function directWasiFileRead({
   nreadPtr,
   offset,
   original,
+  stats,
   wasi,
 }) {
   const memory = wasi?.inst?.exports?.memory;
@@ -871,15 +983,19 @@ function directWasiFileRead({
   try {
     for (const iovec of iovecs) {
       const target = buffer8.subarray(iovec.buf, iovec.buf + iovec.buf_len);
+      const callStartMs = monotonicNowMs();
       const result = currentOffset === null
         ? fdObj.fd_read_into(target)
         : fdObj.fd_pread_into(target, currentOffset);
+      stats.readCalls += 1;
+      stats.readMs += monotonicNowMs() - callStartMs;
       if (result.ret !== wasiShim.wasi.ERRNO_SUCCESS) {
         if (nread === 0 && result.ret === wasiShim.wasi.ERRNO_NOTSUP) return original();
         buffer.setUint32(nreadPtr, nread, true);
         return result.ret;
       }
       const bytesRead = Math.max(0, Math.min(Number(result.nread) || 0, iovec.buf_len));
+      stats.readBytes += bytesRead;
       nread += bytesRead;
       if (currentOffset !== null) currentOffset += BigInt(bytesRead);
       if (bytesRead !== iovec.buf_len) break;
@@ -888,6 +1004,52 @@ function directWasiFileRead({
     return wasiShim.wasi.ERRNO_SUCCESS;
   } catch (error) {
     if (nread === 0) return original();
+    throw error;
+  }
+}
+
+function directWasiFileWrite({
+  fdObj,
+  iovsLen,
+  iovsPtr,
+  nwrittenPtr,
+  offset,
+  original,
+  stats,
+  wasi,
+}) {
+  const memory = wasi?.inst?.exports?.memory;
+  if (!(memory instanceof WebAssembly.Memory)) return original();
+
+  const buffer = new DataView(memory.buffer);
+  const buffer8 = new Uint8Array(memory.buffer);
+  const iovecs = wasiShim.wasi.Ciovec.read_bytes_array(buffer, iovsPtr, iovsLen);
+  let nwritten = 0;
+  let currentOffset = offset === undefined ? null : BigInt(offset);
+  try {
+    for (const iovec of iovecs) {
+      const source = buffer8.subarray(iovec.buf, iovec.buf + iovec.buf_len);
+      const callStartMs = monotonicNowMs();
+      const result = currentOffset === null
+        ? fdObj.fd_write(source)
+        : fdObj.fd_pwrite(source, currentOffset);
+      stats.writeCalls += 1;
+      stats.writeMs += monotonicNowMs() - callStartMs;
+      if (result.ret !== wasiShim.wasi.ERRNO_SUCCESS) {
+        if (nwritten === 0 && result.ret === wasiShim.wasi.ERRNO_NOTSUP) return original();
+        buffer.setUint32(nwrittenPtr, nwritten, true);
+        return result.ret;
+      }
+      const bytesWritten = Math.max(0, Math.min(Number(result.nwritten) || 0, source.byteLength));
+      stats.writeBytes += bytesWritten;
+      nwritten += bytesWritten;
+      if (currentOffset !== null) currentOffset += BigInt(bytesWritten);
+      if (bytesWritten !== source.byteLength) break;
+    }
+    buffer.setUint32(nwrittenPtr, nwritten, true);
+    return wasiShim.wasi.ERRNO_SUCCESS;
+  } catch (error) {
+    if (nwritten === 0) return original();
     throw error;
   }
 }
@@ -1120,14 +1282,25 @@ class BrowserOpfsRandomAccessFile {
     this.scratchName = options.scratchName ?? null;
     this.dirty = false;
     this.supportsDirectWasmRead = true;
+    this.supportsBufferedSequentialWrite = true;
+    this.readCacheBlocks = [];
+    this.readCacheTick = 0;
     this.closed = false;
   }
 
   readAt(offset, dst) {
-    return this.syncHandle.read(dst, { at: Number(offset) });
+    if (dst.byteLength <= 0) return 0;
+    const start = Number(offset);
+    if (!Number.isFinite(start) || start < 0) return 0;
+    if (dst.byteLength <= RANDOM_ACCESS_READ_CACHE_MAX_REQUEST_BYTES) {
+      const cachedRead = this.readFromCache(start, dst);
+      if (cachedRead !== null) return cachedRead;
+    }
+    return this.syncHandle.read(dst, { at: start });
   }
 
   writeAt(offset, src) {
+    this.clearReadCache();
     const written = this.syncHandle.write(src, { at: Number(offset) });
     if (written > 0) this.dirty = true;
     return written;
@@ -1140,8 +1313,66 @@ class BrowserOpfsRandomAccessFile {
   truncate(size) {
     const normalizedSize = Number(size);
     if (this.syncHandle.getSize() === normalizedSize) return;
+    this.clearReadCache();
     this.syncHandle.truncate(normalizedSize);
     this.dirty = true;
+  }
+
+  readFromCache(offset, dst) {
+    const cached = this.findReadCacheBlock(offset);
+    if (cached) return this.copyReadCacheBlock(cached, offset, dst);
+
+    const blockStart =
+      Math.floor(offset / RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES) * RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES;
+    const block = this.acquireReadCacheBlock();
+    const bytesRead = this.syncHandle.read(block.bytes, { at: blockStart });
+    if (bytesRead <= 0) return bytesRead;
+    block.start = blockStart;
+    block.length = Math.min(bytesRead, block.bytes.byteLength);
+    block.lastUsed = ++this.readCacheTick;
+    return this.copyReadCacheBlock(block, offset, dst);
+  }
+
+  findReadCacheBlock(offset) {
+    for (const block of this.readCacheBlocks) {
+      if (offset >= block.start && offset < block.start + block.length) {
+        block.lastUsed = ++this.readCacheTick;
+        return block;
+      }
+    }
+    return null;
+  }
+
+  acquireReadCacheBlock() {
+    if (this.readCacheBlocks.length < RANDOM_ACCESS_READ_CACHE_BLOCK_COUNT) {
+      const block = {
+        bytes: new Uint8Array(RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES),
+        lastUsed: 0,
+        length: 0,
+        start: 0,
+      };
+      this.readCacheBlocks.push(block);
+      return block;
+    }
+    let oldest = this.readCacheBlocks[0];
+    for (const block of this.readCacheBlocks) {
+      if (block.lastUsed < oldest.lastUsed) oldest = block;
+    }
+    return oldest;
+  }
+
+  copyReadCacheBlock(block, offset, dst) {
+    const relativeOffset = offset - block.start;
+    if (relativeOffset < 0 || relativeOffset >= block.length) return 0;
+    const available = block.length - relativeOffset;
+    const length = Math.min(dst.byteLength, available);
+    if (length <= 0) return 0;
+    dst.set(block.bytes.subarray(relativeOffset, relativeOffset + length));
+    return length;
+  }
+
+  clearReadCache() {
+    this.readCacheBlocks.length = 0;
   }
 
   flush() {
@@ -1157,6 +1388,7 @@ class BrowserOpfsRandomAccessFile {
   close() {
     if (this.closed) return;
     try {
+      this.clearReadCache();
       this.syncHandle.close();
     } finally {
       this.closed = true;
@@ -1419,14 +1651,38 @@ class WasiRandomAccessFileInode extends wasiShim.Inode {
   }
 }
 
+function normalizeWasiReadResult(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return { bytesRead: 0, ret: wasiShim.wasi.ERRNO_IO };
+  const integral = Math.trunc(numeric);
+  if (integral >= 0) return { bytesRead: integral, ret: wasiShim.wasi.ERRNO_SUCCESS };
+  const errno = Math.abs(integral);
+  if (errno > 0 && errno <= 0xffff) return { bytesRead: 0, ret: errno };
+  return { bytesRead: 0, ret: wasiShim.wasi.ERRNO_IO };
+}
+
+function emitWasiReadErrorTrace(scope, rawValue, retCode) {
+  if (typeof console === 'undefined') return;
+  const log = typeof console.debug === 'function' ? console.debug : console.log;
+  log.call(console, `[rom-weaver trace] browser-opfs: ${scope} readAt returned error-like value`, {
+    rawValue,
+    retCode,
+  });
+}
+
 class OpenWasiRandomAccessFile extends wasiShim.Fd {
   constructor(inode) {
     super();
     this.inode = inode;
     this.position = 0n;
+    this.writeBuffer = null;
+    this.writeBufferStart = 0n;
+    this.writeBufferLength = 0;
   }
 
   fd_allocate(offset, len) {
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return flushRet;
     const requested = BigInt(offset) + BigInt(len);
     if (BigInt(this.inode.file.size()) < requested) {
       this.inode.file.truncate(Number(requested));
@@ -1442,46 +1698,88 @@ class OpenWasiRandomAccessFile extends wasiShim.Fd {
   }
 
   fd_filestat_get() {
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return { ret: flushRet, filestat: null };
     return { ret: wasiShim.wasi.ERRNO_SUCCESS, filestat: this.inode.stat() };
   }
 
   fd_filestat_set_size(size) {
     if (this.inode.readonly) return wasiShim.wasi.ERRNO_BADF;
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return flushRet;
     this.inode.file.truncate(Number(size));
     return wasiShim.wasi.ERRNO_SUCCESS;
   }
 
   fd_read(size) {
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) {
+      return { ret: flushRet, data: new Uint8Array(0) };
+    }
     const buffer = new Uint8Array(size);
-    const bytesRead = this.inode.file.readAt(this.position, buffer);
+    const rawRead = this.inode.file.readAt(this.position, buffer);
+    const readResult = normalizeWasiReadResult(rawRead);
+    if (readResult.ret !== wasiShim.wasi.ERRNO_SUCCESS) {
+      emitWasiReadErrorTrace('fd_read', rawRead, readResult.ret);
+      return { ret: readResult.ret, data: new Uint8Array(0) };
+    }
+    const bytesRead = Math.max(0, Math.min(readResult.bytesRead, buffer.byteLength));
     this.position += BigInt(bytesRead);
     return { ret: wasiShim.wasi.ERRNO_SUCCESS, data: buffer.subarray(0, bytesRead) };
   }
 
   fd_pread(size, offset) {
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) {
+      return { ret: flushRet, data: new Uint8Array(0) };
+    }
     const buffer = new Uint8Array(size);
-    const bytesRead = this.inode.file.readAt(offset, buffer);
+    const rawRead = this.inode.file.readAt(offset, buffer);
+    const readResult = normalizeWasiReadResult(rawRead);
+    if (readResult.ret !== wasiShim.wasi.ERRNO_SUCCESS) {
+      emitWasiReadErrorTrace('fd_pread', rawRead, readResult.ret);
+      return { ret: readResult.ret, data: new Uint8Array(0) };
+    }
+    const bytesRead = Math.max(0, Math.min(readResult.bytesRead, buffer.byteLength));
     return { ret: wasiShim.wasi.ERRNO_SUCCESS, data: buffer.subarray(0, bytesRead) };
   }
 
   fd_read_into(target) {
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return { ret: flushRet, nread: 0 };
     if (!this.inode.file.supportsDirectWasmRead) {
       return { ret: wasiShim.wasi.ERRNO_NOTSUP, nread: 0 };
     }
-    const bytesRead = this.inode.file.readAt(this.position, target);
+    const rawRead = this.inode.file.readAt(this.position, target);
+    const readResult = normalizeWasiReadResult(rawRead);
+    if (readResult.ret !== wasiShim.wasi.ERRNO_SUCCESS) {
+      emitWasiReadErrorTrace('fd_read_into', rawRead, readResult.ret);
+      return { ret: readResult.ret, nread: 0 };
+    }
+    const bytesRead = Math.max(0, Math.min(readResult.bytesRead, target.byteLength));
     this.position += BigInt(bytesRead);
     return { ret: wasiShim.wasi.ERRNO_SUCCESS, nread: bytesRead };
   }
 
   fd_pread_into(target, offset) {
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return { ret: flushRet, nread: 0 };
     if (!this.inode.file.supportsDirectWasmRead) {
       return { ret: wasiShim.wasi.ERRNO_NOTSUP, nread: 0 };
     }
-    const bytesRead = this.inode.file.readAt(offset, target);
+    const rawRead = this.inode.file.readAt(offset, target);
+    const readResult = normalizeWasiReadResult(rawRead);
+    if (readResult.ret !== wasiShim.wasi.ERRNO_SUCCESS) {
+      emitWasiReadErrorTrace('fd_pread_into', rawRead, readResult.ret);
+      return { ret: readResult.ret, nread: 0 };
+    }
+    const bytesRead = Math.max(0, Math.min(readResult.bytesRead, target.byteLength));
     return { ret: wasiShim.wasi.ERRNO_SUCCESS, nread: bytesRead };
   }
 
   fd_seek(offset, whence) {
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return { ret: flushRet, offset: this.position };
     let nextPosition;
     switch (whence) {
       case wasiShim.wasi.WHENCE_SET:
@@ -1507,20 +1805,103 @@ class OpenWasiRandomAccessFile extends wasiShim.Fd {
 
   fd_write(data) {
     if (this.inode.readonly) return { ret: wasiShim.wasi.ERRNO_BADF, nwritten: 0 };
-    const bytesWritten = this.inode.file.writeAt(this.position, data);
-    this.position += BigInt(bytesWritten);
-    return { ret: wasiShim.wasi.ERRNO_SUCCESS, nwritten: bytesWritten };
+    if (data.byteLength === 0) return { ret: wasiShim.wasi.ERRNO_SUCCESS, nwritten: 0 };
+    if (!this.inode.file.supportsBufferedSequentialWrite) {
+      const bytesWritten = this.inode.file.writeAt(this.position, data);
+      this.position += BigInt(bytesWritten);
+      return { ret: wasiShim.wasi.ERRNO_SUCCESS, nwritten: bytesWritten };
+    }
+    return this.bufferSequentialWrite(data);
   }
 
   fd_pwrite(data, offset) {
     if (this.inode.readonly) return { ret: wasiShim.wasi.ERRNO_BADF, nwritten: 0 };
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return { ret: flushRet, nwritten: 0 };
     const bytesWritten = this.inode.file.writeAt(offset, data);
     return { ret: wasiShim.wasi.ERRNO_SUCCESS, nwritten: bytesWritten };
   }
 
   fd_sync() {
+    const flushRet = this.flushPendingWrite();
+    if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return flushRet;
     this.inode.file.flush();
     return wasiShim.wasi.ERRNO_SUCCESS;
+  }
+
+  fd_close() {
+    return this.flushPendingWrite();
+  }
+
+  pendingWriteBufferLength() {
+    return this.writeBufferLength;
+  }
+
+  ensureWriteBuffer() {
+    if (!this.writeBuffer) {
+      this.writeBuffer = new Uint8Array(OPFS_SEQUENTIAL_WRITE_BUFFER_BYTES);
+    }
+    return this.writeBuffer;
+  }
+
+  flushPendingWrite() {
+    if (this.writeBufferLength <= 0) return wasiShim.wasi.ERRNO_SUCCESS;
+    const source = this.writeBuffer.subarray(0, this.writeBufferLength);
+    const bytesWritten = this.inode.file.writeAt(this.writeBufferStart, source);
+    if (bytesWritten !== this.writeBufferLength) {
+      if (bytesWritten > 0 && bytesWritten < this.writeBufferLength) {
+        this.writeBuffer.copyWithin(0, bytesWritten, this.writeBufferLength);
+        this.writeBufferStart += BigInt(bytesWritten);
+        this.writeBufferLength -= bytesWritten;
+      }
+      return wasiShim.wasi.ERRNO_IO;
+    }
+    this.writeBufferLength = 0;
+    return wasiShim.wasi.ERRNO_SUCCESS;
+  }
+
+  bufferSequentialWrite(data) {
+    let nwritten = 0;
+    while (nwritten < data.byteLength) {
+      if (this.writeBufferLength > 0) {
+        const expectedPosition = this.writeBufferStart + BigInt(this.writeBufferLength);
+        if (this.position !== expectedPosition) {
+          const flushRet = this.flushPendingWrite();
+          if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return { ret: flushRet, nwritten };
+        }
+      }
+
+      if (this.writeBufferLength === 0) {
+        this.writeBufferStart = this.position;
+        const remaining = data.byteLength - nwritten;
+        if (remaining >= OPFS_SEQUENTIAL_DIRECT_WRITE_MIN_BYTES) {
+          const source = data.subarray(nwritten);
+          const bytesWritten = this.inode.file.writeAt(this.position, source);
+          this.position += BigInt(bytesWritten);
+          nwritten += bytesWritten;
+          if (bytesWritten !== source.byteLength) break;
+          continue;
+        }
+      }
+
+      const buffer = this.ensureWriteBuffer();
+      const available = buffer.byteLength - this.writeBufferLength;
+      if (available <= 0) {
+        const flushRet = this.flushPendingWrite();
+        if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return { ret: flushRet, nwritten };
+        continue;
+      }
+      const chunkLength = Math.min(data.byteLength - nwritten, available);
+      buffer.set(data.subarray(nwritten, nwritten + chunkLength), this.writeBufferLength);
+      this.writeBufferLength += chunkLength;
+      this.position += BigInt(chunkLength);
+      nwritten += chunkLength;
+      if (this.writeBufferLength >= buffer.byteLength) {
+        const flushRet = this.flushPendingWrite();
+        if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return { ret: flushRet, nwritten };
+      }
+    }
+    return { ret: wasiShim.wasi.ERRNO_SUCCESS, nwritten };
   }
 }
 
@@ -1629,7 +2010,6 @@ function restoreVirtualFiles(restores) {
 
 async function flushBrowserOpfsMounts(mounts) {
   for (const mount of mounts) {
-    if (mount.virtualOnly) continue;
     await flushInMemoryEntriesToOpfs(mount.directoryHandle, mount.contents);
     await replaceScratchBackedEntriesWithOpfsHandles({
       directoryHandle: mount.directoryHandle,
@@ -2674,6 +3054,20 @@ function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl }) {
     await Promise.all(workers.slice(0, targetSize).map((slot) => slot.ready));
   };
 
+  const selectAvailableShells = async (poolSize, trace, commandId) => {
+    const deadline = Date.now() + THREAD_WORKER_BUSY_RETRY_TIMEOUT_MS;
+    while (true) {
+      const available = workers.filter((shell) => !shell.terminated && !shell.currentCommand);
+      if (available.length >= poolSize) return available.slice(0, poolSize);
+      if (Date.now() >= deadline) {
+        const busyShell = workers.find((shell) => !shell.terminated && shell.currentCommand);
+        if (busyShell) throw new Error(`browser wasi thread worker ${busyShell.index} is already busy`);
+        throw new Error('browser wasi thread worker pool does not have enough available workers');
+      }
+      await new Promise((resolve) => setTimeout(resolve, THREAD_WORKER_BUSY_RETRY_INTERVAL_MS));
+    }
+  };
+
   const isReady = (size) => {
     if (disposed) return false;
     const targetSize = Math.min(Math.max(0, size), MAX_BROWSER_THREAD_POOL_SIZE);
@@ -2746,10 +3140,12 @@ function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl }) {
           `browser wasi thread worker pool URL mismatch: ${resolvedThreadWorkerUrl} !== ${threadWorkerUrl}`,
         );
       }
-      const shells = workers.slice(0, poolSize);
+      const shells = await selectAvailableShells(poolSize, trace, commandId);
+      trace?.(
+        `[browser-opfs] thread pool command selected workers id=${commandId} workers=${shells.map((shell) => shell.index).join(',')}`,
+      );
       for (const shell of shells) {
         if (shell.terminated) throw new Error(`browser wasi thread worker ${shell.index} is not available`);
-        if (shell.currentCommand) throw new Error(`browser wasi thread worker ${shell.index} is already busy`);
         const control = new Int32Array(
           new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * THREAD_SLOT_LENGTH),
         );
