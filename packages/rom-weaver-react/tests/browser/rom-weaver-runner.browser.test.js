@@ -54,6 +54,13 @@ test("rom-weaver runner ready metadata exposes the loaded browser wasm runtime",
   }
 });
 
+test("rom-weaver runner can initialize a forced single-thread wasm runtime", async () => {
+  const metadata = await getRomWeaverRunnerMetadata({ preferThreadedWasm: false });
+  expect(metadata.threaded).toBe(false);
+  expect(metadata.wasmUrl).toContain("rom-weaver-cli.wasm");
+  expect(metadata.wasmUrl).not.toContain("threaded");
+});
+
 test("rom-weaver failure messages ignore trace-only stderr", () => {
   const traceLine =
     "2026-05-26T04:39:38.602000Z TRACE rom_weaver_core::context: emitting progress event command=extract";
