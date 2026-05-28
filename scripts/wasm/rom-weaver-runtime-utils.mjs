@@ -1,4 +1,5 @@
 export function createWasmEnvImports(memory) {
+  const ARCHIVE_FAILED = -25;
   const imports = {
     __cxa_allocate_exception() {
       return 0;
@@ -7,6 +8,24 @@ export function createWasmEnvImports(memory) {
       throw new Error(
         `rom-weaver wasm raised a C++ exception (pointer=${pointer}, type=${typeInfo})`,
       );
+    },
+    // Stub libarchive external-program filter hooks in browser runtimes.
+    // Browser builds should use in-process codecs; if an external-program path
+    // is selected, return failure instead of trapping on missing imports.
+    __archive_write_program_allocate() {
+      return 0;
+    },
+    __archive_write_program_free() {
+      return ARCHIVE_FAILED;
+    },
+    __archive_write_program_open() {
+      return ARCHIVE_FAILED;
+    },
+    __archive_write_program_write() {
+      return ARCHIVE_FAILED;
+    },
+    __archive_write_program_close() {
+      return ARCHIVE_FAILED;
     },
   };
 

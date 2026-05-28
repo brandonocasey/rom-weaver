@@ -2,6 +2,14 @@ export type RomWeaverArg = string | number | boolean | bigint;
 export type RomWeaverDefaultThreads = number | string | false | null | undefined;
 export type RomWeaverEnv = Record<string, string>;
 export type RomWeaverPreopens = Record<string, string>;
+import type {
+  JsonValue,
+  OperationFamily,
+  OperationStatus,
+  ProgressEvent,
+  ThreadExecution,
+  ThreadMode,
+} from './generated/rom-weaver-rust-types.d.ts';
 
 export type RomWeaverStdinInput = string | Uint8Array | ArrayBuffer | null | undefined;
 
@@ -50,21 +58,12 @@ export interface RomWeaverProgressDetails {
   [key: string]: unknown;
 }
 
-export interface RomWeaverProgressEvent {
-  command: string;
-  family: string;
-  format: string | null;
-  stage: string;
-  label: string;
-  details: RomWeaverProgressDetails | null;
-  percent: number | null;
-  requested_threads: number | null;
-  effective_threads: number | null;
-  thread_mode: string | null;
-  used_parallelism: boolean | null;
-  thread_fallback: boolean | null;
-  status: string;
-}
+export type RomWeaverJsonValue = JsonValue;
+export type RomWeaverOperationFamily = OperationFamily;
+export type RomWeaverOperationStatus = OperationStatus;
+export type RomWeaverThreadMode = ThreadMode;
+export type RomWeaverThreadExecution = ThreadExecution;
+export type RomWeaverProgressEvent = ProgressEvent;
 
 export interface ParseJsonLinesOptions<TEvent = RomWeaverProgressEvent> {
   onEvent?: (event: TEvent) => void;

@@ -718,6 +718,7 @@ const LIBARCHIVE_CREATE_IO_BUFFER_BYTES: usize = 128 * 1024;
 const LIBARCHIVE_CREATE_ZSTD_IO_BUFFER_BYTES: usize = 1024 * 1024;
 const LIBARCHIVE_EXTRACT_IO_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 const COPY_WITH_PROGRESS_MAX_BUFFER_BYTES: u64 = 4 * 1024 * 1024;
+const PARALLEL_COORDINATOR_STACK_SIZE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 struct LibarchiveCreateConfig {
@@ -805,7 +806,9 @@ fn libarchive_open_create_archive(
             }
         }
 
-        if let Some(threads) = config.format_threads {
+        if let Some(threads) = config.format_threads
+            && threads > 1
+        {
             if config.format_compression.is_some() {
                 archive.try_set_format_option(
                     None,
@@ -819,7 +822,9 @@ fn libarchive_open_create_archive(
             }
         }
 
-        if let Some(threads) = config.filter_threads {
+        if let Some(threads) = config.filter_threads
+            && threads > 1
+        {
             if let Some(module) = config.filter.module_name() {
                 archive.try_set_filter_option(
                     module,
@@ -1826,6 +1831,7 @@ fn extract_regular_archive_with_libarchive(
             thread::scope(|scope| -> Result<u64> {
                 let producer = thread::Builder::new()
                     .name("rom-weaver-libarchive-extract".to_string())
+                    .stack_size(PARALLEL_COORDINATOR_STACK_SIZE_BYTES)
                     .spawn_scoped(scope, || {
                         pool.install(|| {
                             tasks.par_chunks(chunk_size).try_for_each_with(
@@ -2086,6 +2092,7 @@ where
     thread::scope(|scope| -> Result<()> {
         let producer = thread::Builder::new()
             .name("rom-weaver-decode".to_string())
+            .stack_size(PARALLEL_COORDINATOR_STACK_SIZE_BYTES)
             .spawn_scoped(scope, || {
                 pool.install(|| {
                     tasks.par_iter().try_for_each_with(sender, |sender, task| {

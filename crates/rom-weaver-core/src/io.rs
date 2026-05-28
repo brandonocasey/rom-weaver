@@ -393,8 +393,12 @@ impl TempPathAllocator {
             .duration_since(UNIX_EPOCH)
             .map(|value| value.as_nanos())
             .unwrap_or_default();
+        #[cfg(target_family = "wasm")]
+        let process_id = 1u32;
+        #[cfg(not(target_family = "wasm"))]
+        let process_id = std::process::id();
         let sequence = NEXT_TEMP_NAMESPACE_ID.fetch_add(1, Ordering::Relaxed);
-        let namespace = format!("rw-{timestamp}-{sequence}");
+        let namespace = format!("rw-{timestamp}-{process_id}-{sequence}");
         Self {
             root,
             namespace,

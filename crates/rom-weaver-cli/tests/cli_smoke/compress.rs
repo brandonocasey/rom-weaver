@@ -1517,3 +1517,71 @@ fn extract_recursively_handles_nested_containers() {
         payload
     );
 }
+
+#[test]
+fn extract_nested_scan_ignores_existing_output_archives() {
+    let temp = setup_temp_dir();
+    let out_dir = temp.child("extract");
+    fs::create_dir_all(out_dir.path()).expect("extract dir");
+
+    fs::write(temp.child("fresh.bin").path(), b"fresh payload").expect("fresh fixture");
+    let fresh_archive = temp.child("fresh.zip");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("fresh.bin").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            fresh_archive.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    fs::write(temp.child("stale.bin").path(), b"stale payload").expect("stale fixture");
+    let stale_archive = out_dir.child("stale.zip");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("stale.bin").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            stale_archive.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let extract_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            fresh_archive.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let extract_json = parse_single_json_line(&extract_output);
+    assert_eq!(extract_json["command"], "extract");
+    assert_eq!(extract_json["status"], "succeeded");
+    assert!(!extract_json["label"]
+        .as_str()
+        .expect("label")
+        .contains("recursively extracted"));
+    assert_eq!(
+        fs::read(out_dir.child("fresh.bin").path()).expect("fresh extract"),
+        b"fresh payload"
+    );
+    assert!(stale_archive.path().exists());
+    assert!(!out_dir.child("stale/stale.bin").path().exists());
+}

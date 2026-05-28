@@ -1,19 +1,18 @@
-use std::{fmt, str::FromStr, sync::Arc, thread};
+use std::{fmt, str::FromStr, sync::Arc};
 
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
+#[cfg(feature = "typescript-types")]
+use ts_rs::TS;
 
 use crate::{Result, RomWeaverError};
 
-fn default_thread_count() -> usize {
-    thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
-        .max(1)
-}
+const DEFAULT_THREAD_COUNT: usize = 4;
+const DEFAULT_RAYON_STACK_SIZE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadMode {
     Auto,
@@ -37,7 +36,7 @@ impl ThreadBudget {
 
     pub fn requested_threads(self) -> usize {
         match self {
-            Self::Auto => default_thread_count(),
+            Self::Auto => DEFAULT_THREAD_COUNT,
             Self::Fixed(count) => count.max(1),
         }
     }
@@ -170,6 +169,7 @@ impl ThreadCapability {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct ThreadExecution {
     pub requested_threads: usize,
     pub effective_threads: usize,
@@ -216,6 +216,7 @@ impl SharedThreadPool {
         trace!(size, "building shared thread pool");
         let inner = rayon::ThreadPoolBuilder::new()
             .num_threads(size)
+            .stack_size(DEFAULT_RAYON_STACK_SIZE_BYTES)
             .build()
             .map_err(|error| RomWeaverError::ThreadPoolBuild(error.to_string()))?;
         Ok(Self {

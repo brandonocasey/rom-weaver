@@ -1,6 +1,6 @@
 /* jscpd:ignore-start */
 impl CliApp {
-    fn run_patch_apply(&self, args: PatchApplyCommand) -> ExitCode {
+    fn run_patch_apply(&self, args: PatchApplyCommand) -> AppRunOutcome {
         trace!(
             input = %args.input.display(),
             selections = args.select.len(),
@@ -694,7 +694,7 @@ impl CliApp {
         self.finish("patch-apply", report)
     }
 
-    fn run_patch_create(&self, args: PatchCreateCommand) -> ExitCode {
+    fn run_patch_create(&self, args: PatchCreateCommand) -> AppRunOutcome {
         trace!(
             original = %args.original.display(),
             modified = %args.modified.display(),

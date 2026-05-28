@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/rom-weaver-app",
     "crates/rom-weaver-chd",
     "crates/rom-weaver-checksum",
     "crates/rom-weaver-cli",
@@ -10,6 +11,7 @@ members = [
     "crates/rom-weaver-libarchive-sys",
     "crates/rom-weaver-patches",
     "crates/rom-weaver-xdelta",
+    "tools/rom-weaver-typegen",
 ]
 exclude = ["vendor/nod"]
 resolver = "2"
@@ -52,6 +54,7 @@ tar = "0.4.44"
 thiserror = "2.0.17"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
+ts-rs = "12.0.1"
 xdvdfs = { version = "0.8.3", default-features = false, features = ["std", "read", "write", "sync"] }
 zeekstd = "0.6.2"
 zstd-sys = { version = "2.0.16", default-features = false }

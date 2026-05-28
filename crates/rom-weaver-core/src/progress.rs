@@ -2,10 +2,13 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(feature = "typescript-types")]
+use ts_rs::TS;
 
 use crate::ThreadMode;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum OperationFamily {
     Command,
@@ -18,6 +21,7 @@ pub enum OperationFamily {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatus {
     Pending,
@@ -40,6 +44,7 @@ impl OperationStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct ProgressEvent {
     pub command: String,
     pub family: OperationFamily,
@@ -53,7 +58,7 @@ pub struct ProgressEvent {
     pub thread_mode: Option<ThreadMode>,
     pub used_parallelism: Option<bool>,
     pub thread_fallback: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_fallback_reason: Option<String>,
     pub status: OperationStatus,
 }

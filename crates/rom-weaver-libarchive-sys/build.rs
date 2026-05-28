@@ -198,6 +198,10 @@ fn prepare_wasm_source_tree(manifest_dir: &Path, libarchive_dir: &Path, out_dir:
         .expect("failed to add wasm libarchive format shim");
     patch_archive_util_tempdir_for_wasm(manifest_dir, &staged.join("libarchive/archive_util.c"))
         .expect("failed to patch libarchive temporary directory fallback for wasm");
+    patch_archive_write_set_format_7zip_for_wasm(
+        &staged.join("libarchive/archive_write_set_format_7zip.c"),
+    )
+    .expect("failed to patch libarchive 7zip defaults for wasm");
     patch_cmakelists_for_wasm(manifest_dir, &staged.join("libarchive/CMakeLists.txt"))
         .expect("failed to patch libarchive CMakeLists.txt for wasm");
     staged
@@ -272,6 +276,37 @@ fn patch_archive_util_tempdir_for_wasm(
     )
 }
 
+fn patch_archive_write_set_format_7zip_for_wasm(sevenz_path: &Path) -> std::io::Result<()> {
+    let content = fs::read_to_string(sevenz_path)?;
+    let patched_threads = content.replace("zip->opt_threads = 1;", "zip->opt_threads = 0;");
+    if patched_threads == content {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "libarchive 7zip default thread assignment was not found in {}",
+                sevenz_path.display()
+            ),
+        ));
+    }
+
+    let patched_workers = patched_threads.replace(
+        "ZSTD_CCtx_setParameter(strm, ZSTD_c_nbWorkers, threads);",
+        "if (threads > 1)\n\t\tZSTD_CCtx_setParameter(strm, ZSTD_c_nbWorkers, threads);",
+    );
+    if patched_workers == patched_threads {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "libarchive 7zip zstd worker assignment was not found in {}",
+                sevenz_path.display()
+            ),
+        ));
+    }
+
+    fs::write(sevenz_path, patched_workers)?;
+    Ok(())
+}
+
 fn patch_cmakelists_for_wasm(manifest_dir: &Path, cmakelists_path: &Path) -> std::io::Result<()> {
     let drop_entries_path = wasm_patch_path(manifest_dir, "cmakelists_drop_entries.txt");
     let drop_entries: HashSet<String> = fs::read_to_string(drop_entries_path)?
@@ -331,7 +366,10 @@ fn build_libarchive(libarchive_dir: &Path) {
             .define("CMAKE_ASM_COMPILER_TARGET", target.as_str())
             .define("CMAKE_C_FLAGS", joined.as_str())
             .define("CMAKE_CXX_FLAGS", joined.as_str())
-            .define("CMAKE_ASM_FLAGS", joined.as_str());
+            .define("CMAKE_ASM_FLAGS", joined.as_str())
+            // CMake's cross-compile probe can miss this symbol on WASI even
+            // when zstd is linked and usable via current headers.
+            .define("HAVE_ZSTD_compressStream", "1");
     }
 
     if is_wasm_threads_target() {

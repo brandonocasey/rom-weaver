@@ -20,7 +20,7 @@ impl CliApp {
         }
     }
 
-    fn finish(&self, command: &str, report: OperationReport) -> ExitCode {
+    fn finish(&self, command: &str, report: OperationReport) -> AppRunOutcome {
         trace!(
             command,
             family = ?report.family,
@@ -33,7 +33,7 @@ impl CliApp {
         );
         let status = report.status;
         self.reporter.emit(report.into_event(command));
-        ExitCode::from(status.exit_code())
+        AppRunOutcome { status, exit_code: status.exit_code() }
     }
 
     fn extract_nested_archives(

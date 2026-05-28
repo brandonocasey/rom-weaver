@@ -168,7 +168,8 @@ impl PatchHandler for RupPatchHandler {
             } else {
                 file.target_md5
             };
-            let actual_md5 = md5_file(&request.output)?;
+            output.seek(SeekFrom::Start(0))?;
+            let actual_md5 = md5_open_file(&mut output)?;
             if actual_md5 != expected_md5 {
                 return Err(RomWeaverError::Validation(format!(
                     "RUP target checksum mismatch; expected {}, got {}",
@@ -1277,6 +1278,19 @@ fn encode_rup_patch(metadata: &RupMetadata, files: &[RupFile]) -> Result<Vec<u8>
 fn bytes_record_count(bytes: &[u8]) -> Result<usize> {
     let patch = parse_rup_bytes(bytes)?;
     Ok(patch.files.iter().map(|file| file.records.len()).sum())
+}
+
+fn md5_open_file(file: &mut File) -> Result<[u8; 16]> {
+    let mut hasher = Md5::new();
+    let mut buffer = vec![0u8; RUP_IO_BUFFER_SIZE];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().into())
 }
 
 fn write_fixed_string(buffer: &mut Vec<u8>, value: &str, len: usize) {

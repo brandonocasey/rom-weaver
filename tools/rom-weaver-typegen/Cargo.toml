@@ -1,0 +1,11 @@
+[package]
+name = "rom-weaver-typegen"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+rom-weaver-core = { path = "../../crates/rom-weaver-core", features = ["typescript-types"] }
+serde_json.workspace = true
+ts-rs.workspace = true

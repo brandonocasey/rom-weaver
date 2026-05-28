@@ -148,7 +148,16 @@ impl ContainerHandler for TarContainerHandler {
     }
 
     fn probe(&self, source: &Path) -> ProbeConfidence {
-        probe_regular_archive_with_libarchive(source, self.descriptor.name, LibarchiveProbeFormat::Tar)
+        // Libarchive tar probing can succeed on arbitrary binary payloads.
+        // Require a tar-family extension before treating tar probes as signature matches.
+        if !self.descriptor.matches_path(source) {
+            return ProbeConfidence::Extension;
+        }
+        probe_regular_archive_with_libarchive(
+            source,
+            self.descriptor.name,
+            LibarchiveProbeFormat::Tar,
+        )
     }
 
     fn inspect(

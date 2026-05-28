@@ -23,6 +23,10 @@ WASM artifacts + JS wrappers:
 scripts/build-wasm-cli.sh
 ```
 
+The WASM artifact keeps the `rom-weaver-cli.wasm` package ABI, but the binary is
+only a CLI/argv/reporter shim over the shared `rom-weaver-app` command
+orchestration crate.
+
 Ad-hoc WASI target checks/builds (uses LLVM + WASI sysroot wiring):
 
 ```bash

@@ -1,14 +1,9 @@
 import { type BrowserVirtualFile, getActiveBrowserVirtualFiles } from "../protocol/browser-virtual-files.ts";
 import { isBrowserRuntime } from "../shared/runtime-env.ts";
 import { WORKER_OPFS_MOUNTPOINT } from "../shared/worker-storage/storage-layout.ts";
+import type { RomWeaverProgressEvent } from "rom-weaver-wasm";
 
-type RomWeaverRunJsonEvent = {
-  label?: string;
-  percent?: number | null;
-  stage?: string;
-  status?: string;
-  [key: string]: RuntimeValue;
-};
+type RomWeaverRunJsonEvent = RomWeaverProgressEvent;
 
 type RomWeaverRunJsonOptions = {
   onEvent?: (event: RomWeaverRunJsonEvent) => void;

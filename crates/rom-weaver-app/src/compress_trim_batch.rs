@@ -1,6 +1,6 @@
 /* jscpd:ignore-start */
 impl CliApp {
-    fn run_compress(&self, args: CompressCommand) -> ExitCode {
+    fn run_compress(&self, args: CompressCommand) -> AppRunOutcome {
         trace!(
             input_count = args.input.len(),
             output = %args.output.display(),
@@ -223,7 +223,7 @@ impl CliApp {
         )
     }
 
-    fn run_trim(&self, args: TrimCommand) -> ExitCode {
+    fn run_trim(&self, args: TrimCommand) -> AppRunOutcome {
         trace!(
             source_count = args.source.len(),
             output = ?args.output.as_ref().map(|path| path.display().to_string()),
@@ -496,7 +496,7 @@ impl CliApp {
         )
     }
 
-    fn run_batch_header_fixer(&self, args: BatchHeaderFixerCommand) -> ExitCode {
+    fn run_batch_header_fixer(&self, args: BatchHeaderFixerCommand) -> AppRunOutcome {
         trace!(
             source_count = args.source.len(),
             output = ?args.output.as_ref().map(|path| path.display().to_string()),

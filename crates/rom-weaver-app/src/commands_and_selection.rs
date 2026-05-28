@@ -14,7 +14,7 @@ impl CliApp {
         }
     }
 
-    fn run(&self, command: Commands) -> ExitCode {
+    fn run(&self, command: Commands) -> AppRunOutcome {
         let command_name = Self::command_name(&command);
         trace!(command = command_name, "dispatching CLI command");
         match command {
@@ -42,7 +42,7 @@ impl CliApp {
         }
     }
 
-    fn run_inspect(&self, args: InspectCommand) -> ExitCode {
+    fn run_inspect(&self, args: InspectCommand) -> AppRunOutcome {
         trace!(source = %args.source.display(), list = args.list, "starting inspect command");
         let context = self.context(ThreadBudget::Fixed(1));
         let source = args.source.clone();
@@ -240,7 +240,7 @@ impl CliApp {
         self.finish("inspect", report)
     }
 
-    fn run_extract(&self, args: ExtractCommand) -> ExitCode {
+    fn run_extract(&self, args: ExtractCommand) -> AppRunOutcome {
         trace!(
             source = %args.source.display(),
             selections = args.select.len(),
@@ -264,9 +264,7 @@ impl CliApp {
             threads,
         } = args;
         let out_dir_before = Self::snapshot_file_tree(&out_dir).unwrap_or_default();
-        let context = self
-            .context(threads)
-            .with_extract_checksum_algorithms(checksum);
+        let context = self.context(threads).with_extract_checksum_algorithms(checksum);
         let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
         if let Some(report) = self.require_existing_path(
             "extract",
@@ -439,7 +437,7 @@ impl CliApp {
         self.finish("extract", report)
     }
 
-    fn run_checksum(&self, args: ChecksumCommand) -> ExitCode {
+    fn run_checksum(&self, args: ChecksumCommand) -> AppRunOutcome {
         trace!(
             source = %args.source.display(),
             algorithm_count = args.algo.len(),
@@ -681,12 +679,13 @@ impl CliApp {
             start,
             length,
         };
-        let header_only_translated_range = strip_header
-            && !user_requested_range
-            && !should_auto_trim_fix
-            && stripped_header_offset > 0
-            && request.start == Some(stripped_header_offset)
-            && request.length.is_none();
+        let header_only_translated_range =
+            strip_header
+                && !user_requested_range
+                && !should_auto_trim_fix
+                && stripped_header_offset > 0
+                && request.start == Some(stripped_header_offset)
+                && request.length.is_none();
         let checksum_stage = if (request.start.is_some() || request.length.is_some())
             && !header_only_translated_range
         {

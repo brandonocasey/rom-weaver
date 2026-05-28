@@ -31,17 +31,17 @@ fn migrated_payload_paths_avoid_full_buffer_reads() {
             allowlist_fragments: &[],
         },
         GuardTarget {
-            relative_path: "crates/rom-weaver-cli/src/header_detection_and_finalize.rs",
+            relative_path: "crates/rom-weaver-app/src/header_detection_and_finalize.rs",
             forbidden: &["fs::read(", "read_to_end("],
             allowlist_fragments: &[],
         },
         GuardTarget {
-            relative_path: "crates/rom-weaver-cli/src/header_repair.rs",
+            relative_path: "crates/rom-weaver-app/src/header_repair.rs",
             forbidden: &["fs::read(", "read_to_end(", "let mut bytes = Vec::new();"],
             allowlist_fragments: &[],
         },
         GuardTarget {
-            relative_path: "crates/rom-weaver-cli/src/trim_and_inspect_details.rs",
+            relative_path: "crates/rom-weaver-app/src/trim_and_inspect_details.rs",
             forbidden: &["fs::read("],
             allowlist_fragments: &["let mut bytes = fs::read(source)?;"],
         },
