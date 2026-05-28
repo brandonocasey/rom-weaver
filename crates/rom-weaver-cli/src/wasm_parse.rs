@@ -186,6 +186,7 @@ fn parse_wasm_extract(args: Vec<String>) -> WasmCliParseResult<ExtractCommand> {
     let mut split_bin = false;
     let mut no_ignore = false;
     let mut no_nested_extract = false;
+    let mut no_overwrite = false;
     let mut checksum = Vec::new();
     let mut threads = ThreadBudget::Auto;
     let mut index = 0usize;
@@ -225,6 +226,11 @@ fn parse_wasm_extract(args: Vec<String>) -> WasmCliParseResult<ExtractCommand> {
         }
         if arg == "--no-nested-extract" {
             no_nested_extract = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--no-overwrite" {
+            no_overwrite = true;
             index += 1;
             continue;
         }
@@ -276,6 +282,7 @@ fn parse_wasm_extract(args: Vec<String>) -> WasmCliParseResult<ExtractCommand> {
         split_bin,
         no_ignore,
         no_nested_extract,
+        no_overwrite,
         checksum,
         threads,
     })

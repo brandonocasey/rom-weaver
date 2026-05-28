@@ -731,7 +731,10 @@ impl ChdContainerHandler {
             let mut output_checksums = Vec::new();
             let mut cue_writer = if write_cue {
                 produced_outputs.push(cue_path.clone());
-                Some(BufWriter::new(File::create(&cue_path)?))
+                Some(BufWriter::new(create_extract_output_file(
+                    &cue_path,
+                    request.overwrite,
+                )?))
             } else {
                 None
             };
@@ -742,7 +745,10 @@ impl ChdContainerHandler {
                 let mut bin_writer = if write_single_bin {
                     wrote_single_bin_output = true;
                     produced_outputs.push(bin_path.clone());
-                    Some(BufWriter::new(File::create(&bin_path)?))
+                    Some(BufWriter::new(create_extract_output_file(
+                        &bin_path,
+                        request.overwrite,
+                    )?))
                 } else {
                     None
                 };
@@ -906,7 +912,10 @@ impl ChdContainerHandler {
                     if write_split_tracks[track_index] {
                         let track_path = request.out_dir.join(track_name);
                         produced_outputs.push(track_path.clone());
-                        track_writers.push(Some(BufWriter::new(File::create(track_path)?)));
+                        track_writers.push(Some(BufWriter::new(create_extract_output_file(
+                            &track_path,
+                            request.overwrite,
+                        )?)));
                         track_checksums.push(create_extract_checksum(context)?);
                     } else {
                         track_writers.push(None);
@@ -1158,7 +1167,10 @@ impl ChdContainerHandler {
                 if write_tracks[track_index] {
                     let track_path = request.out_dir.join(track_name);
                     produced_outputs.push(track_path.clone());
-                    track_writers.push(Some(BufWriter::new(File::create(track_path)?)));
+                    track_writers.push(Some(BufWriter::new(create_extract_output_file(
+                        &track_path,
+                        request.overwrite,
+                    )?)));
                     track_checksums.push(create_extract_checksum(context)?);
                 } else {
                     track_writers.push(None);
@@ -1243,7 +1255,8 @@ impl ChdContainerHandler {
             }
 
             if write_gdi {
-                let mut gdi_writer = BufWriter::new(File::create(&gdi_path)?);
+                let mut gdi_writer =
+                    BufWriter::new(create_extract_output_file(&gdi_path, request.overwrite)?);
                 produced_outputs.push(gdi_path.clone());
                 gdi_writer.write_all(format!("{}\n", gdi_lines.len()).as_bytes())?;
                 for line in &gdi_lines {

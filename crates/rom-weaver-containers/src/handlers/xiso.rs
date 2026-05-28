@@ -107,7 +107,7 @@ impl ContainerHandler for XisoContainerHandler {
             fs::create_dir_all(parent)?;
         }
 
-        let output_file = File::create(&output_path)?;
+        let output_file = create_extract_output_file(&output_path, request.overwrite)?;
         let mut output = BufWriter::new(output_file);
         let extract_progress_label = format!("extracting `{}`", XISO.name);
         let mut listed_entries = 0usize;

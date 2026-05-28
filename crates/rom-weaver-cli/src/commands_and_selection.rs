@@ -248,6 +248,7 @@ impl CliApp {
             split_bin = args.split_bin,
             no_ignore = args.no_ignore,
             no_nested_extract = args.no_nested_extract,
+            no_overwrite = args.no_overwrite,
             threads = %args.threads,
             "starting extract command"
         );
@@ -258,11 +259,14 @@ impl CliApp {
             split_bin,
             no_ignore,
             no_nested_extract,
+            no_overwrite,
             checksum,
             threads,
         } = args;
         let out_dir_before = Self::snapshot_file_tree(&out_dir).unwrap_or_default();
-        let context = self.context(threads).with_extract_checksum_algorithms(checksum);
+        let context = self
+            .context(threads)
+            .with_extract_checksum_algorithms(checksum);
         let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
         if let Some(report) = self.require_existing_path(
             "extract",
@@ -332,6 +336,7 @@ impl CliApp {
                 &selections,
                 extract_split_bin,
                 !no_ignore,
+                !no_overwrite,
                 "extract input",
                 &context,
             )
@@ -350,6 +355,21 @@ impl CliApp {
         }
         if !warnings.is_empty() {
             report.label = format!("{}; warning={}", report.label, warnings.join("; "));
+        }
+        let mut primary_emitted_files = Vec::new();
+        if report.status == OperationStatus::Succeeded {
+            match Self::collect_changed_files(&out_dir, &out_dir_before) {
+                Ok(emitted_files) => {
+                    primary_emitted_files = emitted_files;
+                }
+                Err(error) => {
+                    trace!(
+                        out_dir = %out_dir.display(),
+                        error = %error,
+                        "failed to collect primary extract emitted output metadata"
+                    );
+                }
+            }
         }
         if report.status == OperationStatus::Succeeded && !no_nested_extract {
             let progress_execution = report.thread_execution.clone();
@@ -371,11 +391,17 @@ impl CliApp {
                 OperationFamily::Container,
                 Some(handler.descriptor().name),
                 "nested-extract",
-                format!("checking nested archives under `{}`", out_dir.display()),
+                "checking nested archives in extracted outputs".to_string(),
                 None,
                 Some(context.plan_threads(ThreadCapability::single_threaded())),
             );
-            match self.extract_nested_archives(&source, &out_dir, !no_ignore, &context) {
+            match self.extract_nested_archives(
+                &source,
+                &primary_emitted_files,
+                !no_ignore,
+                !no_overwrite,
+                &context,
+            ) {
                 Ok(0) => {}
                 Ok(nested_count) => {
                     report.label = format!(
@@ -395,18 +421,7 @@ impl CliApp {
             }
         }
         if report.status == OperationStatus::Succeeded {
-            match Self::collect_changed_files(&out_dir, &out_dir_before) {
-                Ok(emitted_files) => {
-                    report = Self::attach_emitted_files_details(report, emitted_files, None);
-                }
-                Err(error) => {
-                    trace!(
-                        out_dir = %out_dir.display(),
-                        error = %error,
-                        "failed to collect extract emitted output metadata"
-                    );
-                }
-            }
+            report = Self::attach_emitted_files_details(report, primary_emitted_files, None);
             self.emit_running(
                 "extract",
                 OperationFamily::Container,
@@ -666,13 +681,12 @@ impl CliApp {
             start,
             length,
         };
-        let header_only_translated_range =
-            strip_header
-                && !user_requested_range
-                && !should_auto_trim_fix
-                && stripped_header_offset > 0
-                && request.start == Some(stripped_header_offset)
-                && request.length.is_none();
+        let header_only_translated_range = strip_header
+            && !user_requested_range
+            && !should_auto_trim_fix
+            && stripped_header_offset > 0
+            && request.start == Some(stripped_header_offset)
+            && request.length.is_none();
         let checksum_stage = if (request.start.is_some() || request.length.is_some())
             && !header_only_translated_range
         {
@@ -1220,6 +1234,7 @@ impl CliApp {
                 select,
                 false,
                 false,
+                true,
                 labels.source_label,
                 context,
             )
@@ -1396,6 +1411,7 @@ impl CliApp {
         selections: &[String],
         split_bin: bool,
         ignore_common_files: bool,
+        overwrite: bool,
         source_label: &str,
         context: &OperationContext,
     ) -> Result<OperationReport> {
@@ -1405,6 +1421,7 @@ impl CliApp {
             out_dir: out_dir.to_path_buf(),
             split_bin,
             ignore_common_files,
+            overwrite,
             parent: None,
         };
         match handler.extract(&request, context) {
@@ -1431,6 +1448,7 @@ impl CliApp {
                     out_dir: out_dir.to_path_buf(),
                     split_bin,
                     ignore_common_files,
+                    overwrite,
                     parent: None,
                 };
                 handler.extract(&retry_request, context)

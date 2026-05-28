@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::{
     collections::BTreeSet,
     ffi::c_void,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     mem::MaybeUninit,
     path::{Path, PathBuf},
@@ -127,6 +127,22 @@ fn emit_chd_running_progress(
             .and_then(|value| value.thread_fallback_reason.clone()),
         status: OperationStatus::Running,
     });
+}
+
+fn create_extract_output_file(output_path: &Path, overwrite: bool) -> Result<File> {
+    if overwrite {
+        return File::create(output_path).map_err(RomWeaverError::from);
+    }
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output_path)
+        .map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "refusing to overwrite existing output `{}`: {error}",
+                output_path.display()
+            ))
+        })
 }
 
 #[allow(clippy::too_many_arguments)]

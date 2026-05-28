@@ -274,11 +274,7 @@ impl Z3dsContainerHandler {
 
     fn align_16(size: usize) -> usize {
         let rem = size % 16;
-        if rem == 0 {
-            size
-        } else {
-            size + (16 - rem)
-        }
+        if rem == 0 { size } else { size + (16 - rem) }
     }
 
     fn format_magic(&self, magic: [u8; 4]) -> String {
@@ -484,10 +480,7 @@ impl Z3dsContainerHandler {
         self.extract_chunk_from_reader(payload_reader, task)
     }
 
-    fn build_create_tasks(
-        &self,
-        total_len: u64,
-    ) -> Result<Vec<Z3dsCreateTask>> {
+    fn build_create_tasks(&self, total_len: u64) -> Result<Vec<Z3dsCreateTask>> {
         if total_len == 0 {
             return Ok(Vec::new());
         }
@@ -498,11 +491,7 @@ impl Z3dsContainerHandler {
         let mut index = 0_usize;
         while offset < total_len {
             let len = (total_len - offset).min(chunk_len);
-            tasks.push(Z3dsCreateTask {
-                index,
-                offset,
-                len,
-            });
+            tasks.push(Z3dsCreateTask { index, offset, len });
             offset = offset.saturating_add(len);
             index += 1;
         }
@@ -668,7 +657,7 @@ impl ContainerHandler for Z3dsContainerHandler {
         let extract_progress_bucket = Arc::new(AtomicU8::new(0));
 
         {
-            let output_file = File::create(&output_path)?;
+            let output_file = create_extract_output_file(&output_path, request.overwrite)?;
             let mut ordered_writer = OrderedChunkWriter::new(
                 BufWriter::new(output_file),
                 bounded_items_for_threads(execution.effective_threads),
@@ -907,7 +896,8 @@ impl ContainerHandler for Z3dsContainerHandler {
             }
             output.write_all(&frame.compressed)?;
             compressed_frame_bytes = compressed_frame_bytes.saturating_add(copied);
-            uncompressed_bytes = uncompressed_bytes.saturating_add(u64::from(frame.decompressed_size));
+            uncompressed_bytes =
+                uncompressed_bytes.saturating_add(u64::from(frame.decompressed_size));
         }
 
         let seek_table_bytes = self.write_seek_table(&mut output, &frames)?;

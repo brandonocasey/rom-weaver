@@ -119,7 +119,8 @@ impl ContainerHandler for ChdContainerHandler {
             chd.header().logical_bytes,
             format!("extracting `{}`", CHD.name),
         );
-        let mut output = BufWriter::new(File::create(&output_path)?);
+        let mut output =
+            BufWriter::new(create_extract_output_file(&output_path, request.overwrite)?);
         let mut output_checksum = create_extract_checksum(context)?;
         chd.stream_with_progress(
             execution.effective_threads,

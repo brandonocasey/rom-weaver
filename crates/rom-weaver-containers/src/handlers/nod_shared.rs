@@ -40,7 +40,9 @@ impl NodHandlerCore {
     fn negotiated_preloader_threads(&self, execution: &ThreadExecution) -> usize {
         // `nod` examples and tooling default this to 4; larger values add startup cost and
         // provide diminishing returns for sequential extract/create reads.
-        let negotiated = self.negotiated_threads(execution).min(Self::MAX_PRELOADER_THREADS);
+        let negotiated = self
+            .negotiated_threads(execution)
+            .min(Self::MAX_PRELOADER_THREADS);
         #[cfg(target_family = "wasm")]
         {
             // Browser WASI thread startup dominates RVZ open latency when preloader fanout is high.
@@ -266,7 +268,10 @@ impl NodHandlerCore {
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let mut plan = self.prepare_extract(request, context)?;
-        let mut output = BufWriter::new(File::create(&plan.output_path)?);
+        let mut output = BufWriter::new(create_extract_output_file(
+            &plan.output_path,
+            request.overwrite,
+        )?);
         let progress_label = format!("extracting `{}`", self.format_name());
         let bytes_written = copy_reader_with_progress(
             &mut plan.disc,

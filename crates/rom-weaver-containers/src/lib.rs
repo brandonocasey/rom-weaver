@@ -56,6 +56,32 @@ use xdvdfs::{
 use zeekstd::{Decoder as ZeekstdDecoder, SeekTable as ZeekstdSeekTable};
 use zstd::bulk::compress as zstd_compress;
 
+fn ensure_extract_output_available(output_path: &Path, overwrite: bool) -> Result<()> {
+    if overwrite || !output_path.exists() {
+        return Ok(());
+    }
+    Err(RomWeaverError::Validation(format!(
+        "refusing to overwrite existing output `{}` (rerun without --no-overwrite to replace it)",
+        output_path.display()
+    )))
+}
+
+fn create_extract_output_file(output_path: &Path, overwrite: bool) -> Result<File> {
+    if overwrite {
+        return File::create(output_path).map_err(RomWeaverError::from);
+    }
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output_path)
+        .map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "refusing to overwrite existing output `{}`: {error}",
+                output_path.display()
+            ))
+        })
+}
+
 const ZIP: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Container,
     name: "zip",
@@ -1445,6 +1471,7 @@ fn extract_libarchive_task_chunk<F, G>(
     chunk: &[LibarchiveExtractTask],
     format_name: &str,
     context: &OperationContext,
+    overwrite: bool,
     mut on_bytes_written: F,
     mut on_task_complete: G,
 ) -> Result<(u64, Vec<ExtractedFileChecksum>)>
@@ -1491,7 +1518,10 @@ where
                         if let Some(parent) = task.output_path.parent() {
                             fs::create_dir_all(parent)?;
                         }
-                        let mut output = BufWriter::new(File::create(&task.output_path)?);
+                        let mut output = BufWriter::new(create_extract_output_file(
+                            &task.output_path,
+                            overwrite,
+                        )?);
                         let mut checksum = create_extract_checksum(context)?;
                         let mut copied = 0u64;
                         if checksum.is_some() {
@@ -1722,6 +1752,7 @@ fn extract_regular_archive_with_libarchive(
         if task.is_dir {
             continue;
         }
+        ensure_extract_output_available(&task.output_path, request.overwrite)?;
         duplicate_output_paths |= !output_paths.insert(task.output_path.clone());
     }
 
@@ -1736,6 +1767,7 @@ fn extract_regular_archive_with_libarchive(
             &tasks,
             format_name,
             context,
+            request.overwrite,
             |delta| {
                 if let Some(total_bytes) = total_file_bytes {
                     copied_bytes = copied_bytes.saturating_add(delta).min(total_bytes);
@@ -1854,7 +1886,10 @@ fn extract_regular_archive_with_libarchive(
                                     "{format_name} extract received duplicate start for entry {index} (`{archive_name}`)"
                                 )))
                             } else {
-                                let writer = BufWriter::new(File::create(&output_path)?);
+                                let writer = BufWriter::new(create_extract_output_file(
+                                    &output_path,
+                                    request.overwrite,
+                                )?);
                                 open_outputs.insert(
                                     index,
                                     LibarchiveOpenExtractOutput {
@@ -1975,6 +2010,7 @@ fn extract_regular_archive_with_libarchive(
                 &tasks,
                 format_name,
                 context,
+                request.overwrite,
                 |delta| {
                     if let Some(total_bytes) = total_file_bytes {
                         copied_bytes = copied_bytes.saturating_add(delta).min(total_bytes);

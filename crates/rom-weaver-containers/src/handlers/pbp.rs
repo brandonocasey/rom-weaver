@@ -695,8 +695,9 @@ impl PbpContainerHandler {
         cue_path: &Path,
         bin_name: &str,
         tracks: &[PbpTocTrack],
+        overwrite: bool,
     ) -> Result<()> {
-        let mut writer = BufWriter::new(File::create(cue_path)?);
+        let mut writer = BufWriter::new(create_extract_output_file(cue_path, overwrite)?);
         writer.write_all(format!("FILE \"{bin_name}\" BINARY\n").as_bytes())?;
         for track in tracks {
             let track_type = track.cue_track_type()?;
@@ -921,7 +922,7 @@ impl ContainerHandler for PbpContainerHandler {
                     fs::create_dir_all(parent)?;
                 }
                 let mut ordered_writer = OrderedChunkWriter::new(
-                    BufWriter::new(File::create(&bin_path)?),
+                    BufWriter::new(create_extract_output_file(&bin_path, request.overwrite)?),
                     bounded_items_for_threads(execution.effective_threads),
                 )?;
                 let source = request.source.clone();
@@ -943,10 +944,7 @@ impl ContainerHandler for PbpContainerHandler {
                             if chunk_len != task.expected_len {
                                 return Err(RomWeaverError::Validation(format!(
                                     "pbp extract chunk {} for disc {} wrote {} bytes but expected {}",
-                                    task.task_index,
-                                    disc.disc_number,
-                                    chunk_len,
-                                    task.expected_len
+                                    task.task_index, disc.disc_number, chunk_len, task.expected_len
                                 )));
                             }
                             if chunk.disc_index != task.disc_index
@@ -954,8 +952,7 @@ impl ContainerHandler for PbpContainerHandler {
                             {
                                 return Err(RomWeaverError::Validation(format!(
                                     "pbp extract chunk order mismatch for disc {} task {}",
-                                    disc.disc_number,
-                                    task.task_index
+                                    disc.disc_number, task.task_index
                                 )));
                             }
                             let chunk_index = u64::try_from(task.task_index).map_err(|_| {
@@ -1045,9 +1042,12 @@ impl ContainerHandler for PbpContainerHandler {
             }
             if write_cue {
                 let cue_path = request.out_dir.join(&output.cue_name);
-                if let Err(error) =
-                    self.write_cue_sheet(&cue_path, &output.bin_name, &disc.toc_tracks)
-                {
+                if let Err(error) = self.write_cue_sheet(
+                    &cue_path,
+                    &output.bin_name,
+                    &disc.toc_tracks,
+                    request.overwrite,
+                ) {
                     return Err(error);
                 }
                 produced_outputs.push(cue_path);

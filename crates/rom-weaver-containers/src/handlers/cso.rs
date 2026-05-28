@@ -568,7 +568,7 @@ impl ContainerHandler for CsoContainerHandler {
             fs::create_dir_all(parent)?;
         }
         let mut ordered_writer = OrderedChunkWriter::new(
-            BufWriter::new(File::create(&output_path)?),
+            BufWriter::new(create_extract_output_file(&output_path, request.overwrite)?),
             bounded_items_for_threads(execution.effective_threads),
         )?;
         let source = request.source.clone();

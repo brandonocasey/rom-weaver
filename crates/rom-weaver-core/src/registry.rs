@@ -166,6 +166,7 @@ pub struct ContainerExtractRequest {
     pub out_dir: PathBuf,
     pub split_bin: bool,
     pub ignore_common_files: bool,
+    pub overwrite: bool,
     pub parent: Option<PathBuf>,
 }
 

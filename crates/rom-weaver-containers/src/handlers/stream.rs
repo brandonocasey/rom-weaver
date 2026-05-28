@@ -178,6 +178,7 @@ impl StreamContainerHandler {
         &self,
         source: &Path,
         output_path: &Path,
+        overwrite: bool,
         context: &OperationContext,
         execution: &ThreadExecution,
     ) -> Result<u64> {
@@ -187,8 +188,9 @@ impl StreamContainerHandler {
         let mut archive =
             libarchive_open_read_stream(source, format_name, self.libarchive_read_filter())?;
         let result = (|| -> Result<u64> {
-            if !archive.next_header(&format!("{format_name} extract failed while reading header"))?
-            {
+            if !archive.next_header(&format!(
+                "{format_name} extract failed while reading header"
+            ))? {
                 return Err(RomWeaverError::Validation(format!(
                     "{format_name} extract found no compressed payload entries"
                 )));
@@ -197,7 +199,7 @@ impl StreamContainerHandler {
             if let Some(parent) = output_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let mut output = BufWriter::new(File::create(output_path)?);
+            let mut output = BufWriter::new(create_extract_output_file(output_path, overwrite)?);
             let progress_label = format!("extracting `{}`", format_name);
             let emitted_progress_bucket = AtomicU8::new(0);
             let mut copied = 0_u64;
@@ -228,10 +230,7 @@ impl StreamContainerHandler {
             Ok(copied)
         })();
 
-        match (
-            result,
-            libarchive_close_read_stream(archive, format_name),
-        ) {
+        match (result, libarchive_close_read_stream(archive, format_name)) {
             (Ok(bytes), Ok(())) => Ok(bytes),
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(error),
@@ -377,6 +376,7 @@ impl ContainerHandler for StreamContainerHandler {
         let written = match self.extract_with_libarchive(
             &request.source,
             &output_path,
+            request.overwrite,
             context,
             &execution,
         ) {

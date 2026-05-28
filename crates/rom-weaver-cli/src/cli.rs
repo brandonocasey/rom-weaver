@@ -203,6 +203,14 @@ pub struct ExtractCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            long = "no-overwrite",
+            help = "Fail extraction if any destination output file already exists"
+        )
+    )]
+    pub no_overwrite: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
             long = "checksum",
             value_name = "ALGO",
             help = "Compute an output checksum while extracting; repeat for multiple algorithms"

@@ -39,13 +39,14 @@ impl CliApp {
     fn extract_nested_archives(
         &self,
         root_source: &Path,
-        root_out_dir: &Path,
+        root_candidates: &[PathBuf],
         ignore_common_files: bool,
+        overwrite: bool,
         context: &OperationContext,
     ) -> Result<usize> {
         trace!(
             root_source = %root_source.display(),
-            root_out_dir = %root_out_dir.display(),
+            candidate_count = root_candidates.len(),
             "starting nested archive extraction scan"
         );
         let root_source =
@@ -55,7 +56,9 @@ impl CliApp {
         processed.insert(root_source);
 
         let mut queue = VecDeque::new();
-        self.enqueue_nested_candidates(root_out_dir, 1, &processed, &mut queue)?;
+        for candidate in root_candidates {
+            self.enqueue_nested_candidate(candidate, 1, &processed, &mut queue);
+        }
         trace!(
             initial_queue_len = queue.len(),
             "nested archive extraction initial queue prepared"
@@ -138,6 +141,7 @@ impl CliApp {
                 out_dir: nested_out_dir.clone(),
                 split_bin: false,
                 ignore_common_files,
+                overwrite,
                 parent: None,
             };
             self.emit_running(
@@ -182,6 +186,35 @@ impl CliApp {
         Ok(nested_count)
     }
 
+    fn enqueue_nested_candidate(
+        &self,
+        path: &Path,
+        depth: usize,
+        processed: &HashSet<PathBuf>,
+        queue: &mut VecDeque<(PathBuf, usize)>,
+    ) {
+        if !path.is_file() || self.containers.probe(path).is_none() {
+            return;
+        }
+        let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if processed.contains(&canonical)
+            || queue
+                .iter()
+                .any(|(queued_path, _)| queued_path.as_path() == path)
+        {
+            return;
+        }
+        queue.push_back((path.to_path_buf(), depth));
+        if let Some((queued_path, queued_depth)) = queue.back() {
+            trace!(
+                source = %queued_path.display(),
+                depth = *queued_depth,
+                queue_len = queue.len(),
+                "queued nested extract candidate"
+            );
+        }
+    }
+
     fn enqueue_nested_candidates(
         &self,
         root: &Path,
@@ -213,23 +246,10 @@ impl CliApp {
                 if !file_type.is_file() || self.containers.probe(&path).is_none() {
                     continue;
                 }
-                let canonical = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                if processed.contains(&canonical)
-                    || queue
-                        .iter()
-                        .any(|(queued_path, _)| queued_path.as_path() == path)
-                {
-                    continue;
-                }
-                queue.push_back((path, depth));
-                queued_count = queued_count.saturating_add(1);
-                if let Some((queued_path, queued_depth)) = queue.back() {
-                    trace!(
-                        source = %queued_path.display(),
-                        depth = *queued_depth,
-                        queue_len = queue.len(),
-                        "queued nested extract candidate"
-                    );
+                let prior_len = queue.len();
+                self.enqueue_nested_candidate(&path, depth, processed, queue);
+                if queue.len() > prior_len {
+                    queued_count = queued_count.saturating_add(1);
                 }
             }
         }

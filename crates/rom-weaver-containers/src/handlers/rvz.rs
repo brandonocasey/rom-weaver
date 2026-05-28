@@ -17,7 +17,10 @@ impl RvzContainerHandler {
         RVZ_NOD_CORE.open_disc(source, preloader_threads)
     }
 
-    fn create_extract_output(&self, output_path: &Path) -> Result<File> {
+    fn create_extract_output(&self, output_path: &Path, overwrite: bool) -> Result<File> {
+        if !overwrite {
+            return create_extract_output_file(output_path, false);
+        }
         match File::create(output_path) {
             Ok(file) => Ok(file),
             Err(error) if error.raw_os_error() == Some(69) => OpenOptions::new()
@@ -77,9 +80,9 @@ impl RvzContainerHandler {
                     continue;
                 }
 
-                let percent =
-                    ((bytes_written.min(total_bytes) as f32 / total_bytes as f32) * 100.0)
-                        .clamp(0.0, 100.0);
+                let percent = ((bytes_written.min(total_bytes) as f32 / total_bytes as f32)
+                    * 100.0)
+                    .clamp(0.0, 100.0);
                 if percent < 100.0 && percent - last_emitted_percent >= 1.0 {
                     last_emitted_percent = percent;
                     emit_container_running_progress(
@@ -107,9 +110,9 @@ impl RvzContainerHandler {
                     continue;
                 }
 
-                let percent =
-                    ((bytes_written.min(total_bytes) as f32 / total_bytes as f32) * 100.0)
-                        .clamp(0.0, 100.0);
+                let percent = ((bytes_written.min(total_bytes) as f32 / total_bytes as f32)
+                    * 100.0)
+                    .clamp(0.0, 100.0);
                 if percent < 100.0 && percent - last_emitted_percent >= 1.0 {
                     last_emitted_percent = percent;
                     emit_container_running_progress(
@@ -214,7 +217,8 @@ impl ContainerHandler for RvzContainerHandler {
             RVZ_NOD_CORE.prepare_extract_with(request, context, |source, preloader_threads| {
                 self.open_disc_with_threads(source, preloader_threads)
             })?;
-        let mut output = BufWriter::new(self.create_extract_output(&plan.output_path)?);
+        let mut output =
+            BufWriter::new(self.create_extract_output(&plan.output_path, request.overwrite)?);
         let (bytes_written, checksums) = self.copy_extract_with_progress(
             &mut plan.disc,
             &mut output,

@@ -5,10 +5,10 @@ use std::path::PathBuf;
 
 use assert_cmd::Command;
 use assert_fs::{
-    fixture::{FileWriteStr, PathChild},
     TempDir,
+    fixture::{FileWriteStr, PathChild},
 };
-use flate2::{write::DeflateEncoder, Compression as DeflateCompression};
+use flate2::{Compression as DeflateCompression, write::DeflateEncoder};
 use nod::{
     common::{Compression as NodCompression, Format as NodFormat},
     read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
@@ -1457,8 +1457,8 @@ fn non_json_default_suppresses_running_progress_without_tty() {
         .clone();
 
     let text = String::from_utf8(output).expect("utf8 stdout");
-    assert!(!text.contains("status=Running"));
-    assert!(text.contains("status=Succeeded"));
+    assert!(!text.contains("[checksum] computing"));
+    assert!(text.contains("[checksum] succeeded:"));
 }
 
 #[test]
@@ -1482,8 +1482,9 @@ fn progress_flag_enables_running_progress_without_json() {
         .clone();
 
     let text = String::from_utf8(output).expect("utf8 stdout");
-    assert!(text.contains("status=Running"));
-    assert!(text.contains("status=Succeeded"));
+    assert!(text.contains("[checksum] computing"));
+    assert!(text.contains("[checksum] succeeded:"));
+    assert!(text.contains("[checksum] elapsed:"));
 }
 
 #[test]
@@ -1515,6 +1516,94 @@ fn no_progress_flag_suppresses_running_progress_in_json_mode() {
     let terminal = events.last().expect("terminal event");
     assert_eq!(terminal["command"], "checksum");
     assert_eq!(terminal["status"], "succeeded");
+}
+
+#[test]
+fn extract_progress_text_reports_elapsed_and_files() {
+    let temp = setup_temp_dir();
+    let input = temp.child("sample.bin");
+    let archive = temp.child("sample.zip");
+    let extract_dir = temp.child("extract");
+    fs::write(input.path(), b"extract-progress-check").expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            input.path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            archive.path().to_str().expect("path"),
+        ])
+        .assert()
+        .code(0);
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "--progress",
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--out-dir",
+            extract_dir.path().to_str().expect("path"),
+            "--no-nested-extract",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).expect("utf8 stdout");
+    assert!(text.contains("[extract] extracted `sample.zip`"));
+    assert!(text.contains(" in "));
+    assert!(text.contains(" to:"));
+    assert!(text.contains("[extract]   `sample.bin` ("));
+}
+
+#[test]
+fn extract_no_overwrite_fails_when_output_exists() {
+    let temp = setup_temp_dir();
+    let input = temp.child("sample.bin");
+    let archive = temp.child("sample.zip");
+    let extract_dir = temp.child("extract");
+    fs::write(input.path(), b"overwrite-check").expect("fixture");
+
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            input.path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            archive.path().to_str().expect("path"),
+        ])
+        .assert()
+        .code(0);
+
+    fs::create_dir_all(extract_dir.path()).expect("extract dir");
+    fs::write(extract_dir.child("sample.bin").path(), b"existing").expect("existing output");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--out-dir",
+            extract_dir.path().to_str().expect("path"),
+            "--no-overwrite",
+            "--no-nested-extract",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).expect("utf8 stdout");
+    assert!(text.contains("refusing to overwrite existing output"));
 }
 
 #[test]
