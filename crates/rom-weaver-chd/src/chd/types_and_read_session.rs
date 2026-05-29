@@ -695,7 +695,14 @@
             let source = source.to_path_buf();
             let parent_source = parent_source.map(Path::to_path_buf);
             let hunk_indices: Vec<u32> = (0..hunk_count).collect();
-            let batch_hunks = effective_threads.saturating_mul(16).max(effective_threads);
+            let hunk_bytes_usize = usize::try_from(hunk_bytes)
+                .ok()
+                .filter(|bytes| *bytes > 0)
+                .unwrap_or(usize::MAX);
+            let target_batch_hunks = (64 * 1024 * 1024_usize) / hunk_bytes_usize;
+            let batch_hunks = target_batch_hunks
+                .max(effective_threads.saturating_mul(16))
+                .max(effective_threads);
             let mut remaining = logical_bytes;
 
             for batch in hunk_indices.chunks(batch_hunks) {

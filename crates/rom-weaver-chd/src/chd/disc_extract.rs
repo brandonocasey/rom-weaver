@@ -632,6 +632,17 @@ impl ChdContainerHandler {
         chd.stream_with_progress(thread_count, on_progress, |chunk| {
             let mut offset = 0_usize;
             while offset < chunk.len() {
+                if filled == 0 {
+                    let full_frame_bytes = ((chunk.len() - offset) / frame_len) * frame_len;
+                    let full_frame_end = offset + full_frame_bytes;
+                    while offset < full_frame_end {
+                        on_frame(&chunk[offset..offset + frame_len])?;
+                        offset += frame_len;
+                    }
+                    if offset == chunk.len() {
+                        break;
+                    }
+                }
                 let copy_len = (frame_len - filled).min(chunk.len() - offset);
                 frame[filled..filled + copy_len].copy_from_slice(&chunk[offset..offset + copy_len]);
                 filled += copy_len;
@@ -839,11 +850,16 @@ impl ChdContainerHandler {
                                     omitted_subcode = true;
                                 }
                                 if let Some(writer) = bin_writer.as_mut() {
-                                    let mut data = data.to_vec();
-                                    track.mode.swap_audio_bytes(&mut data);
-                                    writer.write_all(&data)?;
+                                    let data = if track.mode == DiscTrackMode::Audio {
+                                        let mut swapped = data.to_vec();
+                                        track.mode.swap_audio_bytes(&mut swapped);
+                                        Cow::Owned(swapped)
+                                    } else {
+                                        Cow::Borrowed(data)
+                                    };
+                                    writer.write_all(data.as_ref())?;
                                     if let Some(checksum) = single_bin_checksum.as_mut() {
-                                        checksum.update(&data)?;
+                                        checksum.update(data.as_ref())?;
                                     }
                                 }
                                 data_frames_remaining -= 1;
@@ -953,17 +969,23 @@ impl ChdContainerHandler {
                             let track = &layout.tracks[track_index];
                             if data_frames_remaining > 0 {
                                 if write_split_tracks[track_index] {
-                                    let mut data = frame[..track.mode.data_bytes()].to_vec();
+                                    let data = &frame[..track.mode.data_bytes()];
                                     if track.has_subcode {
                                         omitted_subcode = true;
                                     }
-                                    track.mode.swap_audio_bytes(&mut data);
+                                    let data = if track.mode == DiscTrackMode::Audio {
+                                        let mut swapped = data.to_vec();
+                                        track.mode.swap_audio_bytes(&mut swapped);
+                                        Cow::Owned(swapped)
+                                    } else {
+                                        Cow::Borrowed(data)
+                                    };
                                     if let Some(writer) = track_writers[track_index].as_mut() {
-                                        writer.write_all(&data)?;
+                                        writer.write_all(data.as_ref())?;
                                         if let Some(checksum) =
                                             track_checksums[track_index].as_mut()
                                         {
-                                            checksum.update(&data)?;
+                                            checksum.update(data.as_ref())?;
                                         }
                                     }
                                 }
@@ -1207,15 +1229,21 @@ impl ChdContainerHandler {
                         let track = &layout.tracks[track_index];
                         if data_frames_remaining > 0 {
                             if write_tracks[track_index] {
-                                let mut data = frame[..track.mode.data_bytes()].to_vec();
+                                let data = &frame[..track.mode.data_bytes()];
                                 if track.has_subcode {
                                     omitted_subcode = true;
                                 }
-                                track.mode.swap_audio_bytes(&mut data);
+                                let data = if track.mode == DiscTrackMode::Audio {
+                                    let mut swapped = data.to_vec();
+                                    track.mode.swap_audio_bytes(&mut swapped);
+                                    Cow::Owned(swapped)
+                                } else {
+                                    Cow::Borrowed(data)
+                                };
                                 if let Some(writer) = track_writers[track_index].as_mut() {
-                                    writer.write_all(&data)?;
+                                    writer.write_all(data.as_ref())?;
                                     if let Some(checksum) = track_checksums[track_index].as_mut() {
-                                        checksum.update(&data)?;
+                                        checksum.update(data.as_ref())?;
                                     }
                                 }
                             }
