@@ -16,6 +16,7 @@ import {
   assertRunJsonSucceeded,
   getGuestFileSize,
   joinGuestPath,
+  toTypedRunInput,
   writeGuestFile,
 } from './test-helpers.mjs';
 
@@ -881,7 +882,9 @@ async function runBenchmarkCommandAllowFailure(args, {
   if (!worker) {
     throw new Error(`benchmark ${wasmRuntime} worker is not initialized`);
   }
-  return worker.runJson(['--no-progress', ...args]);
+  // The browser runtime requires typed command/run-request objects; convert the CLI-style arg
+  // arrays the benchmark builds into that shape, mirroring the test suite's worker wrapper.
+  return worker.runJson(toTypedRunInput(['--no-progress', ...args]));
 }
 
 function defaultWasmRuntime() {

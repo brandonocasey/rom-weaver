@@ -17,6 +17,7 @@ import {
 import {
   assertRunJsonSucceeded,
   joinGuestPath,
+  toTypedRunInput,
 } from './test-helpers.mjs';
 
 const BENCH_ROOT = joinGuestPath(WORK_GUEST_ROOT, 'bench-checksum-threading');
@@ -76,7 +77,7 @@ describe('rom-weaver-wasm benchmark parity with python bench-checksum-threading'
           `checksum-threading algo:${algorithm} size_mib:${sizeMib} threads:${threads}`,
           async () => {
             await ensureRuntimeReady();
-            const result = await worker.runJson([
+            const result = await worker.runJson(toTypedRunInput([
               '--no-progress',
               'checksum',
               '--algo',
@@ -89,7 +90,7 @@ describe('rom-weaver-wasm benchmark parity with python bench-checksum-threading'
               '--length',
               String(sizeBytes),
               SOURCE_PATH,
-            ]);
+            ]));
             assertRunJsonSucceeded(result, { command: 'checksum' });
           },
           BENCH_OPTIONS,
