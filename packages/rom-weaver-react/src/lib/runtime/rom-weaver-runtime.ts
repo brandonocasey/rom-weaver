@@ -748,24 +748,39 @@ const runRomWeaverInspectListWorker = async (
     command,
     sourcePath,
   });
-  const result = await runRomWeaverJsonWithRetryOnOutOfMemory(
-    command,
-    toRomWeaverOptions({
-      logLevel: input.logLevel,
-      onEvent: (event) => {
-        const progress = toSimpleProgress(event);
-        if (progress) onProgress?.(progress);
+  const runInspectList = (preferThreadedWasm?: boolean) =>
+    runRomWeaverJsonWithRetryOnOutOfMemory(
+      command,
+      toRomWeaverOptions({
+        logLevel: input.logLevel,
+        onEvent: (event) => {
+          const progress = toSimpleProgress(event);
+          if (progress) onProgress?.(progress);
+        },
+        onLog,
+        ...(typeof preferThreadedWasm === "boolean" ? { preferThreadedWasm } : {}),
+      }),
+      "Compression listing failed",
+      {
+        commandLabel: "inspect",
+        logLevel: input.logLevel,
+        onLog,
       },
-      onLog,
-    }),
-    "Compression listing failed",
-    {
-      commandLabel: "inspect",
-      logLevel: input.logLevel,
-      onLog,
-    },
-  );
-  ensureRomWeaverSuccess(result, "Compression listing failed");
+    );
+  let result = await runInspectList();
+  if (!(result.ok && result.exitCode === 0)) {
+    const failureMessage = getRomWeaverFailureMessage(result, "Compression listing failed");
+    if (isThreadedWorkerFailure(failureMessage)) {
+      emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson inspect-list retry single-thread", {
+        failureMessage,
+      });
+      await resetRomWeaverRunner().catch(() => undefined);
+      result = await runInspectList(false);
+      ensureRomWeaverSuccess(result, "Compression listing failed after single-thread retry");
+    } else {
+      throw new Error(failureMessage);
+    }
+  }
   const entries = getContainerEntriesFromInspect(result);
   return {
     entries: entries.map((entryName) => ({

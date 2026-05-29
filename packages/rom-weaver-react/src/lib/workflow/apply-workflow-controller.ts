@@ -115,6 +115,7 @@ const FILE_EXTENSION_REGEX = /\.([^./\\\s]+)$/;
 const APPLY_FORMATS = new Set<CompressionFormat>(["7z", "chd", "none", "rvz", "z3ds", "zip"]);
 const Z3DS_APPLY_EXTENSIONS = new Set([...Z3DS_COMPRESSION_INPUT_EXTENSIONS, ...Z3DS_DECOMPRESSION_INPUT_EXTENSIONS]);
 const PATCH_TARGET_SELECTION_ERROR_CODES = new Set(["AMBIGUOUS_SELECTION", "PATCH_TARGET_MISMATCH"]);
+const MAX_INPUT_SELECTION_RETRY_COUNT = 12;
 
 const cloneInputState = (
   state: InternalSourceState | null | undefined,
@@ -1112,23 +1113,49 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     const session = this.inputSession;
     if (!(session && session.view.state.status === "needsSelection" && !session.view.state.selectedCandidateId))
       return false;
+    return this.maybeResolveBlockingInputSelectionWithRetryGuard(session, new Set<string>());
+  }
+
+  private async maybeResolveBlockingInputSelectionWithRetryGuard(
+    session: InputSession<TSource>,
+    attemptedSelectionKeys: Set<string>,
+  ): Promise<boolean> {
+    if (attemptedSelectionKeys.size >= MAX_INPUT_SELECTION_RETRY_COUNT)
+      throw new RomWeaverError(
+        "INVALID_INPUT",
+        `${session.view.state.fileName || "Input"} could not be prepared after repeated archive selection attempts`,
+      );
     const selection = await this.resolveSelectionRequest(
       this.createSelectionRequest(session.view.state),
       this.selectFile,
     );
     if (!selection) return false;
     const owner = session.view.internalCandidates.get(selection.id)?.owner || session.view;
-    if (!owner.internalCandidates.has(selection.id))
+    const internalCandidate = owner.internalCandidates.get(selection.id);
+    if (!internalCandidate)
       throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${selection.id}`);
+    const retryIdentity =
+      internalCandidate.archiveEntry ||
+      ("fileName" in internalCandidate.candidate ? String(internalCandidate.candidate.fileName || "") : "") ||
+      owner.selectedArchiveEntry ||
+      owner.state.fileName ||
+      owner.state.id;
+    const selectionRetryKey = `${owner.state.id}:${retryIdentity}`;
+    if (attemptedSelectionKeys.has(selectionRetryKey))
+      throw new RomWeaverError(
+        "INVALID_INPUT",
+        `${owner.state.fileName || "Input"} could not be prepared after repeated archive selection attempts`,
+      );
+    attemptedSelectionKeys.add(selectionRetryKey);
     releasePreparedSource(owner);
     owner.state.selectedCandidateId = selection.id;
-    owner.selectedArchiveEntry = owner.internalCandidates.get(selection.id)?.archiveEntry;
+    owner.selectedArchiveEntry = internalCandidate.archiveEntry;
     owner.state.checksums = undefined;
     owner.state.checksumTimeMs = undefined;
     await this.prepareSelectedSource(owner);
     this.syncInputSessionView();
     if (session.view.state.status === "needsSelection" && !session.view.state.selectedCandidateId)
-      return this.maybeResolveBlockingInputSelection();
+      return this.maybeResolveBlockingInputSelectionWithRetryGuard(session, attemptedSelectionKeys);
     return true;
   }
 
