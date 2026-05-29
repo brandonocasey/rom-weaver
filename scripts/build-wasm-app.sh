@@ -126,6 +126,11 @@ NON_THREADED_RUSTFLAGS+=" -C linker-plugin-lto"
 THREADED_RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals,+sign-ext,+reference-types,+simd128"
 THREADED_RUSTFLAGS+=" -C linker-plugin-lto"
 THREADED_RUSTFLAGS+=" -C link-arg=--export=malloc -C link-arg=--export=free"
+# Raise the shared memory ceiling to 2 GiB so large CHD parallel decode (which holds one shared
+# copy of the compressed input in linear memory) fits. The imported memory's maximum is baked in
+# here at link time and must match DEFAULT_SHARED_MEMORY_MAX_PAGES (32768) on the JS side; a
+# mismatch makes WebAssembly instantiation fail. 2147483648 = 2 GiB = 32768 * 64 KiB pages.
+THREADED_RUSTFLAGS+=" -C link-arg=--max-memory=2147483648"
 
 WASI_CXX_DIR="${WASI_CXX_DIR:-$WASI_SYSROOT/lib/wasm32-wasip1/noeh}"
 WASI_CXX_THREADS_DIR="${WASI_CXX_THREADS_DIR:-$WASI_SYSROOT/lib/wasm32-wasip1-threads/noeh}"
