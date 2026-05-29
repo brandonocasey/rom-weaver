@@ -41,7 +41,10 @@ test("rom-weaver runtime extracts an RVZ staged through browser OPFS", async () 
     source,
   });
   try {
-    const checksumResult = await runRomWeaverJson(["checksum", staged.filePath, "--algo", "crc32", "--no-extract"]);
+    const checksumResult = await runRomWeaverJson({
+      args: { algo: ["crc32"], no_extract: true, source: staged.filePath },
+      type: "checksum",
+    });
     expect(
       checksumResult.ok,
       checksumResult.stderr ||

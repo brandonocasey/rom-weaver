@@ -99,7 +99,10 @@ test("rom-weaver runner reads and writes staged /work OPFS paths", async () => {
   try {
     const compressEvents = [];
     const compressResult = await runRomWeaverJson(
-      ["compress", staged.filePath, "--format", "gz", "--output", outputPath, "--threads", "1"],
+      {
+        args: { format: "gz", input: [staged.filePath], output: outputPath, threads: 1 },
+        type: "compress",
+      },
       {
         onEvent: (event) => compressEvents.push(event),
       },
@@ -110,7 +113,10 @@ test("rom-weaver runner reads and writes staged /work OPFS paths", async () => {
     const outputStat = await browserRuntime.vfs.stat(outputPath);
     expect(outputStat?.size || 0).toBeGreaterThan(0);
 
-    const checksumResult = await runRomWeaverJson(["checksum", outputPath, "--algo", "crc32", "--no-extract"]);
+    const checksumResult = await runRomWeaverJson({
+      args: { algo: ["crc32"], no_extract: true, source: outputPath },
+      type: "checksum",
+    });
     expectRunSucceeded(checksumResult);
   } finally {
     await staged.cleanup().catch(() => undefined);
