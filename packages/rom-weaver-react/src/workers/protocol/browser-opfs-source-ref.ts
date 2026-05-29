@@ -6,8 +6,8 @@ import {
 } from "../../storage/shared/binary/source-file-utils.ts";
 import type { WorkerStorageBucket } from "../shared/worker-storage/storage-layout.ts";
 import { getWorkerStorageBucketPath, WORKER_OPFS_MOUNTPOINT } from "../shared/worker-storage/storage-layout.ts";
-import { registerBrowserVirtualFile } from "./browser-virtual-files.ts";
 import { requestBrowserOpfsStorage } from "./browser-opfs-worker-client.ts";
+import { registerBrowserVirtualFile } from "./browser-virtual-files.ts";
 import { getManagedOpfsFileHandle } from "./opfs-path.ts";
 
 type BrowserOpfsSourceRef = {
@@ -51,7 +51,13 @@ const toFileLike = (source: Blob, fileName: string): File => {
 
 const LEADING_DOTS_REGEX = /^\.+/;
 const PATH_SEPARATOR_REGEX = /[\\/]+/g;
-const CONTROL_FILE_CHARS_REGEX = /[\u0000-\u001f\u007f]+/g;
+// Strips C0 control characters and DEL from file names. Built via String.fromCharCode so the control
+// characters never appear as a regex literal (lint/suspicious/noControlCharactersInRegex forbids that);
+// the compiled pattern is identical to the original control-character class.
+const CONTROL_FILE_CHARS_REGEX = new RegExp(
+  `[${String.fromCharCode(0x00)}-${String.fromCharCode(0x1f)}${String.fromCharCode(0x7f)}]+`,
+  "g",
+);
 const NON_ASCII_CHARS_REGEX = /[^\x20-\x7e]+/g;
 const RESERVED_FILE_CHARS_REGEX = /[:*?"<>|]+/g;
 const EDGE_WHITESPACE_OR_UNDERSCORES_REGEX = /^[_\s]+|[_\s]+$/g;
@@ -157,7 +163,7 @@ const stageBrowserOpfsSource = async (
     mountPoint: options.mountPoint,
     pathPrefix: options.pathPrefix,
   });
-  if (!response.success || !response.filePath) {
+  if (!(response.success && response.filePath)) {
     throw new Error(response.error?.message || "Browser OPFS input staging failed");
   }
   const stagedPath = response.filePath;

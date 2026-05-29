@@ -379,7 +379,7 @@ const normalizeWorkerThreadsSetting = (
   settings: SettingsState = validation.settings,
 ): SettingsState["workerThreads"] => {
   const parsedValue = v.safeParse(storedStringOrNumberSchema, value);
-  const normalizedRaw = String(parsedValue.success ? parsedValue.output : value ?? "")
+  const normalizedRaw = String(parsedValue.success ? parsedValue.output : (value ?? ""))
     .trim()
     .toLowerCase();
   if (normalizedRaw === "auto") return "auto";

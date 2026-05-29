@@ -787,10 +787,7 @@ function ApplyWorkflowFormView({
           {uiState.patchDetails.requirementsValue}
         </div>
       </div>
-      <div
-        className={cx(rowClasses.output, "mb-0 !block")}
-        id="rom-weaver-row-output-file-name"
-      >
+      <div className={cx(rowClasses.output, "mb-0 !block")} id="rom-weaver-row-output-file-name">
         <div className={rowClasses.outputLabel}>
           <div className={sectionClasses.title}>
             <div className={sectionClasses.titleRow}>

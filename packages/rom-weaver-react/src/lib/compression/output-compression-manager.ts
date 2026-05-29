@@ -160,20 +160,20 @@ const OutputCompressionManager = (() => {
   const COMPRESSION_PROFILE_LEVELS = {
     standard: {
       high: 7,
-      "very-high": 8,
       low: 3,
       max: 9,
       medium: 5,
       min: 0,
+      "very-high": 8,
       "very-low": 2,
     },
     zstd: {
       high: 19,
-      "very-high": 21,
       low: 5,
       max: 22,
       medium: 12,
       min: 0,
+      "very-high": 21,
       "very-low": 3,
     },
   };
