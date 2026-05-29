@@ -1294,11 +1294,14 @@ class BrowserOpfsRandomAccessFile {
     if (dst.byteLength <= 0) return 0;
     const start = Number(offset);
     if (!Number.isFinite(start) || start < 0) return 0;
-    if (dst.byteLength <= RANDOM_ACCESS_READ_CACHE_MAX_REQUEST_BYTES) {
+    if (
+      dst.byteLength <= RANDOM_ACCESS_READ_CACHE_MAX_REQUEST_BYTES
+      && readFitsWithinCacheBlock(start, dst.byteLength)
+    ) {
       const cachedRead = this.readFromCache(start, dst);
       if (cachedRead !== null) return cachedRead;
     }
-    return this.syncHandle.read(dst, { at: start });
+    return readSyncAccessHandleFully(this.syncHandle, dst, start);
   }
 
   writeAt(offset, src) {
@@ -1327,7 +1330,7 @@ class BrowserOpfsRandomAccessFile {
     const blockStart =
       Math.floor(offset / RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES) * RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES;
     const block = this.acquireReadCacheBlock();
-    const bytesRead = this.syncHandle.read(block.bytes, { at: blockStart });
+    const bytesRead = readSyncAccessHandleFully(this.syncHandle, block.bytes, blockStart);
     if (bytesRead <= 0) return bytesRead;
     block.start = blockStart;
     block.length = Math.min(bytesRead, block.bytes.byteLength);
@@ -1397,6 +1400,23 @@ class BrowserOpfsRandomAccessFile {
       this.dirty = false;
     }
   }
+}
+
+function readFitsWithinCacheBlock(offset, byteLength) {
+  const blockStart =
+    Math.floor(offset / RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES) * RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES;
+  return offset + byteLength <= blockStart + RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES;
+}
+
+function readSyncAccessHandleFully(syncHandle, dst, offset) {
+  let totalRead = 0;
+  while (totalRead < dst.byteLength) {
+    const chunk = dst.subarray(totalRead);
+    const bytesRead = syncHandle.read(chunk, { at: offset + totalRead });
+    if (!(bytesRead > 0)) break;
+    totalRead += Math.min(bytesRead, chunk.byteLength);
+  }
+  return totalRead;
 }
 
 class BrowserMemoryRandomAccessFile {

@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 
-test("browser OPFS source refs use selected files directly as virtual WASI inputs", async () => {
+test("browser OPFS source refs use non-CHD selected files directly as virtual WASI inputs", async () => {
   vi.stubGlobal(
     "Worker",
     class UnexpectedWorker {
@@ -11,7 +11,7 @@ test("browser OPFS source refs use selected files directly as virtual WASI input
   );
 
   try {
-    const requestFile = new File([new Uint8Array([1, 2, 3, 4])], "input.chd", {
+    const requestFile = new File([new Uint8Array([1, 2, 3, 4])], "input.bin", {
       type: "application/octet-stream",
     });
     const sourceHandle = {
@@ -23,27 +23,22 @@ test("browser OPFS source refs use selected files directly as virtual WASI input
     const { createBrowserOpfsSourceRef } = await import("../../src/workers/protocol/browser-opfs-source-ref.ts");
     const { getActiveBrowserVirtualFiles } = await import("../../src/workers/protocol/browser-virtual-files.ts");
 
-    const staged = await createBrowserOpfsSourceRef(sourceHandle, "input.chd", {
+    const staged = await createBrowserOpfsSourceRef(sourceHandle, "input.bin", {
       bucket: "input",
       mountPoint: "/work",
       pathPrefix: "direct-input",
     });
 
-    expect(staged.fileName).toBe("input.chd");
+    expect(staged.fileName).toBe("input.bin");
     expect(staged.filePath).toMatch(/^\/work\/input\/direct-input-/);
     expect(staged.size).toBe(requestFile.size);
     expect(staged.virtual).toBe(true);
     const activeVirtualFiles = getActiveBrowserVirtualFiles();
     expect(activeVirtualFiles).toHaveLength(1);
     expect(activeVirtualFiles[0]?.path).toBe(staged.filePath);
-    expect(activeVirtualFiles[0]?.proxy).toMatchObject({
-      size: requestFile.size,
-    });
-    expect(activeVirtualFiles[0]?.proxy?.slots?.length).toBeGreaterThan(0);
-    expect(activeVirtualFiles[0]?.proxy?.slots?.length).toBeLessThanOrEqual(4);
-    const totalSlotBytes =
-      activeVirtualFiles[0]?.proxy?.slots?.reduce((total, slot) => total + slot.dataBuffer.byteLength, 0) ?? 0;
-    expect(totalSlotBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(activeVirtualFiles[0]?.source).toBeInstanceOf(File);
+    expect(activeVirtualFiles[0]?.source?.size).toBe(requestFile.size);
+    expect(activeVirtualFiles[0]?.proxy).toBeUndefined();
 
     await staged.cleanup();
     expect(getActiveBrowserVirtualFiles()).toEqual([]);
@@ -70,20 +65,11 @@ test("browser OPFS source refs reject direct virtual inputs when Atomics.waitAsy
   });
 
   try {
-    const requestFile = new File([new Uint8Array([9, 8, 7, 6])], "input.chd", {
-      type: "application/octet-stream",
-    });
-    const sourceHandle = {
-      getFile: async () => requestFile,
-      kind: "file",
-      name: requestFile.name,
-    };
-
     const { createBrowserOpfsSourceRef } = await import("../../src/workers/protocol/browser-opfs-source-ref.ts");
     const { getActiveBrowserVirtualFiles } = await import("../../src/workers/protocol/browser-virtual-files.ts");
 
     await expect(
-      createBrowserOpfsSourceRef(sourceHandle, "input.chd", {
+      createBrowserOpfsSourceRef(new Uint8Array([9, 8, 7, 6]), "input.bin", {
         bucket: "input",
         mountPoint: "/work",
         pathPrefix: "direct-input",
@@ -101,21 +87,26 @@ test("browser OPFS source refs reject direct virtual inputs when Atomics.waitAsy
   }
 });
 
-test("browser OPFS source refs use Blob and byte-array inputs directly as virtual files", async () => {
+test("browser OPFS source refs stage CHD blobs and keep byte-array inputs virtual", async () => {
   const requestFile = new File([new Uint8Array([9, 8, 7, 6])], "input.chd", {
     type: "application/octet-stream",
   });
   const { createBrowserOpfsSourceRef } = await import("../../src/workers/protocol/browser-opfs-source-ref.ts");
   const { getActiveBrowserVirtualFiles } = await import("../../src/workers/protocol/browser-virtual-files.ts");
+  const { getManagedOpfsFileHandle } = await import("../../src/workers/protocol/opfs-path.ts");
 
   const stagedBlob = await createBrowserOpfsSourceRef(requestFile, "input.chd", {
     bucket: "input",
     mountPoint: "/work",
     pathPrefix: "direct-input",
   });
-  expect(stagedBlob.virtual).toBe(true);
-  expect(getActiveBrowserVirtualFiles()).toHaveLength(1);
+  expect(stagedBlob.virtual).toBeUndefined();
+  expect(stagedBlob.filePath).toMatch(/^\/work\/input\/direct-input-/);
+  expect(stagedBlob.size).toBe(requestFile.size);
+  expect(getActiveBrowserVirtualFiles()).toHaveLength(0);
+  expect(await getManagedOpfsFileHandle(stagedBlob.filePath, { navigatorObject: navigator })).toBeTruthy();
   await stagedBlob.cleanup();
+  expect(await getManagedOpfsFileHandle(stagedBlob.filePath, { navigatorObject: navigator })).toBeNull();
 
   const stagedBytes = await createBrowserOpfsSourceRef(new Uint8Array([1, 2, 3]), "input.bin", {
     bucket: "input",
