@@ -15,6 +15,24 @@ const toUint8Array = (source: ArrayBuffer | ArrayBufferView | Uint8Array) => {
   return new Uint8Array(source);
 };
 
+const getDestinationFileName = (destination: unknown) => {
+  if (!destination || typeof destination !== "object" || !("fileName" in destination)) return "";
+  const fileName = (destination as { fileName?: unknown }).fileName;
+  return typeof fileName === "string" ? fileName.trim() : "";
+};
+
+const getDestinationFileHandle = (destination: unknown) => {
+  if (!destination || typeof destination !== "object") return null;
+  if ("createWritable" in destination) return destination as FileSystemFileHandle;
+  if ("fileHandle" in destination) {
+    const fileHandle = (destination as { fileHandle?: unknown }).fileHandle;
+    return fileHandle && typeof fileHandle === "object" && "createWritable" in fileHandle
+      ? (fileHandle as FileSystemFileHandle)
+      : null;
+  }
+  return null;
+};
+
 const createBrowserLargeFileVfs = (options: BrowserLargeFileVfsOptions = {}): LargeFileVfs => {
   const rootPath = normalizeVfsRoot(options.rootPath);
   const navigatorObject = options.navigatorObject || globalThis.navigator;
@@ -79,13 +97,14 @@ const createBrowserLargeFileVfs = (options: BrowserLargeFileVfsOptions = {}): La
       mediaType: input.mediaType || file.type || undefined,
       path: normalizedPath,
       saveAs: async (destination) => {
-        if (!destination) {
-          triggerBrowserDownload(file, fileName);
+        const destinationFileHandle = getDestinationFileHandle(destination);
+        if (!destinationFileHandle) {
+          const destinationFileName = getDestinationFileName(destination);
+          const downloadBlob = destinationFileName ? new Blob([file], { type: "application/octet-stream" }) : file;
+          triggerBrowserDownload(downloadBlob, destinationFileName || fileName);
           return;
         }
-        if (typeof destination !== "object" || !("createWritable" in destination))
-          throw new Error("Browser VFS outputs require a FileSystemFileHandle destination");
-        await writeBlobToFileHandle(destination as FileSystemFileHandle, file);
+        await writeBlobToFileHandle(destinationFileHandle, file);
       },
       size: typeof input.size === "number" ? input.size : file.size,
       vfs,

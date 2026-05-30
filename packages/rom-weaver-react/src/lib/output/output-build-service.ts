@@ -25,7 +25,7 @@ import {
 } from "../input/binary-service.ts";
 import { getChdAutoCreateMode, replaceCuePatchFileName } from "../input/disc-file-utils.ts";
 import type { InputAsset } from "../input/input-assets.ts";
-import { getFileNameWithoutExtension } from "../input/path-utils.ts";
+import { getFileNameWithoutExtension, hasFileNameExtension, replaceFileNameExtension } from "../input/path-utils.ts";
 import { reportProgress } from "../progress/progress-reporting.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
 import { createPatchedOutputPlan, type PatchedOutputPlan } from "./patched-output-plan.ts";
@@ -337,6 +337,12 @@ const getOutputBaseName = (assets: InputAsset[]) => {
   return getFileNameWithoutExtension(name) || "patched";
 };
 
+const resolveRawRequestedOutputName = (outputName: string, source: PatchFileInstance) => {
+  if (hasFileNameExtension(outputName)) return outputName;
+  const sourceExtension = typeof source.getExtension === "function" ? source.getExtension() : "";
+  return sourceExtension ? replaceFileNameExtension(outputName, sourceExtension) : outputName;
+};
+
 const createCompressedArchive = async (
   entries: ArchiveEntryInput[],
   compression: "zip" | "7z",
@@ -446,7 +452,11 @@ const buildSessionOutputFiles = async (
     const onlyOutput = outputAssets[0];
     if (!onlyOutput) throw new Error("No output file was produced");
     const onlyFile = onlyOutput.file;
-    if (requestedOutputName) onlyFile.fileName = requestedOutputName;
+    if (requestedOutputName)
+      onlyFile.fileName =
+        compression === "none"
+          ? resolveRawRequestedOutputName(requestedOutputName, onlyOutput.asset.file)
+          : requestedOutputName;
     assertOutputSizeLimit(onlyFile.fileSize, options);
     if (compression === "none") return { files: [onlyFile], rawOutputSize: onlyFile.fileSize };
     const builtFiles = await buildOutputFiles(onlyOutput.asset.file, onlyFile, options, runtime);

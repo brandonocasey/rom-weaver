@@ -170,6 +170,7 @@ const getInputStackFileName = () =>
   document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file strong")?.textContent?.trim() ||
   document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file")?.textContent?.trim() ||
   "";
+const getOutputFileNameValue = () => document.getElementById("rom-weaver-input-output-file-name")?.value || "";
 
 const waitForInputStackFileName = async () => {
   const state = await waitForState(() => {
@@ -194,7 +195,11 @@ const clearOpfsInputDirectory = async () => {
 const clearOpfsOutputDirectory = async () => {
   if (!navigator.storage?.getDirectory) return;
   const root = await navigator.storage.getDirectory();
-  await root.removeEntry("output", { recursive: true }).catch(() => undefined);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await root.removeEntry("output", { recursive: true }).catch(() => undefined);
+    if (!(await listOpfsOutputFiles().catch(() => [])).length) return;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+  }
 };
 
 const listOpfsInputFiles = async () => {
@@ -329,7 +334,7 @@ test("manual output name is used for patchless apply download", async () => {
     await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
 
     selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-    setFormControlValue(document.getElementById("rom-weaver-input-output-file-name"), "custom-output.bin");
+    setFormControlValue(document.getElementById("rom-weaver-input-output-file-name"), "custom-output");
 
     await waitForApplyButtonEnabled();
     await clickApplyButton();
@@ -341,6 +346,156 @@ test("manual output name is used for patchless apply download", async () => {
   } finally {
     HTMLAnchorElement.prototype.click = originalAnchorClick;
   }
+});
+
+test("removing a patch refreshes generated output name", async () => {
+  mount(
+    createElement(ApplyPatchForm, {
+      defaultSettings: {
+        output: {
+          compression: "none",
+        },
+      },
+    }),
+  );
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
+  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+
+  await waitForApplyButtonEnabled();
+  await expect.poll(getOutputFileNameValue, { timeout: 30000 }).toBe("game - change");
+
+  const removePatchButton = document.querySelector("button[title='Remove patch']");
+  if (!(removePatchButton instanceof HTMLButtonElement)) throw new Error("Missing remove patch button");
+  removePatchButton.click();
+
+  await expect.poll(getOutputFileNameValue, { timeout: 30000 }).toBe("game.bin");
+});
+
+test("removing an input refreshes generated output name", async () => {
+  mount(
+    createElement(ApplyPatchForm, {
+      defaultSettings: {
+        output: {
+          compression: "zip",
+        },
+      },
+    }),
+  );
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  const firstInput = await loadFixtureFile(RAW_ROM);
+  const secondInput = new File([await firstInput.arrayBuffer()], "second.bin", { type: firstInput.type });
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), firstInput);
+  await waitForInputStackFileName();
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), secondInput);
+
+  await expect
+    .poll(() => document.querySelectorAll("#rom-weaver-list-input-stack .rom-weaver-input-stack-file").length, {
+      timeout: 30000,
+    })
+    .toBe(2);
+  await expect.poll(getOutputFileNameValue, { timeout: 30000 }).toBe("game.bin");
+
+  const removeInputButton = document.querySelector("button[title='Remove ROM input']");
+  if (!(removeInputButton instanceof HTMLButtonElement)) throw new Error("Missing remove ROM input button");
+  removeInputButton.click();
+
+  await expect.poll(getOutputFileNameValue, { timeout: 30000 }).toBe("second.bin");
+});
+
+test("editing output name after download is ready keeps the prepared output", async () => {
+  const downloadNames = [];
+  const downloadBlobTypes = [];
+  let applyCompleteCount = 0;
+  const originalAnchorClick = HTMLAnchorElement.prototype.click;
+  const originalCreateObjectUrl = URL.createObjectURL;
+  HTMLAnchorElement.prototype.click = function (...args) {
+    downloadNames.push(this.download || "");
+    return originalAnchorClick.apply(this, args);
+  };
+  URL.createObjectURL = function (blob) {
+    downloadBlobTypes.push(blob instanceof Blob ? blob.type : "");
+    return originalCreateObjectUrl.call(this, blob);
+  };
+  try {
+    mount(
+      createElement(ApplyPatchForm, {
+        defaultSettings: {
+          output: {
+            compression: "none",
+          },
+        },
+        onApplyComplete: () => {
+          applyCompleteCount += 1;
+        },
+      }),
+    );
+
+    await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+    selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
+    selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+
+    await waitForApplyButtonEnabled();
+    await clickApplyButton();
+
+    const applyState = await waitForApplyOutcome();
+    expect(applyState).not.toBeNull();
+    expect(applyState?.kind, applyState && "errorText" in applyState ? applyState.errorText : "").toBe("download");
+    expect(applyCompleteCount).toBe(1);
+
+    setFormControlValue(document.getElementById("rom-weaver-input-output-file-name"), "renamed-output");
+
+    await expect
+      .poll(() => document.getElementById("rom-weaver-button-apply")?.textContent || "", { timeout: 30000 })
+      .toContain("Download");
+
+    await clickApplyButton();
+
+    expect(downloadNames.at(-1)).toBe("renamed-output.bin");
+    expect(downloadBlobTypes.at(-1)).toBe("application/octet-stream");
+    expect(applyCompleteCount).toBe(1);
+  } finally {
+    HTMLAnchorElement.prototype.click = originalAnchorClick;
+    URL.createObjectURL = originalCreateObjectUrl;
+  }
+});
+
+test("changing output format invalidates pending download and removes OPFS output", async () => {
+  await clearOpfsOutputDirectory();
+  mount(
+    createElement(ApplyPatchForm, {
+      defaultSettings: {
+        output: {
+          compression: "none",
+        },
+      },
+    }),
+  );
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
+  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+
+  await waitForApplyButtonEnabled();
+  await clickApplyButton();
+
+  const applyState = await waitForApplyOutcome();
+  expect(applyState).not.toBeNull();
+  expect(applyState?.kind, applyState && "errorText" in applyState ? applyState.errorText : "").toBe("download");
+  await expect.poll(async () => (await listOpfsOutputFiles()).length, { timeout: 30000 }).toBeGreaterThan(0);
+
+  setFormControlValue(document.getElementById("rom-weaver-select-output-format"), "zip");
+
+  await expect
+    .poll(() => document.getElementById("rom-weaver-button-apply")?.textContent || "", { timeout: 30000 })
+    .toContain("Apply");
+  await expect.poll(async () => (await listOpfsOutputFiles()).length, { timeout: 30000 }).toBe(0);
 });
 
 test("compressed outputs clean up intermediate raw OPFS files", async () => {

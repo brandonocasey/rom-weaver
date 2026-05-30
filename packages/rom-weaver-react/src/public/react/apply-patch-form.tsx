@@ -67,6 +67,11 @@ const PATCH_OUTPUT_LABEL_PATTERN = /\[([^\]]+)\](?:\.[^.]+)?\d*$/;
 
 const getFileNameWithoutExtension = (fileName: string) => fileName.replace(FILE_EXTENSION_REGEX, "") || fileName;
 const getFileNameExtension = (fileName: string) => fileName.match(FILE_EXTENSION_REGEX)?.[1]?.toLowerCase() || "";
+const getOutputSourceKey = (inputs: BinarySource[], patches: BinarySource[]) =>
+  JSON.stringify({
+    inputs: getBinarySourceListStableIds(inputs),
+    patches: getBinarySourceListStableIds(patches),
+  });
 
 const getApplyOutputCompression = (
   snapshot: ApplyWorkflowSessionInput,
@@ -180,7 +185,7 @@ const normalizeApplyResult = (result: BrowserApplyResult): ApplyWorkflowResult =
     fileName: output.fileName,
     mediaType: undefined,
     path: "" as ApplyWorkflowResult["output"]["path"],
-    saveAs: () => output.saveAs(),
+    saveAs: (destination?: unknown) => output.saveAs(destination as Parameters<typeof output.saveAs>[0]),
     size: output.size || 0,
     vfs: {} as ApplyWorkflowResult["output"]["vfs"],
   })) as unknown as ApplyWorkflowResult["outputs"];
@@ -365,6 +370,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   const [applyReady, setApplyReady] = useState(false);
   const [resolvedOutputCompression, setResolvedOutputCompression] = useState<CompressionFormat | undefined>(undefined);
   const [resolvedOutputName, setResolvedOutputName] = useState("");
+  const [resolvedOutputNameKey, setResolvedOutputNameKey] = useState("");
   const workflowIdRef = useRef(createWorkflowId("react-apply"));
   const mutationQueueRef = useRef(Promise.resolve<void>(undefined));
   const selectedInputCandidateIdRef = useRef<string | null>(null);
@@ -413,6 +419,11 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     },
     [syncInputSelectionRefs, syncPatchSelectionRefs],
   );
+
+  const setResolvedOutputNameForSnapshot = useCallback((snapshot: ApplyWorkflowSessionInput, outputName: string) => {
+    setResolvedOutputName(outputName);
+    setResolvedOutputNameKey(getOutputSourceKey(snapshot.inputs, snapshot.patches));
+  }, []);
 
   const handleLocalInputsChange = useCallback(
     (nextInputs: BinarySource[]) => {
@@ -566,7 +577,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         patchCount: snapshot.patches.length,
       });
       setResolvedOutputCompression(getApplyOutputCompression(snapshot, null));
-      setResolvedOutputName(getAutomaticApplyOutputName(snapshot, null, []));
+      setResolvedOutputNameForSnapshot(snapshot, getAutomaticApplyOutputName(snapshot, null, []));
       const workflow = getWorkflow();
       prepareHandlersRef.current = handlers;
       const handleProgress = (event: WorkflowProgress) => handlers.onProgress?.(event);
@@ -650,7 +661,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         const checksums = input?.checksums || null;
         const outputCompression = getApplyOutputCompression(snapshot, input);
         setResolvedOutputCompression(outputCompression);
-        setResolvedOutputName(getAutomaticApplyOutputName(snapshot, input, patches));
+        setResolvedOutputNameForSnapshot(snapshot, getAutomaticApplyOutputName(snapshot, input, patches));
         handlers.onInputState?.(input);
         handlers.onPatchState?.(patches);
         if (input?.checksums) handlers.onChecksumReady?.(input);
@@ -683,7 +694,14 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         workflow.off("progress", handleProgress);
       }
     },
-    [getWorkflow, props.workerThreads, resolveSelections, syncSelectionRefs, syncWorkflowOutputOverrides],
+    [
+      getWorkflow,
+      props.workerThreads,
+      resolveSelections,
+      setResolvedOutputNameForSnapshot,
+      syncSelectionRefs,
+      syncWorkflowOutputOverrides,
+    ],
   );
 
   const withPreparedWorkflow = useCallback(
@@ -795,8 +813,8 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     ],
   );
 
-  const downloadOutput = useCallback((result: ApplyWorkflowResult) => {
-    if (typeof window !== "undefined") return result.output.saveAs?.();
+  const downloadOutput = useCallback((result: ApplyWorkflowResult, fileName?: string) => {
+    if (typeof window !== "undefined") return result.output.saveAs?.(fileName ? { fileName } : undefined);
     return undefined;
   }, []);
 
@@ -916,6 +934,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
       onPatchesChange: handleLocalPatchesChange,
       resolvedOutputCompression,
       resolvedOutputName,
+      resolvedOutputNameKey,
       stageInput,
       stagePatches,
     });

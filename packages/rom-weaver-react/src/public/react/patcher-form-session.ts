@@ -199,6 +199,37 @@ const getRequestedOutputName = (outputName: string): string | undefined => {
   return normalizedOutputName || undefined;
 };
 
+const FILE_EXTENSION_REGEX = /\.[^./\\\s]+$/;
+
+const getFileNameExtension = (fileName: string | null | undefined) =>
+  String(fileName || "").match(FILE_EXTENSION_REGEX)?.[0] || "";
+
+const resolvePendingDownloadFileName = ({
+  automaticOutputName,
+  fallbackOutputName,
+  requestedOutputName,
+  resultOutputName,
+}: {
+  automaticOutputName?: string;
+  fallbackOutputName?: string;
+  requestedOutputName?: string;
+  resultOutputName?: string;
+}) => {
+  const normalizedRequestedOutputName = requestedOutputName ? getRequestedOutputName(requestedOutputName) : undefined;
+  const normalizedResultOutputName = resultOutputName ? getRequestedOutputName(resultOutputName) : undefined;
+  if (normalizedRequestedOutputName) {
+    if (FILE_EXTENSION_REGEX.test(normalizedRequestedOutputName)) return normalizedRequestedOutputName;
+    const resultExtension = getFileNameExtension(normalizedResultOutputName);
+    return resultExtension ? `${normalizedRequestedOutputName}${resultExtension}` : normalizedRequestedOutputName;
+  }
+  return (
+    normalizedResultOutputName ||
+    (automaticOutputName ? getRequestedOutputName(automaticOutputName) : undefined) ||
+    (fallbackOutputName ? getRequestedOutputName(fallbackOutputName) : undefined) ||
+    "output"
+  );
+};
+
 const getLegacyCompressionWorkerThreads = (settings: ApplyPatchFormSettings): number | string | undefined => {
   const legacyThreads = (settings as { compression?: { workerThreads?: unknown } }).compression?.workerThreads;
   if (typeof legacyThreads === "number" || typeof legacyThreads === "string") return legacyThreads;
@@ -517,10 +548,11 @@ type LocalApplyPatchFormSessionOptions = Pick<
       onProgress: (event: ProgressEvent) => void;
     };
   }) => Promise<ApplyWorkflowResult>;
-  downloadOutput: (result: ApplyWorkflowResult) => void | Promise<void>;
+  downloadOutput: (result: ApplyWorkflowResult, fileName?: string) => void | Promise<void>;
   applyReady?: boolean;
   resolvedOutputCompression?: CompressionFormat;
   resolvedOutputName?: string;
+  resolvedOutputNameKey?: string;
   stageInput?: (
     input: ApplyWorkflowStageSnapshot,
     handlers: {
@@ -559,6 +591,7 @@ const useLocalApplyPatchFormSession = ({
   downloadOutput,
   resolvedOutputCompression,
   resolvedOutputName,
+  resolvedOutputNameKey,
   stageInput,
   stagePatches,
 }: LocalApplyPatchFormSessionOptions) => {
@@ -683,7 +716,8 @@ const useLocalApplyPatchFormSession = ({
     [],
   );
   const activeOutputCleanupRef = useRef<(() => Promise<void> | void) | null>(null);
-  const pendingDownloadActionRef = useRef<(() => void | Promise<void>) | null>(null);
+  const pendingDownloadFileNameRef = useRef<string | null>(null);
+  const pendingDownloadResultRef = useRef<ApplyWorkflowResult | null>(null);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
   const applyExecutionTimingRef = useRef<ApplyExecutionTimingTracker>({
     applyStartedAt: null,
@@ -748,11 +782,28 @@ const useLocalApplyPatchFormSession = ({
     () => createOutputOptions(compressionOptions, outputOptionLabels),
     [compressionOptions, outputOptionLabels],
   );
+  const outputSourceKey = useMemo(
+    () =>
+      JSON.stringify({
+        inputs: getBinarySourceListStableIds(effectiveInputs),
+        patches: getBinarySourceListStableIds(activePatches),
+      }),
+    [activePatches, effectiveInputs],
+  );
   const hasPendingDownload = !!pendingDownloadFileName;
+  const setPendingDownloadReadyFileName = useCallback(
+    (fileName: string) => {
+      const normalizedFileName = getRequestedOutputName(fileName) || "output";
+      pendingDownloadFileNameRef.current = normalizedFileName;
+      setPendingDownloadFileName(normalizedFileName);
+    },
+    [setPendingDownloadFileName],
+  );
   const clearPendingDownload = useCallback(() => {
-    pendingDownloadActionRef.current = null;
+    pendingDownloadFileNameRef.current = null;
+    pendingDownloadResultRef.current = null;
     setPendingDownloadFileName(null);
-  }, []);
+  }, [setPendingDownloadFileName]);
   const resetCompletedOutputState = useCallback(() => {
     setCompletedApplyTimeMs(null);
     setCompletedCompressionTimeMs(null);
@@ -812,10 +863,16 @@ const useLocalApplyPatchFormSession = ({
   );
   const generatedOutputName = getGeneratedOutputName(effectiveInputs[0], activePatches, activeSettings.output || {});
   const requestedOutputName = outputNameEdited ? getRequestedOutputName(outputName) : undefined;
+  const currentResolvedOutputName =
+    resolvedOutputName && (!resolvedOutputNameKey || resolvedOutputNameKey === outputSourceKey)
+      ? resolvedOutputName
+      : "";
+  const automaticResolvedOutputName = effectiveInputs.length
+    ? currentResolvedOutputName || generatedOutputName
+    : generatedOutputName;
   const resolvedWorkerThreads =
     activeSettings.workers?.threads ?? getLegacyCompressionWorkerThreads(activeSettings) ?? workerThreads;
-  const effectiveResolvedOutputName =
-    requestedOutputName || (effectiveInputs.length ? resolvedOutputName || generatedOutputName : generatedOutputName);
+  const effectiveResolvedOutputName = requestedOutputName || automaticResolvedOutputName;
   const stageSettingsKey = useMemo(
     () =>
       createStageSettingsKey({
@@ -917,6 +974,11 @@ const useLocalApplyPatchFormSession = ({
     if (cleanup) void Promise.resolve(cleanup()).catch(() => undefined);
   }, [clearPendingDownload]);
 
+  const invalidateCompletedOutputState = useCallback(() => {
+    disposeActiveOutput();
+    resetCompletedOutputState();
+  }, [disposeActiveOutput, resetCompletedOutputState]);
+
   const cancelActiveOperation = useCallback(() => {
     activeAbortControllerRef.current?.abort();
   }, []);
@@ -933,7 +995,21 @@ const useLocalApplyPatchFormSession = ({
     const configuredOutputName = activeSettings.output?.outputName || "";
     setOutputName(configuredOutputName);
     setOutputNameEdited(!!configuredOutputName.trim());
-  }, [activeSettings.output?.outputName]);
+    if (pendingDownloadResultRef.current && hasPendingDownload) {
+      setPendingDownloadReadyFileName(
+        resolvePendingDownloadFileName({
+          automaticOutputName: automaticResolvedOutputName,
+          requestedOutputName: configuredOutputName,
+          resultOutputName: pendingDownloadResultRef.current.output.fileName,
+        }),
+      );
+    }
+  }, [
+    activeSettings.output?.outputName,
+    automaticResolvedOutputName,
+    hasPendingDownload,
+    setPendingDownloadReadyFileName,
+  ]);
 
   useEffect(() => {
     setPatchInfoByKey((current) => {
@@ -1087,17 +1163,22 @@ const useLocalApplyPatchFormSession = ({
 
   const updateSettings = useCallback(
     (nextSettings: ApplyPatchFormSettings) => {
-      disposeActiveOutput();
-      resetCompletedOutputState();
+      invalidateCompletedOutputState();
       if (settings === undefined) setInternalSettings(nextSettings);
       onSettingsChange?.(nextSettings);
     },
-    [disposeActiveOutput, onSettingsChange, resetCompletedOutputState, settings],
+    [invalidateCompletedOutputState, onSettingsChange, settings],
+  );
+  const commitSettings = useCallback(
+    (nextSettings: ApplyPatchFormSettings) => {
+      if (settings === undefined) setInternalSettings(nextSettings);
+      onSettingsChange?.(nextSettings);
+    },
+    [onSettingsChange, settings],
   );
   const updatePatches = useCallback(
     (nextPatches: BinarySource[]) => {
-      disposeActiveOutput();
-      resetCompletedOutputState();
+      invalidateCompletedOutputState();
       setPatchInfoByKey((current) => {
         const nextInfoByKey: Record<string, StagedInputInfo> = {};
         for (const patch of nextPatches) {
@@ -1109,7 +1190,7 @@ const useLocalApplyPatchFormSession = ({
       if (patches === undefined) setInternalPatches(nextPatches);
       onPatchesChange?.(nextPatches);
     },
-    [disposeActiveOutput, getPatchKey, onPatchesChange, patches, resetCompletedOutputState],
+    [getPatchKey, invalidateCompletedOutputState, onPatchesChange, patches],
   );
   const getStableInputInfo = useCallback(
     (info: StagedInputInfo, sources: BinarySource[]) => {
@@ -1178,7 +1259,7 @@ const useLocalApplyPatchFormSession = ({
   );
   const updateInputs = useCallback(
     (nextInputs: BinarySource[]) => {
-      disposeActiveOutput();
+      invalidateCompletedOutputState();
       inputStageGenerationRef.current += 1;
       inputProgressGenerationRef.current += 1;
       emitSessionTrace("input list updated", {
@@ -1220,18 +1301,9 @@ const useLocalApplyPatchFormSession = ({
           }),
         );
       });
-      resetCompletedOutputState();
       return inputStageGenerationRef.current;
     },
-    [
-      disposeActiveOutput,
-      effectiveInputs.length,
-      emitSessionTrace,
-      getInputKey,
-      inputs,
-      onInputsChange,
-      resetCompletedOutputState,
-    ],
+    [effectiveInputs.length, emitSessionTrace, getInputKey, invalidateCompletedOutputState, inputs, onInputsChange],
   );
   const syncPatchFiles = useCallback(
     (
@@ -1676,7 +1748,6 @@ const useLocalApplyPatchFormSession = ({
       },
       getState: localUiStoreController.getState,
       providePatchInputFiles: (fileList: FileList | BinarySource[] | null) => {
-        disposeActiveOutput();
         const nextPatches = Array.from(fileList || []) as BinarySource[];
         patchStageGenerationRef.current += 1;
         setPatchProgress(null);
@@ -1685,7 +1756,6 @@ const useLocalApplyPatchFormSession = ({
         setErrorMessage("");
         setOutputErrorMessage("");
         setProgress(null);
-        resetCompletedOutputState();
         updatePatches(nextPatches);
       },
       provideRomInputFile: (file: BinarySource | null) => {
@@ -1735,16 +1805,7 @@ const useLocalApplyPatchFormSession = ({
         );
       },
     }),
-    [
-      disposeActiveOutput,
-      effectiveInputs,
-      emitSessionTrace,
-      localUiStoreController,
-      resetCompletedOutputState,
-      romInputs,
-      updateInputs,
-      updatePatches,
-    ],
+    [effectiveInputs, emitSessionTrace, localUiStoreController, romInputs, updateInputs, updatePatches],
   );
   const localStackController = useMemo(
     () => ({
@@ -1773,8 +1834,14 @@ const useLocalApplyPatchFormSession = ({
           cancelActiveOperation();
           return;
         }
-        if (pendingDownloadActionRef.current && hasPendingDownload) {
-          await Promise.resolve(pendingDownloadActionRef.current());
+        const pendingDownloadResult = pendingDownloadResultRef.current;
+        if (pendingDownloadResult && hasPendingDownload) {
+          await Promise.resolve(
+            downloadOutput(
+              pendingDownloadResult,
+              pendingDownloadFileNameRef.current || pendingDownloadFileName || effectiveResolvedOutputName || "output",
+            ),
+          );
           return;
         }
         if (!canQueueApply) return;
@@ -1783,8 +1850,7 @@ const useLocalApplyPatchFormSession = ({
         setBusy(true);
         setErrorMessage("");
         setOutputErrorMessage("");
-        disposeActiveOutput();
-        resetCompletedOutputState();
+        invalidateCompletedOutputState();
         applyExecutionTimingRef.current = {
           applyStartedAt: Date.now(),
           compressionStartedAt: null,
@@ -1900,11 +1966,11 @@ const useLocalApplyPatchFormSession = ({
                   await Promise.all(result.outputs.map((output) => output.cleanup?.()));
                 }
               : result.output.cleanup || null;
-          const downloadResult = () => downloadOutput(result);
-          pendingDownloadActionRef.current = downloadResult;
-          setPendingDownloadFileName(result.output.fileName || effectiveResolvedOutputName || "output");
+          pendingDownloadResultRef.current = result;
+          const initialDownloadFileName = result.output.fileName || effectiveResolvedOutputName || "output";
+          setPendingDownloadReadyFileName(initialDownloadFileName);
           try {
-            await Promise.resolve(downloadResult());
+            await Promise.resolve(downloadOutput(result, initialDownloadFileName));
           } catch (downloadError) {
             const normalizedDownloadError = toError(downloadError);
             logUiError("Output download failed", normalizedDownloadError);
@@ -1943,7 +2009,17 @@ const useLocalApplyPatchFormSession = ({
         const nextOutputName = getRequestedOutputName(value);
         setOutputName(value);
         setOutputNameEdited(!!nextOutputName);
-        updateSettings({
+        if (pendingDownloadResultRef.current && hasPendingDownload) {
+          setPendingDownloadReadyFileName(
+            resolvePendingDownloadFileName({
+              automaticOutputName: automaticResolvedOutputName,
+              fallbackOutputName: effectiveResolvedOutputName,
+              requestedOutputName: nextOutputName,
+              resultOutputName: pendingDownloadResultRef.current.output.fileName,
+            }),
+          );
+        }
+        commitSettings({
           ...activeSettings,
           output: { ...activeSettings.output, outputName: nextOutputName },
         });
@@ -1962,16 +2038,17 @@ const useLocalApplyPatchFormSession = ({
     [
       activePatches,
       activeSettings,
+      automaticResolvedOutputName,
       containerInputsEnabled,
       applyPatches,
       cancelActiveOperation,
-      disposeActiveOutput,
+      commitSettings,
       downloadOutput,
       effectiveInputs,
       getPatchKey,
+      invalidateCompletedOutputState,
       localOutputStoreController,
       busy,
-      clearPendingDownload,
       onApplyComplete,
       onError,
       onProgress,
@@ -1983,7 +2060,8 @@ const useLocalApplyPatchFormSession = ({
       effectiveResolvedOutputName,
       hasPendingDownload,
       mergeRomInput,
-      resetCompletedOutputState,
+      pendingDownloadFileName,
+      setPendingDownloadReadyFileName,
     ],
   );
   const localNoticeController = useMemo(

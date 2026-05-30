@@ -30,6 +30,12 @@ const createRuntimeOutputPath = (rootPath: string, fileName: string, pathPrefix 
   return joinVfsPath(rootPath, "output", `${pathPrefix}-${runtimeOutputId}`, fileName);
 };
 
+const createOutputPathCleanup =
+  (vfs: PublicOutput["vfs"], filePath: string, cleanup?: () => Promise<void> | void) => async () => {
+    await Promise.resolve(cleanup?.()).catch(() => undefined);
+    await vfs.remove(filePath).catch(() => undefined);
+  };
+
 const createRuntimeOutputRef = async (
   outputRefPromise: Promise<Omit<PublicOutput, "cleanup">> | Omit<PublicOutput, "cleanup">,
   cleanup?: () => Promise<void> | void,
@@ -64,7 +70,7 @@ const createRuntimeOutputFromBytes = async (
   await vfs.truncate(outputPath, 0);
   if (bytes.byteLength) await vfs.write(outputPath, bytes, { fileOffset: 0 });
   return createRuntimeOutputFromVfs(vfs, outputPath, fileName, {
-    cleanup: options.cleanup,
+    cleanup: createOutputPathCleanup(vfs, outputPath, options.cleanup),
     mediaType: options.mediaType,
     size: bytes.byteLength,
   });
@@ -85,7 +91,7 @@ const createRuntimeOutputFromSource = async (
   if (vfsSource && vfsSource.vfs === vfs) {
     const fileName = vfsSource.fileName || fallbackFileName;
     return createRuntimeOutputFromVfs(vfs, vfsSource.path, fileName, {
-      cleanup: options.cleanup,
+      cleanup: createOutputPathCleanup(vfs, vfsSource.path, options.cleanup),
       mediaType: options.mediaType || vfsSource.mediaType,
     });
   }
@@ -118,7 +124,7 @@ const createRuntimeOutputFromSource = async (
         },
       );
   return createRuntimeOutputFromVfs(vfs, outputPath, fallbackFileName, {
-    cleanup: options.cleanup,
+    cleanup: createOutputPathCleanup(vfs, outputPath, options.cleanup),
     mediaType: options.mediaType,
     size,
   });

@@ -368,14 +368,21 @@ const getBrowserDestinationHandle = (destination: unknown) => {
   return undefined;
 };
 
+const getBrowserDestinationFileName = (destination: unknown) => {
+  if (!destination || typeof destination !== "object" || !("fileName" in destination)) return "";
+  const fileName = (destination as { fileName?: unknown }).fileName;
+  return typeof fileName === "string" ? fileName.trim() : "";
+};
+
 const createBrowserPublicOutputAdapter = (): RuntimePublicOutputAdapter => ({
   getBlob: (output) => readRuntimeOutputBlob(output),
   getSize: (output) => output.size,
   getStorage: (output) => getRuntimeOutputStorage(output),
   saveAs: async (output, destination) => {
     const fileHandle = getBrowserDestinationHandle(destination);
-    if (fileHandle || destination == null) {
-      await output.saveAs(fileHandle);
+    const fileName = getBrowserDestinationFileName(destination);
+    if (fileHandle || fileName || destination == null) {
+      await output.saveAs(fileHandle || (fileName ? { fileName } : undefined));
       return;
     }
     const blob = await readRuntimeOutputBlob(output);
