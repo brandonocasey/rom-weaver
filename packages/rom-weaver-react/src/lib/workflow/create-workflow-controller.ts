@@ -116,6 +116,17 @@ const releasePreparedSource = (source?: StagedSource<unknown>) => {
   source.preparedInputAssets = undefined;
 };
 
+const releasePreparedSourceAndWait = async (source?: StagedSource<unknown>) => {
+  if (!source) return;
+  await Promise.all(
+    (source.preparedInputAssets || []).map(async (asset) => {
+      const cleanup = getPatchFileCleanup(asset.file);
+      if (cleanup) await Promise.resolve(cleanup()).catch(() => undefined);
+    }),
+  );
+  source.preparedInputAssets = undefined;
+};
+
 const canRecoverWithCandidateSelection = (error: unknown, requests: CandidateSelectionRequest[]) => {
   if (!requests.length) return false;
   const normalized = toRomWeaverError(error);
@@ -232,8 +243,8 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.abort();
-    this.releaseSourceSession(this.originalSession);
-    this.releaseSourceSession(this.modifiedSession);
+    await this.releaseSourceSession(this.originalSession);
+    await this.releaseSourceSession(this.modifiedSession);
     this.originalSession = undefined;
     this.modifiedSession = undefined;
     this.clearListeners();
@@ -294,16 +305,22 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
       this.validateSources?.(source);
       const sources = Array.isArray(source) ? [...source] : [source];
       if (!sources.length) throw new RomWeaverError("INVALID_INPUT", `No ${role} source was provided`);
-      this.releaseRoleSession(role);
-      await this.runtime.preload?.preloadCapability?.("compression", () => undefined, {
-        workerThreads: this.settings.workers?.threads,
-      });
-      const session = await this.stageSourceSession(role, sources);
-      if (role === "original") this.originalSession = session;
-      else this.modifiedSession = session;
-      await this.maybeResolveBlockingSessionSelection(session);
-      await this.finalizeSourceStableState(session);
-      if (!this.manualOutputName) this.outputName = this.buildAutomaticOutputName();
+      try {
+        await this.releaseRoleSession(role);
+        await this.runtime.preload?.preloadCapability?.("compression", () => undefined, {
+          workerThreads: this.settings.workers?.threads,
+        });
+        const session = await this.stageSourceSession(role, sources);
+        if (role === "original") this.originalSession = session;
+        else this.modifiedSession = session;
+        await this.maybeResolveBlockingSessionSelection(session);
+        await this.finalizeSourceStableState(session);
+        if (!this.manualOutputName) this.outputName = this.buildAutomaticOutputName();
+      } catch (error) {
+        await this.releaseRoleSession(role);
+        await this.releaseRuntimeSources(sources);
+        throw error;
+      }
     });
   }
 
@@ -654,20 +671,31 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
     if (session.synthetic) this.syncSourceSessionView(session);
   }
 
-  private releaseRoleSession(role: SourceRole) {
+  private getRuntimeSourcesForStage(stage?: StagedSource<TSource>): unknown[] {
+    if (!stage) return [];
+    return (stage.preparedInputAssets || []).map((asset) => asset.file);
+  }
+
+  private async releaseRuntimeSources(sources: unknown[]): Promise<void> {
+    await this.runtime.workerIo?.releaseSources?.(sources).catch(() => undefined);
+  }
+
+  private async releaseRoleSession(role: SourceRole) {
     if (role === "original") {
-      this.releaseSourceSession(this.originalSession);
+      await this.releaseSourceSession(this.originalSession);
       this.originalSession = undefined;
       return;
     }
-    this.releaseSourceSession(this.modifiedSession);
+    await this.releaseSourceSession(this.modifiedSession);
     this.modifiedSession = undefined;
   }
 
-  private releaseSourceSession(session?: SourceSession<TSource>) {
+  private async releaseSourceSession(session?: SourceSession<TSource>) {
     if (!session) return;
-    for (const stage of session.stages) releasePreparedSource(stage);
-    if (!session.stages.includes(session.view)) releasePreparedSource(session.view);
+    const sessionStages = [...session.stages, ...(session.stages.includes(session.view) ? [] : [session.view])];
+    const sources = [...session.sources, ...sessionStages.flatMap((stage) => this.getRuntimeSourcesForStage(stage))];
+    await Promise.all(sessionStages.map((stage) => releasePreparedSourceAndWait(stage)));
+    await this.releaseRuntimeSources(sources);
   }
 
   private getPatchType() {

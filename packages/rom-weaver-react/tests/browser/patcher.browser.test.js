@@ -131,9 +131,11 @@ const clickCandidateSelectionOption = async (label) => {
   expect(state?.kind, state && "errorText" in state ? state.errorText : "").not.toBe("error");
   if (state?.kind === "selected") return;
   if (!document.querySelector("#rom-weaver-candidate-selection-list")) return;
-  const button = Array.from(document.querySelectorAll("#rom-weaver-candidate-selection-list button")).find((entry) =>
-    entry.textContent?.includes(label),
-  );
+  const button = Array.from(
+    document.querySelectorAll(
+      "#rom-weaver-candidate-selection-list button, #rom-weaver-candidate-selection-list [role='button']",
+    ),
+  ).find((entry) => entry.textContent?.includes(label));
   if (!button) throw new Error(`Missing candidate selection option: ${label}`);
   button.click();
 };
@@ -155,9 +157,11 @@ const clickPatchCandidateSelectionOption = async (label) => {
   expect(state?.kind, state && "errorText" in state ? state.errorText : "").not.toBe("error");
   if (state?.kind === "selected") return;
   if (!document.querySelector("#rom-weaver-candidate-selection-list")) return;
-  const button = Array.from(document.querySelectorAll("#rom-weaver-candidate-selection-list button")).find((entry) =>
-    entry.textContent?.includes(label),
-  );
+  const button = Array.from(
+    document.querySelectorAll(
+      "#rom-weaver-candidate-selection-list button, #rom-weaver-candidate-selection-list [role='button']",
+    ),
+  ).find((entry) => entry.textContent?.includes(label));
   if (!button) throw new Error(`Missing patch candidate selection option: ${label}`);
   button.click();
 };
@@ -193,7 +197,7 @@ const clearOpfsOutputDirectory = async () => {
   await root.removeEntry("output", { recursive: true }).catch(() => undefined);
 };
 
-const listOpfsExtractedInputFiles = async () => {
+const listOpfsInputFiles = async () => {
   if (!navigator.storage?.getDirectory) return [];
   const root = await navigator.storage.getDirectory();
   const inputHandle = await root.getDirectoryHandle("input").catch(() => null);
@@ -203,18 +207,37 @@ const listOpfsExtractedInputFiles = async () => {
     for await (const [name, handle] of dirHandle.entries()) {
       const nextPath = `${prefix}/${name}`;
       if (handle.kind === "file") {
-        const file = await handle.getFile();
-        files.push({
-          path: nextPath,
-          size: file.size,
-        });
+        const file = await handle.getFile().catch(() => null);
+        if (file) {
+          files.push({
+            path: nextPath,
+            size: file.size,
+          });
+        }
         continue;
       }
-      await walk(handle, nextPath);
+      await walk(handle, nextPath).catch(() => undefined);
     }
   };
   await walk(inputHandle, "input");
+  return files;
+};
+
+const listOpfsExtractedInputFiles = async () => {
+  const files = await listOpfsInputFiles();
   return files.filter((entry) => entry.path.includes("/.rom-weaver-extract-"));
+};
+
+const listOpfsInputFilesMatching = async (fragment) => {
+  const files = await listOpfsInputFiles();
+  return files.filter((entry) => entry.path.includes(fragment));
+};
+
+const listOpfsStagedInputSourceFiles = async (fragment = "") => {
+  const files = await listOpfsInputFiles();
+  return files.filter(
+    (entry) => /\/(?:chd-input|direct-input|rvz-input|z3ds-input)-/.test(entry.path) && entry.path.includes(fragment),
+  );
 };
 
 const listOpfsOutputFiles = async () => {
@@ -397,6 +420,127 @@ test("clearing ROM input releases extracted OPFS files", async () => {
   await expect.poll(async () => (await listOpfsExtractedInputFiles()).length, { timeout: 30000 }).toBe(0);
 });
 
+test("clearing CHD ROM input releases staged OPFS source files", async () => {
+  await clearOpfsInputDirectory();
+  mount(createElement(ApplyPatchForm));
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(CHD_INPUT));
+  await waitForInputStackFileName();
+
+  await expect
+    .poll(async () => (await listOpfsStagedInputSourceFiles("game-cd")).length, { timeout: 30000 })
+    .toBeGreaterThan(0);
+
+  const clearButton = document.querySelector("button[title='Clear ROM input']");
+  if (!(clearButton instanceof HTMLButtonElement)) throw new Error("Missing clear ROM input button");
+  clearButton.click();
+
+  await expect
+    .poll(() => !document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file"), {
+      timeout: 30000,
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => (await listOpfsStagedInputSourceFiles("game-cd")).length, { interval: 50, timeout: 3000 })
+    .toBe(0);
+});
+
+test("clearing a selected archive input requires selection again when re-added", async () => {
+  mount(createElement(ApplyPatchForm));
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  const archiveFile = await loadFixtureFile(MULTI_ROM_ZIP, "application/zip");
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), archiveFile);
+  await clickCandidateSelectionOption("game.bin");
+  await waitForInputStackFileName();
+
+  const clearButton = document.querySelector("button[title='Clear ROM input']");
+  if (!(clearButton instanceof HTMLButtonElement)) throw new Error("Missing clear ROM input button");
+  clearButton.click();
+
+  await expect
+    .poll(() => !document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file"), {
+      timeout: 30000,
+    })
+    .toBe(true);
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), archiveFile);
+
+  await expect
+    .poll(() => !!document.querySelector("#rom-weaver-candidate-selection-list"), { timeout: 30000 })
+    .toBe(true);
+});
+
+test("cancelling input candidate selection removes the pending ROM input", async () => {
+  await clearOpfsInputDirectory();
+  mount(createElement(ApplyPatchForm));
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+  selectFileInput(
+    document.getElementById("rom-weaver-input-file-rom"),
+    await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"),
+  );
+
+  await expect.poll(() => document.querySelector("#rom-weaver-candidate-selection-list")).not.toBeNull();
+
+  const closeButton = document.querySelector(
+    "#rom-weaver-candidate-selection-dialog button[aria-label='Close selection dialog']",
+  );
+  if (!(closeButton instanceof HTMLButtonElement)) throw new Error("Missing candidate selection close button");
+  closeButton.click();
+
+  await expect
+    .poll(
+      () =>
+        !(
+          document.querySelector("#rom-weaver-candidate-selection-list") ||
+          document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file")
+        ),
+      { timeout: 30000 },
+    )
+    .toBe(true);
+  await expect
+    .poll(async () => (await listOpfsInputFilesMatching("multi-rom")).length, {
+      interval: 50,
+      timeout: 3000,
+    })
+    .toBe(0);
+});
+
+test("cancelling patch candidate selection removes the pending patch", async () => {
+  mount(createElement(ApplyPatchForm));
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-patch")).not.toBeNull();
+
+  selectFileInput(
+    document.getElementById("rom-weaver-input-file-patch"),
+    await loadFixtureFile(MULTI_PATCH_ZIP, "application/zip"),
+  );
+
+  await expect.poll(() => document.querySelector("#rom-weaver-candidate-selection-list")).not.toBeNull();
+
+  const closeButton = document.querySelector(
+    "#rom-weaver-candidate-selection-dialog button[aria-label='Close selection dialog']",
+  );
+  if (!(closeButton instanceof HTMLButtonElement)) throw new Error("Missing candidate selection close button");
+  closeButton.click();
+
+  await expect
+    .poll(
+      () =>
+        !(
+          document.querySelector("#rom-weaver-candidate-selection-list") ||
+          document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file")
+        ),
+      { timeout: 30000 },
+    )
+    .toBe(true);
+});
+
 test("input stack shows resolved extracted disc filename after staging", async () => {
   mount(createElement(ApplyPatchForm));
 
@@ -453,6 +597,40 @@ test("patch row shows extraction progress and extracted patch naming", async () 
   expect(
     document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-archive strong")?.textContent || "",
   ).toContain("change.ips");
+});
+
+test("deleting a selected patch archive requires selection again when re-added", async () => {
+  mount(createElement(ApplyPatchForm));
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-patch")).not.toBeNull();
+
+  const patchArchive = await loadFixtureFile(MULTI_PATCH_ZIP, "application/zip");
+  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), patchArchive);
+  await clickPatchCandidateSelectionOption("change.ips");
+
+  await expect
+    .poll(
+      () =>
+        document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file strong")?.textContent || "",
+      { timeout: 30000 },
+    )
+    .toContain("change.ips");
+
+  const removeButton = document.querySelector("#rom-weaver-list-patch-stack button[title='Remove patch']");
+  if (!(removeButton instanceof HTMLButtonElement)) throw new Error("Missing remove patch button");
+  removeButton.click();
+
+  await expect
+    .poll(() => !document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file"), {
+      timeout: 30000,
+    })
+    .toBe(true);
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), patchArchive);
+
+  await expect
+    .poll(() => !!document.querySelector("#rom-weaver-candidate-selection-list"), { timeout: 30000 })
+    .toBe(true);
 });
 
 test("adding an input after a staged patch does not reshow preparing patch progress", async () => {

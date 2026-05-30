@@ -278,6 +278,20 @@ const releasePreparedSource = (source?: StagedSource<unknown>) => {
   source.parsedPatch = undefined;
 };
 
+const releasePreparedFileAndWait = async (file?: PatchFileInstance) => {
+  const cleanup = file ? getPatchFileCleanup(file) : undefined;
+  if (cleanup) await Promise.resolve(cleanup()).catch(() => undefined);
+};
+
+const releasePreparedSourceAndWait = async (source?: StagedSource<unknown>) => {
+  if (!source) return;
+  await Promise.all((source.preparedInputAssets || []).map((asset) => releasePreparedFileAndWait(asset.file)));
+  await releasePreparedFileAndWait(source.preparedPatchFile);
+  source.preparedInputAssets = undefined;
+  source.preparedPatchFile = undefined;
+  source.parsedPatch = undefined;
+};
+
 const getPreparedAssetFileName = (asset: InputAsset | undefined, fallback?: string) =>
   getBaseFileName(asset?.file.fileName || asset?.fileName || fallback || "input.bin");
 
@@ -358,7 +372,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
         inputCount: Array.isArray(input) ? input.length : input ? 1 : 0,
       });
       try {
-        this.releaseInputSession();
+        await this.releaseInputSession();
         this.inputs = [];
         this.validateSources?.(input);
         this.inputs = Array.isArray(input) ? [...input] : [input];
@@ -397,6 +411,8 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
           status: this.inputSession.view.state.status,
         });
       } catch (error) {
+        await this.releaseInputSession();
+        this.inputs = [];
         this.trace("input.set.fail", {
           error,
         });
@@ -407,7 +423,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
 
   async clearInput(): Promise<void> {
     return this.mutate("clearInput", async () => {
-      this.releaseInputSession();
+      await this.releaseInputSession();
       this.inputs = [];
       this.inputSession = undefined;
       await this.refreshPatchReadiness();
@@ -439,7 +455,8 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       } catch (error) {
         const index = this.patches.indexOf(stage);
         if (index !== -1) this.patches.splice(index, 1);
-        releasePreparedSource(stage);
+        await releasePreparedSourceAndWait(stage);
+        await this.releaseRuntimeSources([stage.source]);
         this.recomputeOutputState();
         throw error;
       }
@@ -451,7 +468,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       this.trace("patches.clear.start", {
         patchCount: this.patches.length,
       });
-      for (const patch of this.patches) releasePreparedSource(patch);
+      await this.releasePatchSources();
       this.patches = [];
       this.recomputeOutputState();
       this.trace("patches.clear.finish");
@@ -589,8 +606,8 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.abort();
-    this.releaseInputSession();
-    for (const patch of this.patches) releasePreparedSource(patch);
+    await this.releaseInputSession();
+    await this.releasePatchSources();
     this.patches = [];
     this.clearListeners();
     this.disposed = true;
@@ -1647,11 +1664,37 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     stage.state.warnings.push(warning);
   }
 
-  private releaseInputSession() {
+  private getRuntimeSourcesForStage(stage?: StagedSource<TSource>): unknown[] {
+    if (!stage) return [];
+    return [
+      ...(stage.preparedInputAssets || []).map((asset) => asset.file),
+      ...(stage.preparedPatchFile ? [stage.preparedPatchFile] : []),
+    ];
+  }
+
+  private async releaseRuntimeSources(sources: unknown[]): Promise<void> {
+    await this.runtime.workerIo?.releaseSources?.(sources).catch(() => undefined);
+  }
+
+  private async releasePatchSources(): Promise<void> {
+    const sources = this.patches.flatMap((patch) => [patch.source, ...this.getRuntimeSourcesForStage(patch)]);
+    await Promise.all(this.patches.map((patch) => releasePreparedSourceAndWait(patch)));
+    await this.releaseRuntimeSources(sources);
+  }
+
+  private async releaseInputSession() {
     if (!this.inputSession) return;
-    for (const stage of this.inputSession.stages) releasePreparedSource(stage);
-    if (!this.inputSession.stages.includes(this.inputSession.view)) releasePreparedSource(this.inputSession.view);
+    const sessionStages = [
+      ...this.inputSession.stages,
+      ...(this.inputSession.stages.includes(this.inputSession.view) ? [] : [this.inputSession.view]),
+    ];
+    const sources = [
+      ...this.inputSession.sources,
+      ...sessionStages.flatMap((stage) => this.getRuntimeSourcesForStage(stage)),
+    ];
+    await Promise.all(sessionStages.map((stage) => releasePreparedSourceAndWait(stage)));
     this.inputSession = undefined;
+    await this.releaseRuntimeSources(sources);
   }
 }
 

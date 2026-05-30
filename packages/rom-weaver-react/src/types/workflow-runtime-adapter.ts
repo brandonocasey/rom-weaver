@@ -78,6 +78,7 @@ type RuntimeWorkerIo = {
     fallbackFileName: string,
     failureMessage?: string,
   ) => Promise<PublicOutput>;
+  releaseSources?: (sources: unknown[]) => Promise<void>;
   runPathWorkerToOutput: (input: {
     failureMessage?: string;
     fallbackFileName: string;

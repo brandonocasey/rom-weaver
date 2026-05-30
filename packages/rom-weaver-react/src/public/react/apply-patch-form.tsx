@@ -372,6 +372,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   const selectedPatchArchiveCandidateIdsRef = useRef(new Map<string, string>());
   const lastInputsRef = useRef<BinarySource[]>([]);
   const lastPatchOrderRef = useRef("");
+  const forcePatchWorkflowRefreshRef = useRef(false);
   const workflowRef = useRef<ApplyWorkflow | null>(null);
   const workflowSyncRef = useRef<ApplyWorkflowSyncState>({
     inputs: [],
@@ -388,18 +389,46 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     settings: props.settings,
   };
 
-  const syncSelectionRefs = useCallback((snapshot: ApplyWorkflowSessionInput) => {
-    if (!sameBinarySourceLists(lastInputsRef.current, snapshot.inputs)) {
+  const syncInputSelectionRefs = useCallback((inputs: BinarySource[]) => {
+    if (!sameBinarySourceLists(lastInputsRef.current, inputs)) {
       selectedInputCandidateIdRef.current = null;
-      lastInputsRef.current = snapshot.inputs.slice();
+      lastInputsRef.current = inputs.slice();
     }
-    const patchOrder = getBinarySourceListStableIds(snapshot.patches).join("|");
+  }, []);
+
+  const syncPatchSelectionRefs = useCallback((patches: BinarySource[]) => {
+    const patchOrder = getBinarySourceListStableIds(patches).join("|");
     if (lastPatchOrderRef.current !== patchOrder) {
       selectedPatchCandidateIdsRef.current.clear();
       selectedPatchArchiveCandidateIdsRef.current.clear();
+      forcePatchWorkflowRefreshRef.current = true;
       lastPatchOrderRef.current = patchOrder;
     }
   }, []);
+
+  const syncSelectionRefs = useCallback(
+    (snapshot: ApplyWorkflowSessionInput) => {
+      syncInputSelectionRefs(snapshot.inputs);
+      syncPatchSelectionRefs(snapshot.patches);
+    },
+    [syncInputSelectionRefs, syncPatchSelectionRefs],
+  );
+
+  const handleLocalInputsChange = useCallback(
+    (nextInputs: BinarySource[]) => {
+      syncInputSelectionRefs(nextInputs);
+      props.onInputsChange?.(nextInputs);
+    },
+    [props.onInputsChange, syncInputSelectionRefs],
+  );
+
+  const handleLocalPatchesChange = useCallback(
+    (nextPatches: BinarySource[]) => {
+      syncPatchSelectionRefs(nextPatches);
+      props.onPatchesChange?.(nextPatches);
+    },
+    [props.onPatchesChange, syncPatchSelectionRefs],
+  );
 
   const queueMutation = useCallback(<TValue,>(callback: () => Promise<TValue>) => {
     const run = mutationQueueRef.current.catch(() => undefined).then(callback);
@@ -548,7 +577,10 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         const previousSync = workflowSyncRef.current;
         const settingsChanged = previousSync.settingsKey !== settingsKey;
         const inputsChanged = settingsChanged || !sameBinarySourceLists(previousSync.inputs, snapshot.inputs);
-        const patchesChanged = settingsChanged || !sameBinarySourceLists(previousSync.patches, snapshot.patches);
+        const patchesChanged =
+          forcePatchWorkflowRefreshRef.current ||
+          settingsChanged ||
+          !sameBinarySourceLists(previousSync.patches, snapshot.patches);
         emitApplyWorkflowTrace(snapshot.options, "prepareWorkflow diff", {
           inputsChanged,
           patchesChanged,
@@ -611,6 +643,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           patches: snapshot.patches.slice(),
           settingsKey,
         };
+        forcePatchWorkflowRefreshRef.current = false;
 
         const input = workflow.getInput();
         const patches = workflow.getPatches();
@@ -709,7 +742,8 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         const workflowPrepared =
           !!workflow &&
           sameBinarySourceLists(previousSync.inputs, input.inputs) &&
-          sameBinarySourceLists(previousSync.patches, input.patches);
+          sameBinarySourceLists(previousSync.patches, input.patches) &&
+          !forcePatchWorkflowRefreshRef.current;
         if (!(workflowPrepared && workflow)) {
           return prepareWorkflow(
             input,
@@ -878,6 +912,8 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
       applyReady,
       downloadOutput,
       onApplyComplete: () => undefined,
+      onInputsChange: handleLocalInputsChange,
+      onPatchesChange: handleLocalPatchesChange,
       resolvedOutputCompression,
       resolvedOutputName,
       stageInput,

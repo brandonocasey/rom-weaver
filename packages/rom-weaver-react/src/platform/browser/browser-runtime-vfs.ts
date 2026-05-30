@@ -14,6 +14,7 @@ type CreateBrowserRuntimeVfsIoOptions = {
 type StagedBrowserSource = Awaited<ReturnType<typeof createBrowserOpfsSourceRef>>;
 type CachedStagedSource = {
   cleanupTimer?: ReturnType<typeof setTimeout>;
+  cleanupWhenIdle?: boolean;
   refCount: number;
   staged: StagedBrowserSource;
 };
@@ -39,14 +40,44 @@ const createBrowserRuntimeVfsIo = ({
     if (isVfsFileRef(candidate)) return null;
     return candidate;
   };
+  const cleanupCachedStagedSource = async (key: object, cached: CachedStagedSource) => {
+    if (cached.cleanupTimer) {
+      clearTimeout(cached.cleanupTimer);
+      cached.cleanupTimer = undefined;
+    }
+    stagedSourceCache.delete(key);
+    await cached.staged.cleanup().catch(() => undefined);
+  };
   const releaseCachedStagedSource = (key: object, cached: CachedStagedSource) => {
     cached.refCount = Math.max(0, cached.refCount - 1);
     if (cached.refCount > 0 || cached.cleanupTimer) return;
+    if (cached.cleanupWhenIdle) {
+      void cleanupCachedStagedSource(key, cached);
+      return;
+    }
     cached.cleanupTimer = setTimeout(() => {
       if (cached.refCount > 0) return;
-      stagedSourceCache.delete(key);
-      cached.staged.cleanup().catch(() => undefined);
+      void cleanupCachedStagedSource(key, cached);
     }, STAGED_SOURCE_CACHE_GRACE_MS);
+  };
+  const releaseSources: RuntimeWorkerIo["releaseSources"] = async (sources) => {
+    const cleanups: Array<Promise<void>> = [];
+    for (const source of sources) {
+      const key = getStagedSourceCacheKey(source);
+      if (!key) continue;
+      const cached = stagedSourceCache.get(key);
+      if (!cached) continue;
+      cached.cleanupWhenIdle = true;
+      if (cached.refCount > 0) {
+        if (cached.cleanupTimer) {
+          clearTimeout(cached.cleanupTimer);
+          cached.cleanupTimer = undefined;
+        }
+        continue;
+      }
+      cleanups.push(cleanupCachedStagedSource(key, cached));
+    }
+    await Promise.all(cleanups);
   };
   const wrapCachedStagedSource = (key: object, cached: CachedStagedSource): StagedBrowserSource => {
     let released = false;
@@ -216,6 +247,7 @@ const createBrowserRuntimeVfsIo = ({
       }
       throw new Error(failureMessage || "Worker did not return browser output");
     },
+    releaseSources,
     runPathWorkerToOutput: async ({ failureMessage, fallbackFileName, outputName, pathPrefix, run, scope, source }) => {
       const workerSource = await stageSource({ fallbackFileName, pathPrefix, scope, source });
       try {

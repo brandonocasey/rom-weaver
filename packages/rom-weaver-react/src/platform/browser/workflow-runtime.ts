@@ -997,12 +997,19 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
           ? normalizeDiscEntryNameForSource(primaryFile.fileName, stagedSourceFileName, fileName)
           : undefined;
         const cueText = cueFile ? await readTextFromBrowserVfs(cueFile.path).catch(() => "") : undefined;
+        const primaryPath = primaryFile?.path || directOutputPath;
+        const sidecarCleanupPaths = uniqueNonEmptyStrings([
+          cueFile?.path && cueFile.path !== primaryPath ? cueFile.path : "",
+        ]);
         return attachDiscOutputMetadata(
           await workerIo.createWorkerOutput(
             {
               checksums: primaryFile?.checksums,
+              cleanup: async () => {
+                await Promise.all(sidecarCleanupPaths.map((path) => browserVfs.remove(path).catch(() => undefined)));
+              },
               fileName: outputName || normalizedPrimaryFileName || primaryFile?.fileName || directOutputFileName,
-              filePath: primaryFile?.path || directOutputPath,
+              filePath: primaryPath,
               size: primaryFile?.sizeBytes,
             },
             outputName || normalizedPrimaryFileName || directOutputFileName || fileName,
