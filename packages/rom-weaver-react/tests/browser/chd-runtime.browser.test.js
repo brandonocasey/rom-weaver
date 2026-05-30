@@ -96,3 +96,46 @@ test("rom-weaver runtime keeps original CHD basename for extracted output", asyn
     await browserRuntime.vfs.remove(sourcePath).catch(() => undefined);
   }
 });
+
+test("rom-weaver runtime creates a CD CHD from a browser-generated CUE", async () => {
+  await resetRomWeaverRunner();
+  await warmupRomWeaverRunner();
+
+  const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const sourcePath = `${WORKER_OPFS_MOUNTPOINT}/input/chd-create-${runId}/disc.bin`;
+  const sectorBytes = 2352;
+  const sectorCount = 32;
+  const sourceBytes = new Uint8Array(sectorBytes * sectorCount);
+  for (let index = 0; index < sourceBytes.length; index += 1) {
+    sourceBytes[index] = index & 0xff;
+  }
+  await browserRuntime.vfs.truncate(sourcePath, 0);
+  await browserRuntime.vfs.write(sourcePath, sourceBytes, { fileOffset: 0 });
+
+  let output = null;
+  try {
+    const result = await browserRuntime.compression.create?.({
+      chdSourceMode: "cd",
+      format: "chd",
+      mode: "cd",
+      options: {
+        workerThreads: 2,
+      },
+      outputName: "created-cd.chd",
+      source: {
+        fileName: "disc.bin",
+        filePath: sourcePath,
+      },
+    });
+
+    output = result?.output || null;
+    expect(output?.fileName).toBe("created-cd.chd");
+    expect(output?.size).toBeGreaterThan(0);
+    const blob = await browserRuntime.publicOutput.getBlob(output);
+    const header = new TextDecoder().decode(await blob.slice(0, 8).arrayBuffer());
+    expect(header).toBe("MComprHD");
+  } finally {
+    await output?.cleanup?.().catch(() => undefined);
+    await browserRuntime.vfs.remove(`${WORKER_OPFS_MOUNTPOINT}/input/chd-create-${runId}`).catch(() => undefined);
+  }
+});

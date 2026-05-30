@@ -220,6 +220,10 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
       });
       const resolvedVirtualOnlyMounts =
         Boolean(runOptions.virtualOnlyMounts ?? options.virtualOnlyMounts ?? false);
+      const knownInputPaths = normalizeKnownInputPaths([
+        ...(Array.isArray(options.knownInputPaths) ? options.knownInputPaths : []),
+        ...(Array.isArray(runOptions.knownInputPaths) ? runOptions.knownInputPaths : []),
+      ]);
       const resolvedMainScratchFilePoolSize = normalizeScratchFilePoolSize(
         runOptions.scratchFilePoolSize ?? options.scratchFilePoolSize,
       );
@@ -252,6 +256,7 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
           mountHandles,
           request,
           runtimeMounts,
+          knownInputPaths,
           scratchFilePoolSize: resolvedMainScratchFilePoolSize,
           threadScratchFilePoolSize: resolvedThreadScratchFilePoolSize,
           syncAccessMode: resolvedSyncAccessMode,
@@ -275,6 +280,7 @@ export async function createRomWeaverBrowserOpfs(options = {}) {
         stdin: requestStdin,
         runtimeMounts,
         mountHandles,
+        knownInputPaths,
         stderrLineHandler: runOptions.onStderrLine,
         stdoutLineHandler: runOptions.onStdoutLine,
         virtualFiles,
@@ -477,6 +483,7 @@ export async function __runRomWeaverBrowserWasiThread(payload = {}) {
       request: runtime?.request,
       runtimeMounts: normalizedRuntimeMounts,
       mountHandles: normalizedMountHandles,
+      knownInputPaths: runtime?.knownInputPaths,
       stderrLineHandler,
       stdoutLineHandler,
       scratchFilePoolSize: runtime?.threadScratchFilePoolSize ?? runtime?.scratchFilePoolSize,
@@ -912,6 +919,7 @@ async function buildBrowserOpfsWasiFds({
   stdin,
   runtimeMounts,
   mountHandles,
+  knownInputPaths,
   stderrLineHandler,
   stdoutLineHandler,
   virtualFiles,
@@ -984,15 +992,19 @@ async function buildBrowserOpfsWasiFds({
   if (virtualOnlyMounts) {
     trace?.('[browser-opfs] sync mounted input paths start for virtual-only mount');
   }
-  await syncMountedInputPathsFromOpfs({
+  const syncSummary = await syncMountedInputPathsFromOpfs({
     cwdMountPath,
+    knownInputPaths,
     mounts,
     mountHandles,
     request,
     runtimeMounts,
+    trace,
   });
   if (virtualOnlyMounts) {
-    trace?.('[browser-opfs] sync mounted input paths done for virtual-only mount');
+    trace?.(
+      `[browser-opfs] sync mounted input paths done for virtual-only mount paths=${syncSummary.paths} hydrated=${syncSummary.hydrated} missing=${syncSummary.missing}`,
+    );
   }
   trace?.(`[browser-opfs] build fds leave fds=${fds.length} mounts=${mounts.length}`);
 
@@ -2375,13 +2387,16 @@ async function prepareKnownRequestPaths({ mountHandles, request, runtimeMounts }
 
 async function syncMountedInputPathsFromOpfs({
   cwdMountPath,
+  knownInputPaths,
   mounts,
   mountHandles,
   request,
   runtimeMounts,
+  trace,
 }) {
-  const inputPaths = collectRequestInputPaths(request);
-  if (inputPaths.length === 0) return;
+  const inputPaths = collectMountedInputPaths(request, knownInputPaths);
+  const summary = { paths: inputPaths.length, hydrated: 0, missing: 0 };
+  if (inputPaths.length === 0) return summary;
   const mountsByPath = new Map(mounts.map((mount) => [mount.mountPath, mount]));
   for (const path of inputPaths) {
     const resolved = resolveMountedGuestPath(path, mountHandles, runtimeMounts, { cwdMountPath });
@@ -2390,12 +2405,25 @@ async function syncMountedInputPathsFromOpfs({
     if (!mount) continue;
     const relativePath = resolved.relativeParts.join('/');
     if (relativePath.length === 0 || pathExistsInDirectory(mount.contents, relativePath)) continue;
-    await hydrateMountedInputPathFromOpfs({
+    const hydrated = await hydrateMountedInputPathFromOpfs({
       mount,
       relativeParts: resolved.relativeParts,
       rootHandle: resolved.handle,
     });
+    if (hydrated) {
+      summary.hydrated += 1;
+    } else {
+      summary.missing += 1;
+      trace?.(`[browser-opfs] sync mounted input path missing path=${basenameForTrace(path)}`);
+    }
   }
+  return summary;
+}
+
+function collectMountedInputPaths(request, knownInputPaths) {
+  const values = collectRequestInputPaths(request);
+  pushPathValues(values, normalizeKnownInputPaths(knownInputPaths));
+  return [...new Set(values.map((value) => String(value)))];
 }
 
 function collectRequestInputPaths(request) {
@@ -2448,7 +2476,7 @@ function pushPathValue(out, value) {
 }
 
 async function hydrateMountedInputPathFromOpfs({ mount, relativeParts, rootHandle }) {
-  if (!Array.isArray(relativeParts) || relativeParts.length === 0) return;
+  if (!Array.isArray(relativeParts) || relativeParts.length === 0) return false;
   let entries = mount.contents;
   let directoryHandle = rootHandle;
   for (const part of relativeParts.slice(0, -1)) {
@@ -2457,7 +2485,7 @@ async function hydrateMountedInputPathFromOpfs({ mount, relativeParts, rootHandl
       try {
         directoryHandle = await directoryHandle.getDirectoryHandle(part, { create: false });
       } catch {
-        return;
+        return false;
       }
       entry = new wasiShim.Directory(new Map());
       entries.set(part, entry);
@@ -2465,15 +2493,15 @@ async function hydrateMountedInputPathFromOpfs({ mount, relativeParts, rootHandl
       try {
         directoryHandle = await directoryHandle.getDirectoryHandle(part, { create: false });
       } catch {
-        return;
+        return false;
       }
     }
-    if (!(entry instanceof wasiShim.Directory)) return;
+    if (!(entry instanceof wasiShim.Directory)) return false;
     entries = entry.contents;
   }
 
   const name = relativeParts[relativeParts.length - 1];
-  if (entries.has(name)) return;
+  if (entries.has(name)) return true;
 
   const guestPath = joinGuestPath(mount.mountPath, relativeParts.join('/'));
   const writable = mount.isWritablePath(guestPath);
@@ -2486,7 +2514,7 @@ async function hydrateMountedInputPathFromOpfs({ mount, relativeParts, rootHandl
     const file = new BrowserOpfsRandomAccessFile(syncHandle);
     mount.trackOwnedFile(file);
     entries.set(name, new WasiRandomAccessFileInode(file, { readonly: !writable }));
-    return;
+    return true;
   } catch {
     // ignored
   }
@@ -2494,9 +2522,11 @@ async function hydrateMountedInputPathFromOpfs({ mount, relativeParts, rootHandl
   try {
     await directoryHandle.getDirectoryHandle(name, { create: false });
     entries.set(name, new wasiShim.Directory(new Map()));
+    return true;
   } catch {
     // ignored
   }
+  return false;
 }
 
 function collectRequestPreparedPaths(request) {
@@ -3163,6 +3193,10 @@ function normalizeGuestPathList(value, label) {
   if (value == null) return [];
   if (!Array.isArray(value)) throw new TypeError(`${label} must be an array of guest paths`);
   return value.map((entry) => normalizeGuestPath(String(entry), { label }));
+}
+
+function normalizeKnownInputPaths(value) {
+  return normalizeGuestPathList(value, 'knownInputPaths');
 }
 
 function isGuestPathWithinRoots(path, roots) {

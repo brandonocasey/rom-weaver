@@ -552,16 +552,6 @@ const readTextFromBrowserVfs = async (filePath: string): Promise<string> => {
   return new TextDecoder().decode(bytes);
 };
 
-const writeTextToBrowserVfs = async (filePath: string, text: string) => {
-  const bytes = new TextEncoder().encode(text);
-  await browserVfs.truncate(filePath, 0);
-  if (bytes.byteLength) {
-    await browserVfs.write(filePath, bytes, {
-      fileOffset: 0,
-    });
-  }
-};
-
 const stageBrowserCompressionEntries = async (
   entries: RuntimeArchiveCreateInput["entries"],
   workerIo: RuntimeWorkerIo,
@@ -617,6 +607,7 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
               codecs: codecEntries,
               format,
               inputPaths: staged.inputPaths,
+              invalidateMountCacheBeforeRun: true,
               levelProfile,
               logLevel: workflowInput.options?.logLevel,
               outputFileName,
@@ -797,14 +788,10 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
         )
       : [];
 
-    const transientPaths: string[] = [];
-    const cleanupTransient = async () => {
-      await Promise.all(transientPaths.map((transientPath) => browserVfs.remove(transientPath).catch(() => undefined)));
-    };
-
     try {
       const stagedInputPaths = [workerInput.filePath, ...stagedImageSources.map((entry) => entry.filePath)];
       let chdInputPath = workerInput.filePath;
+      const virtualFiles: RuntimeValue[] = [];
       const requestedMode = String(chdSourceMode || mode || "")
         .trim()
         .toLowerCase();
@@ -813,8 +800,8 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
         const cueFileName =
           cueInputFileName ||
           `${getPathBaseName(workerInput.fileName || "disc.bin", "disc").replace(/\.[^./\\]*$/, "")}.cue`;
-        const cuePath = selectRomWeaverOutputPath(workerInput.filePath, cueFileName, stagedInputPaths);
-        const cueTarget = workerInput.fileName || fileName || "disc.bin";
+        const cuePath = joinPath(getPathDirectory(workerInput.filePath), cueFileName);
+        const cueTarget = workerInput.filePath;
         let normalizedCueText = cueText
           ? String(cueText)
           : `FILE "${cueTarget}" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n`;
@@ -825,8 +812,10 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
             // Preserve multi-track cue sheets that do not match single-track replacement assumptions.
           }
         }
-        await writeTextToBrowserVfs(cuePath, normalizedCueText);
-        transientPaths.push(cuePath);
+        virtualFiles.push({
+          path: cuePath,
+          source: new TextEncoder().encode(normalizedCueText),
+        });
         chdInputPath = cuePath;
       }
 
@@ -842,9 +831,12 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
           codecs,
           format: "chd",
           inputPaths: [chdInputPath],
+          invalidateMountCacheBeforeRun: true,
+          knownInputPaths: stagedInputPaths,
           logLevel,
           outputFileName,
           outputPath,
+          virtualFiles,
           workerThreads: threads,
         },
         onProgress ? forwardDiscProgress(onProgress) : undefined,
@@ -856,7 +848,6 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
         "CHD compression worker did not return browser output",
       );
     } finally {
-      await cleanupTransient();
       await workerInput.cleanup().catch(() => undefined);
       await Promise.all(stagedImageSources.map((imageSource) => imageSource.cleanup().catch(() => undefined)));
     }
@@ -887,6 +878,8 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
             codecs,
             format: "rvz",
             inputPaths: [workerSource.filePath],
+            invalidateMountCacheBeforeRun: true,
+            knownInputPaths: [workerSource.filePath],
             logLevel,
             outputFileName,
             outputPath,
@@ -916,6 +909,8 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
             codecs,
             format: "z3ds",
             inputPaths: [workerSource.filePath],
+            invalidateMountCacheBeforeRun: true,
+            knownInputPaths: [workerSource.filePath],
             logLevel,
             outputFileName,
             outputPath,

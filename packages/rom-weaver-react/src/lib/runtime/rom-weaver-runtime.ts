@@ -81,6 +81,23 @@ const toThreadBudget = (value: unknown, fallback: ThreadBudget | null = null): T
   return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
 };
 
+// The browser wasi-threads decode pool intermittently traps ("memory access out of bounds") and
+// wedges its sibling shells once more than a few decode threads run concurrently. This is a race in
+// the browser worker-pool shim, not the decoder: the same threaded wasm decodes a 657 MB CD CHD
+// flawlessly under wasmtime at 8 threads, and the hang rate here scales with the decode thread count
+// (stable at <=4, intermittent at >=6). Clamp browser extract decode concurrency to the empirically
+// stable ceiling so a configured or `auto` (= hardwareConcurrency) thread count cannot reach the
+// unstable regime. The default browser thread count is already 4, so typical runs are unaffected.
+const BROWSER_EXTRACT_MAX_DECODE_THREADS = 4;
+
+const clampBrowserExtractThreadBudget = (budget: ThreadBudget | null): ThreadBudget | null => {
+  if (budget === "auto") return BROWSER_EXTRACT_MAX_DECODE_THREADS;
+  if (typeof budget === "number" && budget > BROWSER_EXTRACT_MAX_DECODE_THREADS) {
+    return BROWSER_EXTRACT_MAX_DECODE_THREADS;
+  }
+  return budget;
+};
+
 const XDELTA_PATCH_FILE_EXTENSION_REGEX = /\.(?:xdelta|vcdiff)$/i;
 const BPS_PATCH_FILE_EXTENSION_REGEX = /\.bps$/i;
 
@@ -170,12 +187,14 @@ const appendBrowserStorageContext = async (message: string) => {
 const toRomWeaverOptions = (input: {
   defaultThreads?: number | null;
   invalidateMountCacheBeforeRun?: boolean;
+  knownInputPaths?: string[];
   logLevel?: LogLevel | string;
   onEvent?: (event: RomWeaverRunJsonEvent) => void;
   onLog?: (log: WorkflowRuntimeLog) => void;
   preferThreadedWasm?: boolean;
   scratchFilePoolSize?: number | null;
   syncAccessMode?: string;
+  virtualFiles?: RuntimeValue[];
   virtualOnlyMounts?: boolean;
 }): RomWeaverRunJsonOptions => {
   const traceEnabled = isTraceEnabled(input.logLevel);
@@ -210,7 +229,14 @@ const toRomWeaverOptions = (input: {
     options.syncAccessMode = input.syncAccessMode.trim();
   }
   if (input.invalidateMountCacheBeforeRun) options.invalidateMountCacheBeforeRun = true;
+  if (Array.isArray(input.knownInputPaths)) {
+    const knownInputPaths = input.knownInputPaths
+      .map((pathValue) => String(pathValue || "").trim())
+      .filter((pathValue) => !!pathValue);
+    if (knownInputPaths.length) options.knownInputPaths = knownInputPaths;
+  }
   if (typeof input.preferThreadedWasm === "boolean") options.preferThreadedWasm = input.preferThreadedWasm;
+  if (Array.isArray(input.virtualFiles)) options.virtualFiles = input.virtualFiles;
   if (typeof input.virtualOnlyMounts === "boolean") options.virtualOnlyMounts = input.virtualOnlyMounts;
   return options;
 };
@@ -539,11 +565,14 @@ const invokeRomWeaverCompressionCreateWorker = async (
   input: {
     codecs?: unknown;
     format?: string | null;
+    invalidateMountCacheBeforeRun?: boolean;
     inputPaths: string[];
+    knownInputPaths?: string[];
     levelProfile?: string | null;
     logLevel?: LogLevel | string;
     outputFileName: string;
     outputPath: string;
+    virtualFiles?: RuntimeValue[];
     workerThreads?: number | string | null;
   },
   onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
@@ -594,12 +623,15 @@ const invokeRomWeaverCompressionCreateWorker = async (
   const result = await runRomWeaverJsonWithRetryOnOutOfMemory(
     command,
     toRomWeaverOptions({
+      invalidateMountCacheBeforeRun: input.invalidateMountCacheBeforeRun,
+      knownInputPaths: input.knownInputPaths,
       logLevel: input.logLevel,
       onEvent: (event) => {
         const progress = toSimpleProgress(event);
         if (progress) onProgress?.(progress);
       },
       onLog,
+      virtualFiles: input.virtualFiles,
     }),
     "Compression create failed",
     {
@@ -652,7 +684,7 @@ const invokeRomWeaverExtractWorker = async (
     const value = String(algorithm || "").trim();
     if (value) checksum.push(value);
   }
-  const threadArg = toThreadBudget(input.workerThreads);
+  const threadArg = clampBrowserExtractThreadBudget(toThreadBudget(input.workerThreads));
   const command: RomWeaverCommand = {
     args: {
       checksum,
