@@ -19,8 +19,12 @@ type NavigatorLike = {
   serviceWorker?: ServiceWorkerContainerLike;
 };
 type CacheStorageLike = Pick<CacheStorage, "keys" | "delete">;
-type WindowLike = Pick<Window, "location" | "addEventListener" | "setInterval" | "clearInterval">;
+type SessionStorageLike = Pick<Storage, "getItem" | "removeItem" | "setItem">;
+type WindowLike = Pick<Window, "location" | "addEventListener" | "setInterval" | "clearInterval"> & {
+  crossOriginIsolated?: boolean;
+};
 type DocumentLike = Pick<Document, "addEventListener" | "visibilityState">;
+type RegisterServiceWorker = typeof registerSW;
 
 type CreatePwaServiceWorkerClientOptions = {
   cachePrefix: string;
@@ -31,6 +35,8 @@ type CreatePwaServiceWorkerClientOptions = {
   onBeforeReload?: () => void;
   onConfirmReload: () => Promise<boolean>;
   onStateChange: (state: ServiceWorkerCacheState) => void;
+  registerServiceWorker?: RegisterServiceWorker;
+  sessionStorage?: SessionStorageLike | undefined;
   updateIntervalMs: number;
   window: WindowLike | undefined;
 };
@@ -43,6 +49,11 @@ type PwaServiceWorkerClient = {
 };
 
 const ROM_WEAVER_SERVICE_WORKER_URL_PATTERN = /\/(?:_cache_service_worker|cache-service-worker|dev-sw)\.js(?:$|\?)/;
+const COI_COEP_CREDENTIALLESS_ACTION = "set-coep-credentialless";
+const COI_COEP_HAS_FAILED_KEY = "rom-weaver-coi-coep-has-failed";
+const COI_RELOADED_BY_SELF_KEY = "rom-weaver-coi-reloaded-by-self";
+const COI_RELOAD_REASON_COEP_DEGRADE = "coepdegrade";
+const COI_RELOAD_REASON_NOT_CONTROLLING = "notcontrolling";
 
 const createPwaServiceWorkerClient = ({
   cachePrefix,
@@ -53,14 +64,79 @@ const createPwaServiceWorkerClient = ({
   onBeforeReload,
   onConfirmReload,
   onStateChange,
+  registerServiceWorker: registerServiceWorkerOverride,
+  sessionStorage: sessionStorageOverride,
   updateIntervalMs,
   window,
 }: CreatePwaServiceWorkerClientOptions): PwaServiceWorkerClient => {
+  const registerServiceWorker = registerServiceWorkerOverride ?? registerSW;
+  const sessionStorage = sessionStorageOverride;
   let initialized = false;
   let state = createServiceWorkerCacheState();
-  let updateServiceWorker: ReturnType<typeof registerSW> | null = null;
+  let updateServiceWorker: ReturnType<RegisterServiceWorker> | null = null;
   let serviceWorkerRegistration: ServiceWorkerRegistrationLike | undefined;
   let updateIntervalId: number | null = null;
+
+  const setSessionStorageItem = (key: string, value: string) => {
+    try {
+      sessionStorage?.setItem(key, value);
+    } catch (_err) {
+      // session storage is best-effort
+    }
+  };
+  const getSessionStorageItem = (key: string) => {
+    try {
+      return sessionStorage?.getItem(key) || "";
+    } catch (_err) {
+      return "";
+    }
+  };
+  const removeSessionStorageItem = (key: string) => {
+    try {
+      sessionStorage?.removeItem(key);
+    } catch (_err) {
+      // session storage is best-effort
+    }
+  };
+  const takeReloadReason = () => {
+    const reason = getSessionStorageItem(COI_RELOADED_BY_SELF_KEY);
+    if (reason) removeSessionStorageItem(COI_RELOADED_BY_SELF_KEY);
+    return reason;
+  };
+  const isCrossOriginIsolationKnown = () => typeof window?.crossOriginIsolated === "boolean";
+  const isCrossOriginIsolated = () => window?.crossOriginIsolated === true;
+  const reloadForCrossOriginIsolation = (reason: string) => {
+    if (!window?.location || typeof window.location.reload !== "function") return false;
+    setSessionStorageItem(COI_RELOADED_BY_SELF_KEY, reason);
+    window.location.reload();
+    return true;
+  };
+  const postCoepCredentialless = (value: boolean) => {
+    const controller = navigator?.serviceWorker?.controller;
+    if (!controller) return false;
+    try {
+      controller.postMessage({
+        action: COI_COEP_CREDENTIALLESS_ACTION,
+        value,
+      });
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  };
+  let pendingReloadReason = takeReloadReason();
+  const syncCrossOriginIsolationMode = ({ allowReload }: { allowReload: boolean }) => {
+    if (!navigator?.serviceWorker?.controller || !isCrossOriginIsolationKnown()) return;
+    if (!isCrossOriginIsolated()) setSessionStorageItem(COI_COEP_HAS_FAILED_KEY, "true");
+    const coepHasFailed = getSessionStorageItem(COI_COEP_HAS_FAILED_KEY) === "true";
+    const reloadedBySelf = pendingReloadReason;
+    pendingReloadReason = "";
+    const coepDegrading = reloadedBySelf === COI_RELOAD_REASON_COEP_DEGRADE;
+    const reloadToDegrade = allowReload && !coepDegrading && !isCrossOriginIsolated();
+    const useCredentialless = !(reloadToDegrade || coepHasFailed);
+    postCoepCredentialless(useCredentialless);
+    if (reloadToDegrade) reloadForCrossOriginIsolation(COI_RELOAD_REASON_COEP_DEGRADE);
+  };
 
   const emitState = () => {
     onStateChange(state);
@@ -210,6 +286,7 @@ const createPwaServiceWorkerClient = ({
 
     serviceWorker.addEventListener("controllerchange", () => {
       clearUpdateReady();
+      syncCrossOriginIsolationMode({ allowReload: true });
       refreshCacheVersion();
     });
     window?.addEventListener("beforeunload", stopServiceWorkerUpdateChecks);
@@ -219,7 +296,7 @@ const createPwaServiceWorkerClient = ({
       if (document.visibilityState === "visible") runServiceWorkerUpdateCheck();
     });
 
-    updateServiceWorker = registerSW({
+    updateServiceWorker = registerServiceWorker({
       immediate: true,
       onNeedRefresh: markUpdateReady,
       onOfflineReady: refreshCacheVersion,
@@ -236,11 +313,18 @@ const createPwaServiceWorkerClient = ({
           return;
         }
         void registration.update?.().catch(() => undefined);
+        if (!serviceWorker.controller) {
+          if (pendingReloadReason !== COI_RELOAD_REASON_NOT_CONTROLLING)
+            reloadForCrossOriginIsolation(COI_RELOAD_REASON_NOT_CONTROLLING);
+          return;
+        }
+        syncCrossOriginIsolationMode({ allowReload: true });
         startServiceWorkerUpdateChecks();
         refreshCacheVersion();
       },
     });
 
+    syncCrossOriginIsolationMode({ allowReload: false });
     refreshCacheVersion();
   };
 

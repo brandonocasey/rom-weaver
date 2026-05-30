@@ -16,6 +16,10 @@ declare let self: ServiceWorkerGlobalScope & {
 };
 
 const PRECACHE_ID = "rom-weaver";
+const COI_COEP_CREDENTIALLESS_ACTION = "set-coep-credentialless";
+const COI_HEADER_COEP = "Cross-Origin-Embedder-Policy";
+const COI_HEADER_COOP = "Cross-Origin-Opener-Policy";
+const COI_HEADER_CORP = "Cross-Origin-Resource-Policy";
 const getDevBuildToken = () => {
   if (!import.meta.env.DEV) return "";
   try {
@@ -39,6 +43,7 @@ setCacheNameDetails({
 
 const PRECACHE_NAME = cacheNames.precache;
 const RUNTIME_CACHE_NAME = cacheNames.runtime;
+let coepCredentialless = true;
 
 const isSameOriginRequest = (url: URL) => url.origin === self.location.origin;
 
@@ -67,9 +72,33 @@ const shouldUseNetworkFirst = (request: Request, url: URL) => {
   return isHtmlRequest(request, url) || isManifestRequest(request, url) || isDevSourceRequest(request, url);
 };
 
+const getCrossOriginIsolationHeaders = (sourceHeaders: HeadersInit = {}) => {
+  const headers = new Headers(sourceHeaders);
+  headers.set(COI_HEADER_COOP, "same-origin");
+  headers.set(COI_HEADER_COEP, coepCredentialless ? "credentialless" : "require-corp");
+  if (!coepCredentialless) headers.set(COI_HEADER_CORP, "cross-origin");
+  else headers.delete(COI_HEADER_CORP);
+  return headers;
+};
+
+const withCrossOriginIsolationHeaders = (response: Response | undefined | null) => {
+  if (!response || response.status === 0) return response ?? undefined;
+  return new Response(response.body, {
+    headers: getCrossOriginIsolationHeaders(response.headers),
+    status: response.status,
+    statusText: response.statusText,
+  });
+};
+
+const toCredentiallessNoCorsRequest = (request: Request) => {
+  if (!coepCredentialless || request.mode !== "no-cors") return request;
+  return new Request(request, { credentials: "omit" });
+};
+
 const fetchAndUpdateCache = async (request: Request): Promise<Response> => {
-  const response = await fetch(request);
-  if (response?.ok) {
+  const fetchedResponse = await fetch(toCredentiallessNoCorsRequest(request));
+  const response = withCrossOriginIsolationHeaders(fetchedResponse) || fetchedResponse;
+  if (response.ok) {
     const cache = await caches.open(RUNTIME_CACHE_NAME);
     await cache.put(request, response.clone());
   }
@@ -78,9 +107,15 @@ const fetchAndUpdateCache = async (request: Request): Promise<Response> => {
 
 const matchCachedResponse = async (request: Request, url: URL) => {
   const cachedResponse = await caches.match(request);
-  if (cachedResponse) return cachedResponse;
-  if (isManifestRequest(request, url)) return matchPrecache("manifest.json");
-  if (isHtmlRequest(request, url)) return (await matchPrecache("index.html")) || matchPrecache("/");
+  if (cachedResponse) return withCrossOriginIsolationHeaders(cachedResponse) || cachedResponse;
+  if (isManifestRequest(request, url)) {
+    const manifest = await matchPrecache("manifest.json");
+    return withCrossOriginIsolationHeaders(manifest) || manifest;
+  }
+  if (isHtmlRequest(request, url)) {
+    const html = (await matchPrecache("index.html")) || (await matchPrecache("/"));
+    return withCrossOriginIsolationHeaders(html) || html;
+  }
   return undefined;
 };
 
@@ -122,6 +157,11 @@ self.addEventListener("message", (event) => {
 
   if (event.data.action === "skip-waiting") {
     self.skipWaiting();
+    return;
+  }
+
+  if (event.data.action === COI_COEP_CREDENTIALLESS_ACTION) {
+    coepCredentialless = event.data.value !== false;
     return;
   }
 
