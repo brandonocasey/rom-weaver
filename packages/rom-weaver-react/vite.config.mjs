@@ -6,6 +6,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
+import { getBuildInfo } from "./scripts/version.mjs";
 
 const rootDir = process.cwd();
 const repoRoot = path.resolve(rootDir, "../..");
@@ -139,8 +140,14 @@ const writeWebappStaticAssets = () => {
 };
 
 export default defineConfig(({ command }) => {
+  const buildInfo = getBuildInfo();
   const devServiceWorkerEnabled = process.env.VITE_SW_DEV === "1";
   const serviceWorkerEnabled = command === "build" || devServiceWorkerEnabled;
+  const appVersion =
+    process.env.ROM_WEAVER_APP_VERSION || buildInfo.version || process.env.npm_package_version || "0.1.0";
+  const commitHash = process.env.ROM_WEAVER_COMMIT_HASH || buildInfo.commitHash || "unknown";
+  const dirtyHash = process.env.ROM_WEAVER_DIRTY_HASH ?? buildInfo.dirtyHash ?? "";
+  const gitBranch = process.env.ROM_WEAVER_GIT_BRANCH ?? buildInfo.gitBranch ?? "";
   const serviceWorkerDefines = {
     __SERVICE_WORKER_ENABLED__: JSON.stringify(serviceWorkerEnabled),
     __SERVICE_WORKER_UPDATE_INTERVAL_MS__: JSON.stringify(command === "build" ? 60000 : 5000),
@@ -164,10 +171,10 @@ export default defineConfig(({ command }) => {
       transformer: "lightningcss",
     },
     define: {
-      __APP_VERSION__: JSON.stringify(process.env.npm_package_version || "0.1.0"),
-      __COMMIT_HASH__: JSON.stringify(process.env.ROM_WEAVER_COMMIT_HASH || "dev"),
-      __DIRTY_HASH__: JSON.stringify(process.env.ROM_WEAVER_DIRTY_HASH || ""),
-      __GIT_BRANCH__: JSON.stringify(process.env.ROM_WEAVER_GIT_BRANCH || "dev"),
+      __APP_VERSION__: JSON.stringify(appVersion),
+      __COMMIT_HASH__: JSON.stringify(commitHash),
+      __DIRTY_HASH__: JSON.stringify(dirtyHash),
+      __GIT_BRANCH__: JSON.stringify(gitBranch),
       ...serviceWorkerDefines,
     },
     optimizeDeps: {
