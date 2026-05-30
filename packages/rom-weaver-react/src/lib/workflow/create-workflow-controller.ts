@@ -66,6 +66,15 @@ type SourceSession<TSource> = {
   view: StagedSource<TSource>;
   synthetic: boolean;
 };
+type PreparationProgress = {
+  current?: number;
+  details?: unknown;
+  hasProgress?: boolean;
+  label?: string;
+  message?: string;
+  percent?: number | null;
+  total?: number;
+};
 
 const SUPPORTED_CREATE_PATCH_TYPES = new Set<PatchFormat | string>([
   "aps",
@@ -396,46 +405,8 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
 
   private async stageSource(stage: StagedSource<TSource>): Promise<StagedSource<TSource>> {
     const requests: CandidateSelectionRequest[] = [];
-    const options = {
-      ...this.createExecutionOptions(),
-      onCandidatesFound: (request: CandidateSelectionRequest) => requests.push(request),
-      onProgress: (progress: {
-        current?: number;
-        details?: unknown;
-        hasProgress?: boolean;
-        label?: string;
-        message?: string;
-        percent?: number | null;
-        total?: number;
-      }) => {
-        const progressStage = getPreparationProgressStage(progress, stage.state.role);
-        this.emitProgress({
-          current: progress.current,
-          details: {
-            ...(isRecord(progress.details) ? progress.details : {}),
-            fileName: stage.state.fileName,
-            sourceId: stage.state.id,
-          },
-          hasProgress: progress.hasProgress,
-          id: `${this.id}:${stage.state.id}:${progressStage}`,
-          label: progress.label || progress.message || "Preparing input...",
-          percent: typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
-          role: stage.state.role,
-          stage: progressStage,
-          total: progress.total,
-          workflow: "create",
-        });
-      },
-    } satisfies Partial<CreateWorkflowOptions>;
     try {
-      stage.preparedInputAssets = await prepareInputAssets(
-        stage.source as never,
-        options as never,
-        stage.index,
-        this.runtime,
-        undefined,
-        { allowLazyBrowserRomSource: !!stage.allowLazyBrowserRomSource },
-      );
+      stage.preparedInputAssets = await this.prepareStageAssets(stage, requests, undefined);
     } catch (error) {
       if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
       if (!requests.length) this.pushWarning(stage, toRomWeaverError(error));
@@ -456,46 +427,8 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
 
   private async prepareSelectedSource(stage: StagedSource<TSource>): Promise<void> {
     const requests: CandidateSelectionRequest[] = [];
-    const options = {
-      ...this.createExecutionOptions(),
-      onCandidatesFound: (request: CandidateSelectionRequest) => requests.push(request),
-      onProgress: (progress: {
-        current?: number;
-        details?: unknown;
-        hasProgress?: boolean;
-        label?: string;
-        message?: string;
-        percent?: number | null;
-        total?: number;
-      }) => {
-        const progressStage = getPreparationProgressStage(progress, stage.state.role);
-        this.emitProgress({
-          current: progress.current,
-          details: {
-            ...(isRecord(progress.details) ? progress.details : {}),
-            fileName: stage.state.fileName,
-            sourceId: stage.state.id,
-          },
-          hasProgress: progress.hasProgress,
-          id: `${this.id}:${stage.state.id}:${progressStage}`,
-          label: progress.label || progress.message || "Preparing input...",
-          percent: typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
-          role: stage.state.role,
-          stage: progressStage,
-          total: progress.total,
-          workflow: "create",
-        });
-      },
-    } satisfies Partial<CreateWorkflowOptions>;
     try {
-      stage.preparedInputAssets = await prepareInputAssets(
-        stage.source as never,
-        options as never,
-        stage.index,
-        this.runtime,
-        stage.selectedArchiveEntry,
-        { allowLazyBrowserRomSource: !!stage.allowLazyBrowserRomSource },
-      );
+      stage.preparedInputAssets = await this.prepareStageAssets(stage, requests, stage.selectedArchiveEntry);
       this.applyPreparedSourceMetadata(stage);
       stage.state.status = "ready";
     } catch (error) {
@@ -527,11 +460,7 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
     const selection = await this.resolveSelectionRequest(this.createSelectionRequest(stage.state), this.selectFile);
     if (!selection) return false;
     const owner = stage.internalCandidates.get(selection.id)?.owner || stage;
-    if (!owner.internalCandidates.has(selection.id))
-      throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${selection.id}`);
-    releasePreparedSource(owner);
-    owner.state.selectedCandidateId = selection.id;
-    owner.selectedArchiveEntry = owner.internalCandidates.get(selection.id)?.archiveEntry;
+    this.setSelectedCandidate(owner, selection.id);
     await this.prepareSelectedSource(owner);
     return true;
   }
@@ -544,16 +473,66 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
     );
     if (!selection) return false;
     const owner = session.view.internalCandidates.get(selection.id)?.owner || session.view;
-    if (!owner.internalCandidates.has(selection.id))
-      throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${selection.id}`);
-    releasePreparedSource(owner);
-    owner.state.selectedCandidateId = selection.id;
-    owner.selectedArchiveEntry = owner.internalCandidates.get(selection.id)?.archiveEntry;
+    this.setSelectedCandidate(owner, selection.id);
     await this.prepareSelectedSource(owner);
     this.syncSourceSessionView(session);
     if (session.view.state.status === "needsSelection" && !session.view.state.selectedCandidateId)
       return this.maybeResolveBlockingSessionSelection(session);
     return true;
+  }
+
+  private createPreparationOptions(
+    stage: StagedSource<TSource>,
+    requests: CandidateSelectionRequest[],
+  ): Partial<CreateWorkflowOptions> {
+    return {
+      ...this.createExecutionOptions(),
+      onCandidatesFound: (request: CandidateSelectionRequest) => requests.push(request),
+      onProgress: (progress: PreparationProgress) => this.emitPreparationProgress(stage, progress),
+    } satisfies Partial<CreateWorkflowOptions>;
+  }
+
+  private emitPreparationProgress(stage: StagedSource<TSource>, progress: PreparationProgress) {
+    const progressStage = getPreparationProgressStage(progress, stage.state.role);
+    this.emitProgress({
+      current: progress.current,
+      details: {
+        ...(isRecord(progress.details) ? progress.details : {}),
+        fileName: stage.state.fileName,
+        sourceId: stage.state.id,
+      },
+      hasProgress: progress.hasProgress,
+      id: `${this.id}:${stage.state.id}:${progressStage}`,
+      label: progress.label || progress.message || "Preparing input...",
+      percent: typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
+      role: stage.state.role,
+      stage: progressStage,
+      total: progress.total,
+      workflow: "create",
+    });
+  }
+
+  private async prepareStageAssets(
+    stage: StagedSource<TSource>,
+    requests: CandidateSelectionRequest[],
+    selectedArchiveEntry: string | undefined,
+  ): Promise<InputAsset[]> {
+    return prepareInputAssets(
+      stage.source as never,
+      this.createPreparationOptions(stage, requests) as never,
+      stage.index,
+      this.runtime,
+      selectedArchiveEntry,
+      { allowLazyBrowserRomSource: !!stage.allowLazyBrowserRomSource },
+    );
+  }
+
+  private setSelectedCandidate(stage: StagedSource<TSource>, candidateId: string): void {
+    if (!stage.internalCandidates.has(candidateId))
+      throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${candidateId}`);
+    releasePreparedSource(stage);
+    stage.state.selectedCandidateId = candidateId;
+    stage.selectedArchiveEntry = stage.internalCandidates.get(candidateId)?.archiveEntry;
   }
 
   private handleSourceSelectionRequests(stage: StagedSource<TSource>, requests: CandidateSelectionRequest[]) {

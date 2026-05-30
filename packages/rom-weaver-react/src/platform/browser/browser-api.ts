@@ -21,6 +21,14 @@ type BrowserRuntimePreloadOptions = {
 };
 
 const runtimePreloadKeys = new Set<string>();
+type BrowserWorkflowController<TResult> = {
+  readonly id: string;
+  on(event: "progress", listener: (event: WorkflowProgress) => void): void;
+  off(event: "progress", listener: (event: WorkflowProgress) => void): void;
+  run(): Promise<TResult>;
+  abort(reason?: unknown): void;
+  dispose(): Promise<void>;
+};
 
 const getRuntimePreloadKey = (workerThreads: BrowserRuntimePreloadOptions["workerThreads"]) => {
   const normalized = String(workerThreads ?? "").trim();
@@ -49,14 +57,11 @@ const preloadBrowserRuntime = (options: BrowserRuntimePreloadOptions = {}) => {
     .then(() => undefined);
 };
 
-class CreateWorkflow {
-  private readonly controller: CreateWorkflowController<BrowserSourceRef, BrowserSaveDestination>;
-
-  constructor(options: WorkflowOptions<CreateSettings> = {}) {
-    configureBrowserAssetBaseUrl(options.assetBaseUrl);
-    void preloadBrowserRuntime({ workerThreads: options.settings?.workers?.threads });
-    this.controller = new CreateWorkflowController(browserRuntime, options, assertPublicSources);
-  }
+abstract class BrowserWorkflowBase<
+  TResult,
+  TController extends BrowserWorkflowController<TResult>,
+> {
+  protected abstract readonly controller: TController;
 
   get id() {
     return this.controller.id;
@@ -68,6 +73,32 @@ class CreateWorkflow {
 
   off(event: "progress", listener: (event: WorkflowProgress) => void): void {
     this.controller.off(event, listener);
+  }
+
+  run(): Promise<TResult> {
+    return this.controller.run();
+  }
+
+  abort(reason?: unknown): void {
+    this.controller.abort(reason);
+  }
+
+  dispose(): Promise<void> {
+    return this.controller.dispose();
+  }
+}
+
+class CreateWorkflow extends BrowserWorkflowBase<
+  CreateResult<BrowserSaveDestination>,
+  CreateWorkflowController<BrowserSourceRef, BrowserSaveDestination>
+> {
+  protected readonly controller: CreateWorkflowController<BrowserSourceRef, BrowserSaveDestination>;
+
+  constructor(options: WorkflowOptions<CreateSettings> = {}) {
+    super();
+    configureBrowserAssetBaseUrl(options.assetBaseUrl);
+    void preloadBrowserRuntime({ workerThreads: options.settings?.workers?.threads });
+    this.controller = new CreateWorkflowController(browserRuntime, options, assertPublicSources);
   }
 
   setOriginal(source: BrowserSourceRef | BrowserSourceRef[]): Promise<void> {
@@ -94,17 +125,6 @@ class CreateWorkflow {
     return this.controller.setOutputName(name);
   }
 
-  run(): Promise<CreateResult<BrowserSaveDestination>> {
-    return this.controller.run();
-  }
-
-  abort(reason?: unknown): void {
-    this.controller.abort(reason);
-  }
-
-  dispose(): Promise<void> {
-    return this.controller.dispose();
-  }
 }
 
 export type {
@@ -133,25 +153,17 @@ export type {
   SourceRef,
 } from "../../types/source.ts";
 
-class ApplyWorkflow {
-  private readonly controller: ApplyWorkflowController<BrowserSourceRef, BrowserSaveDestination>;
+class ApplyWorkflow extends BrowserWorkflowBase<
+  ApplyResult<BrowserSaveDestination>,
+  ApplyWorkflowController<BrowserSourceRef, BrowserSaveDestination>
+> {
+  protected readonly controller: ApplyWorkflowController<BrowserSourceRef, BrowserSaveDestination>;
 
   constructor(options: WorkflowOptions<ApplySettings> = {}) {
+    super();
     configureBrowserAssetBaseUrl(options.assetBaseUrl);
     void preloadBrowserRuntime({ workerThreads: options.settings?.workers?.threads });
     this.controller = new ApplyWorkflowController(browserRuntime, options, assertPublicSources);
-  }
-
-  get id() {
-    return this.controller.id;
-  }
-
-  on(event: "progress", listener: (event: WorkflowProgress) => void): void {
-    this.controller.on(event, listener);
-  }
-
-  off(event: "progress", listener: (event: WorkflowProgress) => void): void {
-    this.controller.off(event, listener);
   }
 
   setInput(input: BrowserSourceRef | BrowserSourceRef[]): Promise<void> {
@@ -190,17 +202,6 @@ class ApplyWorkflow {
     return this.controller.setOutputFormat(format);
   }
 
-  run(): Promise<ApplyResult<BrowserSaveDestination>> {
-    return this.controller.run();
-  }
-
-  abort(reason?: unknown): void {
-    this.controller.abort(reason);
-  }
-
-  dispose(): Promise<void> {
-    return this.controller.dispose();
-  }
 }
 
 export { ApplyWorkflow, CreateWorkflow, preloadBrowserRuntime };
