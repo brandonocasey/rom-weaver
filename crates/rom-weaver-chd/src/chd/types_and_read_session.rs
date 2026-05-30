@@ -420,6 +420,13 @@
         },
     }
 
+    #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
+    struct WasmDecodedHunk {
+        hunk_index: u32,
+        data: Vec<u8>,
+        write_len: u64,
+    }
+
     impl ChdReadSession {
         fn open(source: &Path, parent_source: Option<&Path>) -> Result<Self> {
             Self::open_rust(source, parent_source).map_err(|rust_error| {
@@ -848,95 +855,105 @@
                 // workers whose sleep/wake latch deadlocks the node wasi-threads runtime (one Worker
                 // per thread-spawn); `std::thread::scope` matches that model (spawn, run once, join)
                 // and `JoinHandle::join` surfaces a worker panic instead of hanging.
-                let chunk_results: Vec<std::result::Result<Vec<(u32, Vec<u8>, u64)>, String>> =
-                    std::thread::scope(|scope| {
-                        let handles: Vec<_> = jobs
-                            .chunks(chunk_size)
-                            .map(|chunk| {
-                                scope.spawn(
-                                    move || -> std::result::Result<Vec<(u32, Vec<u8>, u64)>, String> {
-                                        let mut codecs: Option<chd::Codecs> = None;
-                                        let mut hunk_buffer = vec![0u8; hunk_bytes_usize];
-                                        let mut decoded = Vec::with_capacity(chunk.len());
-                                        for (hunk_index, job) in chunk {
-                                            match job {
-                                                WasmHunkJob::Decode {
-                                                    codec_index,
-                                                    input,
-                                                    crc,
-                                                    write_len,
-                                                } => {
-                                                    if codecs.is_none() {
-                                                        codecs = Some(
-                                                            header_ref
-                                                                .create_compression_codecs()
-                                                                .map_err(|error| {
-                                                                    format!("failed to build CHD codecs: {error:?}")
-                                                                })?,
-                                                        );
-                                                    }
-                                                    let codec = codecs
-                                                        .as_mut()
-                                                        .expect("codecs initialized above")
-                                                        .get_mut(*codec_index)
-                                                        .ok_or_else(|| {
-                                                            format!(
-                                                                "CHD hunk {hunk_index} uses unconfigured codec slot {codec_index}"
-                                                            )
-                                                        })?;
-                                                    codec.decompress(input, &mut hunk_buffer).map_err(
-                                                        |error| {
-                                                            format!(
-                                                                "failed to decompress hunk {hunk_index}: {error:?}"
-                                                            )
-                                                        },
-                                                    )?;
-                                                    if CHD_HUNK_CRC16.checksum(&hunk_buffer) != *crc {
-                                                        return Err(format!(
-                                                            "CHD hunk {hunk_index} failed CRC validation"
-                                                        ));
-                                                    }
-                                                    decoded.push((
-                                                        *hunk_index,
-                                                        hunk_buffer[..*write_len].to_vec(),
-                                                        *write_len as u64,
-                                                    ));
-                                                }
-                                                WasmHunkJob::Ready { data, write_len } => {
-                                                    decoded.push((
-                                                        *hunk_index,
-                                                        data.clone(),
-                                                        *write_len as u64,
-                                                    ));
-                                                }
+                std::thread::scope(|scope| -> std::result::Result<(), String> {
+                    let (decoded_tx, decoded_rx) =
+                        std::sync::mpsc::channel::<std::result::Result<WasmDecodedHunk, String>>();
+                    let handles: Vec<_> = jobs
+                        .chunks(chunk_size)
+                        .map(|chunk| {
+                            let decoded_tx = decoded_tx.clone();
+                            scope.spawn(move || -> std::result::Result<(), String> {
+                                let mut codecs: Option<chd::Codecs> = None;
+                                let mut hunk_buffer = vec![0u8; hunk_bytes_usize];
+                                for (hunk_index, job) in chunk {
+                                    let decoded = match job {
+                                        WasmHunkJob::Decode {
+                                            codec_index,
+                                            input,
+                                            crc,
+                                            write_len,
+                                        } => {
+                                            if codecs.is_none() {
+                                                codecs = Some(header_ref.create_compression_codecs().map_err(
+                                                    |error| format!("failed to build CHD codecs: {error:?}"),
+                                                )?);
+                                            }
+                                            let codec = codecs
+                                                .as_mut()
+                                                .expect("codecs initialized above")
+                                                .get_mut(*codec_index)
+                                                .ok_or_else(|| {
+                                                    format!(
+                                                        "CHD hunk {hunk_index} uses unconfigured codec slot {codec_index}"
+                                                    )
+                                                })?;
+                                            codec.decompress(input, &mut hunk_buffer).map_err(|error| {
+                                                format!("failed to decompress hunk {hunk_index}: {error:?}")
+                                            })?;
+                                            if CHD_HUNK_CRC16.checksum(&hunk_buffer) != *crc {
+                                                return Err(format!("CHD hunk {hunk_index} failed CRC validation"));
+                                            }
+                                            WasmDecodedHunk {
+                                                hunk_index: *hunk_index,
+                                                data: hunk_buffer[..*write_len].to_vec(),
+                                                write_len: *write_len as u64,
                                             }
                                         }
-                                        Ok(decoded)
-                                    },
-                                )
+                                        WasmHunkJob::Ready { data, write_len } => WasmDecodedHunk {
+                                            hunk_index: *hunk_index,
+                                            data: data.clone(),
+                                            write_len: *write_len as u64,
+                                        },
+                                    };
+                                    if decoded_tx.send(Ok(decoded)).is_err() {
+                                        return Ok(());
+                                    }
+                                }
+                                Ok(())
                             })
-                            .collect();
-                        handles
-                            .into_iter()
-                            .map(|handle| {
-                                handle.join().unwrap_or_else(|_| {
-                                    Err("CHD decode worker thread panicked".to_string())
-                                })
-                            })
-                            .collect()
-                    });
+                        })
+                        .collect();
+                    drop(decoded_tx);
 
-                let mut decoded_batch = Vec::new();
-                for result in chunk_results {
-                    decoded_batch.extend(result?);
-                }
-                decoded_batch.sort_by_key(|(hunk_index, _, _)| *hunk_index);
-                for (hunk_index, bytes, write_len) in decoded_batch {
-                    write_hunk(hunk_index, &bytes, write_len)?;
-                    if let Some(on_progress) = on_progress {
-                        on_progress(write_len);
+                    let mut first_error: Option<String> = None;
+                    let mut pending = BTreeMap::<u32, WasmDecodedHunk>::new();
+                    let mut next_hunk_index = jobs.first().map(|(hunk_index, _)| *hunk_index).unwrap_or(0);
+                    let mut written_hunks = 0usize;
+
+                    for result in decoded_rx {
+                        match result {
+                            Ok(decoded) => {
+                                pending.insert(decoded.hunk_index, decoded);
+                                while let Some(decoded) = pending.remove(&next_hunk_index) {
+                                    write_hunk(decoded.hunk_index, &decoded.data, decoded.write_len)?;
+                                    if let Some(on_progress) = on_progress {
+                                        on_progress(decoded.write_len);
+                                    }
+                                    written_hunks = written_hunks.saturating_add(1);
+                                    next_hunk_index = next_hunk_index.saturating_add(1);
+                                }
+                            }
+                            Err(error) => {
+                                if first_error.is_none() {
+                                    first_error = Some(error);
+                                }
+                            }
+                        }
                     }
-                }
+
+                    for handle in handles {
+                        handle
+                            .join()
+                            .unwrap_or_else(|_| Err("CHD decode worker thread panicked".to_string()))?;
+                    }
+                    if let Some(error) = first_error {
+                        return Err(error);
+                    }
+                    if written_hunks != jobs.len() || !pending.is_empty() {
+                        return Err("CHD decode workers did not produce every hunk".to_string());
+                    }
+                    Ok(())
+                })?;
             }
 
             Ok(())
