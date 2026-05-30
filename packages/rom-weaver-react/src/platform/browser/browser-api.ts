@@ -57,10 +57,7 @@ const preloadBrowserRuntime = (options: BrowserRuntimePreloadOptions = {}) => {
     .then(() => undefined);
 };
 
-abstract class BrowserWorkflowBase<
-  TResult,
-  TController extends BrowserWorkflowController<TResult>,
-> {
+abstract class BrowserWorkflowBase<TResult, TController extends BrowserWorkflowController<TResult>> {
   protected abstract readonly controller: TController;
 
   get id() {
@@ -124,7 +121,6 @@ class CreateWorkflow extends BrowserWorkflowBase<
   setOutputName(name: string): Promise<void> {
     return this.controller.setOutputName(name);
   }
-
 }
 
 export type {
@@ -201,7 +197,6 @@ class ApplyWorkflow extends BrowserWorkflowBase<
   setOutputFormat(format: CompressionFormat): Promise<void> {
     return this.controller.setOutputFormat(format);
   }
-
 }
 
 export { ApplyWorkflow, CreateWorkflow, preloadBrowserRuntime };

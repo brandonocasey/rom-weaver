@@ -112,6 +112,7 @@ function CandidateSelectionDialog({
                     <tr
                       className={candidate.selectable ? "group cursor-pointer" : "group"}
                       key={candidate.id}
+                      onClick={candidate.selectable ? () => onSelect(candidate.id) : undefined}
                       onKeyDown={
                         candidate.selectable
                           ? (event) => {
@@ -122,7 +123,6 @@ function CandidateSelectionDialog({
                             }
                           : undefined
                       }
-                      onClick={candidate.selectable ? () => onSelect(candidate.id) : undefined}
                       role={candidate.selectable ? "button" : undefined}
                       tabIndex={candidate.selectable ? 0 : undefined}
                     >

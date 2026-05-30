@@ -621,15 +621,13 @@ function ApplyWorkflowFormView({
                 >
                   <ul className="m-0 list-disc space-y-1 pl-4">
                     <li>
-                      Supported patch formats: IPS, IPS32, SOLID, BPS, UPS, VCDIFF, xdelta, GDIFF,
-                      HDiffPatch/HPatchZ, APS (N64), APSGBA, RUP, PPF, PAT/FFP, EBP, BDF/BSDIFF40,
-                      BSP, MOD/PMSR, DLDI, and DPS.
+                      Supported patch formats: IPS, IPS32, SOLID, BPS, UPS, VCDIFF, xdelta, GDIFF, HDiffPatch/HPatchZ,
+                      APS (N64), APSGBA, RUP, PPF, PAT/FFP, EBP, BDF/BSDIFF40, BSP, MOD/PMSR, DLDI, and DPS.
                     </li>
                     <li>NINJA1 headers are recognized, but NINJA1 patch apply is not supported.</li>
                     <li>PDS patch files are explicitly unsupported.</li>
                     <li>
-                      HDiffPatch directory patches (HDIFF19) are unsupported; single-file
-                      .hdiff/.hpatchz is supported.
+                      HDiffPatch directory patches (HDIFF19) are unsupported; single-file .hdiff/.hpatchz is supported.
                     </li>
                     <li>Patches can be decompressed and chosen from supported archive formats.</li>
                     <li>Nested archives (7z in rar, rar in zip, etc) are supported.</li>

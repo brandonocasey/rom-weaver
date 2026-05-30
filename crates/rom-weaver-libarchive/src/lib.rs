@@ -1174,112 +1174,137 @@ mod tests {
             .to_string()
     }
 
+    fn run_with_large_stack(
+        label: &str,
+        test_fn: impl FnOnce() -> Result<()> + Send + 'static,
+    ) -> Result<()> {
+        std::thread::Builder::new()
+            .name(format!("libarchive-test-{label}"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test_fn)
+            .map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "failed to spawn `{label}` test thread: {error}"
+                ))
+            })?
+            .join()
+            .map_err(|_| RomWeaverError::Validation(format!("`{label}` test thread panicked")))?
+    }
+
     #[test]
     fn probe_regular_archive_format_detects_zip() -> Result<()> {
-        let temp_dir = TempDir::new("probe")?;
-        let source = temp_dir.path().join("fixture.zip");
-        create_zip_fixture(&source)?;
+        run_with_large_stack("probe", || {
+            let temp_dir = TempDir::new("probe")?;
+            let source = temp_dir.path().join("fixture.zip");
+            create_zip_fixture(&source)?;
 
-        assert!(probe_regular_archive_format(
-            &source,
-            "zip",
-            RegularArchiveProbeFormat::Zip
-        )?);
-        assert!(!probe_regular_archive_format(
-            &source,
-            "zip",
-            RegularArchiveProbeFormat::Tar
-        )?);
-        Ok(())
+            assert!(probe_regular_archive_format(
+                &source,
+                "zip",
+                RegularArchiveProbeFormat::Zip
+            )?);
+            assert!(!probe_regular_archive_format(
+                &source,
+                "zip",
+                RegularArchiveProbeFormat::Tar
+            )?);
+            Ok(())
+        })
     }
 
     #[test]
     fn inspect_and_list_regular_archive_entries_report_expected_values() -> Result<()> {
-        let temp_dir = TempDir::new("inspect-list")?;
-        let source = temp_dir.path().join("fixture.zip");
-        create_zip_fixture(&source)?;
+        run_with_large_stack("inspect-list", || {
+            let temp_dir = TempDir::new("inspect-list")?;
+            let source = temp_dir.path().join("fixture.zip");
+            create_zip_fixture(&source)?;
 
-        let summary = inspect_regular_archive(&source, "zip")?;
-        assert_eq!(summary.entries_total, 3);
-        assert_eq!(summary.files, 2);
-        assert_eq!(summary.directories, 1);
-        assert_eq!(summary.logical_bytes, 8);
-        assert!(summary.archive_bytes > 0);
+            let summary = inspect_regular_archive(&source, "zip")?;
+            assert_eq!(summary.entries_total, 3);
+            assert_eq!(summary.files, 2);
+            assert_eq!(summary.directories, 1);
+            assert_eq!(summary.logical_bytes, 8);
+            assert!(summary.archive_bytes > 0);
 
-        let entries = list_regular_archive_entries(&source, "zip")?;
-        assert_eq!(entries.len(), 3);
+            let entries = list_regular_archive_entries(&source, "zip")?;
+            assert_eq!(entries.len(), 3);
 
-        let normalized = entries
-            .iter()
-            .map(|entry| normalize_relaxed(&entry.path))
-            .collect::<Vec<_>>();
-        assert!(normalized.contains(&"dir".to_string()));
-        assert!(normalized.contains(&"dir/file.txt".to_string()));
-        assert!(normalized.contains(&"top.bin".to_string()));
+            let normalized = entries
+                .iter()
+                .map(|entry| normalize_relaxed(&entry.path))
+                .collect::<Vec<_>>();
+            assert!(normalized.contains(&"dir".to_string()));
+            assert!(normalized.contains(&"dir/file.txt".to_string()));
+            assert!(normalized.contains(&"top.bin".to_string()));
 
-        let directory = entries
-            .iter()
-            .find(|entry| normalize_relaxed(&entry.path) == "dir")
-            .ok_or_else(|| {
-                RomWeaverError::Validation("zip fixture missing `dir` directory entry".into())
-            })?;
-        assert!(directory.is_dir);
-        Ok(())
+            let directory = entries
+                .iter()
+                .find(|entry| normalize_relaxed(&entry.path) == "dir")
+                .ok_or_else(|| {
+                    RomWeaverError::Validation("zip fixture missing `dir` directory entry".into())
+                })?;
+            assert!(directory.is_dir);
+            Ok(())
+        })
     }
 
     #[test]
     fn visit_selected_regular_archive_entries_reads_selected_payloads() -> Result<()> {
-        let temp_dir = TempDir::new("visit-selected")?;
-        let source = temp_dir.path().join("fixture.zip");
-        create_zip_fixture(&source)?;
+        run_with_large_stack("visit-selected", || {
+            let temp_dir = TempDir::new("visit-selected")?;
+            let source = temp_dir.path().join("fixture.zip");
+            create_zip_fixture(&source)?;
 
-        let entries = list_regular_archive_entries(&source, "zip")?;
-        let entry_index_by_name = entries
-            .iter()
-            .map(|entry| (normalize_relaxed(&entry.path), entry.index))
-            .collect::<BTreeMap<_, _>>();
+            let entries = list_regular_archive_entries(&source, "zip")?;
+            let entry_index_by_name = entries
+                .iter()
+                .map(|entry| (normalize_relaxed(&entry.path), entry.index))
+                .collect::<BTreeMap<_, _>>();
 
-        let selected_indices = [
-            *entry_index_by_name.get("dir").ok_or_else(|| {
-                RomWeaverError::Validation("zip fixture missing `dir` entry index".into())
-            })?,
-            *entry_index_by_name.get("dir/file.txt").ok_or_else(|| {
-                RomWeaverError::Validation("zip fixture missing `dir/file.txt` entry index".into())
-            })?,
-        ]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+            let selected_indices = [
+                *entry_index_by_name.get("dir").ok_or_else(|| {
+                    RomWeaverError::Validation("zip fixture missing `dir` entry index".into())
+                })?,
+                *entry_index_by_name.get("dir/file.txt").ok_or_else(|| {
+                    RomWeaverError::Validation(
+                        "zip fixture missing `dir/file.txt` entry index".into(),
+                    )
+                })?,
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
 
-        let mut seen_directories = Vec::new();
-        let mut seen_files = BTreeMap::new();
-        let matched = visit_selected_regular_archive_entries(
-            &source,
-            "zip",
-            &selected_indices,
-            |selected| {
-                match selected {
-                    SelectedRegularArchiveEntry::Directory { entry } => {
-                        seen_directories.push(normalize_relaxed(&entry.path));
+            let mut seen_directories = Vec::new();
+            let mut seen_files = BTreeMap::new();
+            let matched = visit_selected_regular_archive_entries(
+                &source,
+                "zip",
+                &selected_indices,
+                |selected| {
+                    match selected {
+                        SelectedRegularArchiveEntry::Directory { entry } => {
+                            seen_directories.push(normalize_relaxed(&entry.path));
+                        }
+                        SelectedRegularArchiveEntry::File { entry, reader } => {
+                            let mut bytes = Vec::new();
+                            reader.read_to_end(&mut bytes).map_err(|error| {
+                                RomWeaverError::Validation(format!(
+                                    "zip fixture read failed for `{}`: {error}",
+                                    entry.path
+                                ))
+                            })?;
+                            seen_files.insert(normalize_relaxed(&entry.path), bytes);
+                        }
                     }
-                    SelectedRegularArchiveEntry::File { entry, reader } => {
-                        let mut bytes = Vec::new();
-                        reader.read_to_end(&mut bytes).map_err(|error| {
-                            RomWeaverError::Validation(format!(
-                                "zip fixture read failed for `{}`: {error}",
-                                entry.path
-                            ))
-                        })?;
-                        seen_files.insert(normalize_relaxed(&entry.path), bytes);
-                    }
-                }
-                Ok(())
-            },
-        )?;
+                    Ok(())
+                },
+            )?;
 
-        assert_eq!(matched, 2);
-        assert_eq!(seen_directories, vec!["dir".to_string()]);
-        assert_eq!(seen_files.get("dir/file.txt"), Some(&b"hello".to_vec()));
-        assert!(!seen_files.contains_key("top.bin"));
-        Ok(())
+            assert_eq!(matched, 2);
+            assert_eq!(seen_directories, vec!["dir".to_string()]);
+            assert_eq!(seen_files.get("dir/file.txt"), Some(&b"hello".to_vec()));
+            assert!(!seen_files.contains_key("top.bin"));
+            Ok(())
+        })
     }
 }

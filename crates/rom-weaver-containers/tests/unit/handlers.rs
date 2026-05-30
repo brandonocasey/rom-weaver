@@ -106,6 +106,16 @@ mod tests {
         )
     }
 
+    fn run_with_large_stack(label: &str, test_fn: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .name(label.to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test_fn)
+            .expect("spawn large-stack test thread")
+            .join()
+            .expect("join large-stack test thread");
+    }
+
     fn assert_execution_matches_capability(
         execution: &ThreadExecution,
         capability: &ThreadCapability,
@@ -834,61 +844,63 @@ mod tests {
 
     #[test]
     fn regular_archive_list_entries_supports_libarchive_formats() {
-        let temp_dir = temp_dir_path("regular-archive-libarchive-list");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_dir = temp_dir.join("payload");
-        let nested_dir = input_dir.join("nested");
-        fs::create_dir_all(&nested_dir).expect("nested dir");
-        fs::write(input_dir.join("alpha.bin"), [1, 2, 3, 4]).expect("alpha fixture");
-        fs::write(nested_dir.join("beta.bin"), [5, 6, 7, 8]).expect("beta fixture");
+        run_with_large_stack("regular-archive-libarchive-list", || {
+            let temp_dir = temp_dir_path("regular-archive-libarchive-list");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_dir = temp_dir.join("payload");
+            let nested_dir = input_dir.join("nested");
+            fs::create_dir_all(&nested_dir).expect("nested dir");
+            fs::write(input_dir.join("alpha.bin"), [1, 2, 3, 4]).expect("alpha fixture");
+            fs::write(nested_dir.join("beta.bin"), [5, 6, 7, 8]).expect("beta fixture");
 
-        let registry = ContainerRegistry::new();
-        let context = test_context(&temp_dir, 4);
+            let registry = ContainerRegistry::new();
+            let context = test_context(&temp_dir, 4);
 
-        for (format, codec, level) in [
-            ("zip", Some("deflate"), Some(6)),
-            ("7z", Some("lzma2"), Some(6)),
-            ("tar", None, None),
-            ("tar.xz", Some("lzma2"), Some(6)),
-        ] {
-            let handler = registry.find_by_name(format).expect("archive handler");
-            let archive_path =
-                temp_dir.join(format!("payload-{}.{}", format.replace('.', "-"), format));
-            handler
-                .create(
-                    &ContainerCreateRequest {
-                        inputs: vec![input_dir.clone()],
-                        output: archive_path.clone(),
-                        format: format.to_string(),
-                        codec: codec.map(str::to_string),
-                        level,
-                        parent: None,
-                    },
-                    &context,
-                )
-                .expect("create archive");
+            for (format, codec, level) in [
+                ("zip", Some("deflate"), Some(6)),
+                ("7z", Some("lzma2"), Some(6)),
+                ("tar", None, None),
+                ("tar.xz", Some("lzma2"), Some(6)),
+            ] {
+                let handler = registry.find_by_name(format).expect("archive handler");
+                let archive_path =
+                    temp_dir.join(format!("payload-{}.{}", format.replace('.', "-"), format));
+                handler
+                    .create(
+                        &ContainerCreateRequest {
+                            inputs: vec![input_dir.clone()],
+                            output: archive_path.clone(),
+                            format: format.to_string(),
+                            codec: codec.map(str::to_string),
+                            level,
+                            parent: None,
+                        },
+                        &context,
+                    )
+                    .expect("create archive");
 
-            let entries = handler
-                .list_entries(
-                    &rom_weaver_core::ContainerInspectRequest {
-                        source: archive_path,
-                    },
-                    &context,
-                )
-                .expect("list entries");
-            assert!(
-                entries.iter().any(|entry| entry == "payload/alpha.bin"),
-                "{format} list should include alpha.bin: {entries:?}"
-            );
-            assert!(
-                entries
-                    .iter()
-                    .any(|entry| entry == "payload/nested/beta.bin"),
-                "{format} list should include beta.bin: {entries:?}"
-            );
-        }
+                let entries = handler
+                    .list_entries(
+                        &rom_weaver_core::ContainerInspectRequest {
+                            source: archive_path,
+                        },
+                        &context,
+                    )
+                    .expect("list entries");
+                assert!(
+                    entries.iter().any(|entry| entry == "payload/alpha.bin"),
+                    "{format} list should include alpha.bin: {entries:?}"
+                );
+                assert!(
+                    entries
+                        .iter()
+                        .any(|entry| entry == "payload/nested/beta.bin"),
+                    "{format} list should include beta.bin: {entries:?}"
+                );
+            }
 
-        let _ = fs::remove_dir_all(temp_dir);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
@@ -1250,426 +1262,447 @@ mod tests {
 
     #[test]
     fn zip_runtime_threads_match_capabilities_for_create_and_extract() {
-        let temp_dir = temp_dir_path("zip-thread-parity");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_dir = temp_dir.join("input");
-        fs::create_dir_all(&input_dir).expect("input dir");
-        for index in 0..8 {
-            let path = input_dir.join(format!("file-{index}.bin"));
-            let content = (0..32_768)
-                .map(|offset| (offset as u8).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            fs::write(path, content).expect("write fixture");
-        }
-        let archive_path = temp_dir.join("payload.zip");
-        let output_dir = temp_dir.join("out");
+        run_with_large_stack("zip-thread-parity", || {
+            let temp_dir = temp_dir_path("zip-thread-parity");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_dir = temp_dir.join("input");
+            fs::create_dir_all(&input_dir).expect("input dir");
+            for index in 0..8 {
+                let path = input_dir.join(format!("file-{index}.bin"));
+                let content = (0..32_768)
+                    .map(|offset| (offset as u8).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                fs::write(path, content).expect("write fixture");
+            }
+            let archive_path = temp_dir.join("payload.zip");
+            let output_dir = temp_dir.join("out");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.find_by_name("zip").expect("zip handler");
-        let capabilities = handler.capabilities();
-        let create_report = handler
-            .create(
-                &ContainerCreateRequest {
-                    inputs: vec![input_dir.clone()],
-                    output: archive_path.clone(),
-                    format: "zip".to_string(),
-                    codec: None,
-                    level: None,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("create zip");
-        let create_execution = create_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &create_execution,
-            &capabilities.create_threads,
-            8,
-        );
+            let registry = ContainerRegistry::new();
+            let handler = registry.find_by_name("zip").expect("zip handler");
+            let capabilities = handler.capabilities();
+            let create_report = handler
+                .create(
+                    &ContainerCreateRequest {
+                        inputs: vec![input_dir.clone()],
+                        output: archive_path.clone(),
+                        format: "zip".to_string(),
+                        codec: None,
+                        level: None,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("create zip");
+            let create_execution = create_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &create_execution,
+                &capabilities.create_threads,
+                8,
+            );
 
-        let extract_report = handler
-            .extract(
-                &rom_weaver_core::ContainerExtractRequest {
-                    source: archive_path.clone(),
-                    out_dir: output_dir.clone(),
-                    selections: Vec::new(),
-                    split_bin: false,
-                    ignore_common_files: false,
-                    overwrite: true,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("extract zip");
+            let extract_report = handler
+                .extract(
+                    &rom_weaver_core::ContainerExtractRequest {
+                        source: archive_path.clone(),
+                        out_dir: output_dir.clone(),
+                        selections: Vec::new(),
+                        split_bin: false,
+                        ignore_common_files: false,
+                        overwrite: true,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("extract zip");
 
-        let extract_execution = extract_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &extract_execution,
-            &capabilities.extract_threads,
-            8,
-        );
+            let extract_execution = extract_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &extract_execution,
+                &capabilities.extract_threads,
+                8,
+            );
 
-        for index in 0..8 {
-            let path = output_dir.join(format!("input/file-{index}.bin"));
-            let content = fs::read(path).expect("read extracted file");
-            let expected = (0..32_768)
-                .map(|offset| (offset as u8).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            assert_eq!(content, expected);
-        }
+            for index in 0..8 {
+                let path = output_dir.join(format!("input/file-{index}.bin"));
+                let content = fs::read(path).expect("read extracted file");
+                let expected = (0..32_768)
+                    .map(|offset| (offset as u8).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                assert_eq!(content, expected);
+            }
 
-        let _ = fs::remove_dir_all(temp_dir);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
     fn zip_runtime_threads_keep_parallel_create_for_single_entry() {
-        let temp_dir = temp_dir_path("zip-thread-single-entry");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_dir = temp_dir.join("input");
-        fs::create_dir_all(&input_dir).expect("input dir");
-        let input_path = input_dir.join("single.bin");
-        let source = (0..65_536)
-            .map(|index| (index % 239) as u8)
-            .collect::<Vec<_>>();
-        fs::write(&input_path, &source).expect("write fixture");
-        let archive_path = temp_dir.join("payload.zip");
-        let output_dir = temp_dir.join("out");
+        run_with_large_stack("zip-thread-single-entry", || {
+            let temp_dir = temp_dir_path("zip-thread-single-entry");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_dir = temp_dir.join("input");
+            fs::create_dir_all(&input_dir).expect("input dir");
+            let input_path = input_dir.join("single.bin");
+            let source = (0..65_536)
+                .map(|index| (index % 239) as u8)
+                .collect::<Vec<_>>();
+            fs::write(&input_path, &source).expect("write fixture");
+            let archive_path = temp_dir.join("payload.zip");
+            let output_dir = temp_dir.join("out");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.find_by_name("zip").expect("zip handler");
-        let capabilities = handler.capabilities();
+            let registry = ContainerRegistry::new();
+            let handler = registry.find_by_name("zip").expect("zip handler");
+            let capabilities = handler.capabilities();
 
-        let create_report = handler
-            .create(
-                &ContainerCreateRequest {
-                    inputs: vec![input_dir.clone()],
-                    output: archive_path.clone(),
-                    format: "zip".to_string(),
-                    codec: None,
-                    level: None,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("create zip");
-        let create_execution = create_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &create_execution,
-            &capabilities.create_threads,
-            8,
-        );
+            let create_report = handler
+                .create(
+                    &ContainerCreateRequest {
+                        inputs: vec![input_dir.clone()],
+                        output: archive_path.clone(),
+                        format: "zip".to_string(),
+                        codec: None,
+                        level: None,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("create zip");
+            let create_execution = create_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &create_execution,
+                &capabilities.create_threads,
+                8,
+            );
 
-        let extract_report = handler
-            .extract(
-                &rom_weaver_core::ContainerExtractRequest {
-                    source: archive_path,
-                    out_dir: output_dir.clone(),
-                    selections: Vec::new(),
-                    split_bin: false,
-                    ignore_common_files: false,
-                    overwrite: true,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("extract zip");
-        let extract_execution = extract_report.thread_execution.expect("thread execution");
-        assert_execution_matches_capability(&extract_execution, &capabilities.extract_threads, 8);
-        assert_eq!(extract_execution.effective_threads, 1);
-        assert!(!extract_execution.used_parallelism);
+            let extract_report = handler
+                .extract(
+                    &rom_weaver_core::ContainerExtractRequest {
+                        source: archive_path,
+                        out_dir: output_dir.clone(),
+                        selections: Vec::new(),
+                        split_bin: false,
+                        ignore_common_files: false,
+                        overwrite: true,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("extract zip");
+            let extract_execution = extract_report.thread_execution.expect("thread execution");
+            assert_execution_matches_capability(
+                &extract_execution,
+                &capabilities.extract_threads,
+                8,
+            );
+            assert_eq!(extract_execution.effective_threads, 1);
+            assert!(!extract_execution.used_parallelism);
 
-        let extracted = fs::read(output_dir.join("input/single.bin")).expect("read extracted file");
-        assert_eq!(extracted, source);
+            let extracted =
+                fs::read(output_dir.join("input/single.bin")).expect("read extracted file");
+            assert_eq!(extracted, source);
 
-        let _ = fs::remove_dir_all(temp_dir);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
     fn tar_gz_runtime_threads_match_capabilities_for_create_and_extract() {
-        let temp_dir = temp_dir_path("tar-gz-thread-parity");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_dir = temp_dir.join("input");
-        fs::create_dir_all(&input_dir).expect("input dir");
-        for index in 0..6 {
-            let path = input_dir.join(format!("blob-{index}.bin"));
-            let content = (0..(512 * 1024))
-                .map(|offset| (offset as u8).wrapping_mul(5).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            fs::write(path, content).expect("write fixture");
-        }
-        let archive_path = temp_dir.join("payload.tar.gz");
-        let output_dir = temp_dir.join("out");
+        run_with_large_stack("tar-gz-thread-parity", || {
+            let temp_dir = temp_dir_path("tar-gz-thread-parity");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_dir = temp_dir.join("input");
+            fs::create_dir_all(&input_dir).expect("input dir");
+            for index in 0..6 {
+                let path = input_dir.join(format!("blob-{index}.bin"));
+                let content = (0..(512 * 1024))
+                    .map(|offset| (offset as u8).wrapping_mul(5).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                fs::write(path, content).expect("write fixture");
+            }
+            let archive_path = temp_dir.join("payload.tar.gz");
+            let output_dir = temp_dir.join("out");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.find_by_name("tar.gz").expect("tar.gz handler");
-        let capabilities = handler.capabilities();
-        let create_report = handler
-            .create(
-                &ContainerCreateRequest {
-                    inputs: vec![input_dir.clone()],
-                    output: archive_path.clone(),
-                    format: "tar.gz".to_string(),
-                    codec: None,
-                    level: None,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("create tar.gz");
-        let create_execution = create_report.thread_execution.expect("thread execution");
-        assert_execution_matches_capability(&create_execution, &capabilities.create_threads, 8);
+            let registry = ContainerRegistry::new();
+            let handler = registry.find_by_name("tar.gz").expect("tar.gz handler");
+            let capabilities = handler.capabilities();
+            let create_report = handler
+                .create(
+                    &ContainerCreateRequest {
+                        inputs: vec![input_dir.clone()],
+                        output: archive_path.clone(),
+                        format: "tar.gz".to_string(),
+                        codec: None,
+                        level: None,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("create tar.gz");
+            let create_execution = create_report.thread_execution.expect("thread execution");
+            assert_execution_matches_capability(
+                &create_execution,
+                &capabilities.create_threads,
+                8,
+            );
 
-        let extract_report = handler
-            .extract(
-                &rom_weaver_core::ContainerExtractRequest {
-                    source: archive_path,
-                    out_dir: output_dir.clone(),
-                    selections: Vec::new(),
-                    split_bin: false,
-                    ignore_common_files: false,
-                    overwrite: true,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("extract tar.gz");
-        let extract_execution = extract_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &extract_execution,
-            &capabilities.extract_threads,
-            8,
-        );
+            let extract_report = handler
+                .extract(
+                    &rom_weaver_core::ContainerExtractRequest {
+                        source: archive_path,
+                        out_dir: output_dir.clone(),
+                        selections: Vec::new(),
+                        split_bin: false,
+                        ignore_common_files: false,
+                        overwrite: true,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("extract tar.gz");
+            let extract_execution = extract_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &extract_execution,
+                &capabilities.extract_threads,
+                8,
+            );
 
-        for index in 0..6 {
-            let path = output_dir.join(format!("input/blob-{index}.bin"));
-            let content = fs::read(path).expect("read extracted file");
-            let expected = (0..(512 * 1024))
-                .map(|offset| (offset as u8).wrapping_mul(5).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            assert_eq!(content, expected);
-        }
+            for index in 0..6 {
+                let path = output_dir.join(format!("input/blob-{index}.bin"));
+                let content = fs::read(path).expect("read extracted file");
+                let expected = (0..(512 * 1024))
+                    .map(|offset| (offset as u8).wrapping_mul(5).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                assert_eq!(content, expected);
+            }
 
-        let _ = fs::remove_dir_all(temp_dir);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
     fn tar_bz2_runtime_threads_match_capabilities_for_create_and_extract() {
-        let temp_dir = temp_dir_path("tar-bz2-thread-parity");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_dir = temp_dir.join("input");
-        fs::create_dir_all(&input_dir).expect("input dir");
-        for index in 0..6 {
-            let path = input_dir.join(format!("blob-{index}.bin"));
-            let content = (0..(512 * 1024))
-                .map(|offset| (offset as u8).wrapping_mul(9).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            fs::write(path, content).expect("write fixture");
-        }
-        let archive_path = temp_dir.join("payload.tar.bz2");
-        let output_dir = temp_dir.join("out");
+        run_with_large_stack("tar-bz2-thread-parity", || {
+            let temp_dir = temp_dir_path("tar-bz2-thread-parity");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_dir = temp_dir.join("input");
+            fs::create_dir_all(&input_dir).expect("input dir");
+            for index in 0..6 {
+                let path = input_dir.join(format!("blob-{index}.bin"));
+                let content = (0..(512 * 1024))
+                    .map(|offset| (offset as u8).wrapping_mul(9).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                fs::write(path, content).expect("write fixture");
+            }
+            let archive_path = temp_dir.join("payload.tar.bz2");
+            let output_dir = temp_dir.join("out");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.find_by_name("tar.bz2").expect("tar.bz2 handler");
-        let capabilities = handler.capabilities();
-        let create_report = handler
-            .create(
-                &ContainerCreateRequest {
-                    inputs: vec![input_dir.clone()],
-                    output: archive_path.clone(),
-                    format: "tar.bz2".to_string(),
-                    codec: None,
-                    level: None,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("create tar.bz2");
-        let create_execution = create_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &create_execution,
-            &capabilities.create_threads,
-            8,
-        );
+            let registry = ContainerRegistry::new();
+            let handler = registry.find_by_name("tar.bz2").expect("tar.bz2 handler");
+            let capabilities = handler.capabilities();
+            let create_report = handler
+                .create(
+                    &ContainerCreateRequest {
+                        inputs: vec![input_dir.clone()],
+                        output: archive_path.clone(),
+                        format: "tar.bz2".to_string(),
+                        codec: None,
+                        level: None,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("create tar.bz2");
+            let create_execution = create_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &create_execution,
+                &capabilities.create_threads,
+                8,
+            );
 
-        let extract_report = handler
-            .extract(
-                &rom_weaver_core::ContainerExtractRequest {
-                    source: archive_path,
-                    out_dir: output_dir.clone(),
-                    selections: Vec::new(),
-                    split_bin: false,
-                    ignore_common_files: false,
-                    overwrite: true,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("extract tar.bz2");
-        let extract_execution = extract_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &extract_execution,
-            &capabilities.extract_threads,
-            8,
-        );
+            let extract_report = handler
+                .extract(
+                    &rom_weaver_core::ContainerExtractRequest {
+                        source: archive_path,
+                        out_dir: output_dir.clone(),
+                        selections: Vec::new(),
+                        split_bin: false,
+                        ignore_common_files: false,
+                        overwrite: true,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("extract tar.bz2");
+            let extract_execution = extract_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &extract_execution,
+                &capabilities.extract_threads,
+                8,
+            );
 
-        for index in 0..6 {
-            let path = output_dir.join(format!("input/blob-{index}.bin"));
-            let content = fs::read(path).expect("read extracted file");
-            let expected = (0..(512 * 1024))
-                .map(|offset| (offset as u8).wrapping_mul(9).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            assert_eq!(content, expected);
-        }
+            for index in 0..6 {
+                let path = output_dir.join(format!("input/blob-{index}.bin"));
+                let content = fs::read(path).expect("read extracted file");
+                let expected = (0..(512 * 1024))
+                    .map(|offset| (offset as u8).wrapping_mul(9).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                assert_eq!(content, expected);
+            }
 
-        let _ = fs::remove_dir_all(temp_dir);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
     fn tar_runtime_threads_match_capabilities_for_create_and_extract() {
-        let temp_dir = temp_dir_path("tar-thread-parity");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_dir = temp_dir.join("input");
-        fs::create_dir_all(&input_dir).expect("input dir");
-        for index in 0..8 {
-            let path = input_dir.join(format!("blob-{index}.bin"));
-            let content = (0..(256 * 1024))
-                .map(|offset| (offset as u8).wrapping_mul(7).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            fs::write(path, content).expect("write fixture");
-        }
-        let archive_path = temp_dir.join("payload.tar");
-        let output_dir = temp_dir.join("out");
+        run_with_large_stack("tar-thread-parity", || {
+            let temp_dir = temp_dir_path("tar-thread-parity");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_dir = temp_dir.join("input");
+            fs::create_dir_all(&input_dir).expect("input dir");
+            for index in 0..8 {
+                let path = input_dir.join(format!("blob-{index}.bin"));
+                let content = (0..(256 * 1024))
+                    .map(|offset| (offset as u8).wrapping_mul(7).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                fs::write(path, content).expect("write fixture");
+            }
+            let archive_path = temp_dir.join("payload.tar");
+            let output_dir = temp_dir.join("out");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.find_by_name("tar").expect("tar handler");
-        let capabilities = handler.capabilities();
-        let create_report = handler
-            .create(
-                &ContainerCreateRequest {
-                    inputs: vec![input_dir.clone()],
-                    output: archive_path.clone(),
-                    format: "tar".to_string(),
-                    codec: None,
-                    level: None,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("create tar");
+            let registry = ContainerRegistry::new();
+            let handler = registry.find_by_name("tar").expect("tar handler");
+            let capabilities = handler.capabilities();
+            let create_report = handler
+                .create(
+                    &ContainerCreateRequest {
+                        inputs: vec![input_dir.clone()],
+                        output: archive_path.clone(),
+                        format: "tar".to_string(),
+                        codec: None,
+                        level: None,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("create tar");
 
-        let create_execution = create_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &create_execution,
-            &capabilities.create_threads,
-            8,
-        );
+            let create_execution = create_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &create_execution,
+                &capabilities.create_threads,
+                8,
+            );
 
-        let extract_report = handler
-            .extract(
-                &rom_weaver_core::ContainerExtractRequest {
-                    source: archive_path,
-                    out_dir: output_dir.clone(),
-                    selections: Vec::new(),
-                    split_bin: false,
-                    ignore_common_files: false,
-                    overwrite: true,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("extract tar");
+            let extract_report = handler
+                .extract(
+                    &rom_weaver_core::ContainerExtractRequest {
+                        source: archive_path,
+                        out_dir: output_dir.clone(),
+                        selections: Vec::new(),
+                        split_bin: false,
+                        ignore_common_files: false,
+                        overwrite: true,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("extract tar");
 
-        let extract_execution = extract_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &extract_execution,
-            &capabilities.extract_threads,
-            8,
-        );
+            let extract_execution = extract_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &extract_execution,
+                &capabilities.extract_threads,
+                8,
+            );
 
-        for index in 0..8 {
-            let path = output_dir.join(format!("input/blob-{index}.bin"));
-            let content = fs::read(path).expect("read extracted file");
-            let expected = (0..(256 * 1024))
-                .map(|offset| (offset as u8).wrapping_mul(7).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            assert_eq!(content, expected);
-        }
+            for index in 0..8 {
+                let path = output_dir.join(format!("input/blob-{index}.bin"));
+                let content = fs::read(path).expect("read extracted file");
+                let expected = (0..(256 * 1024))
+                    .map(|offset| (offset as u8).wrapping_mul(7).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                assert_eq!(content, expected);
+            }
 
-        let _ = fs::remove_dir_all(temp_dir);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
     fn tar_xz_runtime_threads_match_capabilities_for_create_and_extract() {
-        let temp_dir = temp_dir_path("tar-xz-thread-parity");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_dir = temp_dir.join("input");
-        fs::create_dir_all(&input_dir).expect("input dir");
-        for index in 0..6 {
-            let path = input_dir.join(format!("blob-{index}.bin"));
-            let content = (0..(512 * 1024))
-                .map(|offset| (offset as u8).wrapping_mul(3).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            fs::write(path, content).expect("write fixture");
-        }
-        let archive_path = temp_dir.join("payload.tar.xz");
-        let output_dir = temp_dir.join("out");
+        run_with_large_stack("tar-xz-thread-parity", || {
+            let temp_dir = temp_dir_path("tar-xz-thread-parity");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_dir = temp_dir.join("input");
+            fs::create_dir_all(&input_dir).expect("input dir");
+            for index in 0..6 {
+                let path = input_dir.join(format!("blob-{index}.bin"));
+                let content = (0..(512 * 1024))
+                    .map(|offset| (offset as u8).wrapping_mul(3).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                fs::write(path, content).expect("write fixture");
+            }
+            let archive_path = temp_dir.join("payload.tar.xz");
+            let output_dir = temp_dir.join("out");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.find_by_name("tar.xz").expect("tar.xz handler");
-        let capabilities = handler.capabilities();
-        let create_report = handler
-            .create(
-                &ContainerCreateRequest {
-                    inputs: vec![input_dir.clone()],
-                    output: archive_path.clone(),
-                    format: "tar.xz".to_string(),
-                    codec: None,
-                    level: None,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("create tar.xz");
+            let registry = ContainerRegistry::new();
+            let handler = registry.find_by_name("tar.xz").expect("tar.xz handler");
+            let capabilities = handler.capabilities();
+            let create_report = handler
+                .create(
+                    &ContainerCreateRequest {
+                        inputs: vec![input_dir.clone()],
+                        output: archive_path.clone(),
+                        format: "tar.xz".to_string(),
+                        codec: None,
+                        level: None,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("create tar.xz");
 
-        let create_execution = create_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &create_execution,
-            &capabilities.create_threads,
-            8,
-        );
+            let create_execution = create_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &create_execution,
+                &capabilities.create_threads,
+                8,
+            );
 
-        let extract_report = handler
-            .extract(
-                &rom_weaver_core::ContainerExtractRequest {
-                    source: archive_path,
-                    out_dir: output_dir.clone(),
-                    selections: Vec::new(),
-                    split_bin: false,
-                    ignore_common_files: false,
-                    overwrite: true,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("extract tar.xz");
+            let extract_report = handler
+                .extract(
+                    &rom_weaver_core::ContainerExtractRequest {
+                        source: archive_path,
+                        out_dir: output_dir.clone(),
+                        selections: Vec::new(),
+                        split_bin: false,
+                        ignore_common_files: false,
+                        overwrite: true,
+                        parent: None,
+                    },
+                    &test_context(&temp_dir, 8),
+                )
+                .expect("extract tar.xz");
 
-        let extract_execution = extract_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &extract_execution,
-            &capabilities.extract_threads,
-            8,
-        );
+            let extract_execution = extract_report.thread_execution.expect("thread execution");
+            assert_execution_parallel_when_available(
+                &extract_execution,
+                &capabilities.extract_threads,
+                8,
+            );
 
-        for index in 0..6 {
-            let path = output_dir.join(format!("input/blob-{index}.bin"));
-            let content = fs::read(path).expect("read extracted file");
-            let expected = (0..(512 * 1024))
-                .map(|offset| (offset as u8).wrapping_mul(3).wrapping_add(index as u8))
-                .collect::<Vec<_>>();
-            assert_eq!(content, expected);
-        }
+            for index in 0..6 {
+                let path = output_dir.join(format!("input/blob-{index}.bin"));
+                let content = fs::read(path).expect("read extracted file");
+                let expected = (0..(512 * 1024))
+                    .map(|offset| (offset as u8).wrapping_mul(3).wrapping_add(index as u8))
+                    .collect::<Vec<_>>();
+                assert_eq!(content, expected);
+            }
 
-        let _ = fs::remove_dir_all(temp_dir);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
@@ -2859,118 +2892,46 @@ mod tests {
 
     #[test]
     fn seven_z_runtime_threads_match_capabilities_for_create_and_extract() {
-        let temp_dir = temp_dir_path("seven-z-thread-parity");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_path = temp_dir.join("payload.bin");
-        let archive_path = temp_dir.join("payload.7z");
-        let output_dir = temp_dir.join("out");
-        let source_bytes = (0..(64 * 1024))
-            .map(|index| (index % 251) as u8)
-            .collect::<Vec<_>>();
-        fs::write(&input_path, &source_bytes).expect("fixture");
+        run_with_large_stack("seven-z-thread-parity", || {
+            let temp_dir = temp_dir_path("seven-z-thread-parity");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_path = temp_dir.join("payload.bin");
+            let archive_path = temp_dir.join("payload.7z");
+            let output_dir = temp_dir.join("out");
+            let source_bytes = (0..(64 * 1024))
+                .map(|index| (index % 251) as u8)
+                .collect::<Vec<_>>();
+            fs::write(&input_path, &source_bytes).expect("fixture");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.find_by_name("7z").expect("7z handler");
-        let capabilities = handler.capabilities();
-        let create_report = handler
-            .create(
-                &ContainerCreateRequest {
-                    inputs: vec![input_path.clone()],
-                    output: archive_path.clone(),
-                    format: "7z".to_string(),
-                    codec: Some("lzma2".to_string()),
-                    level: Some(6),
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("create seven-z");
-
-        let create_execution = create_report.thread_execution.expect("thread execution");
-        assert_execution_parallel_when_available(
-            &create_execution,
-            &capabilities.create_threads,
-            8,
-        );
-        assert!(archive_path.exists());
-
-        let extract_report = handler
-            .extract(
-                &rom_weaver_core::ContainerExtractRequest {
-                    source: archive_path.clone(),
-                    out_dir: output_dir.clone(),
-                    selections: Vec::new(),
-                    split_bin: false,
-                    ignore_common_files: false,
-                    overwrite: true,
-                    parent: None,
-                },
-                &test_context(&temp_dir, 8),
-            )
-            .expect("extract seven-z");
-
-        let extract_execution = extract_report.thread_execution.expect("thread execution");
-        assert_execution_matches_capability(&extract_execution, &capabilities.extract_threads, 8);
-        assert_eq!(extract_execution.effective_threads, 1);
-        assert!(!extract_execution.used_parallelism);
-
-        let extracted_bytes =
-            fs::read(output_dir.join("payload.bin")).expect("read extracted file");
-        assert_eq!(extracted_bytes, source_bytes);
-
-        let _ = fs::remove_dir_all(temp_dir);
-    }
-
-    #[test]
-    fn seven_z_round_trip_supports_supported_codec_set() {
-        let temp_dir = temp_dir_path("seven-z-expanded-codec-roundtrip");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_path = temp_dir.join("payload.bin");
-        let source_bytes = (0..(96 * 1024))
-            .map(|index| (index as u8).wrapping_mul(29))
-            .collect::<Vec<_>>();
-        fs::write(&input_path, &source_bytes).expect("fixture");
-
-        let registry = ContainerRegistry::new();
-        let handler = registry.find_by_name("7z").expect("7z handler");
-        let capabilities = handler.capabilities();
-
-        for (codec, level) in [
-            ("store", None),
-            ("deflate", Some(6)),
-            ("bzip2", Some(6)),
-            ("lzma", Some(6)),
-            ("lzma2", Some(6)),
-            ("zstd", Some(6)),
-            ("ppmd", Some(6)),
-        ] {
-            let archive_path = temp_dir.join(format!("payload-{codec}.7z"));
-            let output_dir = temp_dir.join(format!("out-{codec}"));
-
+            let registry = ContainerRegistry::new();
+            let handler = registry.find_by_name("7z").expect("7z handler");
+            let capabilities = handler.capabilities();
             let create_report = handler
                 .create(
                     &ContainerCreateRequest {
                         inputs: vec![input_path.clone()],
                         output: archive_path.clone(),
                         format: "7z".to_string(),
-                        codec: Some(codec.to_string()),
-                        level,
+                        codec: Some("lzma2".to_string()),
+                        level: Some(6),
                         parent: None,
                     },
                     &test_context(&temp_dir, 8),
                 )
-                .expect("create seven-z with codec");
+                .expect("create seven-z");
+
             let create_execution = create_report.thread_execution.expect("thread execution");
-            assert!(
-                capabilities
-                    .create_threads
-                    .supports_execution(&create_execution)
+            assert_execution_parallel_when_available(
+                &create_execution,
+                &capabilities.create_threads,
+                8,
             );
+            assert!(archive_path.exists());
 
             let extract_report = handler
                 .extract(
                     &rom_weaver_core::ContainerExtractRequest {
-                        source: archive_path,
+                        source: archive_path.clone(),
                         out_dir: output_dir.clone(),
                         selections: Vec::new(),
                         split_bin: false,
@@ -2980,19 +2941,100 @@ mod tests {
                     },
                     &test_context(&temp_dir, 8),
                 )
-                .expect("extract seven-z with codec");
+                .expect("extract seven-z");
+
             let extract_execution = extract_report.thread_execution.expect("thread execution");
-            assert!(
-                capabilities
-                    .extract_threads
-                    .supports_execution(&extract_execution)
+            assert_execution_matches_capability(
+                &extract_execution,
+                &capabilities.extract_threads,
+                8,
             );
+            assert_eq!(extract_execution.effective_threads, 1);
+            assert!(!extract_execution.used_parallelism);
 
-            let extracted = fs::read(output_dir.join("payload.bin")).expect("read extracted file");
-            assert_eq!(extracted, source_bytes);
-        }
+            let extracted_bytes =
+                fs::read(output_dir.join("payload.bin")).expect("read extracted file");
+            assert_eq!(extracted_bytes, source_bytes);
 
-        let _ = fs::remove_dir_all(temp_dir);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
+    }
+
+    #[test]
+    fn seven_z_round_trip_supports_supported_codec_set() {
+        run_with_large_stack("seven-z-expanded-codec-roundtrip", || {
+            let temp_dir = temp_dir_path("seven-z-expanded-codec-roundtrip");
+            fs::create_dir_all(&temp_dir).expect("temp dir");
+            let input_path = temp_dir.join("payload.bin");
+            let source_bytes = (0..(96 * 1024))
+                .map(|index| (index as u8).wrapping_mul(29))
+                .collect::<Vec<_>>();
+            fs::write(&input_path, &source_bytes).expect("fixture");
+
+            let registry = ContainerRegistry::new();
+            let handler = registry.find_by_name("7z").expect("7z handler");
+            let capabilities = handler.capabilities();
+
+            for (codec, level) in [
+                ("store", None),
+                ("deflate", Some(6)),
+                ("bzip2", Some(6)),
+                ("lzma", Some(6)),
+                ("lzma2", Some(6)),
+                ("zstd", Some(6)),
+                ("ppmd", Some(6)),
+            ] {
+                let archive_path = temp_dir.join(format!("payload-{codec}.7z"));
+                let output_dir = temp_dir.join(format!("out-{codec}"));
+
+                let create_report = handler
+                    .create(
+                        &ContainerCreateRequest {
+                            inputs: vec![input_path.clone()],
+                            output: archive_path.clone(),
+                            format: "7z".to_string(),
+                            codec: Some(codec.to_string()),
+                            level,
+                            parent: None,
+                        },
+                        &test_context(&temp_dir, 8),
+                    )
+                    .expect("create seven-z with codec");
+                let create_execution = create_report.thread_execution.expect("thread execution");
+                assert!(
+                    capabilities
+                        .create_threads
+                        .supports_execution(&create_execution)
+                );
+
+                let extract_report = handler
+                    .extract(
+                        &rom_weaver_core::ContainerExtractRequest {
+                            source: archive_path,
+                            out_dir: output_dir.clone(),
+                            selections: Vec::new(),
+                            split_bin: false,
+                            ignore_common_files: false,
+                            overwrite: true,
+                            parent: None,
+                        },
+                        &test_context(&temp_dir, 8),
+                    )
+                    .expect("extract seven-z with codec");
+                let extract_execution = extract_report.thread_execution.expect("thread execution");
+                assert!(
+                    capabilities
+                        .extract_threads
+                        .supports_execution(&extract_execution)
+                );
+
+                let extracted =
+                    fs::read(output_dir.join("payload.bin")).expect("read extracted file");
+                assert_eq!(extracted, source_bytes);
+            }
+
+            let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
@@ -3036,56 +3078,63 @@ mod tests {
 
     #[test]
     fn probe_prefers_signature_over_mismatched_extension() {
-        let temp_dir = temp_dir_path("seven-z-signature");
-        fs::create_dir_all(&temp_dir).expect("temp dir");
-        let input_path = temp_dir.join("payload.bin");
-        let path = temp_dir.join("payload.zip");
-        fs::write(&input_path, [1, 2, 3, 4]).expect("fixture");
+        run_with_large_stack("probe-prefers-signature", || {
+                let temp_dir = temp_dir_path("seven-z-signature");
+                fs::create_dir_all(&temp_dir).expect("temp dir");
+                let input_path = temp_dir.join("payload.bin");
+                let path = temp_dir.join("payload.zip");
+                fs::write(&input_path, [1, 2, 3, 4]).expect("fixture");
 
-        let registry = ContainerRegistry::new();
-        let seven_z = registry.find_by_name("7z").expect("7z handler");
-        seven_z
-            .create(
-                &ContainerCreateRequest {
-                    inputs: vec![input_path],
-                    output: path.clone(),
-                    format: "7z".to_string(),
-                    codec: Some("lzma2".to_string()),
-                    level: Some(6),
-                    parent: None,
-                },
-                &test_context(&temp_dir, 2),
-            )
-            .expect("create 7z archive");
-        let handler = registry.probe(&path).expect("7z probe");
-        assert_eq!(handler.descriptor().name, "7z");
+                let registry = ContainerRegistry::new();
+                let seven_z = registry.find_by_name("7z").expect("7z handler");
+                seven_z
+                    .create(
+                        &ContainerCreateRequest {
+                            inputs: vec![input_path],
+                            output: path.clone(),
+                            format: "7z".to_string(),
+                            codec: Some("store".to_string()),
+                            level: None,
+                            parent: None,
+                        },
+                        &test_context(&temp_dir, 2),
+                    )
+                    .expect("create 7z archive");
+                let handler = registry.probe(&path).expect("7z probe");
+                assert_eq!(handler.descriptor().name, "7z");
 
-        let _ = fs::remove_dir_all(temp_dir);
+                let _ = fs::remove_dir_all(temp_dir);
+        });
     }
 
     #[test]
     fn probe_routes_unknown_extension_with_chd_signature_to_chd_handler() {
-        let path = temp_file_path_with_extension("chd-signature", "bin");
-        fs::write(&path, b"MComprHD\0\0\0\0").expect("fixture");
+        run_with_large_stack("probe-chd-signature", || {
+                let path = temp_file_path_with_extension("chd-signature", "bin");
+                fs::write(&path, b"MComprHD\0\0\0\0").expect("fixture");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.probe(&path).expect("chd probe");
-        assert_eq!(handler.descriptor().name, "chd");
+                let registry = ContainerRegistry::new();
+                let handler = registry.probe(&path).expect("chd probe");
+                assert_eq!(handler.descriptor().name, "chd");
 
-        let _ = fs::remove_file(path);
+                let _ = fs::remove_file(path);
+        });
     }
 
     #[test]
     fn probe_routes_pbp_signature_even_with_wrong_extension() {
-        let path = temp_file_path_with_extension("pbp-signature", "bin");
-        let pbp_bytes = build_test_pbp_fixture(vec![("SLUS00001", build_test_pbp_iso(64, 17))]);
-        fs::write(&path, pbp_bytes).expect("fixture");
+        run_with_large_stack("probe-pbp-signature", || {
+                let path = temp_file_path_with_extension("pbp-signature", "bin");
+                let pbp_bytes =
+                    build_test_pbp_fixture(vec![("SLUS00001", build_test_pbp_iso(64, 17))]);
+                fs::write(&path, pbp_bytes).expect("fixture");
 
-        let registry = ContainerRegistry::new();
-        let handler = registry.probe(&path).expect("pbp probe");
-        assert_eq!(handler.descriptor().name, "pbp");
+                let registry = ContainerRegistry::new();
+                let handler = registry.probe(&path).expect("pbp probe");
+                assert_eq!(handler.descriptor().name, "pbp");
 
-        let _ = fs::remove_file(path);
+                let _ = fs::remove_file(path);
+        });
     }
 
     #[test]

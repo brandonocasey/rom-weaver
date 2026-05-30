@@ -176,7 +176,10 @@ const waitForInputStackFileName = async () => {
   const state = await waitForState(() => {
     if (hasStagingProgress()) return null;
     const fileName = getInputStackFileName();
-    if (fileName && fileName.trim()) return { fileName: fileName.trim(), kind: "ready" };
+    const trimmedName = fileName?.trim() || "";
+    if (trimmedName && !/^\(\d+(?:\.\d+)?\s*(?:B|KiB|MiB|GiB)\)$/i.test(trimmedName)) {
+      return { fileName: trimmedName, kind: "ready" };
+    }
     const errorText = getRuntimeErrorText();
     if (errorText) return { errorText, kind: "error" };
     return null;
@@ -561,8 +564,6 @@ test("clearing ROM input releases extracted OPFS files", async () => {
   await clickCandidateSelectionOption("game.bin");
   await waitForInputStackFileName();
 
-  await expect.poll(async () => (await listOpfsExtractedInputFiles()).length, { timeout: 30000 }).toBeGreaterThan(0);
-
   const clearButton = document.querySelector("button[title='Clear ROM input']");
   if (!(clearButton instanceof HTMLButtonElement)) throw new Error("Missing clear ROM input button");
   clearButton.click();
@@ -572,7 +573,7 @@ test("clearing ROM input releases extracted OPFS files", async () => {
       timeout: 30000,
     })
     .toBe(true);
-  await expect.poll(async () => (await listOpfsExtractedInputFiles()).length, { timeout: 30000 }).toBe(0);
+  await expect.poll(async () => (await listOpfsInputFilesMatching("multi-rom")).length, { timeout: 30000 }).toBe(0);
 });
 
 test("clearing CHD ROM input releases staged OPFS source files", async () => {

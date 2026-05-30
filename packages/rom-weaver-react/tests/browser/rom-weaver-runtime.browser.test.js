@@ -22,7 +22,7 @@ test("resolvePatchApplyThreadArg forces single-thread for xdelta patches", () =>
   expect(result).toMatchObject({
     forcedSingleThread: true,
     hasXdeltaPatch: true,
-    threadArg: "1",
+    threadArg: 1,
   });
 });
 

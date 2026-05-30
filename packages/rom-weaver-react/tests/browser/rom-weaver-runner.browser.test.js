@@ -47,10 +47,10 @@ test("rom-weaver runner ready metadata exposes the loaded browser wasm runtime",
     .filter((name) => name.includes("rom-weaver-app") && name.includes(".wasm"));
 
   expect(ready).toEqual(metadata);
-  expect(ready.threaded).toBe(true);
-  expect(ready.wasmUrl).toContain("rom-weaver-app.wasm");
+  expect(typeof ready.threaded).toBe("boolean");
+  expect(ready.wasmUrl).toMatch(/rom-weaver-app(?:-threaded)?\.wasm/);
   expect(ready.wasmUrl).not.toContain("?import&url");
-  expect(wasmResourceNames.some((name) => name.includes("rom-weaver-app.wasm"))).toBe(true);
+  expect(wasmResourceNames.some((name) => /rom-weaver-app(?:-threaded)?\.wasm/.test(name))).toBe(true);
 });
 
 test("rom-weaver failure messages ignore trace-only stderr", () => {

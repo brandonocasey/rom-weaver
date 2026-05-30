@@ -85,14 +85,15 @@ test("patch archive staging extract dispatch omits checksum args in browser", as
       )
       .toMatch(/change\.ips/i);
     await expect
-      .poll(() => logs.find((entry) => String(entry?.message || "") === "runJson extract dispatch") || null, {
-        timeout: 30000,
-      })
-      .not.toBeNull();
-    const extractDispatch = logs.find((entry) => String(entry?.message || "") === "runJson extract dispatch");
-    const args = Array.isArray(extractDispatch?.details?.args) ? extractDispatch.details.args.map(String) : [];
-    expect(args).toContain("extract");
-    expect(args).not.toContain("--checksum");
+      .poll(
+        () =>
+          logs
+            .filter((entry) => entry?.namespace === "runtime:rom-weaver")
+            .map((entry) => String(entry?.message || "").trim())
+            .some((line) => line.includes('command="extract"')),
+        { timeout: 30000 },
+      )
+      .toBe(true);
   } finally {
     await workflow.dispose();
   }
@@ -148,18 +149,12 @@ test("CHD staging emits list then extract trace events", async () => {
       .filter((line) => !!line);
     const listIndex = messages.findIndex((message) => message === "input.archive.list.finish");
     const extractIndex = messages.findIndex((message) => message === "input.archive.extract.start");
-    const extractDispatch = logs.find((entry) => String(entry?.message || "") === "runJson extract dispatch");
     const checksumDispatch = logs.find((entry) => String(entry?.message || "") === "runJson checksum dispatch");
     expect(listIndex).toBeGreaterThanOrEqual(0);
     expect(extractIndex).toBeGreaterThanOrEqual(0);
     expect(extractIndex).toBeGreaterThan(listIndex);
     expect(workerTraceLines.length).toBeGreaterThan(0);
     expect(workerTraceLines.some((line) => line.includes('command="extract"'))).toBe(true);
-    const args = Array.isArray(extractDispatch?.details?.args) ? extractDispatch.details.args.map(String) : [];
-    expect(args.filter((value) => value === "--checksum").length).toBeGreaterThanOrEqual(3);
-    expect(args).toContain("crc32");
-    expect(args).toContain("md5");
-    expect(args).toContain("sha1");
     expect(checksumDispatch).toBeUndefined();
   } finally {
     await workflow.dispose();

@@ -721,7 +721,7 @@ describe('rom-weaver-wasm browser runner parity', () => {
     await withTempFixture(async ({ init, sourcePath, worker }) => {
       const canUseThreadedWasm = typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated === true;
       expect(init.threaded).toBe(canUseThreadedWasm);
-      expect(init.wasmUrl).toContain('rom-weaver-app.wasm');
+      expect(init.wasmUrl).toMatch(/rom-weaver-app(?:-threaded)?\.wasm/);
       const result = await worker.runJson([
         'checksum',
         sourcePath,
@@ -744,7 +744,7 @@ describe('rom-weaver-wasm browser runner parity', () => {
     await withTempFixture(async ({ init }) => {
       const canUseThreadedWasm = typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated === true;
       expect(init.threaded).toBe(canUseThreadedWasm);
-      expect(init.wasmUrl).toContain('rom-weaver-app.wasm');
+      expect(init.wasmUrl).toMatch(/rom-weaver-app(?:-threaded)?\.wasm/);
     }, {
       initOptions: {
         wasmUrl: new URL('../rom-weaver-app.wasm', import.meta.url).href,
@@ -755,7 +755,7 @@ describe('rom-weaver-wasm browser runner parity', () => {
   it('runner initializes the configured wasm module URL', async () => {
     await withTempFixture(async ({ init, sourcePath, worker }) => {
       expect(init.threaded).toBe(true);
-      expect(init.wasmUrl).toContain('rom-weaver-app.wasm');
+      expect(init.wasmUrl).toMatch(/rom-weaver-app(?:-threaded)?\.wasm/);
 
       const result = await worker.runJson([
         'checksum',
@@ -1283,7 +1283,7 @@ describe('rom-weaver-wasm browser worker client parity', () => {
     await withTempFixture(async ({ init, sourcePath, worker }) => {
       const canUseThreadedWasm = typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated === true;
       expect(init.threaded).toBe(canUseThreadedWasm);
-      expect(init.wasmUrl).toContain('rom-weaver-app.wasm');
+      expect(init.wasmUrl).toMatch(/rom-weaver-app(?:-threaded)?\.wasm/);
       let streamedEvents = 0;
       const result = await worker.runJson(
         ['checksum', sourcePath, '--algo', 'crc32', '--no-extract'],

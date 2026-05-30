@@ -118,15 +118,10 @@ const canUseThreadedBrowserWasm = (root: typeof globalThis = globalThis) => {
 
 const resolveBrowserWasmAsset = async (): Promise<BrowserWasmAssetSelection> => {
   if (!canUseThreadedBrowserWasm()) {
-    throw new Error(
-      "rom-weaver browser runtime requires SharedArrayBuffer and cross-origin isolation (COOP/COEP).",
-    );
+    throw new Error("rom-weaver browser runtime requires SharedArrayBuffer and cross-origin isolation (COOP/COEP).");
   }
-  const [wasmUrl, threadWorkerUrl] = await Promise.all([
-    resolveBrowserWasmUrl(),
-    resolveBrowserThreadWorkerUrl(),
-  ]);
-  return { wasmUrl, threadWorkerUrl };
+  const [wasmUrl, threadWorkerUrl] = await Promise.all([resolveBrowserWasmUrl(), resolveBrowserThreadWorkerUrl()]);
+  return { threadWorkerUrl, wasmUrl };
 };
 
 const normalizeRunnerDefaultThreads = (workerThreads?: RuntimeValue) => {

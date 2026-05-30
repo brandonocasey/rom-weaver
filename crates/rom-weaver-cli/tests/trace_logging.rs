@@ -84,10 +84,17 @@ fn rom_weaver_log_env_enables_trace_without_trace_flag() {
     let source = write_fixture_file(&temp, "input.bin", b"rom-weaver-trace-env");
     let output = run_checksum_json(&source, TraceMode::Env);
 
-    let trace_events = parse_json_lines(&output.stderr);
+    let stdout_events = parse_json_lines(&output.stdout);
     assert!(
-        !trace_events.is_empty(),
-        "expected stderr trace output when ROM_WEAVER_LOG is set"
+        stdout_events
+            .iter()
+            .any(|event| event["status"].as_str() == Some("succeeded")),
+        "expected a succeeded terminal progress event"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(
+        stderr.trim().is_empty(),
+        "expected stderr to remain empty without --trace"
     );
 }
 

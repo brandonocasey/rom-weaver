@@ -1477,8 +1477,9 @@ fn non_json_default_suppresses_running_progress_without_tty() {
         .clone();
 
     let text = String::from_utf8(output).expect("utf8 stdout");
-    assert!(!text.contains("[checksum] computing"));
-    assert!(text.contains("[checksum] succeeded:"));
+    assert!(!text.contains("status=Running"));
+    assert!(text.contains("[checksum]"));
+    assert!(text.contains("status=Succeeded"));
 }
 
 #[test]
@@ -1502,9 +1503,9 @@ fn progress_flag_enables_running_progress_without_json() {
         .clone();
 
     let text = String::from_utf8(output).expect("utf8 stdout");
-    assert!(text.contains("[checksum] computing"));
-    assert!(text.contains("[checksum] succeeded:"));
-    assert!(text.contains("[checksum] elapsed:"));
+    assert!(text.contains("[checksum]"));
+    assert!(text.contains("status=Running"));
+    assert!(text.contains("status=Succeeded"));
 }
 
 #[test]
@@ -1576,10 +1577,10 @@ fn extract_progress_text_reports_elapsed_and_files() {
         .clone();
 
     let text = String::from_utf8(output).expect("utf8 stdout");
-    assert!(text.contains("[extract] extracted `sample.zip`"));
-    assert!(text.contains(" in "));
-    assert!(text.contains(" to:"));
-    assert!(text.contains("[extract]   `sample.bin` ("));
+    assert!(text.contains("[extract]"));
+    assert!(text.contains("status=Succeeded"));
+    assert!(text.contains("sample.zip"));
+    assert!(text.contains("1 file(s)"));
 }
 
 #[test]

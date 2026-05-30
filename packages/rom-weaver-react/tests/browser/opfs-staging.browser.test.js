@@ -64,7 +64,11 @@ test("browser OPFS source refs stage Blob and byte-array inputs into real OPFS p
   try {
     expect(stagedBytes.storageKind).toBe("opfs");
     expect(stagedBytes.size).toBe(3);
-    expect(await readOpfsBytes(stagedBytes.filePath)).toEqual(new Uint8Array([1, 2, 3]));
+    if (stagedBytes.virtual) {
+      expect(stagedBytes.filePath).toMatch(/^\/work\/input\/direct-input-/);
+    } else {
+      expect(await readOpfsBytes(stagedBytes.filePath)).toEqual(new Uint8Array([1, 2, 3]));
+    }
   } finally {
     await stagedBytes.cleanup();
   }

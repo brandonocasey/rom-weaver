@@ -1,7 +1,7 @@
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.js";
 import Save from "lucide-react/dist/esm/icons/save.js";
 import X from "lucide-react/dist/esm/icons/x.js";
-import { type CSSProperties, type ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { APP_BUILD_VERSION } from "./build-version.ts";
 import { InfoToggle } from "./components/info-toggle.tsx";
 import type { SettingsDraftState, SettingsFieldKey, SettingsUiState } from "./settings/settings-state.ts";

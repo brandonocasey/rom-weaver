@@ -50,7 +50,15 @@ impl PatPatchHandler {
         let planned_execution = context.plan_threads(thread_capability.clone());
 
         let (execution, writes) = if crate::can_apply_in_memory(output_len, output_len) {
-            let mut output_bytes = fs::read(&request.input)?;
+            let output_len_usize = usize::try_from(output_len).map_err(|_| {
+                RomWeaverError::Validation(format!(
+                    "input `{}` is too large to process in memory",
+                    request.input.display()
+                ))
+            })?;
+            let mut output_bytes = vec![0u8; output_len_usize];
+            let mut input = File::open(&request.input)?;
+            input.read_exact(&mut output_bytes)?;
             let current_bytes: Vec<u8> = grouped_records
                 .iter()
                 .map(|g| output_bytes[g.offset as usize])
