@@ -59,6 +59,13 @@ pub enum Commands {
     Compress(CompressCommand),
     Trim(TrimCommand),
     BatchHeaderFixer(BatchHeaderFixerCommand),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(
+            about = "Apply one or more ROM patch files to an input in sequence",
+            long_about = "Apply one or more ROM patch files to an input in sequence.\n\nSupported patch-apply formats:\nIPS, IPS32, SOLID, BPS, UPS, VCDIFF, xdelta, GDIFF, HDiffPatch/HPatchZ, APS (N64), APSGBA, RUP, PPF, PAT/FFP, EBP, BDF/BSDIFF40, BSP, MOD/PMSR, DLDI, DPS.\n\nCaveats:\n- NINJA1 headers are recognized but apply is unsupported.\n- PDS is explicitly unsupported.\n- HDiffPatch directory patches (HDIFF19) are unsupported; only single-file .hdiff/.hpatchz is supported."
+        )
+    )]
     PatchApply(PatchApplyCommand),
     PatchCreate(PatchCreateCommand),
 }
