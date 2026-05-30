@@ -1,5 +1,91 @@
 /* jscpd:ignore-start */
     impl ChdContainerHandler {
+        /// Hashes and compresses a single hunk, trying every encodable codec (including CD FLAC) and
+        /// keeping the smallest, matching chdman. Shared by the sequential and pipelined create
+        /// paths.
+        fn compress_pipeline_hunk(
+            &self,
+            create_kind: &ChdCreateKind,
+            primary_codec: ChdCodec,
+            codecs: &[(u8, ChdCodec)],
+            compression_level: i32,
+            hunk: Vec<u8>,
+            scratch: &mut ChdCompressionScratch,
+        ) -> Result<(HunkHashKey, u8, Vec<u8>)> {
+            let hash_key = Self::hunk_hash_key(&hunk);
+            let (compression_type, payload) = self.compress_best_rust_hunk(
+                create_kind,
+                primary_codec,
+                codecs,
+                compression_level,
+                hunk,
+                scratch,
+            )?;
+            Ok((hash_key, compression_type, payload))
+        }
+
+        /// Appends a compressed hunk in hunk order: emits a self/parent reference when the hunk
+        /// duplicates earlier data, otherwise writes the payload and records its map entry. Shared
+        /// by the sequential and pipelined create paths.
+        #[allow(clippy::too_many_arguments)]
+        fn record_pipeline_hunk(
+            &self,
+            output_file: &mut File,
+            output: &Path,
+            entries: &mut Vec<RustCompressedHunkEntry>,
+            current_offset: &mut u64,
+            self_hunks_by_hash: &mut HashMap<HunkHashKey, u64>,
+            parent_hunks_by_hash: Option<&HashMap<HunkHashKey, u64>>,
+            hunk_index: usize,
+            hash_key: HunkHashKey,
+            compression_type: u8,
+            payload: Vec<u8>,
+        ) -> Result<()> {
+            if let Some(&other_hunk) = self_hunks_by_hash.get(&hash_key) {
+                entries.push(RustCompressedHunkEntry {
+                    compression_type: Self::CHD_V5_MAP_TYPE_SELF,
+                    offset: other_hunk,
+                    length: 0,
+                    crc16: 0,
+                });
+                return Ok(());
+            }
+            if let Some(parent_unit) =
+                parent_hunks_by_hash.and_then(|map| map.get(&hash_key).copied())
+            {
+                entries.push(RustCompressedHunkEntry {
+                    compression_type: Self::CHD_V5_MAP_TYPE_PARENT,
+                    offset: parent_unit,
+                    length: 0,
+                    crc16: 0,
+                });
+                return Ok(());
+            }
+            self_hunks_by_hash.insert(hash_key, hunk_index as u64);
+            let length = u32::try_from(payload.len()).map_err(|_| {
+                RomWeaverError::Validation("compressed CHD chunk exceeded u32 size".into())
+            })?;
+            if length > 0x00FF_FFFF {
+                return Err(RomWeaverError::Validation(format!(
+                    "compressed CHD chunk length {length} exceeds v5 map limit"
+                )));
+            }
+            output_file.write_all(&payload).map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "failed to write CHD data to `{}`: {error}",
+                    output.display()
+                ))
+            })?;
+            entries.push(RustCompressedHunkEntry {
+                compression_type,
+                offset: *current_offset,
+                length,
+                crc16: hash_key.crc16,
+            });
+            *current_offset = current_offset.saturating_add(u64::from(length));
+            Ok(())
+        }
+
         fn create_uncompressed_rust_raw(
             &self,
             input: &Path,
@@ -329,7 +415,7 @@
         #[allow(clippy::too_many_arguments)]
         fn create_compressed_rust_stream(
             &self,
-            source: &mut dyn Read,
+            source: &mut (dyn Read + Send),
             source_label: &str,
             output: &Path,
             logical_bytes: u64,
@@ -424,36 +510,28 @@
                 })?;
 
             let effective_threads = thread_count.max(1).min(hunk_count_usize.max(1));
-            let pool = if effective_threads > 1 {
-                Some(build_chd_thread_pool_result("create", effective_threads)?)
-            } else {
-                None
-            };
-            let batch_size = effective_threads.saturating_mul(4).max(1);
+
             let mut entries = Vec::with_capacity(hunk_count_usize);
-            let mut remaining = logical_bytes;
             let mut current_offset = Self::CHD_V5_HEADER_BYTES;
             let mut self_hunks_by_hash =
                 HashMap::<HunkHashKey, u64>::with_capacity(hunk_count_usize);
             let parent_hunks_by_hash = parent_reuse.as_ref().map(|value| &value.by_hash);
-            let mut next_hunk = 0usize;
-            let mut raw_sha1 = Sha1::new();
-            while next_hunk < hunk_count_usize {
-                let this_batch = (hunk_count_usize - next_hunk).min(batch_size);
-                enum BatchHunkEntry {
-                    SelfCopy(u64),
-                    ParentCopy(u64),
-                    Data { hunk: Vec<u8>, crc16: u16 },
-                }
-                let mut batch_hunks = Vec::with_capacity(this_batch);
-                for batch_index in 0..this_batch {
-                    let mut hunk = vec![0_u8; hunk_bytes_usize];
+
+            let raw_sha1_bytes: [u8; Self::CHD_SHA1_BYTES] = if effective_threads <= 1 {
+                // Sequential path: no worker threads are spawned, so this also serves targets
+                // without thread support (for example the non-threaded wasm build). Hunks are read,
+                // hashed, compressed, and appended in order on the calling thread.
+                let mut raw_sha1 = Sha1::new();
+                let mut remaining = logical_bytes;
+                let mut scratch = ChdCompressionScratch::default();
+                for hunk_index in 0..hunk_count_usize {
                     let read_len =
                         usize::try_from(remaining.min(u64::from(hunk_bytes))).map_err(|_| {
                             RomWeaverError::Validation(
                                 "decoded CHD chunk exceeded addressable memory".to_string(),
                             )
                         })?;
+                    let mut hunk = vec![0_u8; hunk_bytes_usize];
                     source.read_exact(&mut hunk[..read_len]).map_err(|error| {
                         RomWeaverError::Validation(format!(
                             "failed to read source `{source_label}`: {error}",
@@ -464,150 +542,193 @@
                     if let Some(on_progress) = on_progress {
                         on_progress(read_len as u64);
                     }
-                    let key = Self::hunk_hash_key(&hunk);
-                    if let Some(&other_hunk) = self_hunks_by_hash.get(&key) {
-                        batch_hunks.push(BatchHunkEntry::SelfCopy(other_hunk));
-                        continue;
-                    }
-                    if let Some(parent_hunks_by_hash) = parent_hunks_by_hash
-                        && let Some(&parent_unit) = parent_hunks_by_hash.get(&key)
-                    {
-                        batch_hunks.push(BatchHunkEntry::ParentCopy(parent_unit));
-                        continue;
-                    }
-                    let hunk_index = next_hunk.saturating_add(batch_index);
-                    self_hunks_by_hash.insert(key, hunk_index as u64);
-                    batch_hunks.push(BatchHunkEntry::Data {
+                    let (hash_key, compression_type, payload) = self.compress_pipeline_hunk(
+                        create_kind,
+                        primary_codec,
+                        &encodable_codecs,
+                        compression_level,
                         hunk,
-                        crc16: key.crc16,
-                    });
+                        &mut scratch,
+                    )?;
+                    self.record_pipeline_hunk(
+                        &mut output_file,
+                        output,
+                        &mut entries,
+                        &mut current_offset,
+                        &mut self_hunks_by_hash,
+                        parent_hunks_by_hash,
+                        hunk_index,
+                        hash_key,
+                        compression_type,
+                        payload,
+                    )?;
                 }
-
-                let mut data_hunks = Vec::<(usize, Vec<u8>, u16)>::new();
-                for (index, entry) in batch_hunks.iter_mut().enumerate() {
-                    if let BatchHunkEntry::Data { hunk, crc16 } = entry {
-                        data_hunks.push((index, std::mem::take(hunk), *crc16));
-                    }
-                }
-                type CompressedHunkResult = Result<(usize, u8, Vec<u8>, u16)>;
-                let compressed_hunks: Vec<CompressedHunkResult> = if let Some(pool) = &pool {
-                    if data_hunks.len() > 1 {
-                        pool.install(|| {
-                            data_hunks
-                                .into_par_iter()
-                                .map_init(
-                                    ChdCompressionScratch::default,
-                                    |scratch, (index, hunk, crc16)| {
-                                        let (compression_type, payload) =
-                                            self.compress_best_rust_hunk(
-                                                create_kind,
-                                                primary_codec,
-                                                &encodable_codecs,
-                                                compression_level,
-                                                hunk,
-                                                scratch,
-                                            )?;
-                                        Ok((index, compression_type, payload, crc16))
-                                    },
-                                )
-                                .collect()
+                let mut digest = [0_u8; Self::CHD_SHA1_BYTES];
+                digest.copy_from_slice(&raw_sha1.finalize());
+                digest
+            } else {
+                // Streaming compression pipeline: a reader thread feeds hunks (and the running raw
+                // SHA-1) into a bounded queue, worker threads hash + compress in parallel, and the
+                // main thread drains results in hunk order to dedup and append payloads. Overlapping
+                // read, hash, compress, and write keeps workers busy continuously (mirroring chdman)
+                // instead of stalling the whole pool on per-batch read/write barriers.
+                type PipelineHunkResult = Result<(usize, HunkHashKey, u8, Vec<u8>)>;
+                let inflight = effective_threads.saturating_mul(4).max(2);
+                // Channels and the shared work receiver live in the enclosing frame so the scoped
+                // worker threads can borrow them for the lifetime of the scope.
+                let (work_tx, work_rx) =
+                    std::sync::mpsc::sync_channel::<(usize, Vec<u8>)>(inflight);
+                let work_rx = std::sync::Mutex::new(work_rx);
+                let (result_tx, result_rx) =
+                    std::sync::mpsc::sync_channel::<PipelineHunkResult>(inflight);
+                std::thread::scope(|scope| -> Result<[u8; Self::CHD_SHA1_BYTES]> {
+                    let reader = {
+                        scope.spawn(move || -> Result<[u8; Self::CHD_SHA1_BYTES]> {
+                            let mut raw_sha1 = Sha1::new();
+                            let mut remaining = logical_bytes;
+                            for hunk_index in 0..hunk_count_usize {
+                                let read_len = usize::try_from(remaining.min(u64::from(hunk_bytes)))
+                                    .map_err(|_| {
+                                        RomWeaverError::Validation(
+                                            "decoded CHD chunk exceeded addressable memory"
+                                                .to_string(),
+                                        )
+                                    })?;
+                                let mut hunk = vec![0_u8; hunk_bytes_usize];
+                                source.read_exact(&mut hunk[..read_len]).map_err(|error| {
+                                    RomWeaverError::Validation(format!(
+                                        "failed to read source `{source_label}`: {error}",
+                                    ))
+                                })?;
+                                raw_sha1.update(&hunk[..read_len]);
+                                remaining = remaining.saturating_sub(read_len as u64);
+                                if let Some(on_progress) = on_progress {
+                                    on_progress(read_len as u64);
+                                }
+                                if work_tx.send((hunk_index, hunk)).is_err() {
+                                    break;
+                                }
+                            }
+                            drop(work_tx);
+                            let mut digest = [0_u8; Self::CHD_SHA1_BYTES];
+                            digest.copy_from_slice(&raw_sha1.finalize());
+                            Ok(digest)
                         })
-                    } else {
-                        let mut scratch = ChdCompressionScratch::default();
-                        data_hunks
-                            .into_iter()
-                            .map(|(index, hunk, crc16)| {
-                                let (compression_type, payload) =
-                                    self.compress_best_rust_hunk(
+                    };
+
+                    for _ in 0..effective_threads {
+                        let work_rx = &work_rx;
+                        let encodable_codecs = &encodable_codecs;
+                        let result_tx = result_tx.clone();
+                        scope.spawn(move || {
+                            let mut scratch = ChdCompressionScratch::default();
+                            loop {
+                                let received = {
+                                    let guard =
+                                        work_rx.lock().unwrap_or_else(|err| err.into_inner());
+                                    guard.recv()
+                                };
+                                let Ok((hunk_index, hunk)) = received else {
+                                    break;
+                                };
+                                let outcome = self
+                                    .compress_pipeline_hunk(
                                         create_kind,
                                         primary_codec,
-                                        &encodable_codecs,
+                                        encodable_codecs,
                                         compression_level,
                                         hunk,
                                         &mut scratch,
-                                    )?;
-                                Ok((index, compression_type, payload, crc16))
-                            })
-                            .collect()
-                    }
-                } else {
-                    let mut scratch = ChdCompressionScratch::default();
-                    data_hunks
-                        .into_iter()
-                        .map(|(index, hunk, crc16)| {
-                            let (compression_type, payload) =
-                                self.compress_best_rust_hunk(
-                                    create_kind,
-                                    primary_codec,
-                                    &encodable_codecs,
-                                    compression_level,
-                                    hunk,
-                                    &mut scratch,
-                                )?;
-                            Ok((index, compression_type, payload, crc16))
-                        })
-                        .collect()
-                };
-                let mut data_results = vec![None; batch_hunks.len()];
-                for result in compressed_hunks {
-                    let (index, compression_type, payload, crc16) = result?;
-                    data_results[index] = Some((compression_type, payload, crc16));
-                }
-
-                for (index, entry) in batch_hunks.into_iter().enumerate() {
-                    match entry {
-                        BatchHunkEntry::SelfCopy(other_hunk) => {
-                            entries.push(RustCompressedHunkEntry {
-                                compression_type: Self::CHD_V5_MAP_TYPE_SELF,
-                                offset: other_hunk,
-                                length: 0,
-                                crc16: 0,
-                            })
-                        }
-                        BatchHunkEntry::ParentCopy(parent_unit) => {
-                            entries.push(RustCompressedHunkEntry {
-                                compression_type: Self::CHD_V5_MAP_TYPE_PARENT,
-                                offset: parent_unit,
-                                length: 0,
-                                crc16: 0,
-                            })
-                        }
-                        BatchHunkEntry::Data { .. } => {
-                            let Some((compression_type, payload, crc16)) =
-                                data_results[index].take()
-                            else {
-                                return Err(RomWeaverError::Validation(
-                                    "internal CHD compression result mismatch".to_string(),
-                                ));
-                            };
-                            let length = u32::try_from(payload.len()).map_err(|_| {
-                                RomWeaverError::Validation(
-                                    "compressed CHD chunk exceeded u32 size".into(),
-                                )
-                            })?;
-                            if length > 0x00FF_FFFF {
-                                return Err(RomWeaverError::Validation(format!(
-                                    "compressed CHD chunk length {length} exceeds v5 map limit"
-                                )));
+                                    )
+                                    .map(|(hash_key, compression_type, payload)| {
+                                        (hunk_index, hash_key, compression_type, payload)
+                                    });
+                                if result_tx.send(outcome).is_err() {
+                                    break;
+                                }
                             }
-                            output_file.write_all(&payload).map_err(|error| {
-                                RomWeaverError::Validation(format!(
-                                    "failed to write CHD data to `{}`: {error}",
-                                    output.display()
-                                ))
-                            })?;
-                            entries.push(RustCompressedHunkEntry {
-                                compression_type,
-                                offset: current_offset,
-                                length,
-                                crc16,
-                            });
-                            current_offset = current_offset.saturating_add(u64::from(length));
-                        }
+                        });
                     }
-                }
-                next_hunk += this_batch;
-            }
+                    drop(result_tx);
+
+                    // Errors are captured rather than returned mid-loop: returning early would drop
+                    // the writer while the reader/worker threads are still blocked on full channels,
+                    // deadlocking the scope join. Instead we record the first error, stop appending,
+                    // then drain remaining results so every producer can finish and exit cleanly.
+                    let mut writer_error: Option<RomWeaverError> = None;
+                    let mut pending: HashMap<usize, (HunkHashKey, u8, Vec<u8>)> = HashMap::new();
+                    let mut next_hunk = 0usize;
+                    'writer: while next_hunk < hunk_count_usize {
+                        let (hash_key, compression_type, payload) =
+                            match pending.remove(&next_hunk) {
+                                Some(value) => value,
+                                None => {
+                                    let received = loop {
+                                        match result_rx.recv() {
+                                            Ok(Ok((hunk_index, hash_key, compression_type, payload))) => {
+                                                if hunk_index == next_hunk {
+                                                    break Some((hash_key, compression_type, payload));
+                                                }
+                                                pending.insert(
+                                                    hunk_index,
+                                                    (hash_key, compression_type, payload),
+                                                );
+                                            }
+                                            Ok(Err(error)) => {
+                                                writer_error = Some(error);
+                                                break None;
+                                            }
+                                            Err(_) => {
+                                                writer_error = Some(RomWeaverError::Validation(
+                                                    "chd compression pipeline ended before all hunks were produced"
+                                                        .to_string(),
+                                                ));
+                                                break None;
+                                            }
+                                        }
+                                    };
+                                    match received {
+                                        Some(value) => value,
+                                        None => break 'writer,
+                                    }
+                                }
+                            };
+                        if let Err(error) = self.record_pipeline_hunk(
+                            &mut output_file,
+                            output,
+                            &mut entries,
+                            &mut current_offset,
+                            &mut self_hunks_by_hash,
+                            parent_hunks_by_hash,
+                            next_hunk,
+                            hash_key,
+                            compression_type,
+                            payload,
+                        ) {
+                            writer_error = Some(error);
+                            break 'writer;
+                        }
+                        next_hunk += 1;
+                    }
+
+                    // Drain any in-flight results on the error path so workers never block on a full
+                    // result channel; the reader then finishes and drops its sender on its own.
+                    if writer_error.is_some() {
+                        while result_rx.recv().is_ok() {}
+                    }
+
+                    let reader_digest = reader.join().map_err(|_| {
+                        RomWeaverError::Validation(
+                            "chd compression reader thread panicked".to_string(),
+                        )
+                    })?;
+                    // A reader error is the upstream cause, so surface it ahead of any writer error.
+                    reader_digest.and_then(|digest| match writer_error {
+                        Some(error) => Err(error),
+                        None => Ok(digest),
+                    })
+                })?
+            };
 
             let map_offset = current_offset;
             let (map_payload, map_crc, length_bits, self_bits, parent_bits, first_offset) =
@@ -655,9 +776,6 @@
                     "metadata",
                 )?;
             }
-            let raw_sha1 = raw_sha1.finalize();
-            let mut raw_sha1_bytes = [0_u8; Self::CHD_SHA1_BYTES];
-            raw_sha1_bytes.copy_from_slice(&raw_sha1);
             self.patch_chd_header_sha1s(
                 &mut output_file,
                 output,

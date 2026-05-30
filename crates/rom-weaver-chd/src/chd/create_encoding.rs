@@ -14,7 +14,6 @@
     const CD_ECC_LOW: [u8; 256] = build_cd_ecc_low_table();
     const CD_ECC_HIGH: [u8; 256] = build_cd_ecc_high_table();
     const CRC16_IBM3740_TABLE: [u16; 256] = build_crc16_ibm3740_table();
-    const LZMA_FILTER_LZMA1EXT_NO_EOPM: lzma_sys::lzma_vli = 0x4000_0000_0000_0002;
 
     #[derive(Default)]
     struct ChdCompressionScratch {
@@ -1167,93 +1166,31 @@
             level: u32,
             context: &str,
         ) -> Result<Vec<u8>> {
-            let mut options = Self::liblzma_chd_options(level, input.len() as u32, context)?;
-            let mut filters = [
-                lzma_sys::lzma_filter {
-                    id: LZMA_FILTER_LZMA1EXT_NO_EOPM,
-                    options: (&mut options as *mut lzma_sys::lzma_options_lzma).cast::<c_void>(),
-                },
-                lzma_sys::lzma_filter {
-                    id: lzma_sys::LZMA_VLI_UNKNOWN,
-                    options: ptr::null_mut(),
-                },
-            ];
+            // Bring `Write` into scope anonymously so `write_all` resolves
+            // without clashing with the `std::io::Write` already imported in this module.
+            use std::io::Write as _;
 
-            let mut capacity = input
-                .len()
-                .saturating_add(input.len() / 8)
-                .saturating_add(4096)
-                .max(4096);
-            loop {
-                let mut compressed = vec![0_u8; capacity];
-                let mut output_pos = 0usize;
-                let status = unsafe {
-                    lzma_sys::lzma_raw_buffer_encode(
-                        filters.as_mut_ptr(),
-                        ptr::null(),
-                        input.as_ptr(),
-                        input.len(),
-                        compressed.as_mut_ptr(),
-                        &mut output_pos,
-                        compressed.len(),
-                    )
-                };
-
-                match status {
-                    lzma_sys::LZMA_OK => {
-                        compressed.truncate(output_pos);
-                        return Ok(compressed);
-                    }
-                    lzma_sys::LZMA_BUF_ERROR => {
-                        let next_capacity = capacity.saturating_mul(2);
-                        if next_capacity <= capacity {
-                            return Err(RomWeaverError::Validation(format!(
-                                "{context} compression failed: liblzma output buffer overflow"
-                            )));
-                        }
-                        capacity = next_capacity;
-                    }
-                    other => {
-                        return Err(RomWeaverError::Validation(format!(
-                            "{context} compression failed: {}",
-                            Self::liblzma_status_name(other)
-                        )));
-                    }
-                }
-            }
-        }
-
-        fn liblzma_chd_options(
-            level: u32,
-            reduce_size: u32,
-            context: &str,
-        ) -> Result<lzma_sys::lzma_options_lzma> {
-            let mut options =
-                unsafe { MaybeUninit::<lzma_sys::lzma_options_lzma>::zeroed().assume_init() };
-            let preset_status = unsafe { lzma_sys::lzma_lzma_preset(&mut options, level.min(9)) };
-            if preset_status != 0 {
-                return Err(RomWeaverError::Validation(format!(
-                    "{context} compression failed: liblzma rejected preset {level}"
-                )));
-            }
-
+            // Match MAME/chdman's CHD LZMA configuration: raw LZMA1 with no header and no
+            // end-of-stream marker (the CHD map records the decompressed size), lc=3/lp=0/pb=2,
+            // and a hunk-bounded dictionary. The 7-zip LZMA SDK (which lzma-rust2 ports) packs
+            // these small per-hunk streams a few bytes tighter than liblzma.
+            let reduce_size = u32::try_from(input.len()).unwrap_or(u32::MAX);
+            let mut options = lzma_rust2::LzmaOptions::with_preset(level.min(9));
             options.lc = 3;
             options.lp = 0;
             options.pb = 2;
             options.dict_size = Self::chd_lzma_dict_size(level, reduce_size);
-            Ok(options)
-        }
 
-        fn liblzma_status_name(status: lzma_sys::lzma_ret) -> &'static str {
-            match status {
-                lzma_sys::LZMA_MEM_ERROR => "memory allocation failed",
-                lzma_sys::LZMA_MEMLIMIT_ERROR => "memory limit reached",
-                lzma_sys::LZMA_OPTIONS_ERROR => "unsupported options",
-                lzma_sys::LZMA_DATA_ERROR => "input data error",
-                lzma_sys::LZMA_BUF_ERROR => "output buffer too small",
-                lzma_sys::LZMA_PROG_ERROR => "programming error",
-                _ => "unknown liblzma error",
-            }
+            let mut writer = lzma_rust2::LzmaWriter::new_no_header(Vec::new(), &options, false)
+                .map_err(|error| {
+                    RomWeaverError::Validation(format!("{context} compression failed: {error}"))
+                })?;
+            writer.write_all(input).map_err(|error| {
+                RomWeaverError::Validation(format!("{context} compression failed: {error}"))
+            })?;
+            writer.finish().map_err(|error| {
+                RomWeaverError::Validation(format!("{context} compression failed: {error}"))
+            })
         }
 
         fn chd_lzma_dict_size(level: u32, reduce_size: u32) -> u32 {

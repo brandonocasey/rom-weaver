@@ -2,12 +2,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::{
     borrow::Cow,
     collections::BTreeSet,
-    ffi::c_void,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    mem::MaybeUninit,
     path::{Path, PathBuf},
-    ptr,
     sync::{
         Arc,
         atomic::{AtomicU8, AtomicU64, Ordering},
@@ -16,16 +13,21 @@ use std::{
 
 use flacenc::{component::BitRepr as _, error::Verify as _};
 use flate2::{Compression as GzipCompression, write::DeflateEncoder};
+// The rayon parallel-iterator prelude is only needed by the native/non-threaded-wasm decode
+// paths (`par_chunks`); the wasi-threads build parallelises with scoped threads instead.
+#[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
 use rayon::prelude::*;
 use rom_weaver_checksum::StreamingChecksum;
 use rom_weaver_codecs::{CanonicalCodec, RequestedCodec, parse_requested_codec};
 use rom_weaver_core::{
     ContainerCapabilities, ContainerCreateRequest, ContainerExtractRequest, ContainerHandler,
     ContainerInspectRequest, FormatDescriptor, OperationContext, OperationFamily, OperationReport,
-    OperationStatus, ProbeConfidence, ProgressEvent, Result, RomWeaverError, SharedThreadPool,
-    ThreadCapability, ThreadExecution,
+    OperationStatus, ProbeConfidence, ProgressEvent, Result, RomWeaverError, ThreadCapability,
+    ThreadExecution,
 };
-use rom_weaver_libarchive_sys::liblzma_sys as lzma_sys;
+// Only the decode paths use a shared pool, and they are absent on the wasi-threads build.
+#[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
+use rom_weaver_core::SharedThreadPool;
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use zstd::bulk::compress as zstd_compress;
@@ -504,6 +506,9 @@ fn create_extract_checksum(context: &OperationContext) -> Result<Option<Streamin
     StreamingChecksum::new_with_context(context.extract_checksum_algorithms(), context)
 }
 
+// Only the decode paths build a shared pool; the compressed-create path uses scoped threads. Both
+// decode callers are absent on the wasi-threads build, so gate this to match and avoid dead code.
+#[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
 fn build_chd_thread_pool(
     label: &str,
     threads: usize,
@@ -515,10 +520,6 @@ fn build_chd_thread_pool(
         };
         format!("failed to build CHD rust {label} pool (threads={threads}): {reason}")
     })
-}
-
-fn build_chd_thread_pool_result(label: &str, threads: usize) -> Result<SharedThreadPool> {
-    build_chd_thread_pool(label, threads).map_err(RomWeaverError::Validation)
 }
 
 fn build_extract_checksum_emitted_file_detail(
