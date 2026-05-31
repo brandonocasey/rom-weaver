@@ -23,7 +23,7 @@ const rootStaticAssetSources = {
   "/apple-touch-icon.png": path.join(rootDir, "src", "assets", "app", "root", "apple-touch-icon.png"),
   "/favicon.ico": path.join(rootDir, "src", "assets", "app", "root", "favicon.ico"),
   "/manifest.json": rootManifestSourcePath,
-  "/rw-logo.svg": path.join(rootDir, "src", "assets", "app", "rw-logo.svg"),
+  "/logo.svg": path.join(rootDir, "src", "assets", "app", "logo.svg"),
 };
 const staticAppAssetSourceDir = path.join(rootDir, "src", "assets", "app");
 const securityHeaders = {
@@ -213,7 +213,7 @@ export default defineConfig(({ command }) => {
           globPatterns: [
             "index.html",
             "manifest.json",
-            "rw-logo.svg",
+            "logo.svg",
             "favicon.ico",
             "apple-touch-icon.png",
             "apple-touch-icon-precomposed.png",

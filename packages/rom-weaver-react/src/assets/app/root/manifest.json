@@ -4,7 +4,7 @@
   "scope": "./",
   "icons": [
     {
-      "src": "src/assets/app/rw-logo.svg",
+      "src": "src/assets/app/logo.svg",
       "sizes": "any",
       "type": "image/svg+xml"
     }
