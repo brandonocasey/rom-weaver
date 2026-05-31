@@ -565,7 +565,9 @@ const extractCompressionEntries = async (
         : output.fileName || selectedEntryFileName;
       const binFile = await createPatchFileFromPublicOutput(output, resolvedFileName, {
         materializeBlob: !usePathBackedOutput,
-        preferExternalFilePath: resolvedRuntime.name === "browser" && !isPathBackedCompressionOutput,
+        // Keep archive-extracted browser inputs materialized so subsequent staging does not depend on
+        // transient worker output paths that may be cleaned up between selection and apply.
+        preferExternalFilePath: false,
       });
       binFile.fileName = resolvedFileName;
       const externalSource = getPatchFileExternalSource(binFile, resolvedFileName, { preferDirectBrowserSource: true });

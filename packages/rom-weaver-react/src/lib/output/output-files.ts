@@ -65,17 +65,35 @@ const getArchiveOutputOptions = (compression: string, settings: ArchiveOutputSet
   zipLevel: getOptionalCompressionLevel(settings.zipLevel),
 });
 
-const getCompressedOutputFileName = (fileName: string, compression: string, settings: ArchiveOutputSettings): string =>
-  compression === "7z" || compression === "zip"
-    ? appendFileNameExtension(
-        fileName,
-        OutputCompressionManager.getArchiveOutputExtension(compression, getArchiveOutputOptions(compression, settings)),
-      )
-    : OutputCompressionManager.getCompressedFileName(
-        { fileName: fileName },
-        compression,
-        getArchiveOutputOptions(compression, settings),
-      );
+const getCompressedOutputFileName = (
+  fileName: string,
+  compression: string,
+  settings: ArchiveOutputSettings,
+  source?: SourceFileLike | null,
+): string => {
+  if (compression === "7z" || compression === "zip") {
+    return appendFileNameExtension(
+      fileName,
+      OutputCompressionManager.getArchiveOutputExtension(compression, getArchiveOutputOptions(compression, settings)),
+    );
+  }
+
+  const sourceExtension = source ? getSourceExtension(source, "") : "";
+  const resolvedSourceFileName =
+    !hasFileNameExtension(fileName) && sourceExtension ? replaceFileNameExtension(fileName, sourceExtension) : fileName;
+  const compressionSource =
+    source && typeof source === "object"
+      ? {
+          ...source,
+          fileName: resolvedSourceFileName,
+        }
+      : { fileName: resolvedSourceFileName };
+  return OutputCompressionManager.getCompressedFileName(
+    compressionSource,
+    compression,
+    getArchiveOutputOptions(compression, settings),
+  );
+};
 
 const getChdIntermediateFileName = (
   fileName: string,

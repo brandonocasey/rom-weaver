@@ -61,7 +61,7 @@ const createPatchedRomSavePlan = ({
   const finalOutputFileName =
     compression === "none"
       ? normalizedPatchedFileName
-      : getCompressedOutputFileName(normalizedPatchedFileName, compression, compressionSettings || {});
+      : getCompressedOutputFileName(normalizedPatchedFileName, compression, compressionSettings || {}, romFile);
   const archiveEntryFileName =
     compression === "7z" || compression === "zip" ? getArchivePatchedRomEntryName(romFile, finalOutputFileName) : null;
   const cuePatchedFileName = archiveEntryFileName || normalizedPatchedFileName;

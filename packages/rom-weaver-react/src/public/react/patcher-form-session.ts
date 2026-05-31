@@ -787,11 +787,16 @@ const useLocalApplyPatchFormSession = ({
         ? resolvedOutputCompression || autoResolvedCompression
         : autoResolvedCompression
       : activeCompression;
+  const z3dsLabelSource = useMemo<BinarySource | undefined>(() => {
+    const selectedInputFileName = String(romInputs[0]?.info?.fileName || "").trim();
+    if (selectedInputFileName && typeof File === "function") return new File([], selectedInputFileName);
+    return effectiveInputs[0];
+  }, [effectiveInputs, romInputs]);
   const outputOptionLabels = useMemo<OutputOptionLabelMap>(() => {
     const labels: OutputOptionLabelMap = {};
-    if (compressionOptions.includes("z3ds")) labels.z3ds = getZ3dsOutputOptionLabel(effectiveInputs[0]);
+    if (compressionOptions.includes("z3ds")) labels.z3ds = getZ3dsOutputOptionLabel(z3dsLabelSource);
     return labels;
-  }, [compressionOptions, effectiveInputs]);
+  }, [compressionOptions, z3dsLabelSource]);
   const outputOptions = useMemo(
     () => createOutputOptions(compressionOptions, outputOptionLabels),
     [compressionOptions, outputOptionLabels],
