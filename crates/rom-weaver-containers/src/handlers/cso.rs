@@ -34,6 +34,74 @@ struct CsoEncodedTask {
     sector_encodings: Vec<CsoSectorEncoding>,
 }
 
+/// In-memory variant of [`CsoEncodedTask`] used by the read+write-on-main pipeline.
+///
+/// In the browser/wasm runtime only the main runner thread can open OPFS-backed files, so worker
+/// threads can neither read the source nor spill compressed sectors to a per-task temp file. This
+/// struct carries the concatenated compressed-sector payload back in memory; the main thread then
+/// assembles the final cso output from those bytes (see `assemble_create_output_in_memory`).
+#[derive(Clone, Debug)]
+struct CsoEncodedChunk {
+    index: usize,
+    start_sector: usize,
+    sector_encodings: Vec<CsoSectorEncoding>,
+    payload: Vec<u8>,
+}
+
+/// Source of a create task's concatenated compressed-sector bytes during output assembly.
+///
+/// The native path streams the bytes back from a per-task temp file; the read+write-on-main path
+/// holds them in memory. Both expose the same `Read` interface so the assembly loop stays shared
+/// and byte-identical.
+enum CsoSectorPayloadSource<'a> {
+    TempFile(BufReader<File>),
+    Memory(io::Cursor<&'a [u8]>),
+}
+
+impl Read for CsoSectorPayloadSource<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::TempFile(reader) => reader.read(buf),
+            Self::Memory(reader) => reader.read(buf),
+        }
+    }
+}
+
+/// Random-access [`ciso::read::Read`] over an in-memory copy of the full compressed cso source.
+///
+/// The browser/wasm extract pipeline reads the compressed cso once on the main thread (the only
+/// thread allowed to open OPFS files) and shares the bytes with worker threads, which decode from
+/// this cursor instead of re-opening the file. Compressed cso payloads are far smaller than their
+/// decompressed output, so buffering the compressed file is acceptable and matches the z3ds extract
+/// approach.
+struct InMemoryCsoReader {
+    bytes: Arc<Vec<u8>>,
+}
+
+impl ciso::read::Read<io::Error> for InMemoryCsoReader {
+    fn size(&mut self) -> std::result::Result<u64, io::Error> {
+        u64::try_from(self.bytes.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "cso source size overflowed u64"))
+    }
+
+    fn read(&mut self, pos: u64, buf: &mut [u8]) -> std::result::Result<(), io::Error> {
+        let start = usize::try_from(pos)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "cso read offset overflowed usize"))?;
+        let end = start
+            .checked_add(buf.len())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cso read range overflowed usize"))?;
+        let source = self.bytes.as_slice();
+        if end > source.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "cso read range exceeded buffered source",
+            ));
+        }
+        buf.copy_from_slice(&source[start..end]);
+        Ok(())
+    }
+}
+
 struct ExactCsoFileReader {
     file: File,
 }
@@ -61,6 +129,7 @@ impl ciso::read::Read<io::Error> for ExactCsoFileReader {
 enum CsoSourceReader {
     Single(ExactCsoFileReader),
     Split(SplitFileReader<io::Error, ExactCsoFileReader>),
+    InMemory(InMemoryCsoReader),
 }
 
 impl ciso::read::Read<io::Error> for CsoSourceReader {
@@ -68,6 +137,7 @@ impl ciso::read::Read<io::Error> for CsoSourceReader {
         match self {
             Self::Single(reader) => ciso::read::Read::size(reader),
             Self::Split(reader) => ciso::read::Read::size(reader),
+            Self::InMemory(reader) => ciso::read::Read::size(reader),
         }
     }
 
@@ -75,6 +145,7 @@ impl ciso::read::Read<io::Error> for CsoSourceReader {
         match self {
             Self::Single(reader) => ciso::read::Read::read(reader, pos, buf),
             Self::Split(reader) => ciso::read::Read::read(reader, pos, buf),
+            Self::InMemory(reader) => ciso::read::Read::read(reader, pos, buf),
         }
     }
 }
@@ -157,6 +228,15 @@ impl CsoContainerHandler {
         })
     }
 
+    fn open_reader_from_buffer(&self, source: &Path, bytes: Arc<Vec<u8>>) -> Result<CsoImageReader> {
+        CsoReader::new(CsoSourceReader::InMemory(InMemoryCsoReader { bytes })).map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "cso source `{}` is invalid: {error}",
+                source.display()
+            ))
+        })
+    }
+
     fn output_name(&self, source: &Path) -> String {
         let file_name = source
             .file_name()
@@ -208,10 +288,29 @@ impl CsoContainerHandler {
         source: &Path,
         task: &CsoExtractTask,
     ) -> Result<CsoDecodedExtractChunk> {
+        let reader = self.open_reader(source)?;
+        self.decode_extract_task_from_reader(source, reader, task)
+    }
+
+    fn decode_extract_task_from_buffer(
+        &self,
+        source: &Path,
+        bytes: Arc<Vec<u8>>,
+        task: &CsoExtractTask,
+    ) -> Result<CsoDecodedExtractChunk> {
+        let reader = self.open_reader_from_buffer(source, bytes)?;
+        self.decode_extract_task_from_reader(source, reader, task)
+    }
+
+    fn decode_extract_task_from_reader(
+        &self,
+        source: &Path,
+        mut reader: CsoImageReader,
+        task: &CsoExtractTask,
+    ) -> Result<CsoDecodedExtractChunk> {
         let read_len = usize::try_from(task.len).map_err(|_| {
             RomWeaverError::Validation("cso extract task length overflowed usize".into())
         })?;
-        let mut reader = self.open_reader(source)?;
         let mut decoded = vec![0_u8; read_len];
         reader
             .read_offset(task.offset, &mut decoded)
@@ -354,6 +453,207 @@ impl CsoContainerHandler {
         })
     }
 
+    /// Compress one task's raw sector bytes entirely in memory (worker-side for the read-on-main
+    /// pipeline). The raw bytes must contain exactly `sector_count` full sectors, matching the
+    /// `read_exact` loop in `encode_create_task`; the returned payload is the concatenated
+    /// compressed-sector bytes that the native path spills to a temp file, so output is identical.
+    fn compress_create_sectors(
+        &self,
+        sector_count: usize,
+        raw_sectors: &[u8],
+    ) -> Result<(Vec<CsoSectorEncoding>, Vec<u8>)> {
+        let expected_len = sector_count
+            .checked_mul(CSO_DEFAULT_BLOCK_BYTES)
+            .ok_or_else(|| {
+                RomWeaverError::Validation("cso create task length overflowed usize".into())
+            })?;
+        if raw_sectors.len() != expected_len {
+            return Err(RomWeaverError::Validation(format!(
+                "cso create task buffered {} bytes but expected {}",
+                raw_sectors.len(),
+                expected_len
+            )));
+        }
+
+        let mut sector_encodings = Vec::with_capacity(sector_count);
+        let mut payload = Vec::new();
+        for index in 0..sector_count {
+            let start = index * CSO_DEFAULT_BLOCK_BYTES;
+            let end = start + CSO_DEFAULT_BLOCK_BYTES;
+            let sector = &raw_sectors[start..end];
+            let (encoded, is_compressed) = self.compress_sector_for_create(sector)?;
+            let encoded_len = u32::try_from(encoded.len()).map_err(|_| {
+                RomWeaverError::Validation("cso create encoded sector length overflowed u32".into())
+            })?;
+            payload.extend_from_slice(&encoded);
+            sector_encodings.push(CsoSectorEncoding {
+                encoded_len,
+                is_compressed,
+            });
+        }
+
+        Ok((sector_encodings, payload))
+    }
+
+    fn encode_create_chunk_from_bytes(
+        &self,
+        index: usize,
+        start_sector: usize,
+        sector_count: usize,
+        raw_sectors: &[u8],
+    ) -> Result<CsoEncodedChunk> {
+        let (sector_encodings, payload) =
+            self.compress_create_sectors(sector_count, raw_sectors)?;
+        Ok(CsoEncodedChunk {
+            index,
+            start_sector,
+            sector_encodings,
+            payload,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_create_chunks_on_main(
+        &self,
+        source: &Path,
+        logical_bytes: u64,
+        create_tasks: &[CsoCreateTask],
+        execution: &ThreadExecution,
+        context: &OperationContext,
+        create_progress_label: &str,
+        create_progress_bytes: &Arc<AtomicU64>,
+        create_progress_bucket: &Arc<AtomicU8>,
+    ) -> Result<Vec<CsoEncodedChunk>> {
+        type ChunkResult = Result<CsoEncodedChunk>;
+        let inflight = bounded_items_for_threads(execution.effective_threads).max(1);
+        let (work_tx, work_rx) = mpsc::sync_channel::<(usize, usize, usize, Vec<u8>)>(inflight);
+        let work_rx = std::sync::Mutex::new(work_rx);
+        let (result_tx, result_rx) = mpsc::sync_channel::<ChunkResult>(inflight);
+        let mut input = BufReader::new(File::open(source)?);
+        input.seek(SeekFrom::Start(0))?;
+
+        thread::scope(|scope| -> Result<Vec<CsoEncodedChunk>> {
+            for _ in 0..execution.effective_threads {
+                let work_rx = &work_rx;
+                let result_tx = result_tx.clone();
+                scope.spawn(move || {
+                    loop {
+                        let received = {
+                            let guard = work_rx.lock().unwrap_or_else(|err| err.into_inner());
+                            guard.recv()
+                        };
+                        let Ok((index, start_sector, sector_count, data)) = received else {
+                            break;
+                        };
+                        let outcome = self.encode_create_chunk_from_bytes(
+                            index,
+                            start_sector,
+                            sector_count,
+                            &data,
+                        );
+                        if result_tx.send(outcome).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(result_tx);
+
+            let mut chunks = Vec::with_capacity(create_tasks.len());
+            let mut next_to_read = 0usize;
+            let mut outstanding = 0usize;
+            let mut reader_error: Option<RomWeaverError> = None;
+
+            while chunks.len() < create_tasks.len() {
+                while reader_error.is_none()
+                    && outstanding < inflight
+                    && next_to_read < create_tasks.len()
+                {
+                    let task = &create_tasks[next_to_read];
+                    let read_len = match task.sector_count.checked_mul(CSO_DEFAULT_BLOCK_BYTES) {
+                        Some(value) => value,
+                        None => {
+                            reader_error = Some(RomWeaverError::Validation(
+                                "cso create task length overflowed usize".into(),
+                            ));
+                            break;
+                        }
+                    };
+                    let mut data = vec![0_u8; read_len];
+                    if let Err(error) = input.read_exact(&mut data) {
+                        reader_error = Some(RomWeaverError::from(error));
+                        break;
+                    }
+                    if logical_bytes > 0 {
+                        let task_logical_bytes =
+                            match self.create_task_logical_bytes(task, logical_bytes) {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    reader_error = Some(error);
+                                    break;
+                                }
+                            };
+                        let completed = create_progress_bytes
+                            .fetch_add(task_logical_bytes, Ordering::Relaxed)
+                            .saturating_add(task_logical_bytes)
+                            .min(logical_bytes);
+                        maybe_emit_container_byte_progress(
+                            context,
+                            "compress",
+                            self.descriptor.name,
+                            "create",
+                            completed,
+                            logical_bytes,
+                            create_progress_label,
+                            Some(execution),
+                            create_progress_bucket.as_ref(),
+                        );
+                    }
+                    if work_tx
+                        .send((task.index, task.start_sector, task.sector_count, data))
+                        .is_err()
+                    {
+                        reader_error = Some(RomWeaverError::Validation(
+                            "cso compression workers ended before all tasks were consumed".into(),
+                        ));
+                        break;
+                    }
+                    next_to_read += 1;
+                    outstanding += 1;
+                }
+
+                if reader_error.is_some() || outstanding == 0 {
+                    break;
+                }
+
+                match result_rx.recv() {
+                    Ok(Ok(chunk)) => {
+                        chunks.push(chunk);
+                        outstanding -= 1;
+                    }
+                    Ok(Err(error)) => {
+                        reader_error = Some(error);
+                        break;
+                    }
+                    Err(_) => {
+                        reader_error = Some(RomWeaverError::Validation(
+                            "cso compression pipeline ended before all tasks were produced".into(),
+                        ));
+                        break;
+                    }
+                }
+            }
+
+            drop(work_tx);
+            while result_rx.recv().is_ok() {}
+
+            match reader_error {
+                Some(error) => Err(error),
+                None => Ok(chunks),
+            }
+        })
+    }
+
     fn cleanup_create_tasks(&self, tasks: &[CsoCreateTask]) {
         for task in tasks {
             let _ = fs::remove_file(&task.temp_path);
@@ -366,6 +666,65 @@ impl CsoContainerHandler {
         logical_bytes: u64,
         encoded_tasks: &[CsoEncodedTask],
     ) -> Result<u64> {
+        self.assemble_create_output_inner(
+            output_path,
+            logical_bytes,
+            encoded_tasks.len(),
+            |index| {
+                let task = &encoded_tasks[index];
+                let input = BufReader::new(File::open(&task.temp_path)?);
+                Ok((
+                    task.index,
+                    task.start_sector,
+                    &task.sector_encodings,
+                    CsoSectorPayloadSource::TempFile(input),
+                ))
+            },
+        )
+    }
+
+    /// Variant of [`Self::assemble_create_output`] that consumes in-memory compressed payloads
+    /// produced by the read+write-on-main pipeline. Output bytes are identical to the temp-file
+    /// path; only the source of the compressed sector bytes differs.
+    fn assemble_create_output_in_memory(
+        &self,
+        output_path: &Path,
+        logical_bytes: u64,
+        encoded_chunks: &[CsoEncodedChunk],
+    ) -> Result<u64> {
+        self.assemble_create_output_inner(
+            output_path,
+            logical_bytes,
+            encoded_chunks.len(),
+            |index| {
+                let chunk = &encoded_chunks[index];
+                Ok((
+                    chunk.index,
+                    chunk.start_sector,
+                    &chunk.sector_encodings,
+                    CsoSectorPayloadSource::Memory(io::Cursor::new(chunk.payload.as_slice())),
+                ))
+            },
+        )
+    }
+
+    fn assemble_create_output_inner<'tasks, F>(
+        &self,
+        output_path: &Path,
+        logical_bytes: u64,
+        task_count: usize,
+        mut task_at: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(
+            usize,
+        ) -> Result<(
+            usize,
+            usize,
+            &'tasks [CsoSectorEncoding],
+            CsoSectorPayloadSource<'tasks>,
+        )>,
+    {
         let mut header = ciso::layout::CSOHeader::new();
         header.uncompressed_size = logical_bytes;
 
@@ -391,16 +750,16 @@ impl CsoContainerHandler {
 
         let mut index_table = Vec::with_capacity(index_entry_count);
         let mut expected_sector = 0_usize;
-        for task in encoded_tasks {
-            if task.start_sector != expected_sector {
+        for task_index in 0..task_count {
+            let (task_label, start_sector, sector_encodings, mut input) = task_at(task_index)?;
+            if start_sector != expected_sector {
                 return Err(RomWeaverError::Validation(format!(
                     "cso create task order is invalid (expected sector {}, found {})",
-                    expected_sector, task.start_sector
+                    expected_sector, start_sector
                 )));
             }
 
-            let mut input = BufReader::new(File::open(&task.temp_path)?);
-            for sector in &task.sector_encodings {
+            for sector in sector_encodings {
                 let align = position & align_mask;
                 if align != 0 {
                     let pad = align_base - align;
@@ -439,8 +798,7 @@ impl CsoContainerHandler {
             let mut trailing = [0_u8; 1];
             if input.read(&mut trailing)? != 0 {
                 return Err(RomWeaverError::Validation(format!(
-                    "cso create task {} produced trailing bytes after encoded sectors",
-                    task.index
+                    "cso create task {task_label} produced trailing bytes after encoded sectors"
                 )));
             }
         }
@@ -572,7 +930,68 @@ impl ContainerHandler for CsoContainerHandler {
             bounded_items_for_threads(execution.effective_threads),
         )?;
         let source = request.source.clone();
-        let decode_result = if execution.used_parallelism {
+        let decode_result = if execution.used_parallelism && z3ds_reads_source_on_main_thread() {
+            // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
+            // runner thread, so the entire compressed cso file is read here once into a shared
+            // buffer. Worker threads then decode from that in-memory buffer (never the file).
+            // Compressed cso is much smaller than the decompressed output, so buffering it is
+            // acceptable; output bytes are identical to the native path.
+            let source_bytes = Arc::new(fs::read(&source).map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "cso extract failed while reading source `{}`: {error}",
+                    source.display()
+                ))
+            })?);
+            let progress_context = context.clone();
+            let progress_execution = execution.clone();
+            write_decoded_chunks_from_workers(
+                &pool,
+                &tasks,
+                bounded_items_for_threads(execution.effective_threads),
+                "cso extract output receiver closed",
+                |task| {
+                    let chunk = self.decode_extract_task_from_buffer(
+                        &source,
+                        Arc::clone(&source_bytes),
+                        task,
+                    )?;
+                    let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
+                        RomWeaverError::Validation("cso extract chunk length overflowed".into())
+                    })?;
+                    if chunk_len != task.len {
+                        return Err(RomWeaverError::Validation(format!(
+                            "cso extract chunk {} wrote {} bytes but expected {}",
+                            task.index, chunk_len, task.len
+                        )));
+                    }
+                    let chunk_index = u64::try_from(chunk.index).map_err(|_| {
+                        RomWeaverError::Validation("cso extract chunk index overflowed".into())
+                    })?;
+                    Ok((chunk_index, chunk.data, chunk_len))
+                },
+                |(chunk_index, data, chunk_len)| {
+                    ordered_writer.write_chunk(chunk_index, data)?;
+                    if logical_bytes > 0 {
+                        let completed = extract_progress_bytes
+                            .fetch_add(chunk_len, Ordering::Relaxed)
+                            .saturating_add(chunk_len)
+                            .min(logical_bytes);
+                        maybe_emit_container_byte_progress(
+                            &progress_context,
+                            "extract",
+                            self.descriptor.name,
+                            "extract",
+                            completed,
+                            logical_bytes,
+                            &extract_progress_label,
+                            Some(&progress_execution),
+                            extract_progress_bucket.as_ref(),
+                        );
+                    }
+                    Ok(())
+                },
+            )
+        } else if execution.used_parallelism {
             let progress_context = context.clone();
             let progress_execution = execution.clone();
             write_decoded_chunks_from_workers(
@@ -711,6 +1130,49 @@ impl ContainerHandler for CsoContainerHandler {
             let create_capability = cso_create_thread_capability(Some(create_tasks.len().max(1)));
             let (execution, pool) = context.build_pool(create_capability)?;
             let source = input.clone();
+            if execution.used_parallelism && z3ds_reads_source_on_main_thread() {
+                // Read+write-on-main pipeline (browser/wasm): the OPFS source is owned by the main
+                // runner thread, which reads each task's raw sectors and assembles the final cso
+                // here. Worker threads only run lz4 compression on in-memory buffers and return the
+                // compressed payload in memory (no per-task source-open and no per-task temp file).
+                // The main thread reads ahead up to `inflight` tasks, drains compressed chunks as
+                // they complete, sorts by `start_sector`, then writes the output — byte-identical
+                // to the native temp-file path.
+                let chunks_result = self.encode_create_chunks_on_main(
+                    input,
+                    logical_bytes,
+                    &create_tasks,
+                    &execution,
+                    context,
+                    &create_progress_label,
+                    &create_progress_bytes,
+                    &create_progress_bucket,
+                );
+                let mut chunks = match chunks_result {
+                    Ok(chunks) => chunks,
+                    Err(error) => return Err(error),
+                };
+                chunks.sort_by_key(|chunk| chunk.start_sector);
+                let output_bytes = self.assemble_create_output_in_memory(
+                    &request.output,
+                    logical_bytes,
+                    &chunks,
+                )?;
+                return Ok(OperationReport::succeeded(
+                    OperationFamily::Container,
+                    Some(self.descriptor.name.to_string()),
+                    "create",
+                    format!(
+                        "created {} `{}` from `{}` (codec=store, {} bytes)",
+                        self.descriptor.name,
+                        request.output.display(),
+                        input.display(),
+                        output_bytes
+                    ),
+                    Some(100.0),
+                    Some(execution),
+                ));
+            }
             let encode_result = if execution.used_parallelism {
                 let progress_context = context.clone();
                 let progress_execution = execution.clone();
