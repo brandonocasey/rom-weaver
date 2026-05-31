@@ -4,6 +4,13 @@
         const MBR_PARTITION_ENTRY_BYTES: usize = 16;
         const MBR_PARTITION_ENTRY_COUNT: usize = 4;
         const GPT_HEADER_LBA: u64 = 1;
+        /// ISO9660 volume descriptors begin at logical sector 16 with a one-byte type followed by
+        /// the `CD001` standard identifier; matching it is positive evidence of a CD/DVD filesystem.
+        const ISO9660_STANDARD_ID: &'static [u8; 5] = b"CD001";
+        /// `CD001` byte offset for 2048-byte cooked sectors: 16 * 2048 + 1 (skip the type byte).
+        const ISO9660_COOKED_DESCRIPTOR_OFFSET: u64 = 16 * 2048 + 1;
+        /// `CD001` byte offset for 2352-byte raw Mode1 sectors: 16 * 2352 + 16 (sync + address) + 1.
+        const ISO9660_RAW_DESCRIPTOR_OFFSET: u64 = 16 * 2352 + 16 + 1;
 
         fn infer_single_track_cd_layout(
             &self,
@@ -88,6 +95,51 @@
             let max_iso_bytes = Self::CD_ISO_MAX_FRAMES
                 * u64::try_from(DiscTrackMode::Mode1.data_bytes()).unwrap_or(2048);
             !Self::is_extension(input, "iso") || logical_bytes <= max_iso_bytes
+        }
+
+        /// Read `len` bytes from `input` at `offset`, returning `None` on any open/seek/read
+        /// failure. Best-effort sniffing: a read error means "no evidence found", not a hard error.
+        fn read_bytes_at(&self, input: &Path, offset: u64, len: usize) -> Option<Vec<u8>> {
+            let mut file = File::open(input).ok()?;
+            file.seek(SeekFrom::Start(offset)).ok()?;
+            let mut buffer = vec![0_u8; len];
+            file.read_exact(&mut buffer).ok()?;
+            Some(buffer)
+        }
+
+        /// Whether the first 12 bytes are the raw CD sector sync header (`00 FF*10 00`), present on
+        /// every raw 2352-byte Mode1/Mode2 sector and strong evidence of a CD rip.
+        fn has_cd_sync_header(&self, input: &Path) -> bool {
+            self.read_bytes_at(input, 0, CD_SYNC_HEADER.len())
+                .is_some_and(|bytes| bytes == CD_SYNC_HEADER)
+        }
+
+        /// Whether the ISO9660 `CD001` standard identifier sits at `offset` (the sector-16 volume
+        /// descriptor).
+        fn has_iso9660_descriptor_at(&self, input: &Path, offset: u64) -> bool {
+            self.read_bytes_at(input, offset, Self::ISO9660_STANDARD_ID.len())
+                .is_some_and(|bytes| bytes.as_slice() == Self::ISO9660_STANDARD_ID)
+        }
+
+        /// Positive evidence that a raw/extensionless input is a single-track CD image: a raw
+        /// 2352-byte image with a sync header (or raw-offset ISO9660 descriptor), or a cooked
+        /// 2048-byte CD-sized image carrying an ISO9660 descriptor. Reads the source bytes rather
+        /// than trusting size alone so plain raw blobs are not misclassified as CD.
+        fn has_single_track_cd_evidence(&self, input: &Path, logical_bytes: u64) -> bool {
+            let mode1_raw_bytes =
+                u64::try_from(DiscTrackMode::Mode1Raw.data_bytes()).unwrap_or(2352);
+            let mode1_bytes = u64::try_from(DiscTrackMode::Mode1.data_bytes()).unwrap_or(2048);
+
+            if logical_bytes.is_multiple_of(mode1_raw_bytes)
+                && (self.has_cd_sync_header(input)
+                    || self.has_iso9660_descriptor_at(input, Self::ISO9660_RAW_DESCRIPTOR_OFFSET))
+            {
+                return true;
+            }
+
+            logical_bytes.is_multiple_of(mode1_bytes)
+                && self.is_cd_sized_iso(input, logical_bytes)
+                && self.has_iso9660_descriptor_at(input, Self::ISO9660_COOKED_DESCRIPTOR_OFFSET)
         }
 
         fn has_sector_signature(sector: &[u8]) -> bool {
@@ -405,7 +457,8 @@
                     ChdCreateKind::HardDisk(self.infer_hd_geometry(logical_bytes)?),
                 ),
                 _ if self.should_auto_infer_single_track_cd(input)
-                    && self.is_single_track_cd_sector_sized(logical_bytes) =>
+                    && self.is_single_track_cd_sector_sized(logical_bytes)
+                    && self.has_single_track_cd_evidence(input, logical_bytes) =>
                 {
                     Ok(ChdCreateKind::Disc(
                         self.infer_single_track_cd_layout(input, logical_bytes)?,

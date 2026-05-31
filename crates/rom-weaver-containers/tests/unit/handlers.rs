@@ -3248,31 +3248,97 @@ mod tests {
     #[cfg(any(not(target_family = "wasm"), rom_weaver_wasi_threads))]
     #[test]
     fn chd_create_auto_infers_sector_sized_cd_inputs() {
+        const CD_SYNC_HEADER: [u8; 12] = [
+            0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
+        ];
+        // ISO9660 `CD001` descriptor byte offset for 2048-byte cooked sectors (sector 16 + 1).
+        const ISO9660_COOKED_DESCRIPTOR_OFFSET: usize = 16 * 2048 + 1;
+
+        let temp_dir = temp_dir_path("chd-cd-auto-infer");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
         let handler = super::ChdContainerHandler;
+
+        // Raw 2352-byte `.bin` carrying a CD sync header -> cd.
+        let raw_bin_path = temp_dir.join("disc.bin");
+        let mut raw_bin = vec![0_u8; 2352 * 20];
+        raw_bin[..CD_SYNC_HEADER.len()].copy_from_slice(&CD_SYNC_HEADER);
+        fs::write(&raw_bin_path, &raw_bin).expect("write raw cd bin");
         assert_eq!(
             handler
-                .infer_create_kind_label_for_tests("chd", Path::new("disc.bin"), 2352 * 8)
+                .infer_create_kind_label_for_tests(
+                    "chd",
+                    &raw_bin_path,
+                    u64::try_from(raw_bin.len()).expect("size"),
+                )
                 .expect("bin cd kind"),
             "cd"
         );
+
+        // Extensionless raw image with a CD sync header -> cd.
+        let extensionless_path = temp_dir.join("Quality of life");
+        fs::write(&extensionless_path, &raw_bin).expect("write extensionless cd image");
         assert_eq!(
             handler
-                .infer_create_kind_label_for_tests("chd", Path::new("Quality of life"), 2048 * 8)
+                .infer_create_kind_label_for_tests(
+                    "chd",
+                    &extensionless_path,
+                    u64::try_from(raw_bin.len()).expect("size"),
+                )
                 .expect("extensionless cd kind"),
             "cd"
         );
+
+        // Cooked 2048-byte image carrying an ISO9660 descriptor -> cd.
+        let cooked_path = temp_dir.join("cooked.bin");
+        let mut cooked = vec![0_u8; 2048 * 20];
+        cooked[ISO9660_COOKED_DESCRIPTOR_OFFSET..ISO9660_COOKED_DESCRIPTOR_OFFSET + 5]
+            .copy_from_slice(b"CD001");
+        fs::write(&cooked_path, &cooked).expect("write cooked cd image");
+        assert_eq!(
+            handler
+                .infer_create_kind_label_for_tests(
+                    "chd",
+                    &cooked_path,
+                    u64::try_from(cooked.len()).expect("size"),
+                )
+                .expect("cooked cd kind"),
+            "cd"
+        );
+
+        // `.iso` extension is auto-classified as CD by size alone.
         assert_eq!(
             handler
                 .infer_create_kind_label_for_tests("chd", Path::new("disc.iso"), 2048 * 8)
                 .expect("iso cd kind"),
             "cd"
         );
+
+        // Sector-sized blob with no CD evidence and no disk signature -> raw.
+        let raw_blob_path = temp_dir.join("blob.bin");
+        let raw_blob = (0..(2048 * 10))
+            .map(|index| (index as u8).wrapping_mul(101))
+            .collect::<Vec<_>>();
+        fs::write(&raw_blob_path, &raw_blob).expect("write raw blob");
+        assert_eq!(
+            handler
+                .infer_create_kind_label_for_tests(
+                    "chd",
+                    &raw_blob_path,
+                    u64::try_from(raw_blob.len()).expect("size"),
+                )
+                .expect("raw blob kind"),
+            "raw"
+        );
+
+        // `.raw` extension never auto-infers CD.
         assert_eq!(
             handler
                 .infer_create_kind_label_for_tests("chd", Path::new("disc.raw"), 2048 * 8)
                 .expect("raw kind"),
             "raw"
         );
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[cfg(any(not(target_family = "wasm"), rom_weaver_wasi_threads))]
