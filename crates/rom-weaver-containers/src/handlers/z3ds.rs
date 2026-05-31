@@ -265,6 +265,26 @@ impl<R: Read + Seek> Seek for Z3dsPayloadReader<R> {
     }
 }
 
+/// Whether the threaded z3ds create/extract pipelines must read the source on the calling
+/// (main) thread instead of opening it from spawned worker threads.
+///
+/// In the browser/wasm runtime only the main runner thread can open OPFS-backed files; spawned
+/// worker threads cannot `path_open` the OPFS source (the open fails with
+/// `No such file or directory (os error 44)`). Reading on the main thread keeps the CPU-bound
+/// zstd compress/decompress parallel while avoiding worker-thread OPFS access — the same shape
+/// the CHD create/extract paths already use (main does I/O, workers compute).
+#[cfg(target_arch = "wasm32")]
+fn z3ds_reads_source_on_main_thread() -> bool {
+    true
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn z3ds_reads_source_on_main_thread() -> bool {
+    // Native opens the source per worker for read/compute overlap; this escape hatch exercises
+    // the main-thread reader path in tests.
+    std::env::var("ROM_WEAVER_CONTAINER_MAIN_THREAD_READER").as_deref() == Ok("1")
+}
+
 impl Z3dsContainerHandler {
     const DEFAULT_FRAME_SIZE: usize = 256 * 1024;
     const DEFAULT_LEVEL: i32 = 3;
@@ -512,6 +532,15 @@ impl Z3dsContainerHandler {
         let mut data = vec![0_u8; read_len];
         file.read_exact(&mut data)?;
 
+        self.compress_frame_bytes(level, task, data)
+    }
+
+    fn compress_frame_bytes(
+        &self,
+        level: i32,
+        task: &Z3dsCreateTask,
+        data: Vec<u8>,
+    ) -> Result<Z3dsCompressedFrame> {
         let compressed = zstd_compress(&data, level)
             .map_err(|error| RomWeaverError::Validation(format!("z3ds create failed: {error}")))?;
         let compressed_size = u32::try_from(compressed.len()).map_err(|_| {
@@ -698,7 +727,50 @@ impl ContainerHandler for Z3dsContainerHandler {
                 Ok(())
             };
 
-            let decode_result: Result<()> = if execution.used_parallelism {
+            let decode_result: Result<()> = if execution.used_parallelism
+                && z3ds_reads_source_on_main_thread()
+            {
+                // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
+                // runner thread, so the compressed payload range is read here into a single shared
+                // buffer. Worker threads then decompress from that in-memory buffer (never the
+                // file). The payload buffer already begins at `payload_start`, so each reader uses
+                // start 0. Bytes written are identical to the native path.
+                let payload_len = usize::try_from(header.compressed_size).map_err(|_| {
+                    RomWeaverError::Validation(
+                        "z3ds compressed payload exceeded addressable memory".into(),
+                    )
+                })?;
+                let mut payload = vec![0_u8; payload_len];
+                {
+                    let mut payload_file = BufReader::new(File::open(&source)?);
+                    payload_file.seek(SeekFrom::Start(payload_start))?;
+                    payload_file.read_exact(&mut payload)?;
+                }
+                let payload = payload.as_slice();
+
+                let batch_size = bounded_items_for_threads(execution.effective_threads);
+                for task_batch in tasks.chunks(batch_size) {
+                    let mut chunks = pool.install(|| {
+                        task_batch
+                            .par_iter()
+                            .map(|task| {
+                                let reader = Z3dsPayloadReader::new(
+                                    io::Cursor::new(payload),
+                                    0,
+                                    header.compressed_size,
+                                )?;
+                                self.extract_chunk_from_reader(reader, task)
+                                    .map(|chunk| (task.len, chunk))
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    })?;
+                    chunks.sort_by_key(|(_, chunk)| chunk.index);
+                    for (task_len, chunk) in chunks {
+                        write_chunk(chunk, task_len)?;
+                    }
+                }
+                Ok(())
+            } else if execution.used_parallelism {
                 let batch_size = bounded_items_for_threads(execution.effective_threads);
                 for task_batch in tasks.chunks(batch_size) {
                     let mut chunks = pool.install(|| {
@@ -797,7 +869,137 @@ impl ContainerHandler for Z3dsContainerHandler {
         })?;
 
         let source = input_path.clone();
-        let compress_result = if execution.used_parallelism {
+        let compress_result = if execution.used_parallelism
+            && z3ds_reads_source_on_main_thread()
+        {
+            // Read-on-main pipeline (browser/wasm): the OPFS source is owned by the main runner
+            // thread, so all reads happen here while worker threads run zstd compression in
+            // parallel. The main thread reads ahead up to `inflight` frames, then drains
+            // compressed frames as they complete; ordering is restored by sorting on `index`
+            // before the write phase, so the output bytes are identical to the native path.
+            type FrameResult = Result<Z3dsCompressedFrame>;
+            let inflight = bounded_items_for_threads(execution.effective_threads).max(1);
+            let (work_tx, work_rx) =
+                std::sync::mpsc::sync_channel::<(usize, Vec<u8>)>(inflight);
+            let work_rx = std::sync::Mutex::new(work_rx);
+            let (result_tx, result_rx) = std::sync::mpsc::sync_channel::<FrameResult>(inflight);
+            let create_progress_bytes = Arc::clone(&create_progress_bytes);
+            let create_progress_bucket = Arc::clone(&create_progress_bucket);
+            let mut input = BufReader::new(File::open(input_path)?);
+            input.seek(SeekFrom::Start(0))?;
+
+            thread::scope(|scope| -> Result<Vec<Z3dsCompressedFrame>> {
+                for _ in 0..execution.effective_threads {
+                    let work_rx = &work_rx;
+                    let result_tx = result_tx.clone();
+                    scope.spawn(move || {
+                        loop {
+                            let received = {
+                                let guard = work_rx.lock().unwrap_or_else(|err| err.into_inner());
+                                guard.recv()
+                            };
+                            let Ok((index, data)) = received else {
+                                break;
+                            };
+                            let task = Z3dsCreateTask {
+                                index,
+                                offset: 0,
+                                len: u64::try_from(data.len()).unwrap_or(u64::MAX),
+                            };
+                            let outcome = self.compress_frame_bytes(level, &task, data);
+                            if result_tx.send(outcome).is_err() {
+                                break;
+                            }
+                        }
+                    });
+                }
+                drop(result_tx);
+
+                let mut frames = Vec::with_capacity(create_tasks.len());
+                let mut next_to_read = 0usize;
+                let mut outstanding = 0usize;
+                let mut reader_error: Option<RomWeaverError> = None;
+
+                while frames.len() < create_tasks.len() {
+                    while reader_error.is_none()
+                        && outstanding < inflight
+                        && next_to_read < create_tasks.len()
+                    {
+                        let task = &create_tasks[next_to_read];
+                        let read_len = match usize::try_from(task.len) {
+                            Ok(value) => value,
+                            Err(_) => {
+                                reader_error = Some(RomWeaverError::Validation(
+                                    "z3ds create chunk size exceeded supported range".into(),
+                                ));
+                                break;
+                            }
+                        };
+                        let mut data = vec![0_u8; read_len];
+                        if let Err(error) = input.read_exact(&mut data) {
+                            reader_error = Some(RomWeaverError::from(error));
+                            break;
+                        }
+                        if input_size > 0 {
+                            let completed = create_progress_bytes
+                                .fetch_add(task.len, Ordering::Relaxed)
+                                .saturating_add(task.len)
+                                .min(input_size);
+                            maybe_emit_container_byte_progress(
+                                context,
+                                "compress",
+                                Z3DS.name,
+                                "create",
+                                completed,
+                                input_size,
+                                &create_progress_label,
+                                Some(&execution),
+                                create_progress_bucket.as_ref(),
+                            );
+                        }
+                        if work_tx.send((task.index, data)).is_err() {
+                            reader_error = Some(RomWeaverError::Validation(
+                                "z3ds compression workers ended before all frames were consumed"
+                                    .into(),
+                            ));
+                            break;
+                        }
+                        next_to_read += 1;
+                        outstanding += 1;
+                    }
+
+                    if reader_error.is_some() || outstanding == 0 {
+                        break;
+                    }
+
+                    match result_rx.recv() {
+                        Ok(Ok(frame)) => {
+                            frames.push(frame);
+                            outstanding -= 1;
+                        }
+                        Ok(Err(error)) => {
+                            reader_error = Some(error);
+                            break;
+                        }
+                        Err(_) => {
+                            reader_error = Some(RomWeaverError::Validation(
+                                "z3ds compression pipeline ended before all frames were produced"
+                                    .into(),
+                            ));
+                            break;
+                        }
+                    }
+                }
+
+                drop(work_tx);
+                while result_rx.recv().is_ok() {}
+
+                match reader_error {
+                    Some(error) => Err(error),
+                    None => Ok(frames),
+                }
+            })
+        } else if execution.used_parallelism {
             let progress_context = context.clone();
             let progress_execution = execution.clone();
             let create_progress_bytes = Arc::clone(&create_progress_bytes);
