@@ -65,6 +65,13 @@ const createBrowserRuntimeVfsIo = ({
       void cleanupCachedStagedSource(key, cached);
       return;
     }
+    // Virtual files are mounted as read-only WASI inputs. Keeping them alive after cleanup can shadow
+    // a later output path with the same visible `/work/<name>` leaf (for example: extract `name.zip`,
+    // then immediately create `name.zip`), so release virtual sources immediately when they go idle.
+    if (cached.staged.virtual) {
+      void cleanupCachedStagedSource(key, cached);
+      return;
+    }
     cached.cleanupTimer = setTimeout(() => {
       if (cached.refCount > 0) return;
       void cleanupCachedStagedSource(key, cached);

@@ -7,6 +7,7 @@ import {
   runRomWeaverJson,
   warmupRomWeaverRunner,
 } from "../../src/workers/rom-weaver/rom-weaver-runner.ts";
+import { getActiveBrowserVirtualFiles } from "../../src/workers/protocol/browser-virtual-files.ts";
 import { WORKER_OPFS_MOUNTPOINT } from "../../src/workers/shared/worker-storage/storage-layout.ts";
 
 const encoder = new TextEncoder();
@@ -113,6 +114,49 @@ test("rom-weaver runner reads and writes staged /work OPFS paths", async () => {
   } finally {
     await staged.cleanup().catch(() => undefined);
     await browserRuntime.vfs.remove(sourcePath).catch(() => undefined);
+    await browserRuntime.vfs.remove(outputPath).catch(() => undefined);
+  }
+});
+
+test("rom-weaver compress can write /work zip outputs after releasing same-name virtual inputs", async () => {
+  await warmupRomWeaverRunner();
+
+  const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const baseName = `Pokemon - Black Version (USA, Europe) (NDSi Enhanced)-${runId}`;
+  const inputPath = `${WORKER_OPFS_MOUNTPOINT}/${baseName}.nds`;
+  const outputPath = `${WORKER_OPFS_MOUNTPOINT}/${baseName}.zip`;
+  const stagedVirtual = await browserRuntime.workerIo.stageSource({
+    fallbackFileName: `${baseName}.zip`,
+    pathPrefix: "archive-input",
+    scope: "archive",
+    source: new File([encoder.encode("zip input fixture")], `${baseName}.zip`, {
+      type: "application/zip",
+    }),
+  });
+
+  try {
+    await stagedVirtual.cleanup();
+    expect(getActiveBrowserVirtualFiles().map((entry) => entry.path)).not.toContain(outputPath);
+
+    const inputBytes = encoder.encode("rom-weaver zip output regression fixture\n");
+    await browserRuntime.vfs.truncate(inputPath, 0);
+    await browserRuntime.vfs.write(inputPath, inputBytes, { fileOffset: 0 });
+
+    const result = await runRomWeaverJson(
+      {
+        args: { format: "zip", input: [inputPath], output: outputPath, threads: 1 },
+        type: "compress",
+      },
+      {
+        invalidateMountCacheBeforeRun: true,
+      },
+    );
+    expectRunSucceeded(result);
+    const outputStat = await browserRuntime.vfs.stat(outputPath);
+    expect(outputStat?.size || 0).toBeGreaterThan(0);
+  } finally {
+    await stagedVirtual.cleanup().catch(() => undefined);
+    await browserRuntime.vfs.remove(inputPath).catch(() => undefined);
     await browserRuntime.vfs.remove(outputPath).catch(() => undefined);
   }
 });
