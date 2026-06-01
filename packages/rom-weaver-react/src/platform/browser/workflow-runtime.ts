@@ -1,9 +1,8 @@
 import {
-  getChdExtractedFileName,
-  getRvzExtractedFileName,
-  getZ3dsExtractedFileName,
-  replaceCuePatchFileName,
-} from "../../lib/input/disc-file-utils.ts";
+  DISC_COMPRESSION_FORMAT_REGISTRY,
+  getDiscExtractedFileName,
+} from "../../lib/compression/container-format-registry.ts";
+import { replaceCuePatchFileName } from "../../lib/input/disc-file-utils.ts";
 import {
   invokeRomWeaverCompressionCreateWorker,
   invokeRomWeaverCreatePatchWorker,
@@ -60,6 +59,9 @@ const CHD_CD_OUTPUT_SCRATCH_FILE_POOL_SIZE = 2;
 const LEVEL_PROFILE_REGEX = /^(min|very-low|low|medium|high|very-high|max)$/i;
 const BROWSER_VFS_PATH_RETRY_ATTEMPTS = 6;
 const EXTRACT_CHECKSUM_ALGORITHMS = ["crc32", "md5", "sha1"] as const;
+const CHD_DISC_FORMAT = DISC_COMPRESSION_FORMAT_REGISTRY.chd;
+const RVZ_DISC_FORMAT = DISC_COMPRESSION_FORMAT_REGISTRY.rvz;
+const Z3DS_DISC_FORMAT = DISC_COMPRESSION_FORMAT_REGISTRY.z3ds;
 const ZIP_LIKE_EXTENSION_REGEX = /\.(zip|jar|apk|cbz|epub|xpi)$/i;
 
 const toFileBlobPart = (source: ArrayBufferLike | Uint8Array): BlobPart => {
@@ -871,8 +873,8 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
   }) => {
     const workerInput = await workerIo.stageSource({
       fallbackFileName: fileName || "input.bin",
-      pathPrefix: "chd-image",
-      scope: "chd",
+      pathPrefix: CHD_DISC_FORMAT.pathPrefix.create,
+      scope: CHD_DISC_FORMAT.scope,
       source,
       trace: { logLevel, onLog },
     });
@@ -880,8 +882,8 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
       ? await workerIo.stageSources(
           imageFiles.map((entry, index) => ({
             fallbackFileName: entry.fileName || `track-${index + 1}.bin`,
-            pathPrefix: `chd-track-${index + 1}`,
-            scope: "chd" as const,
+            pathPrefix: `${CHD_DISC_FORMAT.pathPrefix.sidecar}-${index + 1}`,
+            scope: CHD_DISC_FORMAT.scope,
             source: entry.source,
             trace: { logLevel, onLog },
           })),
@@ -921,10 +923,10 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
         ...stagedInputPaths,
         ...(chdInputPath === workerInput.filePath ? [] : [chdInputPath]),
       ]);
-      await removeBrowserVfsOutputPaths([outputPath], [
-        ...stagedInputPaths,
-        ...(chdInputPath === workerInput.filePath ? [] : [chdInputPath]),
-      ]);
+      await removeBrowserVfsOutputPaths(
+        [outputPath],
+        [...stagedInputPaths, ...(chdInputPath === workerInput.filePath ? [] : [chdInputPath])],
+      );
       const codecs = normalizeCodecEntries(compressionCodecs);
       const result = await invokeRomWeaverCompressionCreateWorker(
         {
@@ -966,7 +968,7 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
       failureMessage: "RVZ compression worker did not return browser output",
       fallbackFileName: fileName || "input.iso",
       outputName,
-      pathPrefix: "rvz-image",
+      pathPrefix: RVZ_DISC_FORMAT.pathPrefix.create,
       run: async (workerSource) => {
         const outputFileName = outputName || "output.rvz";
         const outputPath = selectRomWeaverOutputPath(workerSource.filePath, outputFileName, [workerSource.filePath]);
@@ -989,7 +991,7 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
         );
         return outputName ? { ...result, fileName: outputName } : result;
       },
-      scope: "rvz",
+      scope: RVZ_DISC_FORMAT.scope,
       source,
       trace: { logLevel, onLog },
     }),
@@ -998,7 +1000,7 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
       failureMessage: "Z3DS compression worker did not return browser output",
       fallbackFileName: fileName || "input.3ds",
       outputName,
-      pathPrefix: "z3ds-image",
+      pathPrefix: Z3DS_DISC_FORMAT.pathPrefix.create,
       run: async (workerSource) => {
         const outputFileName = outputName || "output.z3ds";
         const outputPath = selectRomWeaverOutputPath(workerSource.filePath, outputFileName, [workerSource.filePath]);
@@ -1021,15 +1023,15 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
         );
         return outputName ? { ...result, fileName: outputName } : result;
       },
-      scope: "z3ds",
+      scope: Z3DS_DISC_FORMAT.scope,
       source,
       trace: { logLevel, onLog },
     }),
   extractChd: async ({ source, fileName, outputName, mode, splitBin, threads, logLevel, onLog, onProgress }) => {
     const workerSource = await workerIo.stageSource({
       fallbackFileName: fileName,
-      pathPrefix: "chd-input",
-      scope: "chd",
+      pathPrefix: CHD_DISC_FORMAT.pathPrefix.extract,
+      scope: CHD_DISC_FORMAT.scope,
       source,
       trace: { logLevel, onLog },
     });
@@ -1042,13 +1044,13 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
           ? ""
           : shouldPreseedSingleBinCdOutputs
             ? getChdCdOutputFileName(fileName, "bin")
-            : getChdExtractedFileName({ _chdMode: mode || undefined, fileName });
+            : getDiscExtractedFileName("chd", { _chdMode: mode || undefined, fileName });
       const stagedOutputFileName =
         mode === "cd"
           ? ""
           : shouldPreseedSingleBinCdOutputs
             ? getChdCdOutputFileName(stagedSourceFileName, "bin")
-            : getChdExtractedFileName({
+            : getDiscExtractedFileName("chd", {
                 _chdMode: mode || undefined,
                 fileName: stagedSourceFileName,
               });
@@ -1211,8 +1213,8 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
     const stageRvzSource = () =>
       workerIo.stageSource({
         fallbackFileName: fileName,
-        pathPrefix: "rvz-input",
-        scope: "rvz",
+        pathPrefix: RVZ_DISC_FORMAT.pathPrefix.extract,
+        scope: RVZ_DISC_FORMAT.scope,
         source,
         trace: { logLevel, onLog },
       });
@@ -1228,8 +1230,8 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
     };
     try {
       const outDirPath = WORKER_OPFS_MOUNTPOINT;
-      const actualOutputFileName = getRvzExtractedFileName({ fileName });
-      const stagedOutputFileName = getRvzExtractedFileName({
+      const actualOutputFileName = getDiscExtractedFileName("rvz", { fileName });
+      const stagedOutputFileName = getDiscExtractedFileName("rvz", {
         fileName: getPathDerivedFileName(workerSource.filePath, workerSource.fileName || fileName),
       });
       const outputFileName = outputName || actualOutputFileName;
@@ -1289,15 +1291,15 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
   extractZ3ds: async ({ source, fileName, outputName, threads, logLevel, onLog, onProgress }) => {
     const workerSource = await workerIo.stageSource({
       fallbackFileName: fileName,
-      pathPrefix: "z3ds-input",
-      scope: "z3ds",
+      pathPrefix: Z3DS_DISC_FORMAT.pathPrefix.extract,
+      scope: Z3DS_DISC_FORMAT.scope,
       source,
       trace: { logLevel, onLog },
     });
     try {
       const outDirPath = getPathDirectory(workerSource.filePath);
-      const actualOutputFileName = getZ3dsExtractedFileName({ fileName });
-      const stagedOutputFileName = getZ3dsExtractedFileName({
+      const actualOutputFileName = getDiscExtractedFileName("z3ds", { fileName });
+      const stagedOutputFileName = getDiscExtractedFileName("z3ds", {
         fileName: getPathDerivedFileName(workerSource.filePath, workerSource.fileName || fileName),
       });
       const outputFileName = outputName || actualOutputFileName;
@@ -1374,8 +1376,8 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
   listChd: async ({ source, fileName, logLevel, onLog, onProgress }) => {
     const workerSource = await workerIo.stageSource({
       fallbackFileName: fileName,
-      pathPrefix: "chd-input",
-      scope: "chd",
+      pathPrefix: CHD_DISC_FORMAT.pathPrefix.extract,
+      scope: CHD_DISC_FORMAT.scope,
       source,
       trace: { logLevel, onLog },
     });
@@ -1401,16 +1403,19 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
   },
   listRvz: async ({ fileName }) => [
     {
-      fileName: getRvzExtractedFileName({ fileName }),
-      filename: getRvzExtractedFileName({ fileName }),
-      name: getPathBaseName(getRvzExtractedFileName({ fileName }), getRvzExtractedFileName({ fileName })),
+      fileName: getDiscExtractedFileName("rvz", { fileName }),
+      filename: getDiscExtractedFileName("rvz", { fileName }),
+      name: getPathBaseName(
+        getDiscExtractedFileName("rvz", { fileName }),
+        getDiscExtractedFileName("rvz", { fileName }),
+      ),
     },
   ],
   listZ3ds: async ({ source, fileName, logLevel, onLog, onProgress }) => {
     const workerSource = await workerIo.stageSource({
       fallbackFileName: fileName,
-      pathPrefix: "z3ds-input",
-      scope: "z3ds",
+      pathPrefix: Z3DS_DISC_FORMAT.pathPrefix.extract,
+      scope: Z3DS_DISC_FORMAT.scope,
       source,
       trace: { logLevel, onLog },
     });

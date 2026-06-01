@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { resolveAutomaticCompressionFormat } from "../../lib/compression/container-format-registry.ts";
 import { getBaseFileName } from "../../lib/input/path-utils.ts";
 import { emitTraceLog } from "../../lib/logging.ts";
 import { buildPatchedOutputBaseName } from "../../lib/output/output-name-composition.ts";
@@ -67,7 +68,6 @@ const FILE_EXTENSION_REGEX = /\.([^./\\\s]+)$/;
 const PATCH_OUTPUT_LABEL_PATTERN = /\[([^\]]+)\](?:\.[^.]+)?\d*$/;
 
 const getFileNameWithoutExtension = (fileName: string) => fileName.replace(FILE_EXTENSION_REGEX, "") || fileName;
-const getFileNameExtension = (fileName: string) => fileName.match(FILE_EXTENSION_REGEX)?.[1]?.toLowerCase() || "";
 const getOutputSourceKey = (inputs: BinarySource[], patches: BinarySource[]) =>
   JSON.stringify({
     inputs: getBinarySourceListStableIds(inputs),
@@ -80,21 +80,11 @@ const getApplyOutputCompression = (
 ): CompressionFormat => {
   const configuredCompression = snapshot.options.output?.compression || "auto";
   if (configuredCompression !== "auto") return configuredCompression;
-  const parentKind = input?.parentCompressions[0]?.kind;
-  if (parentKind === "zip") return "zip";
-  if (parentKind === "7z") return "7z";
-  if (parentKind === "chd") return "chd";
-  if (parentKind === "rvz") return "rvz";
-  if (parentKind === "z3ds") return "z3ds";
   const sourceName = snapshot.inputs[0] ? getReactBinarySourceFileName(snapshot.inputs[0], "") : "";
-  const extension = getFileNameExtension(sourceName);
-  if (extension === "zip" || extension === "zipx") return "zip";
-  if (extension === "7z") return "7z";
-  if (extension === "chd") return "chd";
-  if (extension === "rvz") return "rvz";
-  if (["cia", "cci", "cxi", "app", "3dsx", "3ds", "zcia", "zcci", "zcxi", "z3dsx", "z3ds"].includes(extension))
-    return "z3ds";
-  return "7z";
+  return resolveAutomaticCompressionFormat({
+    parentKind: input?.parentCompressions[0]?.kind,
+    sourceFileName: sourceName,
+  });
 };
 
 const getAutomaticApplyOutputName = (

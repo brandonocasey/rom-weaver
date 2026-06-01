@@ -55,7 +55,7 @@ impl XisoContainerHandler {
     }
 }
 
-impl ContainerHandler for XisoContainerHandler {
+impl ContainerHandlerOperations for XisoContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &XISO
     }
@@ -197,16 +197,6 @@ impl ContainerHandler for XisoContainerHandler {
         Err(RomWeaverError::Validation(
             "xiso container create is not supported; xiso is trim-only (use `trim`)".into(),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: false,
-            extract: true,
-            create: false,
-            extract_threads: ThreadCapability::single_threaded(),
-            create_threads: ThreadCapability::single_threaded(),
-        }
     }
 }
 /* jscpd:ignore-end */

@@ -48,7 +48,7 @@ impl WiaContainerHandler {
     }
 }
 
-impl ContainerHandler for WiaContainerHandler {
+impl ContainerHandlerOperations for WiaContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &WIA
     }
@@ -135,16 +135,6 @@ impl ContainerHandler for WiaContainerHandler {
             Some(100.0),
             Some(execution),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: true,
-            extract_threads: ThreadCapability::parallel(None),
-            create_threads: ThreadCapability::parallel(None),
-        }
     }
 }
 /* jscpd:ignore-end */

@@ -13,7 +13,7 @@ impl TgcContainerHandler {
     }
 }
 
-impl ContainerHandler for TgcContainerHandler {
+impl ContainerHandlerOperations for TgcContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &TGC
     }
@@ -98,16 +98,6 @@ impl ContainerHandler for TgcContainerHandler {
             Some(100.0),
             Some(execution),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: true,
-            extract_threads: ThreadCapability::parallel(None),
-            create_threads: ThreadCapability::parallel(None),
-        }
     }
 }
 /* jscpd:ignore-end */

@@ -1,10 +1,15 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     num::NonZeroU64,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
+    thread,
     thread::ThreadId,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -64,6 +69,190 @@ static NEXT_TEMP_NAMESPACE_ID: AtomicU64 = AtomicU64::new(1);
 pub fn bounded_items_for_threads(effective_threads: usize) -> usize {
     let threads = effective_threads.max(1);
     threads.saturating_mul(2).max(2)
+}
+
+pub fn create_extract_output_file(output_path: &Path, overwrite: bool) -> Result<File> {
+    if overwrite {
+        return File::create(output_path).map_err(RomWeaverError::from);
+    }
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output_path)
+        .map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "refusing to overwrite existing output `{}`: {error}",
+                output_path.display()
+            ))
+        })
+}
+
+pub fn file_starts_with(source: &Path, signature: &[u8]) -> bool {
+    let mut bytes = vec![0u8; signature.len()];
+    if let Ok(mut file) = File::open(source) {
+        return file.read_exact(&mut bytes).is_ok() && bytes == signature;
+    }
+    false
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn ordered_streaming_compress<
+    Tasks,
+    TTask,
+    TWork,
+    TOutput,
+    TWorkerState,
+    ReadTask,
+    MakeWorkerState,
+    CompressTask,
+    CollectOutput,
+>(
+    tasks: Tasks,
+    effective_threads: usize,
+    worker_closed_message: &'static str,
+    result_closed_message: &'static str,
+    mut read_task: ReadTask,
+    make_worker_state: MakeWorkerState,
+    compress_task: CompressTask,
+    mut collect_output: CollectOutput,
+) -> Result<()>
+where
+    Tasks: IntoIterator<Item = TTask>,
+    Tasks::IntoIter: ExactSizeIterator,
+    TWork: Send,
+    TOutput: Send,
+    MakeWorkerState: Fn() -> TWorkerState + Sync,
+    CompressTask: Fn(&mut TWorkerState, usize, TWork) -> Result<TOutput> + Sync,
+    ReadTask: FnMut(usize, TTask) -> Result<TWork>,
+    CollectOutput: FnMut(usize, TOutput) -> Result<()>,
+{
+    let mut tasks = tasks.into_iter();
+    let total = tasks.len();
+    if total == 0 {
+        return Ok(());
+    }
+
+    let worker_count = effective_threads.max(1).min(total);
+    let inflight = bounded_items_for_threads(worker_count).max(1);
+    let (work_tx, work_rx) = mpsc::sync_channel::<(usize, TWork)>(inflight);
+    let work_rx = Mutex::new(work_rx);
+    let (result_tx, result_rx) = mpsc::sync_channel::<Result<(usize, TOutput)>>(inflight);
+
+    thread::scope(|scope| -> Result<()> {
+        for _ in 0..worker_count {
+            let work_rx = &work_rx;
+            let result_tx = result_tx.clone();
+            let make_worker_state = &make_worker_state;
+            let compress_task = &compress_task;
+            scope.spawn(move || {
+                let mut worker_state = make_worker_state();
+                loop {
+                    let received = {
+                        let guard = work_rx.lock().unwrap_or_else(|err| err.into_inner());
+                        guard.recv()
+                    };
+                    let Ok((index, work)) = received else {
+                        break;
+                    };
+                    let outcome =
+                        compress_task(&mut worker_state, index, work).map(|output| (index, output));
+                    let failed = outcome.is_err();
+                    if result_tx.send(outcome).is_err() || failed {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(result_tx);
+
+        let mut next_to_read = 0usize;
+        let mut next_to_collect = 0usize;
+        let mut outstanding = 0usize;
+        let mut pending = BTreeMap::<usize, TOutput>::new();
+        let mut pipeline_error: Option<RomWeaverError> = None;
+
+        while next_to_collect < total {
+            while pipeline_error.is_none() && outstanding < inflight && next_to_read < total {
+                let Some(task) = tasks.next() else {
+                    pipeline_error = Some(RomWeaverError::Validation(
+                        "ordered compression pipeline task iterator ended early".into(),
+                    ));
+                    break;
+                };
+                match read_task(next_to_read, task) {
+                    Ok(work) => {
+                        if work_tx.send((next_to_read, work)).is_err() {
+                            pipeline_error =
+                                Some(RomWeaverError::Validation(worker_closed_message.into()));
+                            break;
+                        }
+                        next_to_read += 1;
+                        outstanding += 1;
+                    }
+                    Err(error) => {
+                        pipeline_error = Some(error);
+                        break;
+                    }
+                }
+            }
+
+            if pipeline_error.is_some() || outstanding == 0 {
+                break;
+            }
+
+            if let Some(output) = pending.remove(&next_to_collect) {
+                if let Err(error) = collect_output(next_to_collect, output) {
+                    pipeline_error = Some(error);
+                    break;
+                }
+                next_to_collect += 1;
+                outstanding -= 1;
+                continue;
+            }
+
+            match result_rx.recv() {
+                Ok(Ok((index, output))) => {
+                    if index >= total {
+                        pipeline_error = Some(RomWeaverError::Validation(format!(
+                            "ordered compression pipeline produced out-of-range task {index} for {total} tasks"
+                        )));
+                        break;
+                    }
+                    if index < next_to_collect || pending.insert(index, output).is_some() {
+                        pipeline_error = Some(RomWeaverError::Validation(format!(
+                            "ordered compression pipeline produced duplicate task {index}"
+                        )));
+                        break;
+                    }
+
+                    while let Some(output) = pending.remove(&next_to_collect) {
+                        if let Err(error) = collect_output(next_to_collect, output) {
+                            pipeline_error = Some(error);
+                            break;
+                        }
+                        next_to_collect += 1;
+                        outstanding -= 1;
+                    }
+                }
+                Ok(Err(error)) => {
+                    pipeline_error = Some(error);
+                    break;
+                }
+                Err(_) => {
+                    pipeline_error = Some(RomWeaverError::Validation(result_closed_message.into()));
+                    break;
+                }
+            }
+        }
+
+        drop(work_tx);
+        while result_rx.recv().is_ok() {}
+
+        match pipeline_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

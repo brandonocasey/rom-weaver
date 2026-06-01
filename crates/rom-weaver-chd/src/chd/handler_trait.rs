@@ -1,4 +1,4 @@
-impl ContainerHandler for ChdContainerHandler {
+impl ContainerHandlerOperations for ChdContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &CHD
     }
@@ -324,15 +324,5 @@ impl ContainerHandler for ChdContainerHandler {
             Some(100.0),
             Some(execution),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: true,
-            extract_threads: ThreadCapability::parallel(None),
-            create_threads: ThreadCapability::parallel(None),
-        }
     }
 }

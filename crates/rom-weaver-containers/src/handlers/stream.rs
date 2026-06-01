@@ -312,7 +312,7 @@ impl StreamContainerHandler {
     }
 }
 
-impl ContainerHandler for StreamContainerHandler {
+impl ContainerHandlerOperations for StreamContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         self.descriptor
     }
@@ -447,16 +447,6 @@ impl ContainerHandler for StreamContainerHandler {
             Some(100.0),
             Some(execution),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: true,
-            extract_threads: self.extract_thread_capability(),
-            create_threads: self.create_thread_capability(),
-        }
     }
 }
 

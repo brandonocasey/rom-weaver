@@ -10,7 +10,7 @@ impl RarContainerHandler {
     }
 }
 
-impl ContainerHandler for RarContainerHandler {
+impl ContainerHandlerOperations for RarContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         self.descriptor
     }
@@ -72,16 +72,6 @@ impl ContainerHandler for RarContainerHandler {
         Err(RomWeaverError::Validation(
             "rar create is not supported".into(),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: false,
-            extract_threads: regular_archive_extract_thread_capability(),
-            create_threads: ThreadCapability::single_threaded(),
-        }
     }
 }
 /* jscpd:ignore-end */

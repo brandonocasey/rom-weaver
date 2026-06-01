@@ -11,7 +11,7 @@ fn chd_compress_and_extract_dvd_round_trip() {
     let source = (0..16_384)
         .map(|index| (index % 193) as u8)
         .collect::<Vec<_>>();
-    run_chd_round_trip("movie.iso", &source, "zstd", "disc.iso");
+    run_chd_round_trip_with_format("chd-dvd", "movie.iso", &source, "zstd", "disc.iso");
 }
 
 #[test]

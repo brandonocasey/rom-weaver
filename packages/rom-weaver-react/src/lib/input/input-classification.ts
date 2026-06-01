@@ -3,16 +3,10 @@ import type { ByteSourceRecordLike } from "../../storage/shared/binary/source-sh
 import type { ArchiveEntry, JsonObject } from "../../types/runtime.ts";
 import type { WorkflowRomFileLike as InputSource } from "../../types/workflow-source.ts";
 import {
-  createDiscExtensionRegex,
-  RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
-  Z3DS_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "../compression/disc-format-support.ts";
+  DISC_COMPRESSION_FORMAT_REGISTRATIONS,
+  getDiscExtractedFileName,
+} from "../compression/container-format-registry.ts";
 import { getArchiveType } from "../input/archive-type-utils.ts";
-import { getChdExtractedFileName, getRvzExtractedFileName, getZ3dsExtractedFileName } from "./disc-file-utils.ts";
-
-const CHD_EXTENSION_REGEX = /\.chd$/i;
-const RVZ_EXTENSION_REGEX = createDiscExtensionRegex(RVZ_DECOMPRESSION_INPUT_EXTENSIONS);
-const Z3DS_EXTENSION_REGEX = createDiscExtensionRegex(Z3DS_DECOMPRESSION_INPUT_EXTENSIONS);
 
 type PatcherInputClassification =
   | {
@@ -61,14 +55,6 @@ type InputSourceValue =
   | undefined;
 
 type InputSourceObject = Extract<InputSourceValue, object>;
-type DiscClassifier = {
-  extensionRegex: RegExp;
-  fallbackFileName: string;
-  getExtractedFileName: (source: InputSourceValue, fileName: string, fallbackFileName: string) => string;
-  kind: string;
-  magic: number[];
-};
-
 const isInputSourceObject = (source: InputSourceValue): source is InputSourceObject =>
   typeof source === "object" && source !== null;
 
@@ -119,49 +105,10 @@ const getMagicBytes = (source: InputSourceValue, length: number): Uint8Array | n
   return typeof read === "number" ? buffer.subarray(0, read) : buffer;
 };
 
-const hasMagicPrefix = (source: InputSourceValue, magic: number[]) => {
+const hasMagicPrefix = (source: InputSourceValue, magic: readonly number[]) => {
   const bytes = getMagicBytes(source, magic.length);
   return !!bytes && bytes.length >= magic.length && magic.every((value, index) => bytes[index] === value);
 };
-
-const DISC_CLASSIFIERS: DiscClassifier[] = [
-  {
-    extensionRegex: CHD_EXTENSION_REGEX,
-    fallbackFileName: "input.chd",
-    getExtractedFileName: (source, fileName, fallbackFileName) =>
-      getChdExtractedFileName(
-        getInputSourceForExtraction(source, fileName, fallbackFileName, true) as Parameters<
-          typeof getChdExtractedFileName
-        >[0],
-      ),
-    kind: "chd",
-    magic: [0x4d, 0x43, 0x6f, 0x6d, 0x70, 0x72, 0x48, 0x44],
-  },
-  {
-    extensionRegex: RVZ_EXTENSION_REGEX,
-    fallbackFileName: "input.rvz",
-    getExtractedFileName: (source, fileName, fallbackFileName) =>
-      getRvzExtractedFileName(
-        getInputSourceForExtraction(source, fileName, fallbackFileName) as Parameters<
-          typeof getRvzExtractedFileName
-        >[0],
-      ),
-    kind: "rvz",
-    magic: [0x52, 0x56, 0x5a, 0x00],
-  },
-  {
-    extensionRegex: Z3DS_EXTENSION_REGEX,
-    fallbackFileName: "input.z3ds",
-    getExtractedFileName: (source, fileName, fallbackFileName) =>
-      getZ3dsExtractedFileName(
-        getInputSourceForExtraction(source, fileName, fallbackFileName) as Parameters<
-          typeof getZ3dsExtractedFileName
-        >[0],
-      ),
-    kind: "z3ds",
-    magic: [0x5a, 0x33, 0x44, 0x53],
-  },
-];
 
 const classifyPatcherInput = (source: InputSourceValue): PatcherInputClassification => {
   const fileName = getInputSourceFileName(source);
@@ -175,15 +122,18 @@ const classifyPatcherInput = (source: InputSourceValue): PatcherInputClassificat
     isInputSourceObject(source) &&
     !!(source as InputSourceObject & DiscMagicInspectableSource)._discDecompressionOutput;
   const canInspectDiscMagic = canInspectDiscMagicSynchronously(source);
-  for (const classifier of DISC_CLASSIFIERS) {
-    const matchedByExtension = classifier.extensionRegex.test(fileName);
-    const matchedByMagic = canInspectDiscMagic && hasMagicPrefix(source, classifier.magic);
+  for (const registration of DISC_COMPRESSION_FORMAT_REGISTRATIONS) {
+    const matchedByExtension = registration.extensionRegex.test(fileName);
+    const matchedByMagic = canInspectDiscMagic && hasMagicPrefix(source, registration.magicBytes);
     if (!(matchedByExtension || matchedByMagic)) continue;
     if (matchedByExtension && isDiscDecompressionOutput && !matchedByMagic) continue;
     if (matchedByExtension || matchedByMagic) {
       return {
-        compressionFormat: classifier.kind,
-        defaultExtractedEntryName: classifier.getExtractedFileName(source, fileName, classifier.fallbackFileName),
+        compressionFormat: registration.format,
+        defaultExtractedEntryName: getDiscExtractedFileName(
+          registration.format,
+          getInputSourceForExtraction(source, fileName, registration.fallbackFileName, true),
+        ),
         fileName: fileName,
         kind: "compression",
       };

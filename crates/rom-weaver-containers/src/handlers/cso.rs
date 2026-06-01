@@ -524,134 +524,58 @@ impl CsoContainerHandler {
         create_progress_bytes: &Arc<AtomicU64>,
         create_progress_bucket: &Arc<AtomicU8>,
     ) -> Result<Vec<CsoEncodedChunk>> {
-        type ChunkResult = Result<CsoEncodedChunk>;
-        let inflight = bounded_items_for_threads(execution.effective_threads).max(1);
-        let (work_tx, work_rx) = mpsc::sync_channel::<(usize, usize, usize, Vec<u8>)>(inflight);
-        let work_rx = std::sync::Mutex::new(work_rx);
-        let (result_tx, result_rx) = mpsc::sync_channel::<ChunkResult>(inflight);
         let mut input = BufReader::new(File::open(source)?);
         input.seek(SeekFrom::Start(0))?;
+        let mut chunks = Vec::with_capacity(create_tasks.len());
 
-        thread::scope(|scope| -> Result<Vec<CsoEncodedChunk>> {
-            for _ in 0..execution.effective_threads {
-                let work_rx = &work_rx;
-                let result_tx = result_tx.clone();
-                scope.spawn(move || {
-                    loop {
-                        let received = {
-                            let guard = work_rx.lock().unwrap_or_else(|err| err.into_inner());
-                            guard.recv()
-                        };
-                        let Ok((index, start_sector, sector_count, data)) = received else {
-                            break;
-                        };
-                        let outcome = self.encode_create_chunk_from_bytes(
-                            index,
-                            start_sector,
-                            sector_count,
-                            &data,
-                        );
-                        if result_tx.send(outcome).is_err() {
-                            break;
-                        }
-                    }
-                });
-            }
-            drop(result_tx);
-
-            let mut chunks = Vec::with_capacity(create_tasks.len());
-            let mut next_to_read = 0usize;
-            let mut outstanding = 0usize;
-            let mut reader_error: Option<RomWeaverError> = None;
-
-            while chunks.len() < create_tasks.len() {
-                while reader_error.is_none()
-                    && outstanding < inflight
-                    && next_to_read < create_tasks.len()
-                {
-                    let task = &create_tasks[next_to_read];
-                    let read_len = match task.sector_count.checked_mul(CSO_DEFAULT_BLOCK_BYTES) {
-                        Some(value) => value,
-                        None => {
-                            reader_error = Some(RomWeaverError::Validation(
-                                "cso create task length overflowed usize".into(),
-                            ));
-                            break;
-                        }
-                    };
-                    let mut data = vec![0_u8; read_len];
-                    if let Err(error) = input.read_exact(&mut data) {
-                        reader_error = Some(RomWeaverError::from(error));
-                        break;
-                    }
-                    if logical_bytes > 0 {
-                        let task_logical_bytes =
-                            match self.create_task_logical_bytes(task, logical_bytes) {
-                                Ok(value) => value,
-                                Err(error) => {
-                                    reader_error = Some(error);
-                                    break;
-                                }
-                            };
-                        let completed = create_progress_bytes
-                            .fetch_add(task_logical_bytes, Ordering::Relaxed)
-                            .saturating_add(task_logical_bytes)
-                            .min(logical_bytes);
-                        maybe_emit_container_byte_progress(
-                            context,
-                            "compress",
-                            self.descriptor.name,
-                            "create",
-                            completed,
-                            logical_bytes,
-                            create_progress_label,
-                            Some(execution),
-                            create_progress_bucket.as_ref(),
-                        );
-                    }
-                    if work_tx
-                        .send((task.index, task.start_sector, task.sector_count, data))
-                        .is_err()
-                    {
-                        reader_error = Some(RomWeaverError::Validation(
-                            "cso compression workers ended before all tasks were consumed".into(),
-                        ));
-                        break;
-                    }
-                    next_to_read += 1;
-                    outstanding += 1;
+        ordered_streaming_compress(
+            create_tasks,
+            execution.effective_threads,
+            "cso compression workers ended before all tasks were consumed",
+            "cso compression pipeline ended before all tasks were produced",
+            |_, task| {
+                let read_len = task
+                    .sector_count
+                    .checked_mul(CSO_DEFAULT_BLOCK_BYTES)
+                    .ok_or_else(|| {
+                        RomWeaverError::Validation(
+                            "cso create task length overflowed usize".into(),
+                        )
+                    })?;
+                let mut data = vec![0_u8; read_len];
+                input.read_exact(&mut data)?;
+                if logical_bytes > 0 {
+                    let task_logical_bytes =
+                        self.create_task_logical_bytes(task, logical_bytes)?;
+                    let completed = create_progress_bytes
+                        .fetch_add(task_logical_bytes, Ordering::Relaxed)
+                        .saturating_add(task_logical_bytes)
+                        .min(logical_bytes);
+                    maybe_emit_container_byte_progress(
+                        context,
+                        "compress",
+                        self.descriptor.name,
+                        "create",
+                        completed,
+                        logical_bytes,
+                        create_progress_label,
+                        Some(execution),
+                        create_progress_bucket.as_ref(),
+                    );
                 }
+                Ok((task.index, task.start_sector, task.sector_count, data))
+            },
+            || (),
+            |_, _, (index, start_sector, sector_count, data)| {
+                self.encode_create_chunk_from_bytes(index, start_sector, sector_count, &data)
+            },
+            |_, chunk| {
+                chunks.push(chunk);
+                Ok(())
+            },
+        )?;
 
-                if reader_error.is_some() || outstanding == 0 {
-                    break;
-                }
-
-                match result_rx.recv() {
-                    Ok(Ok(chunk)) => {
-                        chunks.push(chunk);
-                        outstanding -= 1;
-                    }
-                    Ok(Err(error)) => {
-                        reader_error = Some(error);
-                        break;
-                    }
-                    Err(_) => {
-                        reader_error = Some(RomWeaverError::Validation(
-                            "cso compression pipeline ended before all tasks were produced".into(),
-                        ));
-                        break;
-                    }
-                }
-            }
-
-            drop(work_tx);
-            while result_rx.recv().is_ok() {}
-
-            match reader_error {
-                Some(error) => Err(error),
-                None => Ok(chunks),
-            }
-        })
+        Ok(chunks)
     }
 
     fn cleanup_create_tasks(&self, tasks: &[CsoCreateTask]) {
@@ -856,7 +780,7 @@ impl CsoContainerHandler {
     }
 }
 
-impl ContainerHandler for CsoContainerHandler {
+impl ContainerHandlerOperations for CsoContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         self.descriptor
     }
@@ -916,7 +840,7 @@ impl ContainerHandler for CsoContainerHandler {
         let reader = self.open_reader(&request.source)?;
         let logical_bytes = reader.file_size();
         let tasks = self.build_extract_tasks(logical_bytes);
-        let extract_capability = cso_extract_thread_capability(Some(tasks.len().max(1)));
+        let extract_capability = ThreadCapability::parallel(Some(tasks.len().max(1)));
         let (execution, pool) = context.build_pool(extract_capability)?;
         let extract_progress_label = format!("extracting `{}`", self.descriptor.name);
         let extract_progress_bytes = Arc::new(AtomicU64::new(0));
@@ -1123,11 +1047,11 @@ impl ContainerHandler for CsoContainerHandler {
 
         let (execution, encode_result) = if create_tasks.is_empty() {
             (
-                context.plan_threads(cso_create_thread_capability(None)),
+                context.plan_threads(ThreadCapability::parallel(None)),
                 Ok(Vec::new()),
             )
         } else {
-            let create_capability = cso_create_thread_capability(Some(create_tasks.len().max(1)));
+            let create_capability = ThreadCapability::parallel(Some(create_tasks.len().max(1)));
             let (execution, pool) = context.build_pool(create_capability)?;
             let source = input.clone();
             if execution.used_parallelism && z3ds_reads_source_on_main_thread() {
@@ -1269,16 +1193,6 @@ impl ContainerHandler for CsoContainerHandler {
             Some(100.0),
             Some(execution),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: true,
-            extract_threads: cso_extract_thread_capability(None),
-            create_threads: cso_create_thread_capability(None),
-        }
     }
 }
 /* jscpd:ignore-end */

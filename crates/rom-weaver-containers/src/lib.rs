@@ -36,10 +36,12 @@ use rom_weaver_codecs::{
 };
 use rom_weaver_core::{
     ContainerCapabilities, ContainerCreateRequest, ContainerExtractRequest, ContainerHandler,
-    ContainerInspectRequest, ContainerListEntry, FormatDescriptor, OperationContext,
-    OperationFamily, OperationReport, OperationStatus, OrderedChunkWriter, ProbeConfidence,
-    ProgressEvent, Result, RomWeaverError, SharedThreadPool, ThreadCapability, ThreadExecution,
-    bounded_items_for_threads, should_ignore_common_container_file,
+    ContainerHandlerOperations, ContainerInspectRequest, ContainerListEntry, FormatDescriptor,
+    OperationContext, OperationFamily, OperationReport, OperationStatus, OrderedChunkWriter,
+    ProbeConfidence, ProgressEvent, Result, RomWeaverError, SharedThreadPool, ThreadCapability,
+    SelectionMatcher, ThreadExecution, bounded_items_for_threads, create_extract_output_file,
+    emit_container_running_progress, file_starts_with, maybe_emit_container_byte_progress,
+    normalize_archive_name, ordered_streaming_compress, should_ignore_common_container_file,
 };
 use rom_weaver_libarchive::{
     EntryFileType, EntrySpec, ReadArchive, ReadFilter as LibarchiveReadFilter,
@@ -64,22 +66,6 @@ fn ensure_extract_output_available(output_path: &Path, overwrite: bool) -> Resul
         "refusing to overwrite existing output `{}` (rerun without --no-overwrite to replace it)",
         output_path.display()
     )))
-}
-
-fn create_extract_output_file(output_path: &Path, overwrite: bool) -> Result<File> {
-    if overwrite {
-        return File::create(output_path).map_err(RomWeaverError::from);
-    }
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output_path)
-        .map_err(|error| {
-            RomWeaverError::Validation(format!(
-                "refusing to overwrite existing output `{}`: {error}",
-                output_path.display()
-            ))
-        })
 }
 
 const ZIP: FormatDescriptor = FormatDescriptor {
@@ -215,6 +201,317 @@ const XISO: FormatDescriptor = FormatDescriptor {
     extensions: &[".xiso", ".xiso.iso"],
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegisteredThreadCapability {
+    SingleThreaded,
+    Parallel { max_threads: Option<usize> },
+}
+
+impl RegisteredThreadCapability {
+    fn into_thread_capability(self) -> ThreadCapability {
+        match self {
+            Self::SingleThreaded => ThreadCapability::single_threaded(),
+            Self::Parallel { max_threads } => ThreadCapability::parallel(max_threads),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RegisteredContainerCapabilities {
+    inspect: bool,
+    extract: bool,
+    create: bool,
+    extract_threads: RegisteredThreadCapability,
+    create_threads: RegisteredThreadCapability,
+}
+
+impl RegisteredContainerCapabilities {
+    fn into_container_capabilities(self) -> ContainerCapabilities {
+        ContainerCapabilities {
+            inspect: self.inspect,
+            extract: self.extract,
+            create: self.create,
+            extract_threads: self.extract_threads.into_thread_capability(),
+            create_threads: self.create_threads.into_thread_capability(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ContainerHandlerKind {
+    Zip(ZipContainerFlavor),
+    SevenZ,
+    Rar,
+    Tar(TarCompression),
+    Stream(StreamCompression),
+    Cso,
+    Pbp,
+    Chd,
+    Gcz,
+    Wia,
+    Tgc,
+    Nfs,
+    Wbfs,
+    Rvz,
+    Z3ds,
+    Xiso,
+}
+
+impl ContainerHandlerKind {
+    fn build(self, descriptor: &'static FormatDescriptor) -> Arc<dyn ContainerHandlerOperations> {
+        match self {
+            Self::Zip(flavor) => Arc::new(ZipContainerHandler::new(descriptor, flavor)),
+            Self::SevenZ => Arc::new(SevenZContainerHandler::new(descriptor)),
+            Self::Rar => Arc::new(RarContainerHandler::new(descriptor)),
+            Self::Tar(compression) => Arc::new(TarContainerHandler::new(descriptor, compression)),
+            Self::Stream(compression) => {
+                Arc::new(StreamContainerHandler::new(descriptor, compression))
+            }
+            Self::Cso => Arc::new(CsoContainerHandler::new(descriptor)),
+            Self::Pbp => Arc::new(PbpContainerHandler),
+            Self::Chd => Arc::new(ChdContainerHandler),
+            Self::Gcz => Arc::new(GczContainerHandler),
+            Self::Wia => Arc::new(WiaContainerHandler),
+            Self::Tgc => Arc::new(TgcContainerHandler),
+            Self::Nfs => Arc::new(NfsContainerHandler),
+            Self::Wbfs => Arc::new(WbfsContainerHandler),
+            Self::Rvz => Arc::new(RvzContainerHandler),
+            Self::Z3ds => Arc::new(Z3dsContainerHandler),
+            Self::Xiso => Arc::new(XisoContainerHandler),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ContainerFormatRegistration {
+    descriptor: &'static FormatDescriptor,
+    capabilities: RegisteredContainerCapabilities,
+    handler: ContainerHandlerKind,
+}
+
+impl ContainerFormatRegistration {
+    fn build_handler(&'static self) -> Arc<dyn ContainerHandler> {
+        Arc::new(RegisteredContainerHandler {
+            registration: self,
+            inner: self.handler.build(self.descriptor),
+        })
+    }
+}
+
+struct RegisteredContainerHandler {
+    registration: &'static ContainerFormatRegistration,
+    inner: Arc<dyn ContainerHandlerOperations>,
+}
+
+impl ContainerHandlerOperations for RegisteredContainerHandler {
+    fn descriptor(&self) -> &'static FormatDescriptor {
+        self.registration.descriptor
+    }
+
+    fn probe(&self, source: &Path) -> ProbeConfidence {
+        self.inner.probe(source)
+    }
+
+    fn inspect(
+        &self,
+        request: &ContainerInspectRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        self.inner.inspect(request, context)
+    }
+
+    fn list_entries(
+        &self,
+        request: &ContainerInspectRequest,
+        context: &OperationContext,
+    ) -> Result<Vec<String>> {
+        self.inner.list_entries(request, context)
+    }
+
+    fn list_entry_records(
+        &self,
+        request: &ContainerInspectRequest,
+        context: &OperationContext,
+    ) -> Result<Vec<ContainerListEntry>> {
+        self.inner.list_entry_records(request, context)
+    }
+
+    fn extract(
+        &self,
+        request: &ContainerExtractRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        self.inner.extract(request, context)
+    }
+
+    fn create(
+        &self,
+        request: &ContainerCreateRequest,
+        context: &OperationContext,
+    ) -> Result<OperationReport> {
+        self.inner.create(request, context)
+    }
+
+    fn create_dry_run_size(
+        &self,
+        request: &ContainerCreateRequest,
+        context: &OperationContext,
+    ) -> Result<u64> {
+        self.inner.create_dry_run_size(request, context)
+    }
+}
+
+impl ContainerHandler for RegisteredContainerHandler {
+    fn capabilities(&self) -> ContainerCapabilities {
+        self.registration.capabilities.into_container_capabilities()
+    }
+}
+
+const SINGLE_THREADED: RegisteredThreadCapability = RegisteredThreadCapability::SingleThreaded;
+const PARALLEL_THREADS: RegisteredThreadCapability =
+    RegisteredThreadCapability::Parallel { max_threads: None };
+
+const CREATE_AND_EXTRACT_PARALLEL: RegisteredContainerCapabilities =
+    RegisteredContainerCapabilities {
+        inspect: true,
+        extract: true,
+        create: true,
+        extract_threads: PARALLEL_THREADS,
+        create_threads: PARALLEL_THREADS,
+    };
+
+const EXTRACT_ONLY_PARALLEL: RegisteredContainerCapabilities = RegisteredContainerCapabilities {
+    inspect: true,
+    extract: true,
+    create: false,
+    extract_threads: PARALLEL_THREADS,
+    create_threads: SINGLE_THREADED,
+};
+
+static CONTAINER_FORMAT_REGISTRY: &[ContainerFormatRegistration] = &[
+    ContainerFormatRegistration {
+        descriptor: &ZIP,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Zip(ZipContainerFlavor::Zip),
+    },
+    ContainerFormatRegistration {
+        descriptor: &ZIPX,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Zip(ZipContainerFlavor::Zipx),
+    },
+    ContainerFormatRegistration {
+        descriptor: &SEVEN_Z,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::SevenZ,
+    },
+    ContainerFormatRegistration {
+        descriptor: &RAR,
+        capabilities: EXTRACT_ONLY_PARALLEL,
+        handler: ContainerHandlerKind::Rar,
+    },
+    ContainerFormatRegistration {
+        descriptor: &TAR,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Tar(TarCompression::None),
+    },
+    ContainerFormatRegistration {
+        descriptor: &TAR_GZ,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Tar(TarCompression::Gzip),
+    },
+    ContainerFormatRegistration {
+        descriptor: &TAR_BZ2,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Tar(TarCompression::Bzip2),
+    },
+    ContainerFormatRegistration {
+        descriptor: &TAR_XZ,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Tar(TarCompression::Xz),
+    },
+    ContainerFormatRegistration {
+        descriptor: &GZ,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Stream(StreamCompression::Gzip),
+    },
+    ContainerFormatRegistration {
+        descriptor: &BZ2,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Stream(StreamCompression::Bzip2),
+    },
+    ContainerFormatRegistration {
+        descriptor: &XZ,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Stream(StreamCompression::Xz),
+    },
+    ContainerFormatRegistration {
+        descriptor: &ZST,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Stream(StreamCompression::Zstd),
+    },
+    ContainerFormatRegistration {
+        descriptor: &CSO,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Cso,
+    },
+    ContainerFormatRegistration {
+        descriptor: &PBP,
+        capabilities: EXTRACT_ONLY_PARALLEL,
+        handler: ContainerHandlerKind::Pbp,
+    },
+    ContainerFormatRegistration {
+        descriptor: &rom_weaver_chd::CHD,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Chd,
+    },
+    ContainerFormatRegistration {
+        descriptor: &GCZ,
+        capabilities: EXTRACT_ONLY_PARALLEL,
+        handler: ContainerHandlerKind::Gcz,
+    },
+    ContainerFormatRegistration {
+        descriptor: &WIA,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Wia,
+    },
+    ContainerFormatRegistration {
+        descriptor: &TGC,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Tgc,
+    },
+    ContainerFormatRegistration {
+        descriptor: &NFS,
+        capabilities: EXTRACT_ONLY_PARALLEL,
+        handler: ContainerHandlerKind::Nfs,
+    },
+    ContainerFormatRegistration {
+        descriptor: &WBFS,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Wbfs,
+    },
+    ContainerFormatRegistration {
+        descriptor: &RVZ,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Rvz,
+    },
+    ContainerFormatRegistration {
+        descriptor: &Z3DS,
+        capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        handler: ContainerHandlerKind::Z3ds,
+    },
+    ContainerFormatRegistration {
+        descriptor: &XISO,
+        capabilities: RegisteredContainerCapabilities {
+            inspect: false,
+            extract: true,
+            create: false,
+            extract_threads: SINGLE_THREADED,
+            create_threads: SINGLE_THREADED,
+        },
+        handler: ContainerHandlerKind::Xiso,
+    },
+];
+
 pub struct ContainerRegistry {
     handlers: Vec<Arc<dyn ContainerHandler>>,
 }
@@ -233,58 +530,10 @@ impl Default for ContainerRegistry {
 
 impl ContainerRegistry {
     pub fn new() -> Self {
-        let mut handlers: Vec<Arc<dyn ContainerHandler>> = vec![
-            Arc::new(ZipContainerHandler::new(&ZIP, ZipContainerFlavor::Zip)),
-            Arc::new(ZipContainerHandler::new(&ZIPX, ZipContainerFlavor::Zipx)),
-            Arc::new(SevenZContainerHandler::new(&SEVEN_Z)),
-        ];
-        handlers.push(Arc::new(RarContainerHandler::new(&RAR)));
-        handlers.push(Arc::new(TarContainerHandler::new(
-            &TAR,
-            TarCompression::None,
-        )));
-        handlers.push(Arc::new(TarContainerHandler::new(
-            &TAR_GZ,
-            TarCompression::Gzip,
-        )));
-        handlers.push(Arc::new(TarContainerHandler::new(
-            &TAR_BZ2,
-            TarCompression::Bzip2,
-        )));
-        handlers.push(Arc::new(TarContainerHandler::new(
-            &TAR_XZ,
-            TarCompression::Xz,
-        )));
-        handlers.push(Arc::new(StreamContainerHandler::new(
-            &GZ,
-            StreamCompression::Gzip,
-        )));
-        handlers.push(Arc::new(StreamContainerHandler::new(
-            &BZ2,
-            StreamCompression::Bzip2,
-        )));
-        handlers.push(Arc::new(StreamContainerHandler::new(
-            &XZ,
-            StreamCompression::Xz,
-        )));
-        handlers.push(Arc::new(StreamContainerHandler::new(
-            &ZST,
-            StreamCompression::Zstd,
-        )));
-        handlers.push(Arc::new(CsoContainerHandler::new(&CSO)));
-        handlers.push(Arc::new(PbpContainerHandler));
-        handlers.push(Arc::new(ChdContainerHandler));
-        handlers.push(Arc::new(GczContainerHandler));
-        handlers.push(Arc::new(WiaContainerHandler));
-        handlers.push(Arc::new(TgcContainerHandler));
-        handlers.push(Arc::new(NfsContainerHandler));
-        handlers.push(Arc::new(WbfsContainerHandler));
-        handlers.push(Arc::new(RvzContainerHandler));
-        handlers.push(Arc::new(Z3dsContainerHandler));
-        handlers.push(Arc::new(XisoContainerHandler));
         Self {
-            handlers: handlers
-                .into_iter()
+            handlers: CONTAINER_FORMAT_REGISTRY
+                .iter()
+                .map(ContainerFormatRegistration::build_handler)
                 .map(rom_weaver_core::traced_container_handler)
                 .collect(),
         }
@@ -352,314 +601,11 @@ const ZSTD_SIGNATURE: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 const CSO_SIGNATURE: [u8; 4] = [b'C', b'I', b'S', b'O'];
 const PBP_SIGNATURE: [u8; 4] = [0x00, b'P', b'B', b'P'];
 
-fn file_starts_with(source: &Path, signature: &[u8]) -> bool {
-    let mut bytes = vec![0u8; signature.len()];
-    if let Ok(mut file) = File::open(source) {
-        return file.read_exact(&mut bytes).is_ok() && bytes == signature;
-    }
-    false
-}
-
 #[derive(Clone, Debug)]
 struct ArchiveInputEntry {
     source: PathBuf,
     archive_name: String,
     is_dir: bool,
-}
-
-#[derive(Clone, Debug)]
-enum SelectionPatternKind {
-    ExactOrPrefix,
-    Wildcard(WildcardPattern),
-}
-
-#[derive(Clone, Debug)]
-struct SelectionPattern {
-    requested: String,
-    kind: SelectionPatternKind,
-}
-
-impl SelectionPattern {
-    fn new(requested: String) -> Self {
-        if Self::contains_glob_syntax(&requested) {
-            let wildcard = WildcardPattern::new(&requested);
-            return Self {
-                requested,
-                kind: SelectionPatternKind::Wildcard(wildcard),
-            };
-        }
-        Self {
-            requested,
-            kind: SelectionPatternKind::ExactOrPrefix,
-        }
-    }
-
-    fn contains_glob_syntax(value: &str) -> bool {
-        value
-            .bytes()
-            .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b'{' | b']' | b'}'))
-    }
-
-    fn matches(&self, entry_name: &str) -> bool {
-        match &self.kind {
-            SelectionPatternKind::ExactOrPrefix => {
-                entry_name == self.requested
-                    || entry_name.starts_with(&format!("{}/", self.requested))
-            }
-            SelectionPatternKind::Wildcard(pattern) => pattern.matches(entry_name),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct WildcardPattern {
-    segments: Vec<PathPatternSegment>,
-}
-
-#[derive(Clone, Debug)]
-enum PathPatternSegment {
-    AnyDepth,
-    OneSegment(String),
-}
-
-impl WildcardPattern {
-    fn new(pattern: &str) -> Self {
-        let segments = pattern
-            .split('/')
-            .filter(|segment| !segment.is_empty())
-            .map(|segment| {
-                if segment == "**" {
-                    PathPatternSegment::AnyDepth
-                } else {
-                    PathPatternSegment::OneSegment(segment.to_string())
-                }
-            })
-            .collect::<Vec<_>>();
-        Self { segments }
-    }
-
-    fn matches(&self, entry_name: &str) -> bool {
-        let path_segments = entry_name
-            .split('/')
-            .filter(|segment| !segment.is_empty())
-            .collect::<Vec<_>>();
-        Self::matches_path_segments(&self.segments, &path_segments)
-    }
-
-    fn matches_path_segments(
-        pattern_segments: &[PathPatternSegment],
-        path_segments: &[&str],
-    ) -> bool {
-        match pattern_segments.split_first() {
-            None => path_segments.is_empty(),
-            Some((PathPatternSegment::AnyDepth, remaining)) => {
-                if Self::matches_path_segments(remaining, path_segments) {
-                    return true;
-                }
-                if let Some((_, tail)) = path_segments.split_first() {
-                    return Self::matches_path_segments(pattern_segments, tail);
-                }
-                false
-            }
-            Some((PathPatternSegment::OneSegment(pattern), remaining)) => {
-                let Some((segment, tail)) = path_segments.split_first() else {
-                    return false;
-                };
-                if !matches_wildcard_segment(pattern, segment) {
-                    return false;
-                }
-                Self::matches_path_segments(remaining, tail)
-            }
-        }
-    }
-}
-
-fn matches_wildcard_segment(pattern: &str, candidate: &str) -> bool {
-    let pattern_chars = pattern.chars().collect::<Vec<_>>();
-    let candidate_chars = candidate.chars().collect::<Vec<_>>();
-    matches_wildcard_segment_inner(&pattern_chars, &candidate_chars, 0, 0)
-}
-
-fn matches_wildcard_segment_inner(
-    pattern: &[char],
-    candidate: &[char],
-    pattern_index: usize,
-    candidate_index: usize,
-) -> bool {
-    let mut pattern_index = pattern_index;
-    let mut candidate_index = candidate_index;
-
-    while pattern_index < pattern.len() {
-        match pattern[pattern_index] {
-            '*' => {
-                while pattern_index < pattern.len() && pattern[pattern_index] == '*' {
-                    pattern_index += 1;
-                }
-                if pattern_index == pattern.len() {
-                    return true;
-                }
-                for next_candidate_index in candidate_index..=candidate.len() {
-                    if matches_wildcard_segment_inner(
-                        pattern,
-                        candidate,
-                        pattern_index,
-                        next_candidate_index,
-                    ) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            '?' => {
-                if candidate_index == candidate.len() {
-                    return false;
-                }
-                pattern_index += 1;
-                candidate_index += 1;
-            }
-            '[' => {
-                let Some(class_end) = find_character_class_end(pattern, pattern_index + 1) else {
-                    if candidate_index == candidate.len() || candidate[candidate_index] != '[' {
-                        return false;
-                    }
-                    pattern_index += 1;
-                    candidate_index += 1;
-                    continue;
-                };
-                if candidate_index == candidate.len() {
-                    return false;
-                }
-                if !character_class_matches(
-                    &pattern[pattern_index + 1..class_end],
-                    candidate[candidate_index],
-                ) {
-                    return false;
-                }
-                pattern_index = class_end + 1;
-                candidate_index += 1;
-            }
-            expected => {
-                if candidate_index == candidate.len() || candidate[candidate_index] != expected {
-                    return false;
-                }
-                pattern_index += 1;
-                candidate_index += 1;
-            }
-        }
-    }
-
-    candidate_index == candidate.len()
-}
-
-fn find_character_class_end(pattern: &[char], class_start: usize) -> Option<usize> {
-    let mut index = class_start;
-    while index < pattern.len() {
-        if pattern[index] == ']' {
-            return Some(index);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn character_class_matches(class: &[char], value: char) -> bool {
-    if class.is_empty() {
-        return false;
-    }
-
-    let mut index = 0usize;
-    let mut negated = false;
-    if matches!(class.first(), Some('!') | Some('^')) {
-        negated = true;
-        index = 1;
-    }
-
-    let mut matched = false;
-    while index < class.len() {
-        let current = class[index];
-        if index + 2 < class.len() && class[index + 1] == '-' {
-            let range_end = class[index + 2];
-            if current <= value && value <= range_end {
-                matched = true;
-            }
-            index += 3;
-            continue;
-        }
-
-        if current == value {
-            matched = true;
-        }
-        index += 1;
-    }
-
-    if negated { !matched } else { matched }
-}
-
-#[derive(Debug, Default)]
-struct SelectionMatcher {
-    requested: Vec<SelectionPattern>,
-    matched: BTreeSet<String>,
-}
-
-impl SelectionMatcher {
-    fn new(requested: &[String]) -> Self {
-        let requested = requested
-            .iter()
-            .map(|value| normalize_archive_name(value))
-            .filter(|value| !value.is_empty())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .map(SelectionPattern::new)
-            .collect::<Vec<_>>();
-        Self {
-            requested,
-            matched: BTreeSet::new(),
-        }
-    }
-
-    fn matches(&mut self, entry_name: &str) -> bool {
-        if self.requested.is_empty() {
-            return true;
-        }
-        let entry_name = normalize_archive_name(entry_name);
-        if entry_name.is_empty() {
-            return false;
-        }
-        for requested in &self.requested {
-            if requested.matches(&entry_name) {
-                self.matched.insert(requested.requested.clone());
-                return true;
-            }
-        }
-        false
-    }
-
-    fn ensure_all_matched(&self) -> Result<()> {
-        let missing = self
-            .requested
-            .iter()
-            .filter_map(|requested| {
-                (!self.matched.contains(&requested.requested))
-                    .then_some(requested.requested.clone())
-            })
-            .collect::<Vec<_>>();
-        if missing.is_empty() {
-            Ok(())
-        } else {
-            Err(RomWeaverError::Validation(format!(
-                "requested selections were not found: {}",
-                missing.join(", ")
-            )))
-        }
-    }
-}
-
-fn normalize_archive_name(name: &str) -> String {
-    name.trim()
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .trim_matches('/')
-        .to_string()
 }
 
 fn sanitize_archive_relative_path_from_str(name: &str) -> Result<PathBuf> {
@@ -1736,22 +1682,6 @@ fn extract_libarchive_task_chunk_to_sender(
     }
 
     Ok(())
-}
-
-fn regular_archive_extract_thread_capability() -> ThreadCapability {
-    ThreadCapability::parallel(None)
-}
-
-fn cso_create_thread_capability(max_threads: Option<usize>) -> ThreadCapability {
-    ThreadCapability::parallel(max_threads)
-}
-
-fn cso_extract_thread_capability(max_threads: Option<usize>) -> ThreadCapability {
-    ThreadCapability::parallel(max_threads)
-}
-
-fn pbp_extract_thread_capability(max_threads: Option<usize>) -> ThreadCapability {
-    ThreadCapability::parallel(max_threads)
 }
 
 fn extract_regular_archive_with_libarchive(

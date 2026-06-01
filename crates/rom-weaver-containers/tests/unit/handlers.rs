@@ -31,8 +31,8 @@ mod tests {
     };
     use rom_weaver_codecs::CanonicalCodec;
     use rom_weaver_core::{
-        CancellationToken, ContainerHandler, NoopProgressSink, OperationContext, ThreadBudget,
-        ThreadCapability, ThreadExecution,
+        CancellationToken, ContainerHandlerOperations, NoopProgressSink, OperationContext,
+        ThreadBudget, ThreadCapability, ThreadExecution,
     };
 
     fn test_temp_root() -> PathBuf {

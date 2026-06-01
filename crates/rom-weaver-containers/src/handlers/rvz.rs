@@ -178,7 +178,7 @@ impl RvzContainerHandler {
     }
 }
 
-impl ContainerHandler for RvzContainerHandler {
+impl ContainerHandlerOperations for RvzContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &RVZ
     }
@@ -341,16 +341,6 @@ impl ContainerHandler for RvzContainerHandler {
                 }
             },
         )
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: true,
-            extract_threads: ThreadCapability::parallel(None),
-            create_threads: ThreadCapability::parallel(None),
-        }
     }
 }
 /* jscpd:ignore-end */

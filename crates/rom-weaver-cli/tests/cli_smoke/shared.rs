@@ -247,6 +247,16 @@ fn read_single_file_bytes(dir: &std::path::Path) -> Vec<u8> {
 }
 
 fn run_chd_round_trip(input_name: &str, source: &[u8], codec: &str, expected_extract_name: &str) {
+    run_chd_round_trip_with_format("chd", input_name, source, codec, expected_extract_name);
+}
+
+fn run_chd_round_trip_with_format(
+    format: &str,
+    input_name: &str,
+    source: &[u8],
+    codec: &str,
+    expected_extract_name: &str,
+) {
     let temp = setup_temp_dir();
     fs::write(temp.child(input_name).path(), source).expect("fixture");
 
@@ -257,7 +267,7 @@ fn run_chd_round_trip(input_name: &str, source: &[u8], codec: &str, expected_ext
             "compress",
             temp.child(input_name).path().to_str().expect("path"),
             "--format",
-            "chd",
+            format,
             "--output",
             chd_path.path().to_str().expect("path"),
             "--codec",

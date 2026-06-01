@@ -15,10 +15,10 @@ import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { ParsedPatchLike, PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
 import { patchWorkflowDeps, runApplyWorkflow } from "../apply/workflow.ts";
 import {
-  Z3DS_COMPRESSION_INPUT_EXTENSIONS,
-  Z3DS_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "../compression/disc-format-support.ts";
-import OutputCompressionManager from "../compression/output-compression-manager.ts";
+  getCompressionOutputExtension,
+  isCompressionFormat,
+  resolveAutomaticCompressionFormat,
+} from "../compression/container-format-registry.ts";
 import { RomWeaverError, throwIfAborted, toRomWeaverError, withAbortSignal } from "../errors.ts";
 import { getPatchFileCleanup } from "../input/binary-service.ts";
 import { getInputPreparationMetrics, type InputAsset, type InputParentCompression } from "../input/input-assets.ts";
@@ -112,8 +112,6 @@ const getPatchFilePrecomputedChecksums = (file: PatchFileInstance | undefined): 
 };
 const PATCH_OUTPUT_LABEL_PATTERN = /\[([^\]]+)\](?:\.[^.]+)?\d*$/;
 const FILE_EXTENSION_REGEX = /\.([^./\\\s]+)$/;
-const APPLY_FORMATS = new Set<CompressionFormat>(["7z", "chd", "none", "rvz", "z3ds", "zip"]);
-const Z3DS_APPLY_EXTENSIONS = new Set([...Z3DS_COMPRESSION_INPUT_EXTENSIONS, ...Z3DS_DECOMPRESSION_INPUT_EXTENSIONS]);
 const PATCH_TARGET_SELECTION_ERROR_CODES = new Set(["AMBIGUOUS_SELECTION", "PATCH_TARGET_MISMATCH"]);
 const MAX_INPUT_SELECTION_RETRY_COUNT = 12;
 
@@ -291,50 +289,17 @@ const getCompressionExtension = (
   format: CompressionFormat,
   inputFileName: string | undefined,
   settings: Partial<ApplySettings>,
-) => {
-  if (format === "none") {
-    const extension = stripFileNameQuery(inputFileName || "").match(FILE_EXTENSION_REGEX)?.[1];
-    return extension || "";
-  }
-  if (format === "7z") return "7z";
-  if (format === "zip")
-    return OutputCompressionManager.getArchiveOutputExtension("zip", {
-      zipCodec: settings.output?.container?.zipCodec,
-    });
-  if (format === "chd") return "chd";
-  if (format === "rvz") return "rvz";
-  if (format === "z3ds") {
-    const extension = stripFileNameQuery(inputFileName || "")
-      .match(FILE_EXTENSION_REGEX)?.[1]
-      ?.toLowerCase();
-    if (extension === "cia" || extension === "zcia") return "zcia";
-    if (extension === "3ds" || extension === "z3ds") return "z3ds";
-    if (extension === "cci" || extension === "zcci") return "zcci";
-    if (extension === "cxi" || extension === "app" || extension === "zcxi") return "zcxi";
-    if (extension === "3dsx" || extension === "z3dsx") return "z3dsx";
-    return "z3ds";
-  }
-  return format;
-};
+): string => getCompressionOutputExtension(format, { inputFileName, settings });
 
 const resolveAutomaticFormat = (
   input: InputSession<unknown> | undefined,
   _settings: Partial<ApplySettings>,
 ): CompressionFormat => {
-  const parentKind = input?.view?.parentCompressions?.[0]?.kind;
-  if (parentKind === "zip") return "zip";
-  if (parentKind === "7z") return "7z";
-  if (parentKind === "chd") return "chd";
-  if (parentKind === "rvz") return "rvz";
-  if (parentKind === "z3ds") return "z3ds";
   const sourceName = input?.sources[0] ? getSourceFileName(input.sources[0], "input") : "";
-  const extension = stripFileNameQuery(sourceName).match(FILE_EXTENSION_REGEX)?.[1]?.toLowerCase();
-  if (extension === "zip" || extension === "zipx") return "zip";
-  if (extension === "7z") return "7z";
-  if (extension === "chd") return "chd";
-  if (extension === "rvz") return "rvz";
-  if (Z3DS_APPLY_EXTENSIONS.has(extension || "")) return "z3ds";
-  return "7z";
+  return resolveAutomaticCompressionFormat({
+    parentKind: input?.view?.parentCompressions?.[0]?.kind,
+    sourceFileName: stripFileNameQuery(sourceName),
+  });
 };
 
 const releasePreparedFile = (file?: PatchFileInstance) => {
@@ -410,7 +375,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     this.constructorSignal = options.signal;
     this.selectFile = options.selectFile;
     const initialCompression = this.settings.output?.compression;
-    if (initialCompression && initialCompression !== "auto" && APPLY_FORMATS.has(initialCompression)) {
+    if (initialCompression && initialCompression !== "auto" && isCompressionFormat(initialCompression)) {
       this.manualOutputFormat = true;
       this.outputFormat = initialCompression;
     }
@@ -559,7 +524,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       this.manualOutputFormat = !!(
         initialCompression &&
         initialCompression !== "auto" &&
-        APPLY_FORMATS.has(initialCompression)
+        isCompressionFormat(initialCompression)
       );
       if (this.manualOutputFormat) {
         this.outputFormat = initialCompression as CompressionFormat;
@@ -599,7 +564,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
 
   async setOutputFormat(format: CompressionFormat): Promise<void> {
     return this.mutate("setOutputFormat", async () => {
-      if (!APPLY_FORMATS.has(format))
+      if (!isCompressionFormat(format))
         throw new RomWeaverError("INVALID_SETTINGS", `Unsupported output format: ${format}`);
       this.manualOutputFormat = true;
       this.outputFormat = format;

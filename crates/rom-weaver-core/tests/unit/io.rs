@@ -8,8 +8,9 @@ use std::{
 
 use super::{
     BlockCacheReader, ChunkPlanner, OrderedChunkWriter, SharedBlockCacheReader, TempPathAllocator,
-    bounded_items_for_threads,
+    bounded_items_for_threads, ordered_streaming_compress,
 };
+use crate::RomWeaverError;
 
 #[test]
 fn chunk_planner_splits_ranges() {
@@ -81,6 +82,59 @@ fn ordered_writer_flushes_in_order() {
     writer.write_chunk(3, b"dd".to_vec()).expect("chunk 3");
     let output = writer.finish().expect("finish");
     assert_eq!(output, b"aabbccdd");
+}
+
+#[test]
+fn ordered_streaming_compress_collects_worker_results_in_task_order() {
+    let tasks = [0usize, 1, 2, 3, 4, 5];
+    let mut collected = Vec::new();
+
+    ordered_streaming_compress(
+        &tasks,
+        3,
+        "workers closed",
+        "results closed",
+        |_, task| Ok(*task),
+        || (),
+        |_, _, task| {
+            if task % 2 == 0 {
+                std::thread::yield_now();
+            }
+            Ok(task * 10)
+        },
+        |_, output| {
+            collected.push(output);
+            Ok(())
+        },
+    )
+    .expect("pipeline");
+
+    assert_eq!(collected, vec![0, 10, 20, 30, 40, 50]);
+}
+
+#[test]
+fn ordered_streaming_compress_returns_collector_errors_without_deadlock() {
+    let tasks = 0usize..64usize;
+    let result = ordered_streaming_compress(
+        tasks,
+        4,
+        "workers closed",
+        "results closed",
+        |_, task| Ok(task),
+        || (),
+        |_, _, task| Ok(task),
+        |_, output| {
+            if output == 2 {
+                return Err(RomWeaverError::Validation("stop collecting".into()));
+            }
+            Ok(())
+        },
+    );
+
+    let Err(RomWeaverError::Validation(message)) = result else {
+        panic!("expected collector validation error");
+    };
+    assert_eq!(message, "stop collecting");
 }
 
 #[test]

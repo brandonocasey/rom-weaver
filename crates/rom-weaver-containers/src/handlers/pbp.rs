@@ -794,7 +794,7 @@ impl PbpContainerHandler {
     }
 }
 
-impl ContainerHandler for PbpContainerHandler {
+impl ContainerHandlerOperations for PbpContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &PBP
     }
@@ -903,7 +903,7 @@ impl ContainerHandler for PbpContainerHandler {
         let extract_progress_label = format!("extracting `{}`", PBP.name);
         let extract_progress_bytes = Arc::new(AtomicU64::new(0));
         let extract_progress_bucket = Arc::new(AtomicU8::new(0));
-        let mut execution = context.plan_threads(pbp_extract_thread_capability(None));
+        let mut execution = context.plan_threads(ThreadCapability::parallel(None));
 
         let mut produced_outputs = Vec::new();
         let mut total_written = 0u64;
@@ -914,7 +914,7 @@ impl ContainerHandler for PbpContainerHandler {
             let bin_path = request.out_dir.join(&output.bin_name);
             if write_bin {
                 let tasks = self.build_disc_extract_tasks(disc_index, disc)?;
-                let extract_capability = pbp_extract_thread_capability(Some(tasks.len().max(1)));
+                let extract_capability = ThreadCapability::parallel(Some(tasks.len().max(1)));
                 let (disc_execution, pool) = context.build_pool(extract_capability)?;
                 execution = disc_execution;
 
@@ -1109,16 +1109,6 @@ impl ContainerHandler for PbpContainerHandler {
         Err(RomWeaverError::Validation(
             "pbp create is not supported".into(),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: false,
-            extract_threads: pbp_extract_thread_capability(None),
-            create_threads: ThreadCapability::single_threaded(),
-        }
     }
 }
 

@@ -13,7 +13,7 @@ impl WbfsContainerHandler {
     }
 }
 
-impl ContainerHandler for WbfsContainerHandler {
+impl ContainerHandlerOperations for WbfsContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &WBFS
     }
@@ -99,16 +99,6 @@ impl ContainerHandler for WbfsContainerHandler {
             Some(100.0),
             Some(execution),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: true,
-            extract_threads: ThreadCapability::parallel(None),
-            create_threads: ThreadCapability::parallel(None),
-        }
     }
 }
 /* jscpd:ignore-end */

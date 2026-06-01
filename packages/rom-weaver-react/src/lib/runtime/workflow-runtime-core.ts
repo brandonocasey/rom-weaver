@@ -20,6 +20,11 @@ import type {
   WorkflowRuntimePreloadEvent,
   WorkflowRuntimeProgress,
 } from "../../types/workflow-runtime-adapter.ts";
+import {
+  type DiscCompressionFormat,
+  type DiscCompressionFormatRegistration,
+  getDiscCompressionFormatRegistration,
+} from "../compression/container-format-registry.ts";
 import { getNamedSourceFileName, toWorkerMetadata } from "./source-normalization.ts";
 import { createCompressionExtractResult } from "./workflow-runtime-worker-helpers.ts";
 
@@ -353,6 +358,17 @@ const createSharedCompressionRuntime = (
   };
   const getSourceFileName = (source: RuntimeDiscExtractChdInput["source"], fallbackFileName: string) =>
     getNamedSourceFileName(source, { fallback: fallbackFileName }) || fallbackFileName;
+  type DiscCreateRequest = Extract<
+    Parameters<NonNullable<WorkflowRuntime["compression"]["create"]>>[0],
+    { source: unknown }
+  >;
+  type DiscExtractRequest = Parameters<NonNullable<WorkflowRuntime["compression"]["extract"]>>[0];
+  type DiscListRequest = Parameters<NonNullable<WorkflowRuntime["compression"]["list"]>>[0];
+  type DiscCreateInput = RuntimeDiscCreateChdInput | RuntimeDiscCreateRvzInput | RuntimeDiscCreateZ3dsInput;
+  type DiscExtractInput = RuntimeDiscExtractChdInput | RuntimeDiscExtractRvzInput | RuntimeDiscExtractZ3dsInput;
+  type DiscListInput = RuntimeDiscExtractChdInput | RuntimeDiscExtractRvzInput | RuntimeDiscExtractZ3dsInput;
+  type DiscCreateOutput = Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>;
+  type DiscListEntries = Awaited<ReturnType<NonNullable<WorkflowRuntime["compression"]["list"]>>>["entries"];
   const toDiscProgressCallback = (
     stage: "input" | "output",
     onProgress: CompressionProgressHandler,
@@ -368,73 +384,174 @@ const createSharedCompressionRuntime = (
           });
         }
       : undefined;
+  const createDiscInputs = {
+    chd: (request: DiscCreateRequest): RuntimeDiscCreateChdInput => ({
+      chdSourceMode: request.chdSourceMode,
+      compressionCodecs: request.compressionCodecs,
+      cueFilePath: request.cueFilePath,
+      fileName: request.fileName,
+      imageFiles: request.imageFiles,
+      logLevel: request.options?.logLevel,
+      mode: request.mode,
+      onLog: request.options?.onLog,
+      onProgress: toDiscProgressCallback("output", request.options?.onProgress),
+      outputName: request.outputName,
+      source: request.source,
+      threads: request.options?.workerThreads,
+    }),
+    rvz: (request: DiscCreateRequest): RuntimeDiscCreateRvzInput => ({
+      fileName: request.fileName,
+      logLevel: request.options?.logLevel,
+      onLog: request.options?.onLog,
+      onProgress: toDiscProgressCallback("output", request.options?.onProgress),
+      outputName: request.outputName,
+      rvzBlockSize: request.rvzBlockSize,
+      rvzCompression: request.rvzCompression,
+      rvzCompressionLevel: request.rvzCompressionLevel,
+      rvzMode: request.rvzMode,
+      rvzScrub: request.rvzScrub,
+      rvzSourceFileName: request.rvzSourceFileName,
+      source: request.source,
+      threads: request.options?.workerThreads,
+    }),
+    z3ds: (request: DiscCreateRequest): RuntimeDiscCreateZ3dsInput => ({
+      fileName: request.fileName,
+      logLevel: request.options?.logLevel,
+      onLog: request.options?.onLog,
+      onProgress: toDiscProgressCallback("output", request.options?.onProgress),
+      outputName: request.outputName,
+      source: request.source,
+      threads: request.options?.workerThreads,
+      z3dsCompressionLevel: request.z3dsCompressionLevel,
+      z3dsMetadata: request.z3dsMetadata as Record<
+        string,
+        string | number | boolean | Uint8Array | null | undefined
+      > | null,
+      z3dsSourceFileName: request.z3dsSourceFileName,
+      z3dsUnderlyingMagic: request.z3dsUnderlyingMagic,
+    }),
+  } satisfies Record<DiscCompressionFormat, (request: DiscCreateRequest) => DiscCreateInput>;
+  const createDiscOutput = async (registration: DiscCompressionFormatRegistration, input: DiscCreateInput) => {
+    const create = discRuntime[registration.create] as
+      | ((input: DiscCreateInput) => Promise<DiscCreateOutput>)
+      | undefined;
+    return create?.(input);
+  };
+  const extractDiscOutput = async (registration: DiscCompressionFormatRegistration, input: DiscExtractInput) => {
+    const extract = discRuntime[registration.extract] as
+      | ((input: DiscExtractInput) => Promise<CompressionExtractResult | DiscCreateOutput>)
+      | undefined;
+    return extract?.(input);
+  };
+  const listDiscEntries = async (registration: DiscCompressionFormatRegistration, input: DiscListInput) => {
+    const list = discRuntime[registration.list] as ((input: DiscListInput) => Promise<DiscListEntries>) | undefined;
+    return list?.(input);
+  };
+  const getDiscListInput = (
+    registration: DiscCompressionFormatRegistration,
+    request: DiscListRequest,
+  ): DiscListInput => ({
+    fileName: getSourceFileName(request.source, registration.fallbackFileName),
+    logLevel: request.options?.logLevel,
+    mode: undefined,
+    onLog: request.options?.onLog,
+    onProgress: toDiscProgressCallback("input", request.options?.onProgress),
+    source: request.source,
+    threads: request.options?.workerThreads,
+  });
+  const extractChd = async (request: DiscExtractRequest) => {
+    const registration = getDiscCompressionFormatRegistration("chd");
+    if (!registration) throw new Error("CHD compression extraction is unavailable");
+    const selectedEntries = request.entries.filter((entryName) => typeof entryName === "string" && entryName);
+    const cueEntryName = selectedEntries.find((entryName) => CUE_FILE_REGEX.test(entryName));
+    const trackEntryName = selectedEntries.find((entryName) => !CUE_FILE_REGEX.test(entryName));
+    const extracted = requireOutput(
+      (await extractDiscOutput(registration, {
+        fileName: getSourceFileName(request.source, registration.fallbackFileName),
+        logLevel: request.options?.logLevel,
+        mode: cueEntryName ? "cd" : undefined,
+        onLog: request.options?.onLog,
+        onProgress: toDiscProgressCallback("input", request.options?.onProgress),
+        outputName: trackEntryName || request.outputName,
+        source: request.source,
+        splitBin: typeof request.options?.chdSplitBin === "boolean" ? request.options.chdSplitBin : undefined,
+        threads: request.options?.workerThreads,
+      })) as CompressionExtractResult | undefined,
+      `${registration.label} compression extraction is unavailable`,
+    );
+    if (!cueEntryName) return extracted;
+    const cueOutput = extracted.outputs.find(isCueOutput) || null;
+    const dataOutputs = extracted.outputs.filter((output) => !isCueOutput(output));
+    if (dataOutputs.length > 1) {
+      return createCompressionExtractResult([
+        ...(cueOutput && cueEntryName
+          ? [withOutputFileName(cueOutput, getPathBaseName(cueEntryName, cueEntryName))]
+          : []),
+        ...dataOutputs,
+      ]);
+    }
+    const outputs = request.entries
+      .map((entryName) => {
+        const normalizedEntryName = getPathBaseName(entryName, entryName).toLowerCase();
+        const exactOutput =
+          extracted.outputs.find((output) => {
+            const outputName = getPathBaseName(output.fileName || output.path || "", "").toLowerCase();
+            return outputName === normalizedEntryName;
+          }) || null;
+        const fallbackOutput = CUE_FILE_REGEX.test(entryName)
+          ? cueOutput
+          : dataOutputs.length === 1
+            ? dataOutputs[0]
+            : null;
+        const output = exactOutput || fallbackOutput;
+        return output ? withOutputFileName(output, getPathBaseName(entryName, entryName)) : null;
+      })
+      .filter((output): output is PublicOutput => !!output);
+    return createCompressionExtractResult(outputs.length ? outputs : extracted.outputs);
+  };
+  const extractSingleOutputDisc = async (
+    registration: DiscCompressionFormatRegistration,
+    request: DiscExtractRequest,
+  ) => {
+    if (request.entries.length !== 1)
+      throw new Error(`${registration.label} compression extraction requires exactly one synthetic output entry`);
+    return createCompressionExtractResult([
+      requireOutput(
+        (await extractDiscOutput(registration, {
+          fileName: getSourceFileName(request.source, registration.fallbackFileName),
+          logLevel: request.options?.logLevel,
+          onLog: request.options?.onLog,
+          onProgress: toDiscProgressCallback("input", request.options?.onProgress),
+          outputName: request.entries[0] || request.outputName,
+          source: request.source,
+          threads: request.options?.workerThreads,
+        })) as DiscCreateOutput | undefined,
+        `${registration.label} compression extraction is unavailable`,
+      ),
+    ]);
+  };
+  const extractDiscHandlers = {
+    chd: (_registration: DiscCompressionFormatRegistration, request: DiscExtractRequest) => extractChd(request),
+    rvz: (registration: DiscCompressionFormatRegistration, request: DiscExtractRequest) =>
+      extractSingleOutputDisc(registration, request),
+    z3ds: (registration: DiscCompressionFormatRegistration, request: DiscExtractRequest) =>
+      extractSingleOutputDisc(registration, request),
+  } satisfies Record<
+    DiscCompressionFormat,
+    (registration: DiscCompressionFormatRegistration, request: DiscExtractRequest) => Promise<CompressionExtractResult>
+  >;
   const runtime: WorkflowRuntime["compression"] = {
     create: async (request) => {
       if ("entries" in request) {
         if (!archiveRuntime.create) throw new Error("Archive compression creation is unavailable");
         return archiveRuntime.create(request);
       }
-      if (request.format === "chd")
+      const registration = getDiscCompressionFormatRegistration(request.format);
+      if (registration)
         return {
           output: requireOutput(
-            await discRuntime.createChd?.({
-              chdSourceMode: request.chdSourceMode,
-              compressionCodecs: request.compressionCodecs,
-              cueFilePath: request.cueFilePath,
-              fileName: request.fileName,
-              imageFiles: request.imageFiles,
-              logLevel: request.options?.logLevel,
-              mode: request.mode,
-              onLog: request.options?.onLog,
-              onProgress: toDiscProgressCallback("output", request.options?.onProgress),
-              outputName: request.outputName,
-              source: request.source,
-              threads: request.options?.workerThreads,
-            }),
-            "CHD compression creation is unavailable",
-          ),
-        };
-      if (request.format === "rvz")
-        return {
-          output: requireOutput(
-            await discRuntime.createRvz?.({
-              fileName: request.fileName,
-              logLevel: request.options?.logLevel,
-              onLog: request.options?.onLog,
-              onProgress: toDiscProgressCallback("output", request.options?.onProgress),
-              outputName: request.outputName,
-              rvzBlockSize: request.rvzBlockSize,
-              rvzCompression: request.rvzCompression,
-              rvzCompressionLevel: request.rvzCompressionLevel,
-              rvzMode: request.rvzMode,
-              rvzScrub: request.rvzScrub,
-              rvzSourceFileName: request.rvzSourceFileName,
-              source: request.source,
-              threads: request.options?.workerThreads,
-            }),
-            "RVZ compression creation is unavailable",
-          ),
-        };
-      if (request.format === "z3ds")
-        return {
-          output: requireOutput(
-            await discRuntime.createZ3ds?.({
-              fileName: request.fileName,
-              logLevel: request.options?.logLevel,
-              onLog: request.options?.onLog,
-              onProgress: toDiscProgressCallback("output", request.options?.onProgress),
-              outputName: request.outputName,
-              source: request.source,
-              threads: request.options?.workerThreads,
-              z3dsCompressionLevel: request.z3dsCompressionLevel,
-              z3dsMetadata: request.z3dsMetadata as Record<
-                string,
-                string | number | boolean | Uint8Array | null | undefined
-              > | null,
-              z3dsSourceFileName: request.z3dsSourceFileName,
-              z3dsUnderlyingMagic: request.z3dsUnderlyingMagic,
-            }),
-            "Z3DS compression creation is unavailable",
+            await createDiscOutput(registration, createDiscInputs[registration.format](request)),
+            `${registration.label} compression creation is unavailable`,
           ),
         };
       throw new Error(
@@ -443,136 +560,19 @@ const createSharedCompressionRuntime = (
     },
   };
   const extract = async (request: Parameters<NonNullable<WorkflowRuntime["compression"]["extract"]>>[0]) => {
-    if (request.format === "chd") {
-      const selectedEntries = request.entries.filter((entryName) => typeof entryName === "string" && entryName);
-      const cueEntryName = selectedEntries.find((entryName) => CUE_FILE_REGEX.test(entryName));
-      const trackEntryName = selectedEntries.find((entryName) => !CUE_FILE_REGEX.test(entryName));
-      const extracted = requireOutput(
-        await discRuntime.extractChd?.({
-          fileName: getSourceFileName(request.source, "input.chd"),
-          logLevel: request.options?.logLevel,
-          mode: cueEntryName ? "cd" : undefined,
-          onLog: request.options?.onLog,
-          onProgress: toDiscProgressCallback("input", request.options?.onProgress),
-          outputName: trackEntryName || request.outputName,
-          source: request.source,
-          splitBin: typeof request.options?.chdSplitBin === "boolean" ? request.options.chdSplitBin : undefined,
-          threads: request.options?.workerThreads,
-        }),
-        "CHD compression extraction is unavailable",
-      );
-      if (!cueEntryName) return extracted;
-      const cueOutput = extracted.outputs.find(isCueOutput) || null;
-      const dataOutputs = extracted.outputs.filter((output) => !isCueOutput(output));
-      if (dataOutputs.length > 1) {
-        return createCompressionExtractResult([
-          ...(cueOutput && cueEntryName
-            ? [withOutputFileName(cueOutput, getPathBaseName(cueEntryName, cueEntryName))]
-            : []),
-          ...dataOutputs,
-        ]);
-      }
-      const outputs = request.entries
-        .map((entryName) => {
-          const normalizedEntryName = getPathBaseName(entryName, entryName).toLowerCase();
-          const exactOutput =
-            extracted.outputs.find((output) => {
-              const outputName = getPathBaseName(output.fileName || output.path || "", "").toLowerCase();
-              return outputName === normalizedEntryName;
-            }) || null;
-          const fallbackOutput = CUE_FILE_REGEX.test(entryName)
-            ? cueOutput
-            : dataOutputs.length === 1
-              ? dataOutputs[0]
-              : null;
-          const output = exactOutput || fallbackOutput;
-          return output ? withOutputFileName(output, getPathBaseName(entryName, entryName)) : null;
-        })
-        .filter((output): output is PublicOutput => !!output);
-      return createCompressionExtractResult(outputs.length ? outputs : extracted.outputs);
-    }
-    if (request.format === "rvz") {
-      if (request.entries.length !== 1)
-        throw new Error("RVZ compression extraction requires exactly one synthetic output entry");
-      return createCompressionExtractResult([
-        requireOutput(
-          await discRuntime.extractRvz?.({
-            fileName: getSourceFileName(request.source, "input.rvz"),
-            logLevel: request.options?.logLevel,
-            onLog: request.options?.onLog,
-            onProgress: toDiscProgressCallback("input", request.options?.onProgress),
-            outputName: request.entries[0] || request.outputName,
-            source: request.source,
-            threads: request.options?.workerThreads,
-          }),
-          "RVZ compression extraction is unavailable",
-        ),
-      ]);
-    }
-    if (request.format === "z3ds") {
-      if (request.entries.length !== 1)
-        throw new Error("Z3DS compression extraction requires exactly one synthetic output entry");
-      return createCompressionExtractResult([
-        requireOutput(
-          await discRuntime.extractZ3ds?.({
-            fileName: getSourceFileName(request.source, "input.z3ds"),
-            logLevel: request.options?.logLevel,
-            onLog: request.options?.onLog,
-            onProgress: toDiscProgressCallback("input", request.options?.onProgress),
-            outputName: request.entries[0] || request.outputName,
-            source: request.source,
-            threads: request.options?.workerThreads,
-          }),
-          "Z3DS compression extraction is unavailable",
-        ),
-      ]);
-    }
+    const registration = getDiscCompressionFormatRegistration(request.format);
+    if (registration) return extractDiscHandlers[registration.format](registration, request);
     if (!archiveRuntime.extract) throw new Error("Archive compression extraction is unavailable");
     return archiveRuntime.extract(request);
   };
   if (!input.archiveRuntimeOptional || archiveRuntime.extract) runtime.extract = extract;
   runtime.list = async (request) => {
-    if (request.format === "chd")
+    const registration = getDiscCompressionFormatRegistration(request.format);
+    if (registration)
       return {
         entries: requireOutput(
-          await discRuntime.listChd?.({
-            fileName: getSourceFileName(request.source, "input.chd"),
-            logLevel: request.options?.logLevel,
-            mode: undefined,
-            onLog: request.options?.onLog,
-            onProgress: toDiscProgressCallback("input", request.options?.onProgress),
-            source: request.source,
-            threads: request.options?.workerThreads,
-          }),
-          "CHD compression listing is unavailable",
-        ),
-      };
-    if (request.format === "rvz")
-      return {
-        entries: requireOutput(
-          await discRuntime.listRvz?.({
-            fileName: getSourceFileName(request.source, "input.rvz"),
-            logLevel: request.options?.logLevel,
-            onLog: request.options?.onLog,
-            onProgress: toDiscProgressCallback("input", request.options?.onProgress),
-            source: request.source,
-            threads: request.options?.workerThreads,
-          }),
-          "RVZ compression listing is unavailable",
-        ),
-      };
-    if (request.format === "z3ds")
-      return {
-        entries: requireOutput(
-          await discRuntime.listZ3ds?.({
-            fileName: getSourceFileName(request.source, "input.z3ds"),
-            logLevel: request.options?.logLevel,
-            onLog: request.options?.onLog,
-            onProgress: toDiscProgressCallback("input", request.options?.onProgress),
-            source: request.source,
-            threads: request.options?.workerThreads,
-          }),
-          "Z3DS compression listing is unavailable",
+          await listDiscEntries(registration, getDiscListInput(registration, request)),
+          `${registration.label} compression listing is unavailable`,
         ),
       };
     const listRuntime = archiveRuntime.list;

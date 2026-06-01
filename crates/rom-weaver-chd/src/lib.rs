@@ -20,10 +20,10 @@ use rayon::prelude::*;
 use rom_weaver_checksum::StreamingChecksum;
 use rom_weaver_codecs::{CanonicalCodec, RequestedCodec, parse_requested_codec};
 use rom_weaver_core::{
-    ContainerCapabilities, ContainerCreateRequest, ContainerExtractRequest, ContainerHandler,
+    ContainerCreateRequest, ContainerExtractRequest, ContainerHandlerOperations,
     ContainerInspectRequest, FormatDescriptor, OperationContext, OperationFamily, OperationReport,
     OperationStatus, ProbeConfidence, ProgressEvent, Result, RomWeaverError, ThreadCapability,
-    ThreadExecution,
+    ThreadExecution, ordered_streaming_compress,
 };
 // Only the decode paths use a shared pool, and they are absent on the wasi-threads build.
 #[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
@@ -32,7 +32,7 @@ use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use zstd::bulk::compress as zstd_compress;
 
-const CHD: FormatDescriptor = FormatDescriptor {
+pub const CHD: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Container,
     name: "chd",
     aliases: &["chd-cd", "chd-dvd", "chd-raw", "chd-hd"],

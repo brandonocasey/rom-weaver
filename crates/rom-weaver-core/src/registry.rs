@@ -264,7 +264,7 @@ pub fn traced_codec_backend(backend: Arc<dyn CodecBackend>) -> Arc<dyn CodecBack
     Arc::new(TracingCodecBackend { inner: backend })
 }
 
-pub trait ContainerHandler: Send + Sync {
+pub trait ContainerHandlerOperations: Send + Sync {
     fn descriptor(&self) -> &'static FormatDescriptor;
     fn probe(&self, source: &Path) -> ProbeConfidence {
         let _ = source;
@@ -318,6 +318,9 @@ pub trait ContainerHandler: Send + Sync {
             self.descriptor().name
         )))
     }
+}
+
+pub trait ContainerHandler: ContainerHandlerOperations {
     fn capabilities(&self) -> ContainerCapabilities;
 }
 
@@ -376,7 +379,7 @@ struct TracingContainerHandler {
     inner: Arc<dyn ContainerHandler>,
 }
 
-impl ContainerHandler for TracingContainerHandler {
+impl ContainerHandlerOperations for TracingContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         self.inner.descriptor()
     }
@@ -534,7 +537,9 @@ impl ContainerHandler for TracingContainerHandler {
     ) -> Result<u64> {
         self.inner.create_dry_run_size(request, context)
     }
+}
 
+impl ContainerHandler for TracingContainerHandler {
     fn capabilities(&self) -> ContainerCapabilities {
         self.inner.capabilities()
     }

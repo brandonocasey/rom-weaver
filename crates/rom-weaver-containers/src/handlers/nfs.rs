@@ -3,7 +3,7 @@ const NFS_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&NFS, NodFormat::Nfs);
 
 struct NfsContainerHandler;
 
-impl ContainerHandler for NfsContainerHandler {
+impl ContainerHandlerOperations for NfsContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &NFS
     }
@@ -44,16 +44,6 @@ impl ContainerHandler for NfsContainerHandler {
         Err(RomWeaverError::Validation(
             "nfs compression is not supported; nfs can only be decompressed with `extract`".into(),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: false,
-            extract_threads: ThreadCapability::parallel(None),
-            create_threads: ThreadCapability::single_threaded(),
-        }
     }
 }
 /* jscpd:ignore-end */

@@ -3,11 +3,13 @@ import type { JsonValue, ProgressEvent as SharedProgressEvent } from "../../type
 import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import {
-  CHD_DECOMPRESSION_INPUT_EXTENSIONS,
-  hasDiscExtension,
-  RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
-  Z3DS_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "../compression/disc-format-support.ts";
+  DISC_COMPRESSION_FORMAT_REGISTRATIONS,
+  type DiscCompressionFormat,
+  getDiscCompressionFormatRegistration,
+  getDiscExtractedFileName,
+  getFileExtension,
+  hasDiscCompressionFormatExtension,
+} from "../compression/container-format-registry.ts";
 import { RomWeaverError } from "../errors.ts";
 import { reportProgress } from "../progress/progress-reporting.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
@@ -18,20 +20,18 @@ import {
   getPatchFileExternalSource,
   isLazyExternalPatchFile,
 } from "./binary-service.ts";
-import { getChdExtractedFileName, getRvzExtractedFileName, getZ3dsExtractedFileName } from "./disc-file-utils.ts";
 
-const FILE_QUERY_OR_HASH_REGEX = /[?#].*$/;
 const MAX_RECURSIVE_DECOMPRESSION_PASSES = 8;
 
 type InputPreparationOptions = ApplyWorkflowOptions | CreateWorkflowOptions | undefined;
 type InputPreparationRuntime = Pick<WorkflowRuntime, "compression" | "name" | "workerIo">;
-type CompressionInputKind = "chd" | "rvz" | "z3ds";
+type CompressionInputKind = DiscCompressionFormat;
 const DEFAULT_INPUT_PREPARATION_RUNTIME: Pick<WorkflowRuntime, "name"> = {
   name: "browser",
 };
-const CHD_MAGIC = [0x4d, 0x43, 0x6f, 0x6d, 0x70, 0x72, 0x48, 0x44];
-const RVZ_MAGIC = [0x52, 0x56, 0x5a, 0x00];
-const Z3DS_MAGIC = [0x5a, 0x33, 0x44, 0x53];
+const MAX_DISC_MAGIC_LENGTH = Math.max(
+  ...DISC_COMPRESSION_FORMAT_REGISTRATIONS.map((registration) => registration.magicBytes.length),
+);
 
 let defaultBrowserRuntimePromise: Promise<WorkflowRuntime> | null = null;
 
@@ -84,13 +84,13 @@ const readSyncHeader = (binFile: PatchFileInstance, length: number) => {
   }
 };
 
-const hasMagicPrefix = (bytes: Uint8Array | null | undefined, magic: number[]) =>
+const hasMagicPrefix = (bytes: Uint8Array | null | undefined, magic: readonly number[]) =>
   !!bytes && bytes.length >= magic.length && magic.every((value, index) => bytes[index] === value);
 
 const resolveDiscKindFromHeader = (header: Uint8Array | null | undefined): CompressionInputKind | null => {
-  if (hasMagicPrefix(header, CHD_MAGIC)) return "chd";
-  if (hasMagicPrefix(header, RVZ_MAGIC)) return "rvz";
-  if (hasMagicPrefix(header, Z3DS_MAGIC)) return "z3ds";
+  for (const registration of DISC_COMPRESSION_FORMAT_REGISTRATIONS) {
+    if (hasMagicPrefix(header, registration.magicBytes)) return registration.format;
+  }
   return null;
 };
 
@@ -103,10 +103,10 @@ const readBlobHeader = async (binFile: PatchFileInstance, length: number): Promi
 
 const resolveDiscCompressionKind = async (binFile: PatchFileInstance): Promise<CompressionInputKind | null> => {
   if (canInspectDiscMagicSynchronously(binFile)) {
-    const kind = resolveDiscKindFromHeader(readSyncHeader(binFile, CHD_MAGIC.length));
+    const kind = resolveDiscKindFromHeader(readSyncHeader(binFile, MAX_DISC_MAGIC_LENGTH));
     if (kind || isDiscDecompressionOutput(binFile)) return kind;
   }
-  const header = await readBlobHeader(binFile, CHD_MAGIC.length);
+  const header = await readBlobHeader(binFile, MAX_DISC_MAGIC_LENGTH);
   if (header) {
     const kind = resolveDiscKindFromHeader(header);
     if (kind || isDiscDecompressionOutput(binFile)) return kind;
@@ -114,42 +114,27 @@ const resolveDiscCompressionKind = async (binFile: PatchFileInstance): Promise<C
   if (isDiscDecompressionOutput(binFile)) return null;
   if (typeof binFile.getExtension === "function") {
     const extension = binFile.getExtension();
-    if (hasDiscExtension(CHD_DECOMPRESSION_INPUT_EXTENSIONS, extension)) return "chd";
-    if (hasDiscExtension(RVZ_DECOMPRESSION_INPUT_EXTENSIONS, extension)) return "rvz";
-    if (hasDiscExtension(Z3DS_DECOMPRESSION_INPUT_EXTENSIONS, extension)) return "z3ds";
+    const registration = DISC_COMPRESSION_FORMAT_REGISTRATIONS.find((entry) =>
+      hasDiscCompressionFormatExtension(entry.format, extension),
+    );
+    if (registration) return registration.format;
   }
   return null;
 };
 
-const looksLikeRvzFile = (binFile: PatchFileInstance) =>
-  hasMagicPrefix(readSyncHeader(binFile, RVZ_MAGIC.length), RVZ_MAGIC) ||
-  (!isDiscDecompressionOutput(binFile) &&
-    hasDiscExtension(RVZ_DECOMPRESSION_INPUT_EXTENSIONS, getFileExtension(binFile)));
-
-const looksLikeZ3dsFile = (binFile: PatchFileInstance) =>
-  hasMagicPrefix(readSyncHeader(binFile, Z3DS_MAGIC.length), Z3DS_MAGIC) ||
-  (!isDiscDecompressionOutput(binFile) &&
-    hasDiscExtension(Z3DS_DECOMPRESSION_INPUT_EXTENSIONS, getFileExtension(binFile)));
+const looksLikeDiscFile = (format: CompressionInputKind, binFile: PatchFileInstance) => {
+  const registration = getDiscCompressionFormatRegistration(format);
+  if (!registration) return false;
+  return (
+    hasMagicPrefix(readSyncHeader(binFile, registration.magicBytes.length), registration.magicBytes) ||
+    (!isDiscDecompressionOutput(binFile) &&
+      hasDiscCompressionFormatExtension(registration.format, getFileExtension(binFile)))
+  );
+};
 
 const getDiscCompressionInputProgressLabel = (file: PatchFileInstance): string | null => {
-  if (looksLikeChdFile(file)) return "Preparing CHD extraction...";
-  if (looksLikeRvzFile(file)) return "Preparing RVZ extraction...";
-  if (looksLikeZ3dsFile(file)) return "Preparing Z3DS extraction...";
-  return null;
-};
-
-const getFileExtension = (binFile: PatchFileInstance) => {
-  if (typeof binFile.getExtension === "function") return binFile.getExtension();
-  const fileName = String(binFile.fileName || "").replace(FILE_QUERY_OR_HASH_REGEX, "");
-  const extensionIndex = fileName.lastIndexOf(".");
-  return extensionIndex === -1 ? "" : fileName.slice(extensionIndex + 1);
-};
-
-const looksLikeChdFile = (binFile: PatchFileInstance) => {
-  if (hasMagicPrefix(readSyncHeader(binFile, CHD_MAGIC.length), CHD_MAGIC)) return true;
-  if (isDiscDecompressionOutput(binFile)) return false;
-  if (hasDiscExtension(CHD_DECOMPRESSION_INPUT_EXTENSIONS, getFileExtension(binFile))) return true;
-  return false;
+  const registration = DISC_COMPRESSION_FORMAT_REGISTRATIONS.find((entry) => looksLikeDiscFile(entry.format, file));
+  return registration ? `Preparing ${registration.label} extraction...` : null;
 };
 
 const decorateCompressionPatchFile = (
@@ -241,18 +226,13 @@ const resolveSingleCompressionInput = async (
     return decorateCompressionPatchFile(extracted, {});
   };
   const compressionKind = await resolveDiscCompressionKind(file);
-  if (compressionKind === "chd") {
-    const decompressed = await extractInRuntime("chd", getChdExtractedFileName(file), "Extracting CHD...");
-    (decompressed as { _discDecompressionOutput?: boolean })._discDecompressionOutput = true;
-    return decompressed;
-  }
-  if (compressionKind === "rvz") {
-    const decompressed = await extractInRuntime("rvz", getRvzExtractedFileName(file), "Extracting RVZ...");
-    (decompressed as { _discDecompressionOutput?: boolean })._discDecompressionOutput = true;
-    return decompressed;
-  }
-  if (compressionKind === "z3ds") {
-    const decompressed = await extractInRuntime("z3ds", getZ3dsExtractedFileName(file), "Extracting Z3DS...");
+  const registration = compressionKind ? getDiscCompressionFormatRegistration(compressionKind) : undefined;
+  if (registration) {
+    const decompressed = await extractInRuntime(
+      registration.format,
+      getDiscExtractedFileName(registration.format, file),
+      `Extracting ${registration.label}...`,
+    );
     (decompressed as { _discDecompressionOutput?: boolean })._discDecompressionOutput = true;
     return decompressed;
   }

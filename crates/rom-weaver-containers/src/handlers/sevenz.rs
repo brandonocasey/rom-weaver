@@ -200,7 +200,7 @@ impl SevenZContainerHandler {
     }
 }
 
-impl ContainerHandler for SevenZContainerHandler {
+impl ContainerHandlerOperations for SevenZContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         self.descriptor
     }
@@ -287,16 +287,6 @@ impl ContainerHandler for SevenZContainerHandler {
             Some(100.0),
             Some(execution),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: true,
-            extract_threads: regular_archive_extract_thread_capability(),
-            create_threads: ThreadCapability::parallel(None),
-        }
     }
 }
 /* jscpd:ignore-end */

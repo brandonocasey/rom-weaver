@@ -3,7 +3,7 @@ const GCZ_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&GCZ, NodFormat::Gcz);
 
 struct GczContainerHandler;
 
-impl ContainerHandler for GczContainerHandler {
+impl ContainerHandlerOperations for GczContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         &GCZ
     }
@@ -44,16 +44,6 @@ impl ContainerHandler for GczContainerHandler {
         Err(RomWeaverError::Validation(
             "warning: gcz compression is not supported; use `--format rvz` instead".into(),
         ))
-    }
-
-    fn capabilities(&self) -> ContainerCapabilities {
-        ContainerCapabilities {
-            inspect: true,
-            extract: true,
-            create: false,
-            extract_threads: ThreadCapability::parallel(None),
-            create_threads: ThreadCapability::single_threaded(),
-        }
     }
 }
 /* jscpd:ignore-end */
