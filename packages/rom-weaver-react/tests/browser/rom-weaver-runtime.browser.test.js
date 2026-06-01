@@ -52,4 +52,20 @@ test("browser public source validation rejects path sources", () => {
     /Path source wrappers/,
   );
   expect(() => assertPublicSource(new File([new Uint8Array([1])], "input.bin"))).not.toThrow();
+  expect(() => assertPublicSource(new Blob([new Uint8Array([1])]))).not.toThrow();
+  expect(() =>
+    assertPublicSource({
+      getFile: async () => new File([new Uint8Array([1])], "input.bin"),
+      kind: "file",
+    }),
+  ).not.toThrow();
+  expect(() =>
+    assertPublicSource({
+      fileName: "input.bin",
+      source: {
+        getFile: async () => new File([new Uint8Array([1])], "input.bin"),
+        kind: "file",
+      },
+    }),
+  ).not.toThrow();
 });
