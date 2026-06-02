@@ -189,18 +189,18 @@ impl ContainerHandlerOperations for ZipContainerHandler {
         )
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<OperationReport> {
         let summary =
-            inspect_regular_archive_with_libarchive(&request.source, self.descriptor.name)?;
+            probe_regular_archive_details_with_libarchive(&request.source, self.descriptor.name)?;
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
             Some(self.descriptor.name.to_string()),
-            "inspect",
+            "probe",
             format!(
                 "{}: {} entries ({} files, {} directories), {} bytes compressed, {} bytes uncompressed",
                 self.descriptor.name,
@@ -217,7 +217,7 @@ impl ContainerHandlerOperations for ZipContainerHandler {
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         list_regular_archive_entries_with_libarchive(&request.source, self.descriptor.name)
@@ -225,7 +225,7 @@ impl ContainerHandlerOperations for ZipContainerHandler {
 
     fn list_entry_records(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<ContainerListEntry>> {
         list_regular_archive_entry_records_with_libarchive(&request.source, self.descriptor.name)

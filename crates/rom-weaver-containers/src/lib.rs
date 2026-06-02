@@ -38,7 +38,7 @@ use rom_weaver_codecs::{
 };
 use rom_weaver_core::{
     ContainerByteProgress, ContainerCapabilities, ContainerCreateRequest, ContainerExtractRequest,
-    ContainerHandler, ContainerHandlerOperations, ContainerInspectRequest, ContainerListEntry,
+    ContainerHandler, ContainerHandlerOperations, ContainerListEntry, ContainerProbeRequest,
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, OperationStatus,
     OrderedChunkWriter, OrderedStreamingMessages, ProbeConfidence, ProgressEvent, Result,
     RomWeaverError, SelectionMatcher, SharedThreadPool, ThreadCapability, ThreadExecution,
@@ -50,9 +50,9 @@ use rom_weaver_libarchive::{
     EntryFileType, EntrySpec, ReadArchive, ReadFilter as LibarchiveReadFilter,
     RegularArchiveProbeFormat as LibarchiveProbeFormat, SelectedRegularArchiveEntry, WriteArchive,
     WriteFilter as LibarchiveCreateFilter, WriteFormat as LibarchiveCreateFormat,
-    ZeroWriteBehavior, inspect_regular_archive as inspect_regular_archive_with_libarchive_impl,
-    list_regular_archive_entries, probe_regular_archive_format,
-    visit_selected_regular_archive_entries,
+    ZeroWriteBehavior, list_regular_archive_entries,
+    probe_regular_archive as probe_regular_archive_with_libarchive_impl,
+    probe_regular_archive_format, visit_selected_regular_archive_entries,
 };
 use serde_json::{Map, Value, json};
 use xdvdfs::{
@@ -228,7 +228,7 @@ impl RegisteredThreadCapability {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RegisteredContainerCapabilities {
-    inspect: bool,
+    probe_details: bool,
     extract: bool,
     create: bool,
     extract_threads: RegisteredThreadCapability,
@@ -238,7 +238,7 @@ struct RegisteredContainerCapabilities {
 impl RegisteredContainerCapabilities {
     fn into_container_capabilities(self) -> ContainerCapabilities {
         ContainerCapabilities {
-            inspect: self.inspect,
+            probe_details: self.probe_details,
             extract: self.extract,
             create: self.create,
             extract_threads: self.extract_threads.into_thread_capability(),
@@ -322,17 +322,17 @@ impl ContainerHandlerOperations for RegisteredContainerHandler {
         self.inner.probe(source)
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        self.inner.inspect(request, context)
+        self.inner.probe_details(request, context)
     }
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<Vec<String>> {
         self.inner.list_entries(request, context)
@@ -340,7 +340,7 @@ impl ContainerHandlerOperations for RegisteredContainerHandler {
 
     fn list_entry_records(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<Vec<ContainerListEntry>> {
         self.inner.list_entry_records(request, context)
@@ -383,7 +383,7 @@ const PARALLEL_THREADS: RegisteredThreadCapability =
 
 const CREATE_AND_EXTRACT_PARALLEL: RegisteredContainerCapabilities =
     RegisteredContainerCapabilities {
-        inspect: true,
+        probe_details: true,
         extract: true,
         create: true,
         extract_threads: PARALLEL_THREADS,
@@ -391,7 +391,7 @@ const CREATE_AND_EXTRACT_PARALLEL: RegisteredContainerCapabilities =
     };
 
 const EXTRACT_ONLY_PARALLEL: RegisteredContainerCapabilities = RegisteredContainerCapabilities {
-    inspect: true,
+    probe_details: true,
     extract: true,
     create: false,
     extract_threads: PARALLEL_THREADS,
@@ -512,7 +512,7 @@ static CONTAINER_FORMAT_REGISTRY: &[ContainerFormatRegistration] = &[
     ContainerFormatRegistration {
         descriptor: &XISO,
         capabilities: RegisteredContainerCapabilities {
-            inspect: false,
+            probe_details: false,
             extract: true,
             create: false,
             extract_threads: SINGLE_THREADED,
@@ -974,15 +974,15 @@ fn libarchive_open_read_stream(
     format_name: &str,
     filter: LibarchiveReadFilter,
 ) -> Result<ReadArchive> {
-    let mut archive = ReadArchive::new(&format!("{format_name} inspect failed"))?;
+    let mut archive = ReadArchive::new(&format!("{format_name} probe failed"))?;
     let setup_result = (|| -> Result<()> {
         archive.support_raw_format(&format!(
-            "{format_name} inspect failed while enabling raw format"
+            "{format_name} probe failed while enabling raw format"
         ))?;
         archive.support_filter(
             filter,
             &format!(
-                "{format_name} inspect failed while enabling {} filter",
+                "{format_name} probe failed while enabling {} filter",
                 libarchive_read_filter_name(filter)
             ),
         )?;
@@ -991,7 +991,7 @@ fn libarchive_open_read_stream(
             "container source",
             LIBARCHIVE_EXTRACT_IO_BUFFER_BYTES,
             &format!(
-                "{format_name} inspect failed while opening input `{}`",
+                "{format_name} probe failed while opening input `{}`",
                 source.display()
             ),
         )?;
@@ -1013,23 +1013,21 @@ fn libarchive_read_filter_name(filter: LibarchiveReadFilter) -> &'static str {
 
 fn libarchive_close_read_stream(archive: ReadArchive, format_name: &str) -> Result<()> {
     archive.close(
-        &format!("{format_name} inspect failed while closing reader"),
-        &format!("{format_name} inspect failed while releasing reader"),
+        &format!("{format_name} probe failed while closing reader"),
+        &format!("{format_name} probe failed while releasing reader"),
     )
 }
 
-fn inspect_stream_with_libarchive(
+fn probe_stream_with_libarchive(
     source: &Path,
     format_name: &str,
     filter: LibarchiveReadFilter,
 ) -> Result<u64> {
     let mut archive = libarchive_open_read_stream(source, format_name, filter)?;
     let result = (|| -> Result<u64> {
-        if !archive.next_header(&format!(
-            "{format_name} inspect failed while reading header"
-        ))? {
+        if !archive.next_header(&format!("{format_name} probe failed while reading header"))? {
             return Err(RomWeaverError::Validation(format!(
-                "{format_name} inspect found no compressed payload entries"
+                "{format_name} probe found no compressed payload entries"
             )));
         }
 
@@ -1038,19 +1036,19 @@ fn inspect_stream_with_libarchive(
         loop {
             let bytes = archive.read_data(
                 &mut buffer,
-                &format!("{format_name} inspect failed while reading payload"),
+                &format!("{format_name} probe failed while reading payload"),
             )?;
             if bytes == 0 {
                 break;
             }
             let bytes_u64 = u64::try_from(bytes).map_err(|_| {
                 RomWeaverError::Validation(format!(
-                    "{format_name} inspect failed: decoded size exceeded u64 range"
+                    "{format_name} probe failed: decoded size exceeded u64 range"
                 ))
             })?;
             total = total.checked_add(bytes_u64).ok_or_else(|| {
                 RomWeaverError::Validation(format!(
-                    "{format_name} inspect failed: uncompressed size overflowed u64"
+                    "{format_name} probe failed: uncompressed size overflowed u64"
                 ))
             })?;
         }
@@ -1272,7 +1270,7 @@ struct LibarchiveOpenExtractOutput {
     writer: BufWriter<File>,
 }
 
-type LibarchiveInspectSummary = rom_weaver_libarchive::RegularArchiveInspectSummary;
+type LibarchiveProbeSummary = rom_weaver_libarchive::RegularArchiveProbeSummary;
 
 fn probe_regular_archive_with_libarchive(
     source: &Path,
@@ -1285,11 +1283,11 @@ fn probe_regular_archive_with_libarchive(
     }
 }
 
-fn inspect_regular_archive_with_libarchive(
+fn probe_regular_archive_details_with_libarchive(
     source: &Path,
     format_name: &str,
-) -> Result<LibarchiveInspectSummary> {
-    inspect_regular_archive_with_libarchive_impl(source, format_name)
+) -> Result<LibarchiveProbeSummary> {
+    probe_regular_archive_with_libarchive_impl(source, format_name)
 }
 
 fn list_regular_archive_entries_with_libarchive(

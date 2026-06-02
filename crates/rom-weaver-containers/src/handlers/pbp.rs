@@ -807,9 +807,9 @@ impl ContainerHandlerOperations for PbpContainerHandler {
         }
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let execution = context.plan_threads(ThreadCapability::single_threaded());
@@ -831,7 +831,7 @@ impl ContainerHandlerOperations for PbpContainerHandler {
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
             Some(PBP.name.to_string()),
-            "inspect",
+            "probe",
             format!(
                 "pbp: {disc_count} disc(s), {total_tracks} track(s), {total_bytes} bytes; disc_ids=[{disc_ids}]"
             ),
@@ -842,7 +842,7 @@ impl ContainerHandlerOperations for PbpContainerHandler {
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         let archive = self.parse_archive(&request.source)?;

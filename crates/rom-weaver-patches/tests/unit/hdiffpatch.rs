@@ -45,7 +45,7 @@ fn create_is_reported_as_unsupported() {
 #[test]
 fn parse_reports_hdiff13_details() {
     let temp = TestDir::new();
-    let patch_path = temp.child("inspect.hdiff");
+    let patch_path = temp.child("probe.hdiff");
 
     let patch = build_uncompressed_hdiff13_patch(b"old", b"newer bytes").expect("patch");
     fs::write(&patch_path, patch).expect("fixture");

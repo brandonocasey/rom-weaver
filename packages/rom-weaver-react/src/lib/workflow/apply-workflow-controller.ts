@@ -13,7 +13,7 @@ import type { WorkflowOptions, WorkflowWarning } from "../../types/workflow-cont
 import type { ApplyWorkflowOptions, PatchInput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { ParsedPatchLike, PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
-import { getPatchInspectRequirements } from "../apply/patch-apply-service.ts";
+import { getPatchProbeRequirements } from "../apply/patch-apply-service.ts";
 import { patchWorkflowDeps, runApplyWorkflow } from "../apply/workflow.ts";
 import {
   getCompressionOutputExtension,
@@ -1330,7 +1330,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     if (!parsed)
       throw new RomWeaverError("INVALID_INPUT", `Invalid patch file: ${patchFile.fileName || stage.state.fileName}`);
     stage.parsedPatch = parsed;
-    stage.state.requirements = clonePatchRequirements(getPatchInspectRequirements(parsed));
+    stage.state.requirements = clonePatchRequirements(getPatchProbeRequirements(parsed));
     stage.state.checksumPreflight = undefined;
     stage.state.patchValidation = undefined;
   }

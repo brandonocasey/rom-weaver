@@ -323,8 +323,8 @@ impl CliApp {
         }
         if matches!(handler.probe(source), ProbeConfidence::Extension)
             && handler
-                .inspect(
-                    &ContainerInspectRequest {
+                .probe_details(
+                    &ContainerProbeRequest {
                         source: source.to_path_buf(),
                     },
                     context,
@@ -409,7 +409,7 @@ impl CliApp {
             ));
         };
         let capabilities = handler.capabilities();
-        if !capabilities.inspect && !capabilities.extract && !capabilities.create {
+        if !capabilities.probe_details && !capabilities.extract && !capabilities.create {
             return Err(RomWeaverError::Validation(
                 "requested output format is not registered".to_string(),
             ));

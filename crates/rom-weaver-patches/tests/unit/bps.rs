@@ -25,7 +25,7 @@ enum TestAction {
 #[test]
 fn parse_reports_source_target_and_patch_crc32() {
     let temp = TestDir::new();
-    let patch_path = temp.child("inspect.bps");
+    let patch_path = temp.child("probe.bps");
     let patch = build_bps_patch(
         b"source-data",
         b"target-data",

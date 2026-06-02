@@ -131,7 +131,7 @@ impl CliApp {
             );
         };
         let capabilities = handler.capabilities();
-        if !capabilities.inspect && !capabilities.extract && !capabilities.create {
+        if !capabilities.probe_details && !capabilities.extract && !capabilities.create {
             return self.finish(
                 "compress",
                 OperationReport::failed(

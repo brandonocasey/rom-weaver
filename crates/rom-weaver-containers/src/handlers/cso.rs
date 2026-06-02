@@ -817,9 +817,9 @@ impl ContainerHandlerOperations for CsoContainerHandler {
         }
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<OperationReport> {
         let compressed_bytes = fs::metadata(&request.source)?.len();
@@ -828,7 +828,7 @@ impl ContainerHandlerOperations for CsoContainerHandler {
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
             Some(self.descriptor.name.to_string()),
-            "inspect",
+            "probe",
             format!(
                 "{}: {} bytes compressed, {} bytes uncompressed",
                 self.descriptor.name, compressed_bytes, logical_bytes
@@ -840,7 +840,7 @@ impl ContainerHandlerOperations for CsoContainerHandler {
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         Ok(vec![self.output_name(&request.source)])

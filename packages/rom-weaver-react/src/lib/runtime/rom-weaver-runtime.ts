@@ -380,7 +380,7 @@ const getEmittedFiles = (result: RomWeaverRunJsonResult): RomWeaverEmittedFile[]
   return output;
 };
 
-const getContainerEntriesFromInspect = (result: RomWeaverRunJsonResult): CompressionListResult["entries"] => {
+const getContainerEntriesFromList = (result: RomWeaverRunJsonResult): CompressionListResult["entries"] => {
   const terminal = getTerminalEvent(result);
   const details = asRecord(terminal ? getRomWeaverRunEventDetails(terminal) : null);
   const container = asRecord(details?.container);
@@ -414,7 +414,7 @@ const getContainerEntriesFromInspect = (result: RomWeaverRunJsonResult): Compres
   return output;
 };
 
-type RomWeaverInspectPatchDetails = {
+type RomWeaverProbePatchDetails = {
   format: string | null;
   minimum_source_size: number | null;
   patch_crc32: number | null;
@@ -464,7 +464,7 @@ const toOptionalInt = (value: unknown): number | undefined => {
   return normalized === null ? undefined : normalized;
 };
 
-const getPatchDetailsFromInspect = (result: RomWeaverRunJsonResult): RomWeaverInspectPatchDetails => {
+const getPatchDetailsFromProbe = (result: RomWeaverRunJsonResult): RomWeaverProbePatchDetails => {
   const terminal = getTerminalEvent(result);
   const details = asRecord(terminal ? getRomWeaverRunEventDetails(terminal) : null);
   const patch = asRecord(details?.patch);
@@ -779,7 +779,7 @@ const invokeRomWeaverExtractWorker = async (
   };
 };
 
-const runRomWeaverInspectListWorker = async (
+const runRomWeaverListWorker = async (
   input: {
     logLevel?: LogLevel | string;
     sourcePath: string;
@@ -791,16 +791,15 @@ const runRomWeaverInspectListWorker = async (
   if (!sourcePath) throw new Error("Compression list source path is required");
   const command: RomWeaverCommand = {
     args: {
-      list: true,
       source: sourcePath,
     },
-    type: "inspect",
+    type: "list",
   };
-  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson inspect-list dispatch", {
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson list dispatch", {
     command,
     sourcePath,
   });
-  const runInspectList = () =>
+  const runList = () =>
     runRomWeaverJson(
       command,
       toRomWeaverOptions({
@@ -812,32 +811,32 @@ const runRomWeaverInspectListWorker = async (
         onLog,
       }),
     );
-  const result = await runInspectList();
+  const result = await runList();
   if (!(result.ok && result.exitCode === 0)) {
     const failureMessage = getRomWeaverFailureMessage(result, "Compression listing failed");
     throw new Error(failureMessage);
   }
-  const entries = getContainerEntriesFromInspect(result);
+  const entries = getContainerEntriesFromList(result);
   return { entries };
 };
 
-const runRomWeaverInspectPatchWorker = async (
+const runRomWeaverProbePatchWorker = async (
   input: {
     logLevel?: LogLevel | string;
     sourcePath: string;
   },
   onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
   onLog?: (log: WorkflowRuntimeLog) => void,
-): Promise<RomWeaverInspectPatchDetails> => {
+): Promise<RomWeaverProbePatchDetails> => {
   const sourcePath = String(input.sourcePath || "").trim();
-  if (!sourcePath) throw new Error("Patch inspect source path is required");
+  if (!sourcePath) throw new Error("Patch probe source path is required");
   const command: RomWeaverCommand = {
     args: {
       source: sourcePath,
     },
-    type: "inspect",
+    type: "probe",
   };
-  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson inspect-patch dispatch", {
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson probe-patch dispatch", {
     command,
     sourcePath,
   });
@@ -853,10 +852,10 @@ const runRomWeaverInspectPatchWorker = async (
     }),
   );
   if (!(result.ok && result.exitCode === 0)) {
-    const failureMessage = getRomWeaverFailureMessage(result, "Patch inspection failed");
+    const failureMessage = getRomWeaverFailureMessage(result, "Patch probe failed");
     throw new Error(failureMessage);
   }
-  return getPatchDetailsFromInspect(result);
+  return getPatchDetailsFromProbe(result);
 };
 
 const normalizePatchValidationChecksumEntries = (value: unknown): string[] => {
@@ -1291,7 +1290,7 @@ export {
   normalizeCodecEntries,
   resolvePatchApplyThreadArg,
   runRomWeaverChecksumWorker,
-  runRomWeaverInspectListWorker,
-  runRomWeaverInspectPatchWorker,
+  runRomWeaverListWorker,
+  runRomWeaverProbePatchWorker,
   selectRomWeaverOutputPath,
 };

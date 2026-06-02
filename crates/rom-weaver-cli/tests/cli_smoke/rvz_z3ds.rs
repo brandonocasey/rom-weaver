@@ -1,6 +1,6 @@
 /* jscpd:ignore-start */
 #[test]
-fn rvz_inspect_reports_succeeded() {
+fn rvz_probe_reports_succeeded() {
     let temp = setup_temp_dir();
     let iso_bytes = build_test_gamecube_iso(0x6000);
     fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
@@ -8,7 +8,7 @@ fn rvz_inspect_reports_succeeded() {
 
     let output = command_stdout(
         &[
-            "inspect",
+            "probe",
             temp.child("disc.rvz").path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -17,7 +17,7 @@ fn rvz_inspect_reports_succeeded() {
     );
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "rvz");
     assert_eq!(json["status"], "succeeded");
@@ -206,7 +206,7 @@ fn rvz_extract_supports_single_output_selection() {
 }
 
 #[test]
-fn z3ds_compress_inspect_and_extract_round_trip() {
+fn z3ds_compress_probe_and_extract_round_trip() {
     let temp = setup_temp_dir();
     let source = (0..65_536)
         .map(|index| (index % 239) as u8)
@@ -237,21 +237,21 @@ fn z3ds_compress_inspect_and_extract_round_trip() {
     assert_eq!(compress_json["format"], "z3ds");
     assert_eq!(compress_json["status"], "succeeded");
 
-    let inspect_output = command_stdout(
+    let probe_output = command_stdout(
         &[
-            "inspect",
+            "probe",
             z3ds_path.path().to_str().expect("path"),
             "--no-extract",
             "--json",
         ],
         0,
     );
-    let inspect_json = parse_single_json_line(&inspect_output);
-    assert_eq!(inspect_json["command"], "inspect");
-    assert_eq!(inspect_json["family"], "container");
-    assert_eq!(inspect_json["format"], "z3ds");
-    assert_eq!(inspect_json["status"], "succeeded");
-    assert!(inspect_json["label"]
+    let probe_json = parse_single_json_line(&probe_output);
+    assert_eq!(probe_json["command"], "probe");
+    assert_eq!(probe_json["family"], "container");
+    assert_eq!(probe_json["format"], "z3ds");
+    assert_eq!(probe_json["status"], "succeeded");
+    assert!(probe_json["label"]
         .as_str()
         .expect("label")
         .contains("underlying_magic"));

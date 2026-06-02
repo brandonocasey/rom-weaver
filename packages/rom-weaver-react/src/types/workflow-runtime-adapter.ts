@@ -275,7 +275,7 @@ type WorkflowRuntimePatch = {
     message?: string;
     status: "passed";
   }>;
-  inspectPatch?: (input: {
+  probePatch?: (input: {
     patch: SourceRef;
     patchFileName?: string;
     logLevel?: LogLevel;

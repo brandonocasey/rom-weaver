@@ -17,7 +17,9 @@ export type ProgressEvent = { command: string, family: OperationFamily, format: 
 
 export type CompressionLevelProfile = "min" | "very-low" | "low" | "medium" | "high" | "very-high" | "max";
 
-export type InspectCommand = { source: string, select?: Array<string>, no_extract?: boolean, no_ignore?: boolean, list?: boolean, };
+export type ProbeCommand = { source: string, select?: Array<string>, no_extract?: boolean, no_ignore?: boolean, };
+
+export type ListCommand = { source: string, select?: Array<string>, no_ignore?: boolean, };
 
 export type ExtractCommand = { source: string, select?: Array<string>, out_dir: string, split_bin?: boolean, no_ignore?: boolean, no_nested_extract?: boolean, no_overwrite?: boolean, checksum?: Array<string>, threads?: ThreadBudget, };
 
@@ -37,7 +39,7 @@ export type PatchCreateCommand = { original: string, modified: string, format: s
 
 export type PatchCommands = { "type": "apply", "args": PatchApplyCommand } | { "type": "validate", "args": PatchValidateCommand } | { "type": "create", "args": PatchCreateCommand };
 
-export type Commands = { "type": "inspect", "args": InspectCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "batch-header-fixer", "args": BatchHeaderFixerCommand } | { "type": "patch", "args": PatchCommands };
+export type Commands = { "type": "probe", "args": ProbeCommand } | { "type": "list", "args": ListCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "batch-header-fixer", "args": BatchHeaderFixerCommand } | { "type": "patch", "args": PatchCommands };
 
 export type RomWeaverRunOutputOptions = { json?: boolean, progress?: boolean, trace?: boolean, interactive_selection_enabled?: boolean, };
 

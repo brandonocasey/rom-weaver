@@ -46,7 +46,7 @@ type BrowserWasmAssetSelection = {
 };
 
 type RomWeaverCommandBranch =
-  | { type: "checksum" | "extract" | "inspect"; args: { source?: unknown } }
+  | { type: "checksum" | "extract" | "probe" | "list"; args: { source?: unknown } }
   | { type: "compress"; args: { input?: unknown } }
   | { type: "batch-header-fixer" | "trim"; args: { source?: unknown } }
   | { type: "patch-apply" | "patch-validate"; args: { input?: unknown; patches?: unknown } }
@@ -136,7 +136,8 @@ const collectReferencedVirtualFilePaths = (
   switch (branch.type) {
     case "checksum":
     case "extract":
-    case "inspect":
+    case "probe":
+    case "list":
       pushPathValue(paths, branch.args.source);
       break;
     case "compress":

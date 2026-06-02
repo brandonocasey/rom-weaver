@@ -185,17 +185,17 @@ impl ContainerHandlerOperations for RvzContainerHandler {
         ProbeConfidence::Extension
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        RVZ_NOD_CORE.inspect_with(request, context, |source| self.open_disc(source))
+        RVZ_NOD_CORE.probe_details_with(request, context, |source| self.open_disc(source))
     }
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         Ok(RVZ_NOD_CORE.list_entries(&request.source))

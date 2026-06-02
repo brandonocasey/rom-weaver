@@ -2,8 +2,9 @@ use std::{env, fs, path::Path};
 
 use rom_weaver_app::{
     BatchHeaderFixerCommand, ChecksumCommand, Commands, CompressCommand, CompressionLevelProfile,
-    ExtractCommand, InspectCommand, PatchApplyCommand, PatchCommands, PatchCreateCommand,
-    PatchValidateCommand, RomWeaverRunOutputOptions, RomWeaverRunRequest, TrimCommand,
+    ExtractCommand, ListCommand, PatchApplyCommand, PatchCommands, PatchCreateCommand,
+    PatchValidateCommand, ProbeCommand, RomWeaverRunOutputOptions, RomWeaverRunRequest,
+    TrimCommand,
 };
 use rom_weaver_core::{
     OperationFamily, OperationStatus, ProgressEvent, ThreadBudget, ThreadExecution, ThreadMode,
@@ -87,7 +88,8 @@ fn render_types() -> String {
         export_decl::<serde_json::Value>(&config),
         export_decl::<ProgressEvent>(&config),
         export_decl::<CompressionLevelProfile>(&config),
-        export_decl::<InspectCommand>(&config),
+        export_decl::<ProbeCommand>(&config),
+        export_decl::<ListCommand>(&config),
         export_decl::<ExtractCommand>(&config),
         export_decl::<ChecksumCommand>(&config),
         export_decl::<CompressCommand>(&config),

@@ -171,7 +171,7 @@ const createBrowserRuntimeVfsIo = ({
       return wrapCachedStagedSource(cacheKey, cached);
     }
     // Cache every staged source (in-memory virtual *and* real OPFS-staged path copies) keyed on the
-    // underlying File/handle, so the list/inspect/extract passes of a single input reuse one staged copy
+    // underlying File/handle, so the list/probe/extract passes of a single input reuse one staged copy
     // instead of re-copying the whole compressed file into OPFS for each pass.
     const cacheStagedSource = (resolved: StagedBrowserSource): StagedBrowserSource => {
       if (!cacheKey) return resolved;

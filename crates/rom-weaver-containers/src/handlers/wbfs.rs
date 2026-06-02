@@ -22,17 +22,17 @@ impl ContainerHandlerOperations for WbfsContainerHandler {
         WBFS_NOD_CORE.probe(source)
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        WBFS_NOD_CORE.inspect(request, context)
+        WBFS_NOD_CORE.probe_details(request, context)
     }
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         Ok(WBFS_NOD_CORE.list_entries(&request.source))

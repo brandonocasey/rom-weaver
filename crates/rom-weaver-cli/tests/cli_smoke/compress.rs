@@ -933,10 +933,10 @@ fn run_archive_round_trip(format: &str, archive_name: &str, codec: Option<&str>)
     assert_eq!(compress_json["format"], format);
     assert_eq!(compress_json["status"], "succeeded");
 
-    let inspect_output = Command::cargo_bin("rom-weaver")
+    let probe_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             archive.path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -946,11 +946,11 @@ fn run_archive_round_trip(format: &str, archive_name: &str, codec: Option<&str>)
         .get_output()
         .stdout
         .clone();
-    let inspect_json = parse_single_json_line(&inspect_output);
-    assert_eq!(inspect_json["command"], "inspect");
-    assert_eq!(inspect_json["family"], "container");
-    assert_eq!(inspect_json["format"], format);
-    assert_eq!(inspect_json["status"], "succeeded");
+    let probe_json = parse_single_json_line(&probe_output);
+    assert_eq!(probe_json["command"], "probe");
+    assert_eq!(probe_json["family"], "container");
+    assert_eq!(probe_json["format"], format);
+    assert_eq!(probe_json["status"], "succeeded");
 
     let out_dir = temp.child("extract");
     let extract_output = Command::cargo_bin("rom-weaver")

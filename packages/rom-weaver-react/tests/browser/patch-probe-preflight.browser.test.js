@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { getPatchInspectRequirements, parsePatchForApply } from "../../src/lib/apply/patch-apply-service.ts";
+import { getPatchProbeRequirements, parsePatchForApply } from "../../src/lib/apply/patch-apply-service.ts";
 import { createPatchFile } from "../../src/lib/input/binary-service.ts";
 
 const loadFixtureFile = async (filePath, type = "application/octet-stream") => {
@@ -10,14 +10,14 @@ const loadFixtureFile = async (filePath, type = "application/octet-stream") => {
   return new File([bytes], fileName, { type });
 };
 
-test("parsePatchForApply normalizes inspect requirements for BPS patches", async () => {
+test("parsePatchForApply normalizes probe requirements for BPS patches", async () => {
   const patchFile = await createPatchFile(
     await loadFixtureFile("tests/fixtures/browser-generated/patch-matrix/raw/change.bps"),
     "change.bps",
   );
   const parsedPatch = await parsePatchForApply(patchFile, {
     patch: {
-      inspectPatch: async () => ({
+      probePatch: async () => ({
         format: "bps",
         patch_crc32: 1,
         record_count: 42,
@@ -29,7 +29,7 @@ test("parsePatchForApply normalizes inspect requirements for BPS patches", async
     },
   });
   expect(parsedPatch).not.toBeNull();
-  expect(getPatchInspectRequirements(parsedPatch)).toEqual({
+  expect(getPatchProbeRequirements(parsedPatch)).toEqual({
     format: "BPS",
     patchCrc32: "00000001",
     recordCount: 42,
@@ -47,7 +47,7 @@ test("parsePatchForApply normalizes VCDIFF source requirements without Adler val
   );
   const parsedPatch = await parsePatchForApply(patchFile, {
     patch: {
-      inspectPatch: async () => ({
+      probePatch: async () => ({
         format: "xdelta",
         minimum_source_size: 1048576,
         patch_crc32: null,
@@ -64,7 +64,7 @@ test("parsePatchForApply normalizes VCDIFF source requirements without Adler val
     },
   });
   expect(parsedPatch).not.toBeNull();
-  expect(getPatchInspectRequirements(parsedPatch)).toEqual({
+  expect(getPatchProbeRequirements(parsedPatch)).toEqual({
     format: "XDELTA",
     minimumSourceSize: 1048576,
     recordCount: 3,
@@ -72,14 +72,14 @@ test("parsePatchForApply normalizes VCDIFF source requirements without Adler val
   });
 });
 
-test("parsePatchForApply normalizes decimal and hex inspect checksum variants", async () => {
+test("parsePatchForApply normalizes decimal and hex probe checksum variants", async () => {
   const patchFile = await createPatchFile(
     await loadFixtureFile("tests/fixtures/browser-generated/patch-matrix/raw/change.ups"),
     "change.ups",
   );
   const parsedPatch = await parsePatchForApply(patchFile, {
     patch: {
-      inspectPatch: async () => ({
+      probePatch: async () => ({
         format: "ups",
         patch_crc32: "0x1",
         source_crc32: "305441741",
@@ -90,7 +90,7 @@ test("parsePatchForApply normalizes decimal and hex inspect checksum variants", 
     },
   });
   expect(parsedPatch).not.toBeNull();
-  expect(getPatchInspectRequirements(parsedPatch)).toEqual({
+  expect(getPatchProbeRequirements(parsedPatch)).toEqual({
     format: "UPS",
     patchCrc32: "00000001",
     sourceCrc32: "1234abcd",
@@ -100,14 +100,14 @@ test("parsePatchForApply normalizes decimal and hex inspect checksum variants", 
   });
 });
 
-test("parsePatchForApply leaves requirements empty when inspect details are unavailable", async () => {
+test("parsePatchForApply leaves requirements empty when probe details are unavailable", async () => {
   const patchFile = await createPatchFile(
     await loadFixtureFile("tests/fixtures/browser-generated/patch-matrix/raw/change.ips"),
     "change.ips",
   );
   const parsedPatch = await parsePatchForApply(patchFile, {
     patch: {
-      inspectPatch: async () => ({
+      probePatch: async () => ({
         format: null,
         patch_crc32: null,
         record_count: null,
@@ -119,5 +119,5 @@ test("parsePatchForApply leaves requirements empty when inspect details are unav
     },
   });
   expect(parsedPatch).not.toBeNull();
-  expect(getPatchInspectRequirements(parsedPatch)).toBeUndefined();
+  expect(getPatchProbeRequirements(parsedPatch)).toBeUndefined();
 });

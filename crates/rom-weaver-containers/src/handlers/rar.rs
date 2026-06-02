@@ -19,18 +19,18 @@ impl ContainerHandlerOperations for RarContainerHandler {
         probe_regular_archive_with_libarchive(source, self.descriptor.name, LibarchiveProbeFormat::Rar)
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<OperationReport> {
         let summary =
-            inspect_regular_archive_with_libarchive(&request.source, self.descriptor.name)?;
+            probe_regular_archive_details_with_libarchive(&request.source, self.descriptor.name)?;
 
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
             Some(self.descriptor.name.to_string()),
-            "inspect",
+            "probe",
             format!(
                 "rar: {} entries ({} files, {} directories), {} bytes uncompressed",
                 summary.entries_total, summary.files, summary.directories, summary.logical_bytes
@@ -42,7 +42,7 @@ impl ContainerHandlerOperations for RarContainerHandler {
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         list_regular_archive_entries_with_libarchive(&request.source, self.descriptor.name)
@@ -50,7 +50,7 @@ impl ContainerHandlerOperations for RarContainerHandler {
 
     fn list_entry_records(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<ContainerListEntry>> {
         list_regular_archive_entry_records_with_libarchive(&request.source, self.descriptor.name)

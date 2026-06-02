@@ -16,7 +16,7 @@ use rom_weaver_app::{Commands, RomWeaverRunOutputOptions, RomWeaverRunRequest, r
     command(
         name = "rom-weaver",
         version,
-        about = "Native CLI groundwork for ROM inspection, extraction, checksums, compression, trimming, and patching."
+        about = "Native CLI groundwork for ROM probing, extraction, checksums, compression, trimming, and patching."
     )
 )]
 struct Cli {

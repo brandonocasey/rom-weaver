@@ -11,9 +11,9 @@ impl ContainerHandlerOperations for ChdContainerHandler {
         }
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let execution = context.plan_threads(ThreadCapability::single_threaded());
@@ -31,7 +31,7 @@ impl ContainerHandlerOperations for ChdContainerHandler {
         let mut report = OperationReport::succeeded(
             OperationFamily::Container,
             Some(CHD.name.to_string()),
-            "inspect",
+            "probe",
             format!(
                 "{} chd v{}: {} bytes, {}-byte hunks, codec={}{}",
                 self.media_label(media_kind),
@@ -61,7 +61,7 @@ impl ContainerHandlerOperations for ChdContainerHandler {
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         let chd = ChdReadSession::open(&request.source, None)?;

@@ -86,7 +86,7 @@ pub struct RegularArchiveEntryMetadata {
 }
 
 #[derive(Clone, Debug)]
-pub struct RegularArchiveInspectSummary {
+pub struct RegularArchiveProbeSummary {
     pub entries_total: usize,
     pub files: usize,
     pub directories: usize,
@@ -565,13 +565,13 @@ pub fn probe_regular_archive_format(
     ))
 }
 
-pub fn inspect_regular_archive(
+pub fn probe_regular_archive(
     source: &Path,
     format_name: &str,
-) -> Result<RegularArchiveInspectSummary> {
+) -> Result<RegularArchiveProbeSummary> {
     let mut reader = open_regular_archive_reader(source, format_name)?;
-    let result = (|| -> Result<RegularArchiveInspectSummary> {
-        let mut summary = RegularArchiveInspectSummary {
+    let result = (|| -> Result<RegularArchiveProbeSummary> {
+        let mut summary = RegularArchiveProbeSummary {
             entries_total: 0,
             files: 0,
             directories: 0,
@@ -582,7 +582,7 @@ pub fn inspect_regular_archive(
 
         while let Some(entry) = reader.next_entry().map_err(|error| {
             RomWeaverError::Validation(format!(
-                "{format_name} inspect failed while reading entry {index}: {error}"
+                "{format_name} probe failed while reading entry {index}: {error}"
             ))
         })? {
             let entry_path = match entry.pathname_utf8() {
@@ -592,7 +592,7 @@ pub fn inspect_regular_archive(
                     .map(|path| path.to_string_lossy().into_owned())
                     .map_err(|error| {
                         RomWeaverError::Validation(format!(
-                            "{format_name} inspect failed while decoding entry {index}: {error}"
+                            "{format_name} probe failed while decoding entry {index}: {error}"
                         ))
                     })?,
             };
@@ -1213,13 +1213,13 @@ mod tests {
     }
 
     #[test]
-    fn inspect_and_list_regular_archive_entries_report_expected_values() -> Result<()> {
-        run_with_large_stack("inspect-list", || {
-            let temp_dir = TempDir::new("inspect-list")?;
+    fn probe_and_list_regular_archive_entries_report_expected_values() -> Result<()> {
+        run_with_large_stack("probe-list", || {
+            let temp_dir = TempDir::new("probe-list")?;
             let source = temp_dir.path().join("fixture.zip");
             create_zip_fixture(&source)?;
 
-            let summary = inspect_regular_archive(&source, "zip")?;
+            let summary = probe_regular_archive(&source, "zip")?;
             assert_eq!(summary.entries_total, 3);
             assert_eq!(summary.files, 2);
             assert_eq!(summary.directories, 1);

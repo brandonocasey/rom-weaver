@@ -2739,7 +2739,8 @@ function collectRequestInputPaths(request) {
   switch (commandType) {
     case 'checksum':
     case 'extract':
-    case 'inspect':
+    case 'probe':
+    case 'list':
       pushPathValue(values, args.source);
       break;
     case 'compress':

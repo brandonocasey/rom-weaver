@@ -177,7 +177,7 @@ impl NodHandlerCore {
         }
     }
 
-    fn open_disc_for_inspect(&self, source: &Path) -> Result<NodDiscReader> {
+    fn open_disc_for_probe(&self, source: &Path) -> Result<NodDiscReader> {
         self.open_disc(source, 0)
     }
 
@@ -207,18 +207,18 @@ impl NodHandlerCore {
         ProbeConfidence::Extension
     }
 
-    fn inspect_with(
+    fn probe_details_with(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
         open_disc: impl FnOnce(&Path) -> Result<NodDiscReader>,
     ) -> Result<OperationReport> {
         let execution = context.plan_threads(ThreadCapability::single_threaded());
         emit_container_indeterminate_progress(
             context,
-            "inspect",
+            "probe",
             self.format_name(),
-            "inspect",
+            "probe",
             format!("opening {} metadata", self.format_name()),
             Some(&execution),
         );
@@ -233,7 +233,7 @@ impl NodHandlerCore {
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
             Some(self.format_name().to_string()),
-            "inspect",
+            "probe",
             format!(
                 "{}: {disc_size} bytes, compression={}, block={}, lossless={}, decrypted={}, needs_hash_recovery={}",
                 self.format_name(),
@@ -248,13 +248,13 @@ impl NodHandlerCore {
         ))
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        self.inspect_with(request, context, |source| {
-            self.open_disc_for_inspect(source)
+        self.probe_details_with(request, context, |source| {
+            self.open_disc_for_probe(source)
         })
     }
 

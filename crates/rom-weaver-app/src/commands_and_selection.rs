@@ -52,7 +52,8 @@ impl CliApp {
         let command_name = Self::command_name(&command);
         trace!(command = command_name, "dispatching CLI command");
         match command {
-            Commands::Inspect(args) => self.run_inspect(args),
+            Commands::Probe(args) => self.run_probe(args),
+            Commands::List(args) => self.run_list(args),
             Commands::Extract(args) => self.run_extract(args),
             Commands::Checksum(args) => self.run_checksum(args),
             Commands::Compress(args) => self.run_compress(args),
@@ -68,7 +69,8 @@ impl CliApp {
 
     fn command_name(command: &Commands) -> &'static str {
         match command {
-            Commands::Inspect(_) => "inspect",
+            Commands::Probe(_) => "probe",
+            Commands::List(_) => "list",
             Commands::Extract(_) => "extract",
             Commands::Checksum(_) => "checksum",
             Commands::Compress(_) => "compress",
@@ -80,47 +82,36 @@ impl CliApp {
         }
     }
 
-    fn run_inspect(&self, args: InspectCommand) -> AppRunOutcome {
-        let InspectCommand {
+    fn run_probe(&self, args: ProbeCommand) -> AppRunOutcome {
+        let ProbeCommand {
             source,
             select,
             no_extract,
             no_ignore,
-            list,
         } = args;
         trace!(
             source = %source.display(),
             selections = select.len(),
             no_extract,
             no_ignore,
-            list,
-            "starting inspect command"
+            "starting probe command"
         );
         let context = self.context(ThreadBudget::Fixed(1));
         if let Some(report) =
-            self.require_existing_path("inspect", OperationFamily::Command, None, &source, None)
+            self.require_existing_path("probe", OperationFamily::Command, None, &source, None)
         {
-            return self.finish("inspect", report);
+            return self.finish("probe", report);
         }
 
-        let should_auto_extract = !no_extract && (!list || !select.is_empty());
-        let resolved = if should_auto_extract {
+        let resolved = if !no_extract {
             let labels = AutoExtractResolutionLabels {
-                command: "inspect",
+                command: "probe",
                 family: OperationFamily::Command,
                 format: None,
-                source_label: "inspect",
-                temp_prefix: "inspect-extract",
+                source_label: "probe",
+                temp_prefix: "probe-extract",
             };
-            if list && !select.is_empty() {
-                self.resolve_source_with_single_auto_extract(
-                    &source, &select, no_ignore, &context, labels,
-                )
-            } else {
-                self.resolve_source_with_auto_extract(
-                    &source, &select, false, no_ignore, &context, labels,
-                )
-            }
+            self.resolve_source_with_auto_extract(&source, &select, false, no_ignore, &context, labels)
         } else {
             Ok(ResolvedChecksumSource {
                 source: source.clone(),
@@ -129,14 +120,14 @@ impl CliApp {
             })
         };
         let ResolvedChecksumSource {
-            source: inspect_source,
+            source: probe_source,
             extracted_archives,
             cleanup_paths,
         } = match resolved {
             Ok(resolved) => resolved,
             Err(error) => {
                 return self.finish(
-                    "inspect",
+                    "probe",
                     OperationReport::failed(
                         OperationFamily::Command,
                         None,
@@ -147,121 +138,75 @@ impl CliApp {
                 );
             }
         };
-        let inspect_recommendation = self.inspect_compress_recommendation(&inspect_source);
+        let probe_recommendation = self.probe_compress_recommendation(&probe_source);
 
         self.emit_running(
             OperationLabel {
-                command: "inspect",
+                command: "probe",
                 family: OperationFamily::Command,
                 format: None,
             },
             "probe",
-            format!("probing handlers for `{}`", inspect_source.display()),
+            format!("probing handlers for `{}`", probe_source.display()),
             Some(0.0),
             None,
         );
 
-        if let Some(handler) = self.containers.probe(&inspect_source) {
+        if let Some(handler) = self.containers.probe(&probe_source) {
             self.emit_running(
                 OperationLabel {
-                    command: "inspect",
+                    command: "probe",
                     family: OperationFamily::Container,
                     format: Some(handler.descriptor().name),
                 },
-                "inspect",
-                format!("inspecting `{}`", inspect_source.display()),
+                "probe",
+                format!("probing `{}`", probe_source.display()),
                 Some(0.0),
                 Some(context.plan_threads(ThreadCapability::single_threaded())),
             );
-            let request = ContainerInspectRequest {
-                source: inspect_source.clone(),
+            let request = ContainerProbeRequest {
+                source: probe_source.clone(),
             };
-            let mut report = handler.inspect(&request, &context).unwrap_or_else(|error| {
+            let mut report = handler.probe_details(&request, &context).unwrap_or_else(|error| {
                 OperationReport::failed(
                     OperationFamily::Container,
                     Some(handler.descriptor().name.to_string()),
-                    "inspect",
+                    "probe",
                     error.to_string(),
                     None,
                 )
             });
-            let mut listed_entries: Option<Vec<ContainerListEntry>> = None;
-            if report.status == OperationStatus::Succeeded && args.list {
-                self.emit_running(
-                    OperationLabel {
-                        command: "inspect",
-                        family: OperationFamily::Container,
-                        format: Some(handler.descriptor().name),
-                    },
-                    "list",
-                    format!("listing entries for `{}`", inspect_source.display()),
-                    None,
-                    Some(context.plan_threads(ThreadCapability::single_threaded())),
-                );
-                let listed = handler
-                    .list_entry_records(&request, &context)
-                    .map_err(|error| {
-                    OperationReport::failed(
-                        OperationFamily::Container,
-                        Some(handler.descriptor().name.to_string()),
-                        "list",
-                        error.to_string(),
-                        None,
-                    )
-                });
-                match listed {
-                    Ok(entries) => {
-                        if !self.emit_progress_events {
-                            report.label = Self::append_entry_list_label(&report.label, &entries);
-                        }
-                        listed_entries = Some(entries);
-                    }
-                    Err(list_error) => {
-                        report = list_error;
-                    }
-                }
-            }
             if !self.emit_progress_events {
                 report = Self::append_recommended_compress_label(
                     report,
-                    inspect_recommendation.as_ref(),
+                    probe_recommendation.as_ref(),
                 );
             }
-            report = Self::attach_container_inspect_details(
+            report = Self::attach_container_probe_details(
                 report,
-                listed_entries,
-                inspect_recommendation.as_ref(),
+                None,
+                probe_recommendation.as_ref(),
             );
-            return self.finish_inspect(report, extracted_archives, cleanup_paths);
+            return self.finish_probe(report, extracted_archives, cleanup_paths);
         }
 
-        if let Some(handler) = self.patches.probe(&inspect_source) {
+        if let Some(handler) = self.patches.probe(&probe_source) {
             self.emit_running(
                 OperationLabel {
-                    command: "inspect",
+                    command: "probe",
                     family: OperationFamily::Patch,
                     format: Some(handler.descriptor().name),
                 },
-                "inspect",
-                format!("parsing `{}`", inspect_source.display()),
+                "probe",
+                format!("parsing `{}`", probe_source.display()),
                 Some(0.0),
                 None,
             );
-            if list {
-                let report = OperationReport::failed(
-                    OperationFamily::Patch,
-                    Some(handler.descriptor().name.to_string()),
-                    "list",
-                    "inspect --list is only supported for container formats",
-                    None,
-                );
-                return self.finish_inspect(report, extracted_archives, cleanup_paths);
-            }
-            let mut report = handler.parse(&inspect_source, &context).unwrap_or_else(|error| {
+            let mut report = handler.parse(&probe_source, &context).unwrap_or_else(|error| {
                 OperationReport::failed(
                     OperationFamily::Patch,
                     Some(handler.descriptor().name.to_string()),
-                    "inspect",
+                    "probe",
                     error.to_string(),
                     None,
                 )
@@ -269,51 +214,41 @@ impl CliApp {
             if !self.emit_progress_events {
                 report = Self::append_recommended_compress_label(
                     report,
-                    inspect_recommendation.as_ref(),
+                    probe_recommendation.as_ref(),
                 );
             }
-            return self.finish_inspect(
-                Self::attach_patch_inspect_details(report),
+            return self.finish_probe(
+                Self::attach_patch_probe_details(report),
                 extracted_archives,
                 cleanup_paths,
             );
         }
 
-        if let Some(reason) = explicitly_unsupported_patch_reason_for_path(&inspect_source) {
+        if let Some(reason) = explicitly_unsupported_patch_reason_for_path(&probe_source) {
             let mut report = OperationReport::failed(
                 OperationFamily::Patch,
                 Some("PDS".to_string()),
                 "probe",
                 format!(
                     "patch format for `{}` is explicitly not supported: {reason}",
-                    inspect_source.display()
+                    probe_source.display()
                 ),
                 Some(context.plan_threads(ThreadCapability::single_threaded())),
             );
             if !self.emit_progress_events {
                 report = Self::append_recommended_compress_label(
                     report,
-                    inspect_recommendation.as_ref(),
+                    probe_recommendation.as_ref(),
                 );
             }
-            return self.finish_inspect(report, extracted_archives, cleanup_paths);
+            return self.finish_probe(report, extracted_archives, cleanup_paths);
         }
 
-        if let Ok(Some(header_match)) = Self::detect_known_rom_header(&inspect_source) {
-            if list {
-                let report = OperationReport::failed(
-                    OperationFamily::Command,
-                    Some("rom-header".to_string()),
-                    "list",
-                    "inspect --list is only supported for container formats",
-                    None,
-                );
-                return self.finish_inspect(report, extracted_archives, cleanup_paths);
-            }
+        if let Ok(Some(header_match)) = Self::detect_known_rom_header(&probe_source) {
             let mut report = OperationReport::succeeded(
                 OperationFamily::Command,
                 Some("rom-header".to_string()),
-                "inspect",
+                "probe",
                 format!(
                     "detected ROM header {}; stripped_bytes={}; headered_extension={}; headerless_extension={}",
                     header_match.profile_name(),
@@ -330,10 +265,10 @@ impl CliApp {
             if !self.emit_progress_events {
                 report = Self::append_recommended_compress_label(
                     report,
-                    inspect_recommendation.as_ref(),
+                    probe_recommendation.as_ref(),
                 );
             }
-            return self.finish_inspect(report, extracted_archives, cleanup_paths);
+            return self.finish_probe(report, extracted_archives, cleanup_paths);
         }
 
         let mut report = OperationReport::failed(
@@ -342,18 +277,18 @@ impl CliApp {
             "probe",
             format!(
                 "no registered handler matched `{}`",
-                inspect_source.display()
+                probe_source.display()
             ),
             None,
         );
         if !self.emit_progress_events {
             report =
-                Self::append_recommended_compress_label(report, inspect_recommendation.as_ref());
+                Self::append_recommended_compress_label(report, probe_recommendation.as_ref());
         }
-        self.finish_inspect(report, extracted_archives, cleanup_paths)
+        self.finish_probe(report, extracted_archives, cleanup_paths)
     }
 
-    fn finish_inspect(
+    fn finish_probe(
         &self,
         mut report: OperationReport,
         extracted_archives: usize,
@@ -361,12 +296,179 @@ impl CliApp {
     ) -> AppRunOutcome {
         if report.status == OperationStatus::Succeeded && extracted_archives > 0 {
             report.label = format!(
-                "{}; inspect source resolved via {extracted_archives} container extract step(s)",
+                "{}; probe source resolved via {extracted_archives} container extract step(s)",
                 report.label
             );
         }
         Self::cleanup_temp_paths(cleanup_paths);
-        self.finish("inspect", report)
+        self.finish("probe", report)
+    }
+
+    fn run_list(&self, args: ListCommand) -> AppRunOutcome {
+        let ListCommand {
+            source,
+            select,
+            no_ignore,
+        } = args;
+        trace!(
+            source = %source.display(),
+            selections = select.len(),
+            no_ignore,
+            "starting list command"
+        );
+        let context = self.context(ThreadBudget::Fixed(1));
+        if let Some(report) =
+            self.require_existing_path("list", OperationFamily::Command, None, &source, None)
+        {
+            return self.finish("list", report);
+        }
+
+        let labels = AutoExtractResolutionLabels {
+            command: "list",
+            family: OperationFamily::Command,
+            format: None,
+            source_label: "list",
+            temp_prefix: "list-extract",
+        };
+        let resolved = if select.is_empty() {
+            Ok(ResolvedChecksumSource {
+                source: source.clone(),
+                extracted_archives: 0,
+                cleanup_paths: Vec::new(),
+            })
+        } else {
+            self.resolve_source_with_single_auto_extract(
+                &source, &select, no_ignore, &context, labels,
+            )
+        };
+        let ResolvedChecksumSource {
+            source: list_source,
+            extracted_archives,
+            cleanup_paths,
+        } = match resolved {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                return self.finish(
+                    "list",
+                    OperationReport::failed(
+                        OperationFamily::Command,
+                        None,
+                        "prepare",
+                        error.to_string(),
+                        Some(context.plan_threads(ThreadCapability::single_threaded())),
+                    ),
+                );
+            }
+        };
+
+        self.emit_running(
+            OperationLabel {
+                command: "list",
+                family: OperationFamily::Command,
+                format: None,
+            },
+            "probe",
+            format!("probing handlers for `{}`", list_source.display()),
+            Some(0.0),
+            None,
+        );
+
+        if let Some(handler) = self.containers.probe(&list_source) {
+            let request = ContainerProbeRequest {
+                source: list_source.clone(),
+            };
+            self.emit_running(
+                OperationLabel {
+                    command: "list",
+                    family: OperationFamily::Container,
+                    format: Some(handler.descriptor().name),
+                },
+                "list",
+                format!("listing entries for `{}`", list_source.display()),
+                None,
+                Some(context.plan_threads(ThreadCapability::single_threaded())),
+            );
+            let report = match handler.list_entry_records(&request, &context) {
+                Ok(entries) => {
+                    let report = OperationReport::succeeded(
+                        OperationFamily::Container,
+                        Some(handler.descriptor().name.to_string()),
+                        "list",
+                        format!(
+                            "listed {} selectable entr{} for `{}`",
+                            entries.len(),
+                            if entries.len() == 1 { "y" } else { "ies" },
+                            list_source.display()
+                        ),
+                        Some(100.0),
+                        Some(context.plan_threads(ThreadCapability::single_threaded())),
+                    );
+                    Self::attach_container_probe_details(
+                        report,
+                        Some(entries),
+                        self.probe_compress_recommendation(&list_source).as_ref(),
+                    )
+                }
+                Err(error) => OperationReport::failed(
+                    OperationFamily::Container,
+                    Some(handler.descriptor().name.to_string()),
+                    "list",
+                    error.to_string(),
+                    None,
+                ),
+            };
+            return self.finish_list(report, extracted_archives, cleanup_paths);
+        }
+
+        if let Some(handler) = self.patches.probe(&list_source) {
+            let report = OperationReport::failed(
+                OperationFamily::Patch,
+                Some(handler.descriptor().name.to_string()),
+                "list",
+                "list is only supported for container formats",
+                None,
+            );
+            return self.finish_list(report, extracted_archives, cleanup_paths);
+        }
+
+        if let Ok(Some(_header_match)) = Self::detect_known_rom_header(&list_source) {
+            let report = OperationReport::failed(
+                OperationFamily::Command,
+                Some("rom-header".to_string()),
+                "list",
+                "list is only supported for container formats",
+                None,
+            );
+            return self.finish_list(report, extracted_archives, cleanup_paths);
+        }
+
+        let report = OperationReport::failed(
+            OperationFamily::Command,
+            None,
+            "probe",
+            format!(
+                "no registered container handler matched `{}`",
+                list_source.display()
+            ),
+            None,
+        );
+        self.finish_list(report, extracted_archives, cleanup_paths)
+    }
+
+    fn finish_list(
+        &self,
+        mut report: OperationReport,
+        extracted_archives: usize,
+        cleanup_paths: Vec<PathBuf>,
+    ) -> AppRunOutcome {
+        if report.status == OperationStatus::Succeeded && extracted_archives > 0 {
+            report.label = format!(
+                "{}; list source resolved via {extracted_archives} container extract step(s)",
+                report.label
+            );
+        }
+        Self::cleanup_temp_paths(cleanup_paths);
+        self.finish("list", report)
     }
 
     fn run_extract(&self, args: ExtractCommand) -> AppRunOutcome {
@@ -964,7 +1066,7 @@ impl CliApp {
             return Ok(None);
         }
 
-        let request = ContainerInspectRequest {
+        let request = ContainerProbeRequest {
             source: source.to_path_buf(),
         };
         let entries = handler.list_entries(&request, context)?;
@@ -972,11 +1074,11 @@ impl CliApp {
             return Ok(None);
         }
 
-        let report = handler.inspect(&request, context)?;
+        let report = handler.probe_details(&request, context)?;
         if report.status != OperationStatus::Succeeded {
             return Ok(None);
         }
-        let Some(raw_sha1) = Self::extract_chd_raw_sha1_from_inspect_details(report.details.as_ref())
+        let Some(raw_sha1) = Self::extract_chd_raw_sha1_from_probe_details(report.details.as_ref())
         else {
             return Ok(None);
         };
@@ -1002,7 +1104,7 @@ impl CliApp {
         entry.ends_with(".bin") || entry.ends_with(".iso") || entry.ends_with(".img")
     }
 
-    fn extract_chd_raw_sha1_from_inspect_details(details: Option<&Value>) -> Option<String> {
+    fn extract_chd_raw_sha1_from_probe_details(details: Option<&Value>) -> Option<String> {
         let details = details?;
         let Value::Object(map) = details else {
             return None;
@@ -1498,15 +1600,15 @@ impl CliApp {
                 break;
             }
 
-            let inspect_request = ContainerInspectRequest {
+            let probe_request = ContainerProbeRequest {
                 source: current_source.clone(),
             };
-            if let Err(error) = handler.inspect(&inspect_request, context) {
+            if let Err(error) = handler.probe_details(&probe_request, context) {
                 trace!(
                     current_source = %current_source.display(),
                     format = handler.descriptor().name,
                     error = %error,
-                    "auto-extract stopped: handler inspect failed"
+                    "auto-extract stopped: handler probe failed"
                 );
                 break;
             }
@@ -1815,7 +1917,7 @@ impl CliApp {
     ) -> Result<Option<String>> {
         let entries = handler
             .list_entries(
-                &ContainerInspectRequest {
+                &ContainerProbeRequest {
                     source: source.to_path_buf(),
                 },
                 context,

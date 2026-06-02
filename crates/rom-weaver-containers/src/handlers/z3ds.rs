@@ -579,9 +579,9 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         }
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let execution = context.plan_threads(ThreadCapability::single_threaded());
@@ -616,7 +616,7 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
             Some(Z3DS.name.to_string()),
-            "inspect",
+            "probe",
             format!(
                 "z3ds: {} bytes -> {} bytes ({ratio:.2}%), underlying_magic={}, {}",
                 header.uncompressed_size,
@@ -631,7 +631,7 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         let mut file = File::open(&request.source)?;

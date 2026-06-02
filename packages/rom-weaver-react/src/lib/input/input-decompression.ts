@@ -127,7 +127,7 @@ const getCompressionClassification = (file: PatchFileInstance) => classifyPatche
 const isDiscDecompressionOutput = (file: PatchFileInstance) =>
   !!(file as { _discDecompressionOutput?: boolean })._discDecompressionOutput;
 
-const canInspectDiscMagicSynchronously = (file: PatchFileInstance) =>
+const canProbeDiscMagicSynchronously = (file: PatchFileInstance) =>
   file._u8array instanceof Uint8Array ||
   (!(file as { _browserFileBacked?: boolean })._browserFileBacked && typeof file.readIntoAt === "function");
 
@@ -135,8 +135,8 @@ const getPreparedInputFinalizeReason = (
   file: PatchFileInstance,
   classification: ReturnType<typeof getCompressionClassification>,
 ) =>
-  isDiscDecompressionOutput(file) && !canInspectDiscMagicSynchronously(file)
-    ? "disc-output-non-inspectable"
+  isDiscDecompressionOutput(file) && !canProbeDiscMagicSynchronously(file)
+    ? "disc-output-non-probeable"
     : isLazyExternalPatchFile(file) && classification.kind !== "compression"
       ? "lazy-non-compression"
       : null;

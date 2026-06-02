@@ -190,10 +190,10 @@ fn chd_compress_and_extract_avhuff_round_trip() {
         fs::read(out_dir.child("disc.avi").path()).expect("extract bytes"),
         source
     );
-    let inspect_output = Command::cargo_bin("rom-weaver")
+    let probe_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             chd_path.path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -203,34 +203,34 @@ fn chd_compress_and_extract_avhuff_round_trip() {
         .get_output()
         .stdout
         .clone();
-    let inspect_json = parse_single_json_line(&inspect_output);
+    let probe_json = parse_single_json_line(&probe_output);
     assert!(
-        inspect_json["label"]
+        probe_json["label"]
             .as_str()
             .expect("label")
             .contains("codec=avhuff")
     );
     assert!(
-        inspect_json["label"]
+        probe_json["label"]
             .as_str()
             .expect("label")
             .contains("sha1=")
     );
     assert!(
-        inspect_json["label"]
+        probe_json["label"]
             .as_str()
             .expect("label")
             .contains("raw_sha1=")
     );
     assert!(
-        inspect_json["details"]["chd"]["sha1"]
+        probe_json["details"]["chd"]["sha1"]
             .as_str()
             .expect("sha1 detail")
             .len()
             == 40
     );
     assert!(
-        inspect_json["details"]["chd"]["raw_sha1"]
+        probe_json["details"]["chd"]["raw_sha1"]
             .as_str()
             .expect("raw sha1 detail")
             .len()
@@ -306,10 +306,10 @@ fn chd_compress_huffman_alias_emits_huff_label() {
     assert!(json["label"].as_str().expect("label").contains("huff"));
     assert!(!json["label"].as_str().expect("label").contains("huffman"));
 
-    let inspect_output = Command::cargo_bin("rom-weaver")
+    let probe_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             chd_path.path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -319,9 +319,9 @@ fn chd_compress_huffman_alias_emits_huff_label() {
         .get_output()
         .stdout
         .clone();
-    let inspect_json = parse_single_json_line(&inspect_output);
+    let probe_json = parse_single_json_line(&probe_output);
     assert!(
-        inspect_json["label"]
+        probe_json["label"]
             .as_str()
             .expect("label")
             .contains("codec=huff")
@@ -850,10 +850,10 @@ fn chd_compress_accepts_cd_codec_aliases() {
         .assert()
         .code(0);
 
-    let inspect_output = Command::cargo_bin("rom-weaver")
+    let probe_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             chd_path.path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -863,11 +863,11 @@ fn chd_compress_accepts_cd_codec_aliases() {
         .get_output()
         .stdout
         .clone();
-    let inspect_json = parse_single_json_line(&inspect_output);
-    assert_eq!(inspect_json["command"], "inspect");
-    assert_eq!(inspect_json["status"], "succeeded");
+    let probe_json = parse_single_json_line(&probe_output);
+    assert_eq!(probe_json["command"], "probe");
+    assert_eq!(probe_json["status"], "succeeded");
     assert!(
-        inspect_json["label"]
+        probe_json["label"]
             .as_str()
             .expect("label")
             .contains("codec=cdlz")
@@ -980,10 +980,10 @@ fn chd_compress_accepts_multiple_codecs_from_repeated_flags() {
     let compress_json = compress_events.last().expect("compress terminal event");
     assert_eq!(compress_json["status"], "succeeded");
 
-    let inspect_output = Command::cargo_bin("rom-weaver")
+    let probe_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             chd_path.path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -993,11 +993,11 @@ fn chd_compress_accepts_multiple_codecs_from_repeated_flags() {
         .get_output()
         .stdout
         .clone();
-    let inspect_json = parse_single_json_line(&inspect_output);
-    assert_eq!(inspect_json["command"], "inspect");
-    assert_eq!(inspect_json["status"], "succeeded");
+    let probe_json = parse_single_json_line(&probe_output);
+    assert_eq!(probe_json["command"], "probe");
+    assert_eq!(probe_json["status"], "succeeded");
     assert!(
-        inspect_json["label"]
+        probe_json["label"]
             .as_str()
             .expect("label")
             .contains("codec=cdzs+cdzl+cdfl")
@@ -1300,7 +1300,7 @@ fn chd_extract_selecting_gdi_descriptor_includes_tracks() {
 }
 
 #[test]
-fn gcz_inspect_reports_succeeded() {
+fn gcz_probe_reports_succeeded() {
     let temp = setup_temp_dir();
     let iso_bytes = build_test_gamecube_iso(0x6000);
     fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
@@ -1309,7 +1309,7 @@ fn gcz_inspect_reports_succeeded() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("disc.gcz").path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -1321,7 +1321,7 @@ fn gcz_inspect_reports_succeeded() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "gcz");
     assert_eq!(json["status"], "succeeded");
@@ -1425,7 +1425,7 @@ fn gcz_extract_supports_single_output_selection() {
 }
 
 #[test]
-fn wbfs_inspect_reports_succeeded() {
+fn wbfs_probe_reports_succeeded() {
     let temp = setup_temp_dir();
     let iso_bytes = build_test_gamecube_iso(0x6000);
     fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
@@ -1437,7 +1437,7 @@ fn wbfs_inspect_reports_succeeded() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("disc.wbfs").path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -1449,7 +1449,7 @@ fn wbfs_inspect_reports_succeeded() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "wbfs");
     assert_eq!(json["status"], "succeeded");
@@ -1557,7 +1557,7 @@ fn wbfs_extract_supports_single_output_selection() {
 }
 
 #[test]
-fn wia_inspect_reports_succeeded() {
+fn wia_probe_reports_succeeded() {
     let temp = setup_temp_dir();
     let iso_bytes = build_test_gamecube_iso(0x6000);
     fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
@@ -1566,7 +1566,7 @@ fn wia_inspect_reports_succeeded() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("disc.wia").path().to_str().expect("path"),
             "--no-extract",
             "--json",
@@ -1578,7 +1578,7 @@ fn wia_inspect_reports_succeeded() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "wia");
     assert_eq!(json["status"], "succeeded");

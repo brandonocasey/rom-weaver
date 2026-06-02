@@ -113,17 +113,17 @@ impl CliApp {
                 continue;
             };
 
-            // Only recurse into containers that successfully inspect, so extension-only matches
+            // Only recurse into containers that successfully probe, so extension-only matches
             // do not fail nested extraction on non-container payload files.
-            let inspect_request = ContainerInspectRequest {
+            let probe_request = ContainerProbeRequest {
                 source: source.clone(),
             };
-            if let Err(error) = handler.inspect(&inspect_request, context) {
+            if let Err(error) = handler.probe_details(&probe_request, context) {
                 trace!(
                     source = %source.display(),
                     format = handler.descriptor().name,
                     error = %error,
-                    "skipping nested archive candidate because inspect failed"
+                    "skipping nested archive candidate because probe failed"
                 );
                 continue;
             }

@@ -4,7 +4,7 @@ This branch now runs CHD through the Rust path directly with no runtime backend 
 
 ## Status today
 
-- `inspect`, `extract`, and `create` run through the Rust CHD path in `rom-weaver-containers`.
+- `probe`, `extract`, and `create` run through the Rust CHD path in `rom-weaver-containers`.
 - The `ROM_WEAVER_CHD_BACKEND` mode switch has been removed from this branch.
 - Legacy native CHD create/read helper paths were deleted from the active CHD container flow.
 

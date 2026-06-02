@@ -14,7 +14,7 @@ use crate::{
 #[test]
 fn parse_reports_source_target_and_patch_crc32() {
     let temp = TestDir::new();
-    let patch_path = temp.child("inspect.ups");
+    let patch_path = temp.child("probe.ups");
     let patch = create_ups_patch_bytes(b"source-data", b"target-data")
         .expect("patch")
         .bytes;

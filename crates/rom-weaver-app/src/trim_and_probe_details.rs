@@ -1049,22 +1049,7 @@ impl CliApp {
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
-    fn append_entry_list_label(base: &str, entries: &[ContainerListEntry]) -> String {
-        if entries.is_empty() {
-            return format!("{base}; selectable entries: (none)");
-        }
-        let labels = entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        format!(
-            "{base}; selectable entries ({}): {}",
-            labels.len(),
-            labels.join(", ")
-        )
-    }
-
-    fn inspect_compress_recommendation(
+    fn probe_compress_recommendation(
         &self,
         source: &Path,
     ) -> Option<CompressFormatRecommendation> {
@@ -1086,7 +1071,7 @@ impl CliApp {
         report
     }
 
-    fn attach_container_inspect_details(
+    fn attach_container_probe_details(
         mut report: OperationReport,
         listed_entries: Option<Vec<ContainerListEntry>>,
         recommendation: Option<&CompressFormatRecommendation>,
@@ -1150,7 +1135,7 @@ impl CliApp {
         report
     }
 
-    fn attach_patch_inspect_details(mut report: OperationReport) -> OperationReport {
+    fn attach_patch_probe_details(mut report: OperationReport) -> OperationReport {
         if report.status != OperationStatus::Succeeded {
             return report;
         }

@@ -1,6 +1,24 @@
 /* jscpd:ignore-start */
 #[test]
-fn inspect_reports_known_container_as_supported() {
+fn old_inspect_command_is_removed() {
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["inspect", "--help"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn probe_rejects_list_flag() {
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["probe", "input.bin", "--list", "--json"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn probe_reports_known_container_as_supported() {
     let temp = setup_temp_dir();
     temp.child("sample.bin")
         .write_str("placeholder payload")
@@ -23,14 +41,14 @@ fn inspect_reports_known_container_as_supported() {
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "probe",
             archive.path().to_str().expect("path"),
             "--no-extract",
             "--json",
         ],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "succeeded");
@@ -50,7 +68,7 @@ fn inspect_reports_known_container_as_supported() {
 }
 
 #[test]
-fn inspect_list_reports_selectable_zip_entries() {
+fn list_reports_selectable_zip_entries() {
     let temp = setup_temp_dir();
     fs::write(temp.child("sample.bin").path(), b"payload").expect("fixture");
     let archive = temp.child("sample.zip");
@@ -71,14 +89,13 @@ fn inspect_list_reports_selectable_zip_entries() {
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "list",
             archive.path().to_str().expect("path"),
-            "--list",
             "--json",
         ],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "list");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "succeeded");
@@ -99,9 +116,9 @@ fn inspect_list_reports_selectable_zip_entries() {
 }
 
 #[test]
-fn inspect_auto_extracts_single_payload() {
+fn probe_auto_extracts_single_payload() {
     let temp = setup_temp_dir();
-    let payload = b"header-aware inspect payload".to_vec();
+    let payload = b"header-aware probe payload".to_vec();
     fs::write(temp.child("game.nes").path(), with_nes_header(&payload)).expect("fixture");
     let archive = temp.child("game.zip");
 
@@ -120,22 +137,22 @@ fn inspect_auto_extracts_single_payload() {
         .code(0);
 
     let json = run_single_json_event(
-        &["inspect", archive.path().to_str().expect("path"), "--json"],
+        &["probe", archive.path().to_str().expect("path"), "--json"],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "command");
     assert_eq!(json["format"], "rom-header");
     assert_eq!(json["status"], "succeeded");
     let label = json["label"].as_str().expect("label");
     assert!(label.contains("detected ROM header No-Intro_NES.xml"));
-    assert!(label.contains("inspect source resolved via 1 container extract step(s)"));
+    assert!(label.contains("probe source resolved via 1 container extract step(s)"));
 }
 
 #[test]
-fn inspect_auto_extracts_nested_payload() {
+fn probe_auto_extracts_nested_payload() {
     let temp = setup_temp_dir();
-    let payload = b"nested header-aware inspect payload".to_vec();
+    let payload = b"nested header-aware probe payload".to_vec();
     fs::write(temp.child("game.nes").path(), with_nes_header(&payload)).expect("fixture");
 
     let inner = temp.child("inner.zip");
@@ -169,20 +186,20 @@ fn inspect_auto_extracts_nested_payload() {
         .code(0);
 
     let json = run_single_json_event(
-        &["inspect", outer.path().to_str().expect("path"), "--json"],
+        &["probe", outer.path().to_str().expect("path"), "--json"],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "command");
     assert_eq!(json["format"], "rom-header");
     assert_eq!(json["status"], "succeeded");
     let label = json["label"].as_str().expect("label");
     assert!(label.contains("detected ROM header No-Intro_NES.xml"));
-    assert!(label.contains("inspect source resolved via 2 container extract step(s)"));
+    assert!(label.contains("probe source resolved via 2 container extract step(s)"));
 }
 
 #[test]
-fn inspect_no_extract_reports_container_bytes() {
+fn probe_no_extract_reports_container_bytes() {
     let temp = setup_temp_dir();
     fs::write(temp.child("game.nes").path(), with_nes_header(b"payload")).expect("fixture");
     let archive = temp.child("game.zip");
@@ -203,25 +220,25 @@ fn inspect_no_extract_reports_container_bytes() {
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "probe",
             archive.path().to_str().expect("path"),
             "--no-extract",
             "--json",
         ],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "succeeded");
     assert!(!json["label"]
         .as_str()
         .expect("label")
-        .contains("inspect source resolved via"));
+        .contains("probe source resolved via"));
 }
 
 #[test]
-fn inspect_list_with_select_reports_selected_nested_container_entries() {
+fn list_with_select_reports_selected_nested_container_entries() {
     let temp = setup_temp_dir();
     fs::write(temp.child("sample.bin").path(), b"payload").expect("payload fixture");
     fs::write(temp.child("notes.txt").path(), b"ignore me").expect("note fixture");
@@ -259,16 +276,15 @@ fn inspect_list_with_select_reports_selected_nested_container_entries() {
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "list",
             outer.path().to_str().expect("path"),
             "--select",
             "inner.zip",
-            "--list",
             "--json",
         ],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "list");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "succeeded");
@@ -277,11 +293,11 @@ fn inspect_list_with_select_reports_selected_nested_container_entries() {
     assert!(json["label"]
         .as_str()
         .expect("label")
-        .contains("inspect source resolved via 1 container extract step(s)"));
+        .contains("list source resolved via 1 container extract step(s)"));
 }
 
 #[test]
-fn inspect_auto_extract_ambiguity_requires_select() {
+fn probe_auto_extract_ambiguity_requires_select() {
     let temp = setup_temp_dir();
     fs::write(temp.child("alpha.nes").path(), with_nes_header(b"alpha")).expect("alpha fixture");
     fs::write(temp.child("beta.nes").path(), with_nes_header(b"beta")).expect("beta fixture");
@@ -303,11 +319,11 @@ fn inspect_auto_extract_ambiguity_requires_select() {
         .code(0);
 
     let json = run_single_json_event(
-        &["inspect", archive.path().to_str().expect("path"), "--json"],
+        &["probe", archive.path().to_str().expect("path"), "--json"],
         1,
     );
     let label = json["label"].as_str().expect("label");
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["status"], "failed");
     assert!(label.contains("ambiguous"));
     assert!(label.contains("alpha.nes"));
@@ -316,7 +332,7 @@ fn inspect_auto_extract_ambiguity_requires_select() {
 }
 
 #[test]
-fn inspect_auto_extract_ignores_sidecars_unless_no_ignore() {
+fn probe_auto_extract_ignores_sidecars_unless_no_ignore() {
     let temp = setup_temp_dir();
     fs::create_dir_all(temp.child("__MACOSX").path()).expect("__MACOSX dir");
     fs::write(temp.child("game.nes").path(), with_nes_header(b"payload")).expect("payload fixture");
@@ -348,16 +364,16 @@ fn inspect_auto_extract_ignores_sidecars_unless_no_ignore() {
         .code(0);
 
     let json = run_single_json_event(
-        &["inspect", archive.path().to_str().expect("path"), "--json"],
+        &["probe", archive.path().to_str().expect("path"), "--json"],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["format"], "rom-header");
     assert_eq!(json["status"], "succeeded");
 
     let no_ignore_json = run_single_json_event(
         &[
-            "inspect",
+            "probe",
             archive.path().to_str().expect("path"),
             "--no-ignore",
             "--json",
@@ -365,48 +381,48 @@ fn inspect_auto_extract_ignores_sidecars_unless_no_ignore() {
         1,
     );
     let no_ignore_label = no_ignore_json["label"].as_str().expect("label");
-    assert_eq!(no_ignore_json["command"], "inspect");
+    assert_eq!(no_ignore_json["command"], "probe");
     assert_eq!(no_ignore_json["status"], "failed");
     assert!(no_ignore_label.contains("ambiguous"));
     assert!(no_ignore_label.contains("--select"));
 }
 
 #[test]
-fn inspect_reports_rar_container_as_supported() {
+fn probe_reports_rar_container_as_supported() {
     let temp = setup_temp_dir();
     let source = temp.child("version.rar");
     fs::copy(rar_fixture_path("version.rar"), source.path()).expect("copy fixture");
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "probe",
             source.path().to_str().expect("path"),
             "--no-extract",
             "--json",
         ],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "rar");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_reports_known_rom_header_as_supported() {
+fn probe_reports_known_rom_header_as_supported() {
     let temp = setup_temp_dir();
-    let payload = b"header-aware inspect payload".to_vec();
+    let payload = b"header-aware probe payload".to_vec();
     fs::write(temp.child("headered.nes").path(), with_nes_header(&payload)).expect("fixture");
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "probe",
             temp.child("headered.nes").path().to_str().expect("path"),
             "--json",
         ],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "command");
     assert_eq!(json["format"], "rom-header");
     assert_eq!(json["status"], "succeeded");
@@ -418,20 +434,20 @@ fn inspect_reports_known_rom_header_as_supported() {
 }
 
 #[test]
-fn inspect_reports_gba_header_profile() {
+fn probe_reports_gba_header_profile() {
     let temp = setup_temp_dir();
     let rom = build_test_gba_rom(0x2000);
     fs::write(temp.child("test.gba").path(), rom).expect("fixture");
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "probe",
             temp.child("test.gba").path().to_str().expect("path"),
             "--json",
         ],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "command");
     assert_eq!(json["format"], "rom-header");
     assert_eq!(json["status"], "succeeded");
@@ -442,7 +458,7 @@ fn inspect_reports_gba_header_profile() {
 }
 
 #[test]
-fn inspect_list_rejects_patch_inputs() {
+fn list_rejects_patch_inputs() {
     let temp = setup_temp_dir();
     fs::write(
         temp.child("update.ips").path(),
@@ -458,14 +474,13 @@ fn inspect_list_rejects_patch_inputs() {
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "list",
             temp.child("update.ips").path().to_str().expect("path"),
-            "--list",
             "--json",
         ],
         1,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "list");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["status"], "failed");
     assert!(json["label"]
@@ -475,7 +490,7 @@ fn inspect_list_rejects_patch_inputs() {
 }
 
 #[test]
-fn inspect_list_reports_pbp_multi_disc_selectable_outputs() {
+fn list_reports_pbp_multi_disc_selectable_outputs() {
     let temp = setup_temp_dir();
     let disc1 = build_test_pbp_iso(72, 13);
     let disc2 = build_test_pbp_iso(80, 29);
@@ -485,14 +500,13 @@ fn inspect_list_reports_pbp_multi_disc_selectable_outputs() {
 
     let json = run_single_json_event(
         &[
-            "inspect",
+            "list",
             source.path().to_str().expect("path"),
-            "--list",
             "--json",
         ],
         0,
     );
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "list");
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "pbp");
     assert_eq!(json["status"], "succeeded");

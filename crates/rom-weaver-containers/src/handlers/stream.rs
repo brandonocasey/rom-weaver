@@ -184,7 +184,7 @@ impl StreamContainerHandler {
     ) -> Result<u64> {
         let format_name = self.descriptor.name;
         let total_bytes =
-            inspect_stream_with_libarchive(source, format_name, self.libarchive_read_filter())?;
+            probe_stream_with_libarchive(source, format_name, self.libarchive_read_filter())?;
         let mut archive =
             libarchive_open_read_stream(source, format_name, self.libarchive_read_filter())?;
         let result = (|| -> Result<u64> {
@@ -327,13 +327,13 @@ impl ContainerHandlerOperations for StreamContainerHandler {
         }
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<OperationReport> {
         let compressed_bytes = fs::metadata(&request.source)?.len();
-        let logical_bytes = inspect_stream_with_libarchive(
+        let logical_bytes = probe_stream_with_libarchive(
             &request.source,
             self.descriptor.name,
             self.libarchive_read_filter(),
@@ -342,7 +342,7 @@ impl ContainerHandlerOperations for StreamContainerHandler {
         Ok(OperationReport::succeeded(
             OperationFamily::Container,
             Some(self.descriptor.name.to_string()),
-            "inspect",
+            "probe",
             format!(
                 "{}: {} bytes compressed, {} bytes uncompressed",
                 self.descriptor.name, compressed_bytes, logical_bytes
@@ -354,7 +354,7 @@ impl ContainerHandlerOperations for StreamContainerHandler {
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         Ok(vec![self.output_name(&request.source)])

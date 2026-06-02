@@ -645,7 +645,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("gcz").expect("gcz handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(!capabilities.create);
         assert_eq!(
@@ -663,7 +663,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("wbfs").expect("wbfs handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -681,7 +681,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("wia").expect("wia handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -699,7 +699,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("tgc").expect("tgc handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -717,7 +717,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("nfs").expect("nfs handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(!capabilities.create);
         assert_eq!(
@@ -735,7 +735,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("cso").expect("cso handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -753,7 +753,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("pbp").expect("pbp handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(!capabilities.create);
         assert_eq!(
@@ -772,7 +772,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("rar").expect("rar handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(!capabilities.create);
         assert_eq!(
@@ -868,7 +868,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("7z").expect("7z handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -920,7 +920,7 @@ mod tests {
 
                 let entries = handler
                     .list_entries(
-                        &rom_weaver_core::ContainerInspectRequest {
+                        &rom_weaver_core::ContainerProbeRequest {
                             source: archive_path,
                         },
                         &context,
@@ -1025,7 +1025,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("zip").expect("zip handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1160,7 +1160,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("tar").expect("tar handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1178,7 +1178,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("tar.xz").expect("tar.xz handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1196,7 +1196,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("tar.gz").expect("tar.gz handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1214,7 +1214,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("tar.bz2").expect("tar.bz2 handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1232,7 +1232,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("gz").expect("gz handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1250,7 +1250,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("bz2").expect("bz2 handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1268,7 +1268,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("zst").expect("zst handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1286,7 +1286,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("xz").expect("xz handler");
         let capabilities = handler.capabilities();
-        assert!(capabilities.inspect);
+        assert!(capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(capabilities.create);
         assert_eq!(
@@ -1921,8 +1921,8 @@ mod tests {
     }
 
     #[test]
-    fn zst_stream_inspect_reports_uncompressed_bytes() {
-        let temp_dir = temp_dir_path("zst-stream-inspect");
+    fn zst_stream_probe_reports_uncompressed_bytes() {
+        let temp_dir = temp_dir_path("zst-stream-probe");
         fs::create_dir_all(&temp_dir).expect("temp dir");
         let source_path = temp_dir.join("source.bin");
         let archive_path = temp_dir.join("source.bin.zst");
@@ -1948,19 +1948,19 @@ mod tests {
             .expect("create zst");
 
         let report = handler
-            .inspect(
-                &rom_weaver_core::ContainerInspectRequest {
+            .probe_details(
+                &rom_weaver_core::ContainerProbeRequest {
                     source: archive_path,
                 },
                 &test_context(&temp_dir, 8),
             )
-            .expect("inspect zst");
+            .expect("probe zst");
         assert_eq!(report.status, rom_weaver_core::OperationStatus::Succeeded);
         assert!(
             report
                 .label
                 .contains(&format!("{} bytes uncompressed", payload.len())),
-            "inspect label mismatch: {}",
+            "probe label mismatch: {}",
             report.label
         );
 
@@ -2456,21 +2456,21 @@ mod tests {
         let handler = registry.find_by_name("pbp").expect("pbp handler");
         let context = test_context(&temp_dir, 1);
 
-        let inspect = handler
-            .inspect(
-                &rom_weaver_core::ContainerInspectRequest {
+        let probe = handler
+            .probe_details(
+                &rom_weaver_core::ContainerProbeRequest {
                     source: source_path.clone(),
                 },
                 &context,
             )
-            .expect("inspect pbp");
-        assert_eq!(inspect.status, rom_weaver_core::OperationStatus::Succeeded);
-        assert!(inspect.label.contains("pbp: 1 disc(s)"));
-        assert!(inspect.label.contains("SLUS00001"));
+            .expect("probe pbp");
+        assert_eq!(probe.status, rom_weaver_core::OperationStatus::Succeeded);
+        assert!(probe.label.contains("pbp: 1 disc(s)"));
+        assert!(probe.label.contains("SLUS00001"));
 
         let entries = handler
             .list_entries(
-                &rom_weaver_core::ContainerInspectRequest {
+                &rom_weaver_core::ContainerProbeRequest {
                     source: source_path.clone(),
                 },
                 &context,
@@ -2524,7 +2524,7 @@ mod tests {
 
         let entries = handler
             .list_entries(
-                &rom_weaver_core::ContainerInspectRequest {
+                &rom_weaver_core::ContainerProbeRequest {
                     source: source_path.clone(),
                 },
                 &context,
@@ -2640,13 +2640,13 @@ mod tests {
         bad_magic_header[..4].copy_from_slice(b"bad!");
         fs::write(&bad_magic_path, bad_magic_header).expect("bad magic fixture");
         let bad_magic_error = handler
-            .inspect(
-                &rom_weaver_core::ContainerInspectRequest {
+            .probe_details(
+                &rom_weaver_core::ContainerProbeRequest {
                     source: bad_magic_path,
                 },
                 &test_context(&temp_dir, 1),
             )
-            .expect_err("inspect should fail for bad magic");
+            .expect_err("probe should fail for bad magic");
         assert!(bad_magic_error.to_string().contains("missing \\0PBP magic"));
 
         let mut bad_payload =
@@ -2662,13 +2662,13 @@ mod tests {
         fs::write(&bad_payload_path, bad_payload).expect("bad payload fixture");
 
         let bad_payload_error = handler
-            .inspect(
-                &rom_weaver_core::ContainerInspectRequest {
+            .probe_details(
+                &rom_weaver_core::ContainerProbeRequest {
                     source: bad_payload_path,
                 },
                 &test_context(&temp_dir, 1),
             )
-            .expect_err("inspect should fail for bad payload");
+            .expect_err("probe should fail for bad payload");
         assert!(
             bad_payload_error
                 .to_string()
@@ -2683,7 +2683,7 @@ mod tests {
         let registry = ContainerRegistry::new();
         let handler = registry.find_by_name("xiso").expect("xiso handler");
         let capabilities = handler.capabilities();
-        assert!(!capabilities.inspect);
+        assert!(!capabilities.probe_details);
         assert!(capabilities.extract);
         assert!(!capabilities.create);
         assert_eq!(

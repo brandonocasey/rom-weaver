@@ -2570,7 +2570,7 @@ fn patch_apply_uses_checksum_cache_for_validation() {
 }
 
 #[test]
-fn inspect_patch_reports_expected_checksums_for_bps() {
+fn probe_patch_reports_expected_checksums_for_bps() {
     let temp = setup_temp_dir();
     let original = temp.child("old.bin");
     let modified = temp.child("new.bin");
@@ -2595,31 +2595,31 @@ fn inspect_patch_reports_expected_checksums_for_bps() {
         .assert()
         .code(0);
 
-    let inspect_output = Command::cargo_bin("rom-weaver")
+    let probe_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
-        .args(["inspect", patch.path().to_str().expect("path"), "--json"])
+        .args(["probe", patch.path().to_str().expect("path"), "--json"])
         .assert()
         .code(0)
         .get_output()
         .stdout
         .clone();
 
-    let inspect_json = parse_single_json_line(&inspect_output);
-    assert_eq!(inspect_json["command"], "inspect");
-    assert_eq!(inspect_json["family"], "patch");
-    assert_eq!(inspect_json["format"], "BPS");
-    assert_eq!(inspect_json["status"], "succeeded");
-    assert_eq!(inspect_json["details"]["patch"]["format"], "BPS");
-    assert_eq!(inspect_json["details"]["patch"]["source_size"], 15);
-    assert_eq!(inspect_json["details"]["patch"]["target_size"], 15);
-    assert!(inspect_json["details"]["patch"]["source_crc32"].is_number());
-    assert!(inspect_json["details"]["patch"]["target_crc32"].is_number());
-    assert!(inspect_json["details"]["patch"]["patch_crc32"].is_number());
-    assert!(inspect_json["details"]["patch"]["record_count"].is_number());
+    let probe_json = parse_single_json_line(&probe_output);
+    assert_eq!(probe_json["command"], "probe");
+    assert_eq!(probe_json["family"], "patch");
+    assert_eq!(probe_json["format"], "BPS");
+    assert_eq!(probe_json["status"], "succeeded");
+    assert_eq!(probe_json["details"]["patch"]["format"], "BPS");
+    assert_eq!(probe_json["details"]["patch"]["source_size"], 15);
+    assert_eq!(probe_json["details"]["patch"]["target_size"], 15);
+    assert!(probe_json["details"]["patch"]["source_crc32"].is_number());
+    assert!(probe_json["details"]["patch"]["target_crc32"].is_number());
+    assert!(probe_json["details"]["patch"]["patch_crc32"].is_number());
+    assert!(probe_json["details"]["patch"]["record_count"].is_number());
 }
 
 #[test]
-fn inspect_patch_reports_structured_summary_for_ups() {
+fn probe_patch_reports_structured_summary_for_ups() {
     let temp = setup_temp_dir();
     let original = temp.child("old.bin");
     let modified = temp.child("new.bin");
@@ -2644,27 +2644,27 @@ fn inspect_patch_reports_structured_summary_for_ups() {
         .assert()
         .code(0);
 
-    let inspect_output = Command::cargo_bin("rom-weaver")
+    let probe_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
-        .args(["inspect", patch.path().to_str().expect("path"), "--json"])
+        .args(["probe", patch.path().to_str().expect("path"), "--json"])
         .assert()
         .code(0)
         .get_output()
         .stdout
         .clone();
 
-    let inspect_json = parse_single_json_line(&inspect_output);
-    assert_eq!(inspect_json["command"], "inspect");
-    assert_eq!(inspect_json["family"], "patch");
-    assert_eq!(inspect_json["format"], "UPS");
-    assert_eq!(inspect_json["status"], "succeeded");
-    assert_eq!(inspect_json["details"]["patch"]["format"], "UPS");
-    assert_eq!(inspect_json["details"]["patch"]["source_size"], 15);
-    assert_eq!(inspect_json["details"]["patch"]["target_size"], 15);
-    assert!(inspect_json["details"]["patch"]["source_crc32"].is_number());
-    assert!(inspect_json["details"]["patch"]["target_crc32"].is_number());
-    assert!(inspect_json["details"]["patch"]["patch_crc32"].is_number());
-    assert!(inspect_json["details"]["patch"]["record_count"].is_number());
+    let probe_json = parse_single_json_line(&probe_output);
+    assert_eq!(probe_json["command"], "probe");
+    assert_eq!(probe_json["family"], "patch");
+    assert_eq!(probe_json["format"], "UPS");
+    assert_eq!(probe_json["status"], "succeeded");
+    assert_eq!(probe_json["details"]["patch"]["format"], "UPS");
+    assert_eq!(probe_json["details"]["patch"]["source_size"], 15);
+    assert_eq!(probe_json["details"]["patch"]["target_size"], 15);
+    assert!(probe_json["details"]["patch"]["source_crc32"].is_number());
+    assert!(probe_json["details"]["patch"]["target_crc32"].is_number());
+    assert!(probe_json["details"]["patch"]["patch_crc32"].is_number());
+    assert!(probe_json["details"]["patch"]["record_count"].is_number());
 }
 
 #[test]
@@ -4126,7 +4126,7 @@ fn patch_create_succeeds_for_xdelta_with_secondary_when_helpful() {
 }
 
 #[test]
-fn inspect_succeeds_for_valid_vcdiff_patch() {
+fn probe_succeeds_for_valid_vcdiff_patch() {
     let temp = setup_temp_dir();
     let patch = build_patch(
         None,
@@ -4146,7 +4146,7 @@ fn inspect_succeeds_for_valid_vcdiff_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("update.vcdiff").path().to_str().expect("path"),
             "--json",
         ])
@@ -4157,7 +4157,7 @@ fn inspect_succeeds_for_valid_vcdiff_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "VCDIFF");
     assert_eq!(json["status"], "succeeded");
@@ -4177,7 +4177,7 @@ fn inspect_succeeds_for_valid_vcdiff_patch() {
 }
 
 #[test]
-fn inspect_succeeds_for_valid_mod_patch() {
+fn probe_succeeds_for_valid_mod_patch() {
     let temp = setup_temp_dir();
     fs::write(
         temp.child("update.mod").path(),
@@ -4188,7 +4188,7 @@ fn inspect_succeeds_for_valid_mod_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("update.mod").path().to_str().expect("path"),
             "--json",
         ])
@@ -4199,25 +4199,25 @@ fn inspect_succeeds_for_valid_mod_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "MOD");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_succeeds_for_valid_dldi_patch() {
+fn probe_succeeds_for_valid_dldi_patch() {
     let temp = setup_temp_dir();
     fs::write(
         temp.child("update.dldi").path(),
-        build_dldi_driver(8, 0xBF80_0000u32 as i32, "Inspect driver"),
+        build_dldi_driver(8, 0xBF80_0000u32 as i32, "Probe driver"),
     )
     .expect("fixture");
 
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("update.dldi").path().to_str().expect("path"),
             "--json",
         ])
@@ -4228,14 +4228,14 @@ fn inspect_succeeds_for_valid_dldi_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "DLDI");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_succeeds_for_valid_dps_patch() {
+fn probe_succeeds_for_valid_dps_patch() {
     let temp = setup_temp_dir();
     let original = temp.child("original.bin");
     let modified = temp.child("modified.bin");
@@ -4262,7 +4262,7 @@ fn inspect_succeeds_for_valid_dps_patch() {
 
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
-        .args(["inspect", patch.path().to_str().expect("path"), "--json"])
+        .args(["probe", patch.path().to_str().expect("path"), "--json"])
         .assert()
         .code(0)
         .get_output()
@@ -4270,14 +4270,14 @@ fn inspect_succeeds_for_valid_dps_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "DPS");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_succeeds_for_valid_gdiff_patch() {
+fn probe_succeeds_for_valid_gdiff_patch() {
     let temp = setup_temp_dir();
     fs::write(
         temp.child("update.gdiff").path(),
@@ -4292,7 +4292,7 @@ fn inspect_succeeds_for_valid_gdiff_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("update.gdiff").path().to_str().expect("path"),
             "--json",
         ])
@@ -4303,14 +4303,14 @@ fn inspect_succeeds_for_valid_gdiff_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "GDIFF");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_succeeds_for_valid_hdiffpatch_patch() {
+fn probe_succeeds_for_valid_hdiffpatch_patch() {
     let temp = setup_temp_dir();
     let patch = temp.child("update.hpatchz");
     let source = b"source bytes";
@@ -4319,7 +4319,7 @@ fn inspect_succeeds_for_valid_hdiffpatch_patch() {
 
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
-        .args(["inspect", patch.path().to_str().expect("path"), "--json"])
+        .args(["probe", patch.path().to_str().expect("path"), "--json"])
         .assert()
         .code(0)
         .get_output()
@@ -4327,14 +4327,14 @@ fn inspect_succeeds_for_valid_hdiffpatch_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "HDiffPatch/HPatchZ");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_succeeds_for_valid_ebp_patch() {
+fn probe_succeeds_for_valid_ebp_patch() {
     let temp = setup_temp_dir();
     fs::write(
         temp.child("update.ebp").path(),
@@ -4343,7 +4343,7 @@ fn inspect_succeeds_for_valid_ebp_patch() {
                 offset: 0,
                 data: b"A".to_vec(),
             }],
-            r#"{"patcher":"EBPatcher","Title":"Inspect"}"#,
+            r#"{"patcher":"EBPatcher","Title":"Probe"}"#,
         ),
     )
     .expect("fixture");
@@ -4351,7 +4351,7 @@ fn inspect_succeeds_for_valid_ebp_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("update.ebp").path().to_str().expect("path"),
             "--json",
         ])
@@ -4362,14 +4362,14 @@ fn inspect_succeeds_for_valid_ebp_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "EBP");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_succeeds_for_valid_ips32_patch() {
+fn probe_succeeds_for_valid_ips32_patch() {
     let temp = setup_temp_dir();
     fs::write(
         temp.child("update.ips32").path(),
@@ -4383,7 +4383,7 @@ fn inspect_succeeds_for_valid_ips32_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("update.ips32").path().to_str().expect("path"),
             "--json",
         ])
@@ -4394,14 +4394,14 @@ fn inspect_succeeds_for_valid_ips32_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "IPS32");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_succeeds_for_ips32_patch_with_ips_extension() {
+fn probe_succeeds_for_ips32_patch_with_ips_extension() {
     let temp = setup_temp_dir();
     fs::write(
         temp.child("update.ips").path(),
@@ -4415,7 +4415,7 @@ fn inspect_succeeds_for_ips32_patch_with_ips_extension() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("update.ips").path().to_str().expect("path"),
             "--json",
         ])
@@ -4426,14 +4426,14 @@ fn inspect_succeeds_for_ips32_patch_with_ips_extension() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "IPS32");
     assert_eq!(json["status"], "succeeded");
 }
 
 #[test]
-fn inspect_succeeds_for_valid_solid_patch() {
+fn probe_succeeds_for_valid_solid_patch() {
     let temp = setup_temp_dir();
     let original = temp.child("original.bin");
     let modified = temp.child("modified.bin");
@@ -4460,7 +4460,7 @@ fn inspect_succeeds_for_valid_solid_patch() {
 
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
-        .args(["inspect", patch.path().to_str().expect("path"), "--json"])
+        .args(["probe", patch.path().to_str().expect("path"), "--json"])
         .assert()
         .code(0)
         .get_output()
@@ -4468,7 +4468,7 @@ fn inspect_succeeds_for_valid_solid_patch() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "SOLID");
     assert_eq!(json["status"], "succeeded");
@@ -5297,7 +5297,7 @@ fn patch_apply_uses_parallel_threads_for_multi_window_xdelta_patch() {
 }
 
 #[test]
-fn inspect_reports_invalid_vcdiff_content_as_failed() {
+fn probe_reports_invalid_vcdiff_content_as_failed() {
     let temp = setup_temp_dir();
     temp.child("broken.vcdiff")
         .write_str("not-a-patch")
@@ -5306,7 +5306,7 @@ fn inspect_reports_invalid_vcdiff_content_as_failed() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("broken.vcdiff").path().to_str().expect("path"),
             "--json",
         ])
@@ -5317,14 +5317,14 @@ fn inspect_reports_invalid_vcdiff_content_as_failed() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "VCDIFF");
     assert_eq!(json["status"], "failed");
 }
 
 #[test]
-fn inspect_reports_unknown_formats_cleanly() {
+fn probe_reports_unknown_formats_cleanly() {
     let temp = setup_temp_dir();
     temp.child("unknown.bin")
         .write_str("payload")
@@ -5333,7 +5333,7 @@ fn inspect_reports_unknown_formats_cleanly() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("unknown.bin").path().to_str().expect("path"),
             "--json",
         ])
@@ -5344,7 +5344,7 @@ fn inspect_reports_unknown_formats_cleanly() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "command");
     assert!(json["format"].is_null());
     assert_eq!(json["stage"], "probe");
@@ -5354,7 +5354,7 @@ fn inspect_reports_unknown_formats_cleanly() {
 }
 
 #[test]
-fn inspect_reports_pds_as_explicitly_unsupported() {
+fn probe_reports_pds_as_explicitly_unsupported() {
     let temp = setup_temp_dir();
     temp.child("legacy.pds")
         .write_str("obsolete format")
@@ -5363,7 +5363,7 @@ fn inspect_reports_pds_as_explicitly_unsupported() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "inspect",
+            "probe",
             temp.child("legacy.pds").path().to_str().expect("path"),
             "--json",
         ])
@@ -5374,7 +5374,7 @@ fn inspect_reports_pds_as_explicitly_unsupported() {
         .clone();
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "inspect");
+    assert_eq!(json["command"], "probe");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "PDS");
     assert_eq!(json["status"], "failed");

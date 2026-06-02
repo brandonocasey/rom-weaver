@@ -31,7 +31,7 @@ type InputSourceMetadata = {
   fileName?: string;
   name?: string;
 };
-type DiscMagicInspectableSource = ByteSourceRecordLike & {
+type DiscMagicProbeableSource = ByteSourceRecordLike & {
   _browserFileBacked?: boolean;
   _discDecompressionOutput?: boolean;
 };
@@ -39,7 +39,7 @@ type DiscMagicInspectableSource = ByteSourceRecordLike & {
 type InputSourceValue =
   | ArchiveSourceValue
   | InputSource
-  | (DiscMagicInspectableSource &
+  | (DiscMagicProbeableSource &
       InputSourceMetadata & {
         _file?: Blob & { name?: string };
         getExtension?: () => string;
@@ -81,13 +81,13 @@ const getInputSourceForExtraction = (
   return includeMetadata ? Object.assign({}, sourceMetadata, sourceWithFileName) : sourceWithFileName;
 };
 
-const canInspectDiscMagicSynchronously = (source: InputSourceValue) => {
+const canProbeDiscMagicSynchronously = (source: InputSourceValue) => {
   if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) return true;
   if (!isInputSourceObject(source)) return false;
-  const inspectableSource = source as InputSourceObject & DiscMagicInspectableSource;
-  if (inspectableSource._u8array instanceof Uint8Array) return true;
-  if (inspectableSource._browserFileBacked) return false;
-  return typeof inspectableSource.readIntoAt === "function";
+  const probeableSource = source as InputSourceObject & DiscMagicProbeableSource;
+  if (probeableSource._u8array instanceof Uint8Array) return true;
+  if (probeableSource._browserFileBacked) return false;
+  return typeof probeableSource.readIntoAt === "function";
 };
 
 const getMagicBytes = (source: InputSourceValue, length: number): Uint8Array | null => {
@@ -96,12 +96,12 @@ const getMagicBytes = (source: InputSourceValue, length: number): Uint8Array | n
     return new Uint8Array(source.buffer, source.byteOffset, Math.min(length, source.byteLength));
   }
   if (!isInputSourceObject(source)) return null;
-  const inspectableSource = source as InputSourceObject & DiscMagicInspectableSource;
-  if (inspectableSource._u8array instanceof Uint8Array) return inspectableSource._u8array.subarray(0, length);
-  if (inspectableSource._browserFileBacked) return null;
-  if (typeof inspectableSource.readIntoAt !== "function") return null;
+  const probeableSource = source as InputSourceObject & DiscMagicProbeableSource;
+  if (probeableSource._u8array instanceof Uint8Array) return probeableSource._u8array.subarray(0, length);
+  if (probeableSource._browserFileBacked) return null;
+  if (typeof probeableSource.readIntoAt !== "function") return null;
   const buffer = new Uint8Array(length);
-  const read = inspectableSource.readIntoAt(buffer, 0, length, 0);
+  const read = probeableSource.readIntoAt(buffer, 0, length, 0);
   return typeof read === "number" ? buffer.subarray(0, read) : buffer;
 };
 
@@ -120,11 +120,11 @@ const classifyPatcherInput = (source: InputSourceValue): PatcherInputClassificat
   }
   const isDiscDecompressionOutput =
     isInputSourceObject(source) &&
-    !!(source as InputSourceObject & DiscMagicInspectableSource)._discDecompressionOutput;
-  const canInspectDiscMagic = canInspectDiscMagicSynchronously(source);
+    !!(source as InputSourceObject & DiscMagicProbeableSource)._discDecompressionOutput;
+  const canProbeDiscMagic = canProbeDiscMagicSynchronously(source);
   for (const registration of DISC_COMPRESSION_FORMAT_REGISTRATIONS) {
     const matchedByExtension = registration.extensionRegex.test(fileName);
-    const matchedByMagic = canInspectDiscMagic && hasMagicPrefix(source, registration.magicBytes);
+    const matchedByMagic = canProbeDiscMagic && hasMagicPrefix(source, registration.magicBytes);
     if (!(matchedByExtension || matchedByMagic)) continue;
     if (matchedByExtension && isDiscDecompressionOutput && !matchedByMagic) continue;
     if (matchedByExtension || matchedByMagic) {

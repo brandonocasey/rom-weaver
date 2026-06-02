@@ -19,7 +19,7 @@ use rom_weaver_codecs::{CanonicalCodec, RequestedCodec, parse_requested_codec};
 use rom_weaver_containers::{CompressFormatRecommendation, ContainerRegistry};
 use rom_weaver_core::{
     CancellationToken, ChecksumEngine, ChecksumRequest, ContainerCreateRequest,
-    ContainerExtractRequest, ContainerHandler, ContainerInspectRequest, ContainerListEntry,
+    ContainerExtractRequest, ContainerHandler, ContainerListEntry, ContainerProbeRequest,
     OperationContext, OperationFamily, OperationReport, OperationStatus, PatchApplyRequest,
     PatchChecksumValidation, PatchCreateRequest, PatchValidateRequest, ProbeConfidence,
     ProgressEvent, ProgressSink, Result, RomWeaverError, ThreadBudget, ThreadCapability,
@@ -53,7 +53,8 @@ use xdvdfs::{
     ts(rename_all = "kebab-case", tag = "type", content = "args")
 )]
 pub enum Commands {
-    Inspect(InspectCommand),
+    Probe(ProbeCommand),
+    List(ListCommand),
     Extract(ExtractCommand),
     Checksum(ChecksumCommand),
     Compress(CompressCommand),
@@ -150,13 +151,13 @@ fn default_xdelta_secondary() -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
-pub struct InspectCommand {
+pub struct ProbeCommand {
     pub source: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
             long = "select",
-            help = "Select an extracted inspect payload by exact name, prefix, or glob (repeatable)"
+            help = "Select an extracted probe payload by exact name, prefix, or glob (repeatable)"
         )
     )]
     #[serde(default)]
@@ -166,7 +167,7 @@ pub struct InspectCommand {
         not(target_arch = "wasm32"),
         arg(
             long,
-            help = "Disable container auto-extract and inspect the source bytes directly"
+            help = "Disable container auto-extract and probe the source bytes directly"
         )
     )]
     #[serde(default)]
@@ -176,22 +177,39 @@ pub struct InspectCommand {
         not(target_arch = "wasm32"),
         arg(
             long,
-            help = "Disable default ignore filtering during inspect container payload resolution"
+            help = "Disable default ignore filtering during probe container payload resolution"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub no_ignore: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct ListCommand {
+    pub source: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long,
-            help = "List selectable archive entries in the inspect label when supported"
+            long = "select",
+            help = "Select a nested container by exact name, prefix, or glob before listing entries (repeatable)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub list: bool,
+    pub select: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable default ignore filtering during nested list container selection"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_ignore: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1639,7 +1657,7 @@ include!("commands_and_selection.rs");
 include!("compress_trim_batch.rs");
 include!("patch_commands.rs");
 include!("compression_planning.rs");
-include!("trim_and_inspect_details.rs");
+include!("trim_and_probe_details.rs");
 include!("header_detection_and_finalize.rs");
 include!("header_repair.rs");
 include!("nested_extract.rs");

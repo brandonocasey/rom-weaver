@@ -66,7 +66,7 @@ const resolveInputPreparationRuntime = async (
   return resolveNamedInputPreparationRuntime(runtime.name);
 };
 
-const canInspectDiscMagicSynchronously = (binFile: PatchFileInstance) =>
+const canProbeDiscMagicSynchronously = (binFile: PatchFileInstance) =>
   binFile._u8array instanceof Uint8Array || (!binFile._browserFileBacked && typeof binFile.readIntoAt === "function");
 
 const isDiscDecompressionOutput = (binFile: PatchFileInstance) =>
@@ -102,7 +102,7 @@ const readBlobHeader = async (binFile: PatchFileInstance, length: number): Promi
 };
 
 const resolveDiscCompressionKind = async (binFile: PatchFileInstance): Promise<CompressionInputKind | null> => {
-  if (canInspectDiscMagicSynchronously(binFile)) {
+  if (canProbeDiscMagicSynchronously(binFile)) {
     const kind = resolveDiscKindFromHeader(readSyncHeader(binFile, MAX_DISC_MAGIC_LENGTH));
     if (kind || isDiscDecompressionOutput(binFile)) return kind;
   }
@@ -252,7 +252,7 @@ const resolveDiscCompressionInput = async (
     await cleanupIntermediateFile(current, file);
     if (
       isLazyExternalPatchFile(decompressed) ||
-      (isDiscDecompressionOutput(decompressed) && !canInspectDiscMagicSynchronously(decompressed))
+      (isDiscDecompressionOutput(decompressed) && !canProbeDiscMagicSynchronously(decompressed))
     )
       return decompressed;
     current = decompressed;

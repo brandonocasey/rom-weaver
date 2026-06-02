@@ -16,7 +16,7 @@ import {
 } from "./disc-format-support.ts";
 import OutputCompressionManager from "./output-compression-manager.ts";
 
-type ByteInspectableSource = {
+type ByteProbeableSource = {
   _chdMode?: string;
   _u8array?: Uint8Array;
   _z3dsUnderlyingMagic?: string;
@@ -56,7 +56,7 @@ type DiscCompressionFormatRegistration = CompressionFormatRegistrationBase<DiscC
   create: DiscRuntimeCreateMethod;
   decompressionInputExtensions: readonly string[];
   extract: DiscRuntimeExtractMethod;
-  extractedFileName: (source: ByteInspectableSource) => string;
+  extractedFileName: (source: ByteProbeableSource) => string;
   extensionRegex: RegExp;
   fallbackFileName: string;
   list: DiscRuntimeListMethod;
@@ -75,7 +75,7 @@ type CompressionFormatRegistration =
   | DiscCompressionFormatRegistration
   | NoneCompressionFormatRegistration;
 
-const getFileExtension = (source: ByteInspectableSource | null | undefined): string => {
+const getFileExtension = (source: ByteProbeableSource | null | undefined): string => {
   if (source && typeof source.getExtension === "function") return source.getExtension().toLowerCase();
   return getFileNameExtension(source?.fileName);
 };
@@ -108,13 +108,13 @@ const getZ3dsOutputExtension = ({ inputFileName }: CompressionOutputExtensionCon
   return "z3ds";
 };
 
-const getChdExtractedFileName = (source: ByteInspectableSource): string =>
+const getChdExtractedFileName = (source: ByteProbeableSource): string =>
   replaceFileExtension(source.fileName || "input.chd", source._chdMode === "cd" ? "bin" : "iso");
 
-const getRvzExtractedFileName = (source: ByteInspectableSource): string =>
+const getRvzExtractedFileName = (source: ByteProbeableSource): string =>
   replaceFileExtension(source.fileName || "input.rvz", "iso");
 
-const getZ3dsExtractedFileName = (source: ByteInspectableSource): string => {
+const getZ3dsExtractedFileName = (source: ByteProbeableSource): string => {
   const extension = getFileExtension(source);
   if (extension === "zcia") return replaceFileExtension(source.fileName || "input.zcia", "cia");
   if (extension === "zcci") return replaceFileExtension(source.fileName || "input.zcci", "cci");
@@ -251,7 +251,7 @@ const getCompressionOutputExtension = (
   context: CompressionOutputExtensionContext = {},
 ): string => COMPRESSION_FORMAT_REGISTRY[format].outputExtension(context);
 
-const getDiscExtractedFileName = (format: DiscCompressionFormat, source: ByteInspectableSource): string =>
+const getDiscExtractedFileName = (format: DiscCompressionFormat, source: ByteProbeableSource): string =>
   DISC_COMPRESSION_FORMAT_REGISTRY[format].extractedFileName(source);
 
 const hasDiscCompressionFormatExtension = (
@@ -305,7 +305,7 @@ const resolveAutomaticCompressionFormat = ({
   fallback;
 
 export type {
-  ByteInspectableSource,
+  ByteProbeableSource,
   CompressionFormatRegistration,
   DiscCompressionFormat,
   DiscCompressionFormatRegistration,

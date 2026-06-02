@@ -13,7 +13,7 @@ import {
 const BIN_EXTENSION_REGEX = /\.bin$/i;
 const CUE_EXTENSION_REGEX = /\.cue$/i;
 
-type ByteInspectableSource = {
+type ByteProbeableSource = {
   _u8array?: Uint8Array;
   fileName?: string;
   getExtension?: () => string;
@@ -25,11 +25,11 @@ const getSourceBytes = (source: unknown, length: number): Uint8Array | null => {
   if (ArrayBuffer.isView(source))
     return new Uint8Array(source.buffer, source.byteOffset, Math.min(length, source.byteLength));
   if (!source || typeof source !== "object") return null;
-  const inspectable = source as ByteInspectableSource;
-  if (inspectable._u8array instanceof Uint8Array) return inspectable._u8array.subarray(0, length);
-  if (typeof inspectable.readIntoAt === "function") {
+  const probeable = source as ByteProbeableSource;
+  if (probeable._u8array instanceof Uint8Array) return probeable._u8array.subarray(0, length);
+  if (typeof probeable.readIntoAt === "function") {
     const buffer = new Uint8Array(length);
-    const read = inspectable.readIntoAt(buffer, 0, length, 0);
+    const read = probeable.readIntoAt(buffer, 0, length, 0);
     return typeof read === "number" ? buffer.subarray(0, read) : buffer;
   }
   return null;
@@ -46,10 +46,10 @@ const hasAsciiMagic = (source: unknown, magic: string): boolean => {
 
 const isDiscFormatFile = (format: keyof typeof DISC_COMPRESSION_FORMAT_REGISTRY, source: unknown): boolean => {
   const registration = DISC_COMPRESSION_FORMAT_REGISTRY[format];
-  const inspectableSource = source as ByteInspectableSource | null | undefined;
+  const probeableSource = source as ByteProbeableSource | null | undefined;
   return (
-    registration.extensionRegex.test(String(inspectableSource?.fileName || "")) ||
-    hasDiscCompressionFormatExtension(format, getFileExtension(inspectableSource)) ||
+    registration.extensionRegex.test(String(probeableSource?.fileName || "")) ||
+    hasDiscCompressionFormatExtension(format, getFileExtension(probeableSource)) ||
     hasAsciiMagic(source, registration.magic)
   );
 };
@@ -61,7 +61,7 @@ const isRvzFile = (source: unknown): boolean => isDiscFormatFile("rvz", source);
 const isZ3dsFile = (source: unknown): boolean => isDiscFormatFile("z3ds", source);
 
 const getChdAutoCreateMode = (
-  source: ByteInspectableSource & { _chdCuePath?: string; _chdCueText?: string; _chdMode?: string },
+  source: ByteProbeableSource & { _chdCuePath?: string; _chdCueText?: string; _chdMode?: string },
 ): string => {
   if (source._chdMode === "cd" || source._chdCuePath || source._chdCueText) return "cd";
   if (source._chdMode === "dvd") return "dvd";

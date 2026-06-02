@@ -156,7 +156,7 @@ impl OperationReport {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ContainerInspectRequest {
+pub struct ContainerProbeRequest {
     pub source: PathBuf,
 }
 
@@ -225,7 +225,7 @@ pub struct CodecOperationRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContainerCapabilities {
-    pub inspect: bool,
+    pub probe_details: bool,
     pub extract: bool,
     pub create: bool,
     pub extract_threads: ThreadCapability,
@@ -277,14 +277,14 @@ pub trait ContainerHandlerOperations: Send + Sync {
         let _ = source;
         ProbeConfidence::Extension
     }
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport>;
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<Vec<String>> {
         let _ = (request, context);
@@ -295,7 +295,7 @@ pub trait ContainerHandlerOperations: Send + Sync {
     }
     fn list_entry_records(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<Vec<ContainerListEntry>> {
         Ok(self
@@ -450,9 +450,9 @@ impl ContainerHandlerOperations for TracingContainerHandler {
         confidence
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let descriptor = self.inner.descriptor();
@@ -460,16 +460,16 @@ impl ContainerHandlerOperations for TracingContainerHandler {
             family = ?descriptor.family,
             format = descriptor.name,
             source = %request.source.display(),
-            "container inspect start"
+            "container probe details start"
         );
-        let result = self.inner.inspect(request, context);
-        trace_operation_result("inspect", descriptor, &result);
+        let result = self.inner.probe_details(request, context);
+        trace_operation_result("probe", descriptor, &result);
         result
     }
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<Vec<String>> {
         let descriptor = self.inner.descriptor();
@@ -503,7 +503,7 @@ impl ContainerHandlerOperations for TracingContainerHandler {
 
     fn list_entry_records(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<Vec<ContainerListEntry>> {
         let descriptor = self.inner.descriptor();

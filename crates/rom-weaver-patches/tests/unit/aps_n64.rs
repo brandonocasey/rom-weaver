@@ -39,7 +39,7 @@ fn parse_rejects_invalid_header() {
 #[test]
 fn parse_reports_concrete_n64_validation_values() {
     let temp = TestDir::new();
-    let patch_path = temp.child("inspect.aps");
+    let patch_path = temp.child("probe.aps");
     let patch = build_aps_patch(
         APS_N64_MODE,
         Some(TestN64Header {

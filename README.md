@@ -2,7 +2,7 @@
 
 `rom-weaver` is a CLI (native and WASM) for ROM workflows:
 
-- inspect containers, patches, and known ROM headers
+- probe containers, patches, and known ROM headers
 - extract containers (with nested extraction)
 - checksum files/ranges and auto-resolved container payloads
 - compress into multiple container formats
@@ -72,7 +72,8 @@ Integration notes:
 
 ## CLI Commands
 
-- `inspect`
+- `probe`
+- `list`
 - `extract`
 - `checksum`
 - `compress`
@@ -90,17 +91,22 @@ Global flags:
 
 Interactive selection fallback is enabled only for non-JSON TTY sessions (stdin and stderr are terminals).
 
-Inspect behavior highlights:
+Probe behavior highlights:
 
-- `inspect` auto-resolves payloads from containers by default
-- `inspect --no-extract` inspects source bytes directly
-- `inspect --select` chooses payload(s)
-- `inspect --no-ignore` disables default ignore filters (`.txt`, `.nfo`, `.sfv`, `.md5`, etc.)
-- `inspect --list` without `--select` lists the original container entries
+- `probe` auto-resolves payloads from containers by default
+- `probe --no-extract` probes source bytes directly
+- `probe --select` chooses payload(s)
+- `probe --no-ignore` disables default ignore filters (`.txt`, `.nfo`, `.sfv`, `.md5`, etc.)
+
+List behavior highlights:
+
+- `list` lists original container entries
+- `list --select` chooses a nested container before listing its entries
+- `list --no-ignore` disables default ignore filters during nested selection
 
 ## Patch Format Support
 
-All listed formats support inspect/parse (`inspect`) and apply (`patch apply`).
+All listed formats support probe/parse (`probe`) and apply (`patch apply`).
 
 | Format         | Aliases                     | Extensions                     | `patch create` |
 | -------------- | --------------------------- | ------------------------------ | -------------- |
@@ -131,7 +137,7 @@ Notes:
 
 ## Container And Compression Format Support
 
-| Format    | Aliases                                  | Extensions                                   | Inspect | Extract | Create |
+| Format    | Aliases                                  | Extensions                                   | Probe | Extract | Create |
 | --------- | ---------------------------------------- | -------------------------------------------- | ------- | ------- | ------ |
 | `zip`     | none                                     | `.zip`                                       | yes     | yes     | yes    |
 | `zipx`    | none                                     | `.zipx`                                      | yes     | yes     | yes    |
@@ -235,7 +241,7 @@ Notes:
 
 ## Header Detection And Repair
 
-Known header detection is built into inspect/checksum/patch apply flows, including:
+Known header detection is built into probe/checksum/patch apply flows, including:
 
 - A78
 - LNX

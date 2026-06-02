@@ -165,7 +165,7 @@ mod tests {
         let handler = VcdiffPatchHandler::new(&crate::XDELTA);
         let report = handler
             .parse(&patch_path, &test_context())
-            .expect("inspect patch");
+            .expect("probe patch");
         assert_eq!(report.status, rom_weaver_core::OperationStatus::Succeeded);
 
         handler
@@ -210,13 +210,13 @@ mod tests {
         });
 
         let temp = create_temp_dir();
-        let patch_path = temp.join("inspect.xdelta");
+        let patch_path = temp.join("probe.xdelta");
         fs::write(&patch_path, patch_bytes).expect("write patch");
 
         let handler = VcdiffPatchHandler::new(&crate::XDELTA);
         let report = handler
             .parse(&patch_path, &test_context())
-            .expect("inspect patch");
+            .expect("probe patch");
         let details = report.details.expect("details");
         let patch = &details["patch"];
 
@@ -526,11 +526,11 @@ mod tests {
         let handler = VcdiffPatchHandler::new(&crate::VCDIFF);
         let capabilities = handler.capabilities();
         assert!(capabilities.threaded_output);
-        let inspect = handler
+        let probe = handler
             .parse(&patch_path, &test_context())
-            .expect("inspect patch");
-        assert_eq!(inspect.status, rom_weaver_core::OperationStatus::Succeeded);
-        assert!(inspect.label.contains("2 window"));
+            .expect("probe patch");
+        assert_eq!(probe.status, rom_weaver_core::OperationStatus::Succeeded);
+        assert!(probe.label.contains("2 window"));
 
         let report = handler
             .apply(
@@ -1090,10 +1090,10 @@ mod tests {
         let expected = fs::read(fixture_path("secondary-target.bin")).expect("read target fixture");
 
         let handler = VcdiffPatchHandler::new(&crate::XDELTA);
-        let inspect = handler
+        let probe = handler
             .parse(&patch_path, &test_context())
-            .expect("inspect secondary patch");
-        assert_eq!(inspect.status, rom_weaver_core::OperationStatus::Succeeded);
+            .expect("probe secondary patch");
+        assert_eq!(probe.status, rom_weaver_core::OperationStatus::Succeeded);
 
         let report = handler
             .apply(

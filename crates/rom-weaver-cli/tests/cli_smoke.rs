@@ -2,7 +2,7 @@ include!("cli_smoke/shared.rs");
 
 include!("cli_smoke/trim_batch.rs");
 
-include!("cli_smoke/inspect_extract.rs");
+include!("cli_smoke/probe_extract.rs");
 
 include!("cli_smoke/checksum.rs");
 

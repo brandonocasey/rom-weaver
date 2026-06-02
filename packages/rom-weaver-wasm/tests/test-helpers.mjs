@@ -110,8 +110,16 @@ export async function withTempFixture(run, options = {}) {
 }
 
 export function getTerminalEvent(result) {
-  expect(Array.isArray(result.events)).toBe(true);
-  expect(result.events.length).toBeGreaterThan(0);
+  const failureMessage = [
+    `exitCode=${result?.exitCode}`,
+    `ok=${result?.ok}`,
+    `stdout=${JSON.stringify(result?.stdout ?? '')}`,
+    `stderr=${JSON.stringify(result?.stderr ?? '')}`,
+    `error=${JSON.stringify(errorMessage(result?.error))}`,
+    `stack=${JSON.stringify(errorStack(result?.error))}`,
+  ].join(' ');
+  expect(Array.isArray(result.events), failureMessage).toBe(true);
+  expect(result.events.length, failureMessage).toBeGreaterThan(0);
   return result.events.at(-1);
 }
 
@@ -153,13 +161,19 @@ function commandArgsToRunRequest(args) {
   const commandRequest = createCommandRequest(command, subcommand);
   const commandArgs = command === 'patch' ? commandRequest.args.args : commandRequest.args;
   switch (command === 'patch' ? `patch-${subcommand}` : command) {
-    case 'inspect':
+    case 'probe':
       Object.assign(commandArgs, {
-        source: requirePositional(parsed, 0, 'inspect source'),
+        source: requirePositional(parsed, 0, 'probe source'),
         ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
         ...(parsed.flags.has('no-extract') ? { no_extract: true } : {}),
         ...(parsed.flags.has('no-ignore') ? { no_ignore: true } : {}),
-        ...(parsed.flags.has('list') ? { list: true } : {}),
+      });
+      break;
+    case 'list':
+      Object.assign(commandArgs, {
+        source: requirePositional(parsed, 0, 'list source'),
+        ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
+        ...(parsed.flags.has('no-ignore') ? { no_ignore: true } : {}),
       });
       break;
     case 'compress':
@@ -274,7 +288,7 @@ function locateCommand(args) {
       }
       return { command: 'patch', index, subcommand: '' };
     }
-    if (token === 'inspect' || token === 'compress' || token === 'extract' || token === 'checksum') {
+    if (token === 'probe' || token === 'list' || token === 'compress' || token === 'extract' || token === 'checksum') {
       return { command: token, index, subcommand: '' };
     }
   }
@@ -531,7 +545,7 @@ export async function runPatchMatrix({ runJson, opfsHandle, dir, sourcePath, fix
     ]),
     { command: 'compress' },
   );
-  assertRunJsonSucceeded(await runJson(['inspect', chdPath, '--list']), { command: 'inspect' });
+  assertRunJsonSucceeded(await runJson(['list', chdPath]), { command: 'list' });
   assertRunJsonSucceeded(
     await runJson([
       'extract',
@@ -557,7 +571,7 @@ export async function runPatchMatrix({ runJson, opfsHandle, dir, sourcePath, fix
     ]),
     { command: 'compress' },
   );
-  assertRunJsonSucceeded(await runJson(['inspect', zipPath, '--list']), { command: 'inspect' });
+  assertRunJsonSucceeded(await runJson(['list', zipPath]), { command: 'list' });
   assertRunJsonSucceeded(
     await runJson([
       'extract',

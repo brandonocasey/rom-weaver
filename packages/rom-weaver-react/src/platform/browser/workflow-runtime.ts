@@ -12,8 +12,8 @@ import {
   invokeRomWeaverPatchValidateWorker,
   normalizeCodecEntries,
   runRomWeaverChecksumWorker,
-  runRomWeaverInspectListWorker,
-  runRomWeaverInspectPatchWorker,
+  runRomWeaverListWorker,
+  runRomWeaverProbePatchWorker,
   selectRomWeaverOutputPath,
 } from "../../lib/runtime/rom-weaver-runtime.ts";
 import { assertBrowserBinarySource } from "../../lib/runtime/source-normalization.ts";
@@ -554,8 +554,8 @@ const getBrowserArchiveExtractSizeHints = async ({
   const hints = new Map<string, number>();
   if (!entryNames.length) return hints;
   try {
-    const listed = await runRomWeaverInspectListWorker({
-      logLevel: logLevel as Parameters<typeof runRomWeaverInspectListWorker>[0]["logLevel"],
+    const listed = await runRomWeaverListWorker({
+      logLevel: logLevel as Parameters<typeof runRomWeaverListWorker>[0]["logLevel"],
       sourcePath,
     });
     for (const entryName of entryNames) {
@@ -835,7 +835,7 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
       trace: { logLevel: workflowInput.options?.logLevel, onLog: workflowInput.options?.onLog },
     });
     try {
-      return await runRomWeaverInspectListWorker(
+      return await runRomWeaverListWorker(
         {
           logLevel: workflowInput.options?.logLevel,
           sourcePath: archive.filePath,
@@ -1055,7 +1055,7 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
       const directOutputPath = stagedOutputFileName ? joinPath(outDirPath, stagedOutputFileName) : "";
       const staleOutputPaths: string[] = [];
       if (mode === "cd") {
-        const listed = await runRomWeaverInspectListWorker(
+        const listed = await runRomWeaverListWorker(
           {
             logLevel,
             sourcePath: workerSource.filePath,
@@ -1304,7 +1304,7 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
         fileName: getPathDerivedFileName(workerSource.filePath, workerSource.fileName || fileName),
       });
       const outputFileName = outputName || actualOutputFileName;
-      const listed = await runRomWeaverInspectListWorker(
+      const listed = await runRomWeaverListWorker(
         {
           logLevel,
           sourcePath: workerSource.filePath,
@@ -1383,7 +1383,7 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
       trace: { logLevel, onLog },
     });
     try {
-      const result = await runRomWeaverInspectListWorker(
+      const result = await runRomWeaverListWorker(
         {
           logLevel,
           sourcePath: workerSource.filePath,
@@ -1421,7 +1421,7 @@ const createBrowserDiscRuntime = (workerIo: RuntimeWorkerIo): DiscRuntimeAdapter
       trace: { logLevel, onLog },
     });
     try {
-      const result = await runRomWeaverInspectListWorker(
+      const result = await runRomWeaverListWorker(
         {
           logLevel,
           sourcePath: workerSource.filePath,
@@ -1462,17 +1462,17 @@ const createBrowserPatchRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["
   });
   return {
     ...sharedPatchRuntime,
-    inspectPatch: async ({ patch, patchFileName, logLevel, onLog, onProgress }) => {
+    probePatch: async ({ patch, patchFileName, logLevel, onLog, onProgress }) => {
       const workerSource = await workerIo.stageSource({
         fallbackFileName: patchFileName || "patch.bin",
         pathBucket: "patches",
-        pathPrefix: "inspect-patch",
+        pathPrefix: "probe-patch",
         scope: "apply",
         source: patch,
         trace: { logLevel, onLog },
       });
       try {
-        return await runRomWeaverInspectPatchWorker(
+        return await runRomWeaverProbePatchWorker(
           {
             logLevel,
             sourcePath: workerSource.filePath,

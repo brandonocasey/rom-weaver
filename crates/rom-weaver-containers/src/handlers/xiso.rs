@@ -68,19 +68,19 @@ impl ContainerHandlerOperations for XisoContainerHandler {
         }
     }
 
-    fn inspect(
+    fn probe_details(
         &self,
-        _request: &ContainerInspectRequest,
+        _request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<OperationReport> {
         Err(RomWeaverError::Validation(
-            "xiso inspect is not supported yet".into(),
+            "xiso probe is not supported yet".into(),
         ))
     }
 
     fn list_entries(
         &self,
-        request: &ContainerInspectRequest,
+        request: &ContainerProbeRequest,
         _context: &OperationContext,
     ) -> Result<Vec<String>> {
         Ok(vec![self.output_name(&request.source)])

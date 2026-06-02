@@ -22,7 +22,8 @@ export type {
   CompressCommand,
   CompressionLevelProfile,
   ExtractCommand,
-  InspectCommand,
+  ListCommand,
+  ProbeCommand,
   PatchApplyCommand,
   PatchCommands,
   PatchCreateCommand,
@@ -69,7 +70,7 @@ export interface RomWeaverRunOptions {
   interactive_selection_enabled?: boolean;
 }
 
-export interface RomWeaverInspectContainerDetails {
+export interface RomWeaverProbeContainerDetails {
   entry_count: number | null;
   entries?: string[];
   recommended_compress_format?: string;
@@ -77,7 +78,7 @@ export interface RomWeaverInspectContainerDetails {
   [key: string]: unknown;
 }
 
-export interface RomWeaverInspectPatchDetails {
+export interface RomWeaverProbePatchDetails {
   format: string | null;
   minimum_source_size: number | null;
   source_size: number | null;
@@ -93,8 +94,8 @@ export interface RomWeaverInspectPatchDetails {
 }
 
 export interface RomWeaverProgressDetails {
-  container?: RomWeaverInspectContainerDetails;
-  patch?: RomWeaverInspectPatchDetails;
+  container?: RomWeaverProbeContainerDetails;
+  patch?: RomWeaverProbePatchDetails;
   [key: string]: unknown;
 }
 
