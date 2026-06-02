@@ -210,8 +210,12 @@ impl ContainerHandlerOperations for RvzContainerHandler {
             RVZ_NOD_CORE.prepare_extract_with(request, context, |source, preloader_threads| {
                 self.open_disc_with_threads(source, preloader_threads)
             })?;
-        let mut output =
-            BufWriter::new(self.create_extract_output(&plan.output_path, request.overwrite)?);
+        let mut output_file = self.create_extract_output(&plan.output_path, request.overwrite)?;
+        if plan.disc_size > 0 {
+            output_file.set_len(plan.disc_size)?;
+            output_file.seek(SeekFrom::Start(0))?;
+        }
+        let mut output = BufWriter::new(output_file);
         let (bytes_written, checksums) = self.copy_extract_with_progress(
             &mut plan.disc,
             &mut output,

@@ -2348,11 +2348,7 @@ class OpenWasiRandomAccessFile extends wasiShim.Fd {
     const flushRet = this.flushPendingWrite();
     if (flushRet !== wasiShim.wasi.ERRNO_SUCCESS) return flushRet;
     const nextSize = Number(size);
-    if (nextSize > this.inode.file.size() && typeof this.inode.file.allocateAtLeast === 'function') {
-      this.inode.file.allocateAtLeast(nextSize);
-    } else {
-      this.inode.file.truncate(nextSize);
-    }
+    this.inode.file.truncate(nextSize);
     return wasiShim.wasi.ERRNO_SUCCESS;
   }
 
