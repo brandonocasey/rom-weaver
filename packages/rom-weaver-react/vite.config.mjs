@@ -42,6 +42,42 @@ const runtimeScratchIgnorePatterns = [
   "../rom-weaver-wasm/*.wasm.br",
   path.join(os.tmpdir(), "rpjs-vfs*").replace(/\\/g, "/"),
 ];
+// Fast Refresh remounts these stateful forms and aborts active WASM runs; defer to the reload banner instead.
+const statefulReactHotUpdateRoots = [path.join(rootDir, "src", "public", "react")];
+const statefulReactHotUpdateFiles = new Set([
+  path.join(rootDir, "src", "webapp", "webapp-layout.tsx"),
+  path.join(rootDir, "src", "webapp", "webapp-root.tsx"),
+]);
+const statefulReactHotUpdateExtensionPattern = /\.[cm]?[jt]sx?$/i;
+
+const normalizePath = (filePath) => path.normalize(filePath);
+
+const isStatefulReactHotUpdate = (filePath) => {
+  const normalizedFile = normalizePath(filePath);
+  if (!statefulReactHotUpdateExtensionPattern.test(normalizedFile)) return false;
+  if (statefulReactHotUpdateFiles.has(normalizedFile)) return true;
+  return statefulReactHotUpdateRoots.some((root) => {
+    const normalizedRoot = normalizePath(root);
+    return normalizedFile === normalizedRoot || normalizedFile.startsWith(`${normalizedRoot}${path.sep}`);
+  });
+};
+
+const deferStatefulReactHotUpdates = () => ({
+  apply: "serve",
+  handleHotUpdate(ctx) {
+    if (!isStatefulReactHotUpdate(ctx.file)) return undefined;
+    ctx.server.ws.send({
+      data: {
+        label: path.relative(rootDir, ctx.file),
+        source: "vite",
+      },
+      event: "rom-weaver:reload-available",
+      type: "custom",
+    });
+    return [];
+  },
+  name: "rom-weaver-defer-stateful-react-hot-updates",
+});
 
 const suppressNestedWorkerFactoryBundling = () => {
   const workerFactoriesPath = path.join(rootDir, "src", "workers", "protocol", "worker-factories.ts");
@@ -198,6 +234,7 @@ export default defineConfig(({ command }) => {
     },
     plugins: [
       serveRootStaticAssets(),
+      deferStatefulReactHotUpdates(),
       react(),
       tailwindcss(),
       writeWebappStaticAssets(),
