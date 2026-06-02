@@ -58,9 +58,11 @@ impl CliApp {
             Commands::Compress(args) => self.run_compress(args),
             Commands::Trim(args) => self.run_trim(args),
             Commands::BatchHeaderFixer(args) => self.run_batch_header_fixer(args),
-            Commands::PatchApply(args) => self.run_patch_apply(args),
-            Commands::PatchValidate(args) => self.run_patch_validate(args),
-            Commands::PatchCreate(args) => self.run_patch_create(args),
+            Commands::Patch(command) => match command {
+                PatchCommands::Apply(args) => self.run_patch_apply(args),
+                PatchCommands::Validate(args) => self.run_patch_validate(args),
+                PatchCommands::Create(args) => self.run_patch_create(args),
+            },
         }
     }
 
@@ -72,9 +74,9 @@ impl CliApp {
             Commands::Compress(_) => "compress",
             Commands::Trim(_) => "trim",
             Commands::BatchHeaderFixer(_) => "batch-header-fixer",
-            Commands::PatchApply(_) => "patch-apply",
-            Commands::PatchValidate(_) => "patch-validate",
-            Commands::PatchCreate(_) => "patch-create",
+            Commands::Patch(PatchCommands::Apply(_)) => "patch-apply",
+            Commands::Patch(PatchCommands::Validate(_)) => "patch-validate",
+            Commands::Patch(PatchCommands::Create(_)) => "patch-create",
         }
     }
 

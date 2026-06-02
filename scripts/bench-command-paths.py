@@ -131,6 +131,7 @@ ROM_WEAVER_CODEC_MATRIX_BY_FORMAT = {
     str(format_name): [(str(label), str(codec) if codec is not None else None) for label, codec in cases]
     for format_name, cases in COMMAND_PATHS_DEFAULTS["codec_matrix_by_format"].items()
 }
+CONTAINER_CODEC_LABEL_FILTER: set[str] | None = None
 
 DLDI_MAGIC = bytes([0xED, 0xA5, 0x8D, 0xBF, ord(" "), ord("C"), ord("h"), ord("i"), ord("s"), ord("h"), ord("m"), 0x00])
 DLDI_VERSION = 1
@@ -491,6 +492,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--container-codecs",
+        default="all",
+        help=(
+            "Comma-separated subset of benchmark codec labels for container compress/extract paths "
+            "(for example: zstd,store). Use all to run every configured codec label."
+        ),
+    )
+    parser.add_argument(
         "--patch-formats",
         default="all",
         help="Comma-separated subset of patch formats for patch-create/patch-apply (default: all)",
@@ -685,6 +694,30 @@ def parse_optional_checksum_combo_algos(raw: str) -> list[str]:
     if trimmed in {"", "none", "off", "false", "0"}:
         return []
     return parse_value_filter(raw, CHECKSUM_ALGORITHMS, "--checksum-combo-algos")
+
+
+def parse_optional_container_codec_labels(raw: str) -> set[str] | None:
+    trimmed = raw.strip().lower()
+    if trimmed in {"", "all", "*"}:
+        return None
+    labels = {value.strip().lower() for value in raw.split(",") if value.strip()}
+    if not labels:
+        raise ValueError("--container-codecs must include at least one codec label")
+    valid_labels = {
+        label.strip().lower()
+        for cases in ROM_WEAVER_CODEC_MATRIX_BY_FORMAT.values()
+        for label, _codec in cases
+    }
+    valid_labels.update(codec.strip().lower() for codec in ROM_WEAVER_COMPRESS_CODEC_BY_FORMAT.values())
+    unknown_labels = sorted(label for label in labels if label not in valid_labels)
+    if unknown_labels:
+        valid_display = ", ".join(sorted(valid_labels))
+        unknown_display = ", ".join(unknown_labels)
+        raise ValueError(
+            f"--container-codecs contains unknown label(s): {unknown_display}. "
+            f"Known labels: {valid_display}"
+        )
+    return labels
 
 
 def ensure_binary(bin_path: Path, skip_build: bool) -> None:
@@ -1055,11 +1088,20 @@ def base_command(bin_path: Path, args: list[str]) -> list[str]:
 def rom_weaver_codec_cases_for_format(format_name: str) -> list[tuple[str, str | None]]:
     codecs = ROM_WEAVER_CODEC_MATRIX_BY_FORMAT.get(format_name)
     if codecs is not None:
-        return list(codecs)
-    default_codec = ROM_WEAVER_COMPRESS_CODEC_BY_FORMAT.get(format_name)
-    if default_codec is not None:
-        return [(default_codec, default_codec)]
-    return [("default", None)]
+        cases = list(codecs)
+    else:
+        default_codec = ROM_WEAVER_COMPRESS_CODEC_BY_FORMAT.get(format_name)
+        if default_codec is not None:
+            cases = [(default_codec, default_codec)]
+        else:
+            cases = [("default", None)]
+    if CONTAINER_CODEC_LABEL_FILTER is None:
+        return cases
+    return [
+        (label, codec)
+        for label, codec in cases
+        if label.strip().lower() in CONTAINER_CODEC_LABEL_FILTER
+    ]
 
 
 def format_codec_path_id(format_name: str, codec_label: str) -> str:
@@ -1705,6 +1747,7 @@ def print_table(rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
+    global CONTAINER_CODEC_LABEL_FILTER
     args = parse_args()
     selected_commands = parse_command_filter(args.commands)
     archive_tool_mode, explicit_archive_tools = parse_archive_tool_filter(args.archive_tools)
@@ -1714,6 +1757,7 @@ def main() -> None:
         "--container-formats",
         aliases=CONTAINER_FORMAT_ALIASES,
     )
+    CONTAINER_CODEC_LABEL_FILTER = parse_optional_container_codec_labels(args.container_codecs)
     selected_patch_formats = parse_value_filter(args.patch_formats, PATCH_FORMATS, "--patch-formats")
     selected_checksum_algorithms = parse_value_filter(args.checksum_algos, CHECKSUM_ALGORITHMS, "--checksum-algos")
     checksum_combo_algorithms = parse_optional_checksum_combo_algos(args.checksum_combo_algos)
@@ -2011,7 +2055,8 @@ def main() -> None:
             base_command(
                 args.bin,
                 [
-                    "patch-apply",
+                    "patch",
+                    "apply",
                     "--input",
                     str(dldi_original_path),
                     "--patch",
@@ -2042,7 +2087,8 @@ def main() -> None:
         cmd = base_command(
             args.bin,
             [
-                "patch-create",
+                "patch",
+                "create",
                 "--original",
                 str(original_path),
                 "--modified",
@@ -2338,7 +2384,7 @@ def main() -> None:
                                     timeout_sec=args.timeout_sec,
                                     args_factory=make_wasm_args,
                                     processed_bytes_factory=processed_bytes,
-                                    runner=browser_runner_for_wasm_module(wasm_module_for_case),
+                                    runner=browser_runner_for_wasm_module(wasm_module),
                                     tool="rom-weaver-wasm",
                                     cache=cache,
                                 )
@@ -3580,7 +3626,8 @@ def main() -> None:
             return patch_path, patch_original
         patch_path.parent.mkdir(parents=True, exist_ok=True)
         patch_args = [
-            "patch-create",
+            "patch",
+            "create",
             "--original",
             str(patch_original),
             "--modified",
@@ -3652,7 +3699,8 @@ def main() -> None:
                     if patch_path.exists():
                         patch_path.unlink()
                     patch_args = [
-                        "patch-create",
+                        "patch",
+                        "create",
                         "--original",
                         str(original_value),
                         "--modified",
@@ -3703,7 +3751,8 @@ def main() -> None:
                     if "patch-apply" in selected_commands and not patch_path.exists():
                         patch_path.parent.mkdir(parents=True, exist_ok=True)
                         patch_args = [
-                            "patch-create",
+                            "patch",
+                            "create",
                             "--original",
                             str(patch_original),
                             "--modified",
@@ -3810,7 +3859,8 @@ def main() -> None:
                     if output_path.exists():
                         output_path.unlink()
                     patch_apply_args = [
-                        "patch-apply",
+                        "patch",
+                        "apply",
                         "--input",
                         str(input_value),
                         "--patch",
@@ -3886,6 +3936,7 @@ def main() -> None:
             "browser_wasm_persistent_session": args.browser_wasm_persistent_session,
             "commands": sorted(selected_commands),
             "container_formats": selected_container_formats,
+            "container_codecs": sorted(CONTAINER_CODEC_LABEL_FILTER) if CONTAINER_CODEC_LABEL_FILTER is not None else ["all"],
             "patch_formats": selected_patch_formats,
             "checksum_algorithms": selected_checksum_algorithms,
             "checksum_combo_algorithms": checksum_combo_algorithms,

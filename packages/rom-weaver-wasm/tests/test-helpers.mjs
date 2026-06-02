@@ -142,7 +142,7 @@ function commandArgsToRunRequest(args) {
     return { type: 'stream-test', args: {} };
   }
 
-  const { command, index: commandIndex } = locateCommand(args);
+  const { command, index: commandIndex, subcommand } = locateCommand(args);
   const parsed = parseCommandTokens(args, commandIndex);
   const output = {};
   if (parsed.flags.has('json')) output.json = true;
@@ -150,28 +150,29 @@ function commandArgsToRunRequest(args) {
   if (parsed.flags.has('progress')) output.progress = true;
   if (parsed.flags.has('no-progress')) output.progress = false;
 
-  const commandRequest = { type: command, args: {} };
-  switch (command) {
+  const commandRequest = createCommandRequest(command, subcommand);
+  const commandArgs = command === 'patch' ? commandRequest.args.args : commandRequest.args;
+  switch (command === 'patch' ? `patch-${subcommand}` : command) {
     case 'inspect':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         source: requirePositional(parsed, 0, 'inspect source'),
         ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
         ...(parsed.flags.has('no-extract') ? { no_extract: true } : {}),
         ...(parsed.flags.has('no-ignore') ? { no_ignore: true } : {}),
         ...(parsed.flags.has('list') ? { list: true } : {}),
-      };
+      });
       break;
     case 'compress':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         input: parsed.positionals,
         output: requireOptionValue(parsed, 'output'),
         ...(readOptionalValue(parsed, 'format') ? { format: readOptionalValue(parsed, 'format') } : {}),
         ...(readOptionValues(parsed, 'codec').length ? { codec: readOptionValues(parsed, 'codec') } : {}),
         ...(readOptionalValue(parsed, 'level') ? { level: readOptionalValue(parsed, 'level') } : {}),
-      };
+      });
       break;
     case 'extract':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         source: requirePositional(parsed, 0, 'extract source'),
         out_dir: requireOptionValue(parsed, 'out-dir'),
         ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
@@ -180,10 +181,10 @@ function commandArgsToRunRequest(args) {
         ...(parsed.flags.has('no-ignore') ? { no_ignore: true } : {}),
         ...(parsed.flags.has('no-nested-extract') ? { no_nested_extract: true } : {}),
         ...(parsed.flags.has('no-overwrite') ? { no_overwrite: true } : {}),
-      };
+      });
       break;
     case 'checksum':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         source: requirePositional(parsed, 0, 'checksum source'),
         algo: readOptionValues(parsed, 'algo'),
         ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
@@ -193,20 +194,20 @@ function commandArgsToRunRequest(args) {
         ...(parsed.flags.has('no-trim-fix') ? { no_trim_fix: true } : {}),
         ...(readOptionalNumber(parsed, 'start') !== null ? { start: readOptionalNumber(parsed, 'start') } : {}),
         ...(readOptionalNumber(parsed, 'length') !== null ? { length: readOptionalNumber(parsed, 'length') } : {}),
-      };
+      });
       break;
     case 'patch-create':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         original: requireOptionValue(parsed, 'original'),
         modified: requireOptionValue(parsed, 'modified'),
         format: requireOptionValue(parsed, 'format'),
         output: requireOptionValue(parsed, 'output'),
         ...(parsed.flags.has('ignore-checksum-validation') ? { ignore_checksum_validation: true } : {}),
         ...(readOptionalValue(parsed, 'xdelta-secondary') ? { xdelta_secondary: readOptionalValue(parsed, 'xdelta-secondary') } : {}),
-      };
+      });
       break;
     case 'patch-apply':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         input: requireOptionValue(parsed, 'input'),
         patches: readOptionValues(parsed, 'patch'),
         output: requireOptionValue(parsed, 'output'),
@@ -225,15 +226,35 @@ function commandArgsToRunRequest(args) {
         ...(parsed.flags.has('add-header') ? { add_header: true } : {}),
         ...(parsed.flags.has('repair-checksum') ? { repair_checksum: true } : {}),
         ...(parsed.flags.has('ignore-checksum-validation') ? { ignore_checksum_validation: true } : {}),
-      };
+      });
+      break;
+    case 'patch-validate':
+      Object.assign(commandArgs, {
+        input: requireOptionValue(parsed, 'input'),
+        patches: readOptionValues(parsed, 'patch'),
+        ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
+        ...(parsed.flags.has('no-extract') ? { no_extract: true } : {}),
+        ...(parsed.flags.has('no-ignore') ? { no_ignore: true } : {}),
+        ...(readOptionValues(parsed, 'checksum-cache').length ? { checksum_cache: readOptionValues(parsed, 'checksum-cache') } : {}),
+        ...(readOptionValues(parsed, 'validate-with-checksum').length
+          ? { validate_with_checksums: readOptionValues(parsed, 'validate-with-checksum') }
+          : {}),
+        ...(readOptionalNumber(parsed, 'validate-with-size') !== null
+          ? { validate_with_size: readOptionalNumber(parsed, 'validate-with-size') }
+          : {}),
+        ...(readOptionalNumber(parsed, 'validate-with-min-size') !== null
+          ? { validate_with_min_size: readOptionalNumber(parsed, 'validate-with-min-size') }
+          : {}),
+        ...(parsed.flags.has('strip-header') ? { strip_header: true } : {}),
+        ...(parsed.flags.has('ignore-checksum-validation') ? { ignore_checksum_validation: true } : {}),
+      });
       break;
     default:
-      commandRequest.args = {};
       break;
   }
 
   const threads = readOptionalThreadBudget(parsed);
-  if (threads !== null) commandRequest.args.threads = threads;
+  if (threads !== null) commandArgs.threads = threads;
 
   return Object.keys(output).length > 0
     ? { command: commandRequest, output }
@@ -241,21 +262,30 @@ function commandArgsToRunRequest(args) {
 }
 
 function locateCommand(args) {
-  const supportedCommands = new Set([
-    'inspect',
-    'compress',
-    'extract',
-    'checksum',
-    'patch-create',
-    'patch-apply',
-  ]);
   for (let index = 0; index < args.length; index += 1) {
     const token = String(args[index] ?? '').trim().toLowerCase();
-    if (supportedCommands.has(token)) {
-      return { command: token, index };
+    if (token === 'patch-apply') return { command: 'patch', index, subcommand: 'apply' };
+    if (token === 'patch-create') return { command: 'patch', index, subcommand: 'create' };
+    if (token === 'patch-validate') return { command: 'patch', index, subcommand: 'validate' };
+    if (token === 'patch') {
+      const subcommand = String(args[index + 1] ?? '').trim().toLowerCase();
+      if (subcommand === 'apply' || subcommand === 'create' || subcommand === 'validate') {
+        return { command: 'patch', index, subcommand };
+      }
+      return { command: 'patch', index, subcommand: '' };
+    }
+    if (token === 'inspect' || token === 'compress' || token === 'extract' || token === 'checksum') {
+      return { command: token, index, subcommand: '' };
     }
   }
-  return { command: String(args[0] ?? '').trim(), index: 0 };
+  return { command: String(args[0] ?? '').trim(), index: 0, subcommand: '' };
+}
+
+function createCommandRequest(command, subcommand) {
+  if (command === 'patch') {
+    return { type: 'patch', args: { type: subcommand, args: {} } };
+  }
+  return { type: command, args: {} };
 }
 
 function parseCommandTokens(args, commandIndex) {
@@ -264,7 +294,10 @@ function parseCommandTokens(args, commandIndex) {
   const positionals = [];
 
   for (let index = 0; index < args.length; index += 1) {
-    if (index === commandIndex) continue;
+    if (index === commandIndex) {
+      if (String(args[index] ?? '').trim().toLowerCase() === 'patch') index += 1;
+      continue;
+    }
     const raw = String(args[index] ?? '');
     if (!raw.startsWith('--')) {
       if (index > commandIndex) positionals.push(raw);
@@ -402,7 +435,7 @@ export async function runProgressMatrix({ runJson, opfsHandle, dir, sourcePath, 
   ).toBe(true);
 
   const patchCreateResult = await runJson([
-    'patch-create',
+    'patch', 'create',
     '--original',
     originalPath,
     '--modified',
@@ -419,7 +452,7 @@ export async function runProgressMatrix({ runJson, opfsHandle, dir, sourcePath, 
   const patchApplyEvents = [];
   const patchApplyResult = await runJson(
     [
-      'patch-apply',
+      'patch', 'apply',
       '--input',
       originalPath,
       '--patch',
@@ -545,7 +578,7 @@ export async function runPatchMatrix({ runJson, opfsHandle, dir, sourcePath, fix
   ]) {
     assertRunJsonSucceeded(
       await runJson([
-        'patch-create',
+        'patch', 'create',
         '--original',
         originalPath,
         '--modified',
@@ -660,7 +693,7 @@ export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }
 
 async function runPatchApplyNoCompress(runJson, { inputPath, patchPath, outputPath }, runOptions = undefined) {
   return runJson([
-    'patch-apply',
+    'patch', 'apply',
     '--input',
     inputPath,
     '--patch',

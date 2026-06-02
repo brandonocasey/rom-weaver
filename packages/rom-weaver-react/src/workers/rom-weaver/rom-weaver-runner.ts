@@ -45,6 +45,14 @@ type BrowserWasmAssetSelection = {
   wasmUrl?: string;
 };
 
+type RomWeaverCommandBranch =
+  | { type: "checksum" | "extract" | "inspect"; args: { source?: unknown } }
+  | { type: "compress"; args: { input?: unknown } }
+  | { type: "batch-header-fixer" | "trim"; args: { source?: unknown } }
+  | { type: "patch-apply" | "patch-validate"; args: { input?: unknown; patches?: unknown } }
+  | { type: "patch-create"; args: { original?: unknown; modified?: unknown } }
+  | { type: string; args: Record<string, unknown> };
+
 let browserWasmUrlPromise: Promise<string> | null = null;
 let browserThreadWorkerUrlPromise: Promise<string> | null = null;
 let browserThreadedRunnerPromise: Promise<RomWeaverRunner> | null = null;
@@ -80,6 +88,24 @@ const emitRunnerTraceLine = (options: RomWeaverRunnerRunJsonOptions | undefined,
 const readRunCommand = (commandOrRequest: RomWeaverRunInput): RomWeaverCommand =>
   isRomWeaverRunRequest(commandOrRequest) ? commandOrRequest.command : commandOrRequest;
 
+const readCommandBranch = (command: RomWeaverCommand): RomWeaverCommandBranch => {
+  if (command.type === "patch") {
+    const patchCommand = command.args;
+    const patchArgs: Record<string, unknown> =
+      patchCommand && typeof patchCommand === "object" && "args" in patchCommand && patchCommand.args
+        ? patchCommand.args
+        : {};
+    return {
+      args: patchArgs,
+      type: `patch-${String((patchCommand as { type?: unknown })?.type || "").trim()}`,
+    };
+  }
+  return {
+    args: command.args,
+    type: command.type,
+  };
+};
+
 const pushPathValue = (out: Set<string>, value: unknown) => {
   if (typeof value !== "string") return;
   const path = value.trim();
@@ -95,8 +121,8 @@ const pushPathValues = (out: Set<string>, value: unknown) => {
   pushPathValue(out, value);
 };
 
-const throwUnhandledRomWeaverCommand = (command: never): never => {
-  throw new Error(`Unhandled rom-weaver command type: ${String((command as { type?: unknown }).type || "unknown")}`);
+const throwUnhandledRomWeaverCommand = (commandType: string): never => {
+  throw new Error(`Unhandled rom-weaver command type: ${commandType || "unknown"}`);
 };
 
 const collectReferencedVirtualFilePaths = (
@@ -105,31 +131,32 @@ const collectReferencedVirtualFilePaths = (
 ) => {
   const paths = new Set<string>();
   const command = readRunCommand(commandOrRequest);
+  const branch = readCommandBranch(command);
 
-  switch (command.type) {
+  switch (branch.type) {
     case "checksum":
     case "extract":
     case "inspect":
-      pushPathValue(paths, command.args.source);
+      pushPathValue(paths, branch.args.source);
       break;
     case "compress":
-      pushPathValues(paths, command.args.input);
+      pushPathValues(paths, branch.args.input);
       break;
     case "batch-header-fixer":
     case "trim":
-      pushPathValues(paths, command.args.source);
+      pushPathValues(paths, branch.args.source);
       break;
     case "patch-apply":
     case "patch-validate":
-      pushPathValue(paths, command.args.input);
-      pushPathValues(paths, command.args.patches);
+      pushPathValue(paths, branch.args.input);
+      pushPathValues(paths, branch.args.patches);
       break;
     case "patch-create":
-      pushPathValue(paths, command.args.original);
-      pushPathValue(paths, command.args.modified);
+      pushPathValue(paths, branch.args.original);
+      pushPathValue(paths, branch.args.modified);
       break;
     default:
-      throwUnhandledRomWeaverCommand(command);
+      throwUnhandledRomWeaverCommand(branch.type);
   }
 
   pushPathValues(paths, options?.knownInputPaths);

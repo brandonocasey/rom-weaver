@@ -357,7 +357,7 @@ describe('rom-weaver-wasm benchmark parity with python bench-command-paths', () 
           const { originalPath, modifiedPath } = patchFixturePairForFormat(formatName);
           await runBenchmarkCommand(
             [
-              'patch-create',
+              'patch', 'create',
               '--original',
               originalPath,
               '--modified',
@@ -395,7 +395,7 @@ describe('rom-weaver-wasm benchmark parity with python bench-command-paths', () 
           }
           const outputPath = patchApplyOutputPath(formatName);
           const args = [
-            'patch-apply',
+            'patch', 'apply',
             '--input',
             patchSource.inputPath,
             '--patch',
@@ -620,7 +620,8 @@ async function preparePatchSeedSources() {
     const { originalPath, modifiedPath } = patchFixturePairForFormat(formatName);
     const result = await runBenchmarkCommandAllowFailure(
       [
-        'patch-create',
+        'patch',
+        'create',
         '--original',
         originalPath,
         '--modified',

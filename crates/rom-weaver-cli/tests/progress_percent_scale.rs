@@ -32,7 +32,8 @@ fn patch_create_and_apply_report_percent_100() {
     let patch_create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch-create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -57,7 +58,8 @@ fn patch_create_and_apply_report_percent_100() {
     let patch_apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch-apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",

@@ -928,18 +928,21 @@ const invokeRomWeaverPatchValidateWorker = async (
   const syncAccessMode = hasBpsPatch ? "readwrite-unsafe" : undefined;
   const command: RomWeaverCommand = {
     args: {
-      ...(checksumCache.length ? { checksum_cache: checksumCache } : {}),
-      ignore_checksum_validation: ignoreChecksumValidation,
-      input: input.romFilePath,
-      no_extract: true,
-      patches: input.patchFiles.map((patch) => patch.patchFilePath),
-      strip_header: removeHeader,
-      ...(threadArg ? { threads: threadArg } : {}),
-      ...(validateWithChecksums.length ? { validate_with_checksums: validateWithChecksums } : {}),
-      ...(validateWithMinSize === undefined ? {} : { validate_with_min_size: BigInt(validateWithMinSize) }),
-      ...(validateWithSize === undefined ? {} : { validate_with_size: BigInt(validateWithSize) }),
+      args: {
+        ...(checksumCache.length ? { checksum_cache: checksumCache } : {}),
+        ignore_checksum_validation: ignoreChecksumValidation,
+        input: input.romFilePath,
+        no_extract: true,
+        patches: input.patchFiles.map((patch) => patch.patchFilePath),
+        strip_header: removeHeader,
+        ...(threadArg ? { threads: threadArg } : {}),
+        ...(validateWithChecksums.length ? { validate_with_checksums: validateWithChecksums } : {}),
+        ...(validateWithMinSize === undefined ? {} : { validate_with_min_size: BigInt(validateWithMinSize) }),
+        ...(validateWithSize === undefined ? {} : { validate_with_size: BigInt(validateWithSize) }),
+      },
+      type: "validate",
     },
-    type: "patch-validate",
+    type: "patch",
   };
   emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson patch-validate dispatch", {
     command,
@@ -1016,17 +1019,20 @@ const invokeRomWeaverPatchApplyWorker = async (
   const syncAccessMode = hasBpsPatch ? "readwrite-unsafe" : undefined;
   const command: RomWeaverCommand = {
     args: {
-      add_header: addHeader,
-      ignore_checksum_validation: ignoreChecksumValidation,
-      input: input.romFilePath,
-      no_compress: true,
-      output: outputPath,
-      patches: input.patchFiles.map((patch) => patch.patchFilePath),
-      repair_checksum: repairChecksum,
-      strip_header: removeHeader,
-      ...(threadArg ? { threads: threadArg } : {}),
+      args: {
+        add_header: addHeader,
+        ignore_checksum_validation: ignoreChecksumValidation,
+        input: input.romFilePath,
+        no_compress: true,
+        output: outputPath,
+        patches: input.patchFiles.map((patch) => patch.patchFilePath),
+        repair_checksum: repairChecksum,
+        strip_header: removeHeader,
+        ...(threadArg ? { threads: threadArg } : {}),
+      },
+      type: "apply",
     },
-    type: "patch-apply",
+    type: "patch",
   };
   emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson patch-apply dispatch", {
     command,
@@ -1126,13 +1132,16 @@ const invokeRomWeaverCreatePatchWorker = async (
   const threadArg = toThreadBudget(input.workerThreads);
   const command: RomWeaverCommand = {
     args: {
-      format: input.format,
-      modified: input.modifiedFilePath,
-      original: input.originalFilePath,
-      output: outputPath,
-      ...(threadArg ? { threads: threadArg } : {}),
+      args: {
+        format: input.format,
+        modified: input.modifiedFilePath,
+        original: input.originalFilePath,
+        output: outputPath,
+        ...(threadArg ? { threads: threadArg } : {}),
+      },
+      type: "create",
     },
-    type: "patch-create",
+    type: "patch",
   };
   emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson patch-create dispatch", {
     command,

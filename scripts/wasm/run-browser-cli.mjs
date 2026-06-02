@@ -23,7 +23,7 @@ const DEFAULT_WASM_MODULE = resolve(WASM_PACKAGE_DIR, 'rom-weaver-app.wasm');
 const WORK_GUEST_PATH = '/work';
 const STAGE_INPUT_CHUNK_BYTES = 2 * 1024 * 1024;
 
-const SUPPORTED_COMMANDS = new Set(['compress', 'extract', 'checksum', 'patch-create', 'patch-apply', 'patch-validate']);
+const SUPPORTED_COMMANDS = new Set(['compress', 'extract', 'checksum', 'patch']);
 
 function parseArgs(argv) {
   let wasmModule = DEFAULT_WASM_MODULE;
@@ -79,11 +79,25 @@ function isGuestPath(rawPath) {
 function locateCommand(args) {
   for (let index = 0; index < args.length; index += 1) {
     const token = String(args[index] ?? '').trim().toLowerCase();
+    if (token === 'patch') {
+      const subcommand = String(args[index + 1] ?? '').trim().toLowerCase();
+      if (subcommand === 'apply' || subcommand === 'create' || subcommand === 'validate') {
+        return { command: 'patch', index, subcommand };
+      }
+      throw new Error(`unsupported patch subcommand: ${subcommand || '(missing)'}`);
+    }
     if (SUPPORTED_COMMANDS.has(token)) {
-      return { command: token, index };
+      return { command: token, index, subcommand: '' };
     }
   }
   throw new Error(`unable to locate supported command in args: ${args.join(' ')}`);
+}
+
+function createCommandRequest(command, subcommand) {
+  if (command === 'patch') {
+    return { type: 'patch', args: { type: subcommand, args: {} } };
+  }
+  return { type: command, args: {} };
 }
 
 function readFlagValue(args, flag, commandIndex) {
@@ -100,7 +114,7 @@ function readFlagValue(args, flag, commandIndex) {
 
 function collectPathBindings(commandArgs) {
   const resolvedArgs = [...commandArgs];
-  const { command, index: commandIndex } = locateCommand(commandArgs);
+  const { command, index: commandIndex, subcommand } = locateCommand(commandArgs);
   const inputs = [];
   const outputs = [];
 
@@ -163,7 +177,7 @@ function collectPathBindings(commandArgs) {
     });
   };
 
-  switch (command) {
+  switch (command === 'patch' ? `patch-${subcommand}` : command) {
     case 'compress':
       addPositionalInput(1);
       addFlagOutputFile('--output');
@@ -221,6 +235,7 @@ function collectPathBindings(commandArgs) {
 
   return {
     command,
+    subcommand,
     mappedArgs: resolvedArgs,
     inputs,
     outputs,
@@ -228,26 +243,27 @@ function collectPathBindings(commandArgs) {
 }
 
 function commandArgsToRunRequest(args) {
-  const { command, index: commandIndex } = locateCommand(args);
+  const { command, index: commandIndex, subcommand } = locateCommand(args);
   const parsed = parseCommandTokens(args, commandIndex);
   const output = {};
   if (parsed.flags.has('trace')) output.trace = true;
   if (parsed.flags.has('progress')) output.progress = true;
   if (parsed.flags.has('no-progress')) output.progress = false;
 
-  const commandRequest = { type: command, args: {} };
-  switch (command) {
+  const commandRequest = createCommandRequest(command, subcommand);
+  const commandArgs = command === 'patch' ? commandRequest.args.args : commandRequest.args;
+  switch (command === 'patch' ? `patch-${subcommand}` : command) {
     case 'compress':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         input: parsed.positionals,
         output: requireOptionValue(parsed, 'output'),
         ...(readOptionalValue(parsed, 'format') ? { format: readOptionalValue(parsed, 'format') } : {}),
         ...(readOptionValues(parsed, 'codec').length ? { codec: readOptionValues(parsed, 'codec') } : {}),
         ...(readOptionalValue(parsed, 'level') ? { level: readOptionalValue(parsed, 'level') } : {}),
-      };
+      });
       break;
     case 'extract':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         source: requirePositional(parsed, 0, 'extract source'),
         out_dir: requireOptionValue(parsed, 'out-dir'),
         ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
@@ -256,10 +272,10 @@ function commandArgsToRunRequest(args) {
         ...(parsed.flags.has('no-ignore') ? { no_ignore: true } : {}),
         ...(parsed.flags.has('no-nested-extract') ? { no_nested_extract: true } : {}),
         ...(parsed.flags.has('no-overwrite') ? { no_overwrite: true } : {}),
-      };
+      });
       break;
     case 'checksum':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         source: requirePositional(parsed, 0, 'checksum source'),
         algo: readOptionValues(parsed, 'algo'),
         ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
@@ -269,20 +285,20 @@ function commandArgsToRunRequest(args) {
         ...(parsed.flags.has('no-trim-fix') ? { no_trim_fix: true } : {}),
         ...(readOptionalNumber(parsed, 'start') !== null ? { start: readOptionalNumber(parsed, 'start') } : {}),
         ...(readOptionalNumber(parsed, 'length') !== null ? { length: readOptionalNumber(parsed, 'length') } : {}),
-      };
+      });
       break;
     case 'patch-create':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         original: requireOptionValue(parsed, 'original'),
         modified: requireOptionValue(parsed, 'modified'),
         format: requireOptionValue(parsed, 'format'),
         output: requireOptionValue(parsed, 'output'),
         ...(parsed.flags.has('ignore-checksum-validation') ? { ignore_checksum_validation: true } : {}),
         ...(readOptionalValue(parsed, 'xdelta-secondary') ? { xdelta_secondary: readOptionalValue(parsed, 'xdelta-secondary') } : {}),
-      };
+      });
       break;
     case 'patch-apply':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         input: requireOptionValue(parsed, 'input'),
         patches: readOptionValues(parsed, 'patch'),
         output: requireOptionValue(parsed, 'output'),
@@ -301,10 +317,10 @@ function commandArgsToRunRequest(args) {
         ...(parsed.flags.has('add-header') ? { add_header: true } : {}),
         ...(parsed.flags.has('repair-checksum') ? { repair_checksum: true } : {}),
         ...(parsed.flags.has('ignore-checksum-validation') ? { ignore_checksum_validation: true } : {}),
-      };
+      });
       break;
     case 'patch-validate':
-      commandRequest.args = {
+      Object.assign(commandArgs, {
         input: requireOptionValue(parsed, 'input'),
         patches: readOptionValues(parsed, 'patch'),
         ...(readOptionValues(parsed, 'select').length ? { select: readOptionValues(parsed, 'select') } : {}),
@@ -322,14 +338,14 @@ function commandArgsToRunRequest(args) {
           : {}),
         ...(parsed.flags.has('strip-header') ? { strip_header: true } : {}),
         ...(parsed.flags.has('ignore-checksum-validation') ? { ignore_checksum_validation: true } : {}),
-      };
+      });
       break;
     default:
-      throw new Error(`unsupported command: ${command}`);
+      throw new Error(`unsupported command: ${command === 'patch' ? `patch ${subcommand}` : command}`);
   }
 
   const threads = readOptionalThreadBudget(parsed);
-  if (threads !== null) commandRequest.args.threads = threads;
+  if (threads !== null) commandArgs.threads = threads;
 
   return Object.keys(output).length > 0
     ? { command: commandRequest, output }
@@ -342,7 +358,10 @@ function parseCommandTokens(args, commandIndex) {
   const positionals = [];
 
   for (let index = 0; index < args.length; index += 1) {
-    if (index === commandIndex) continue;
+    if (index === commandIndex) {
+      if (String(args[index] ?? '').trim().toLowerCase() === 'patch') index += 1;
+      continue;
+    }
     const raw = String(args[index] ?? '');
     if (!raw.startsWith('--')) {
       if (index > commandIndex) positionals.push(raw);

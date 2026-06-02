@@ -78,8 +78,9 @@ Integration notes:
 - `compress`
 - `trim`
 - `batch-header-fixer`
-- `patch-apply`
-- `patch-create`
+- `patch apply`
+- `patch create`
+- `patch validate`
 
 Global flags:
 
@@ -99,9 +100,9 @@ Inspect behavior highlights:
 
 ## Patch Format Support
 
-All listed formats support inspect/parse (`inspect`) and apply (`patch-apply`).
+All listed formats support inspect/parse (`inspect`) and apply (`patch apply`).
 
-| Format         | Aliases                     | Extensions                     | `patch-create` |
+| Format         | Aliases                     | Extensions                     | `patch create` |
 | -------------- | --------------------------- | ------------------------------ | -------------- |
 | `IPS`          | none                        | `.ips`                         | yes            |
 | `IPS32`        | none                        | `.ips32`                       | yes            |
@@ -125,7 +126,7 @@ All listed formats support inspect/parse (`inspect`) and apply (`patch-apply`).
 
 Notes:
 
-- `patch-apply` accepts repeated `--patch` and applies patches sequentially.
+- `patch apply` accepts repeated `--patch` and applies patches sequentially.
 - Patch checksum validation is strict by default for formats that embed checksums; use `--ignore-checksum-validation` to skip it.
 
 ## Container And Compression Format Support
@@ -184,7 +185,7 @@ Notes:
 
 ## Compression Level Profiles
 
-`compress --level` and `patch-apply --compress-level` share these named profiles:
+`compress --level` and `patch apply --compress-level` share these named profiles:
 
 - `min`
 - `very-low`
@@ -234,7 +235,7 @@ Notes:
 
 ## Header Detection And Repair
 
-Known header detection is built into inspect/checksum/patch-apply flows, including:
+Known header detection is built into inspect/checksum/patch apply flows, including:
 
 - A78
 - LNX

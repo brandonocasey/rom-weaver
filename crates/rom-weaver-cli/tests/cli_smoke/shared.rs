@@ -45,14 +45,39 @@ fn parse_single_json_line(output: &[u8]) -> Value {
 }
 
 fn command_stdout(args: &[&str], expected_code: i32) -> Vec<u8> {
+    let normalized_args = normalize_cli_args(args);
     Command::cargo_bin("rom-weaver")
         .expect("binary")
-        .args(args)
+        .args(&normalized_args)
         .assert()
         .code(expected_code)
         .get_output()
         .stdout
         .clone()
+}
+
+fn normalize_cli_args(args: &[&str]) -> Vec<String> {
+    let mut normalized = Vec::with_capacity(args.len() + 1);
+    let mut index = 0;
+    while index < args.len() {
+        match args[index] {
+            "patch-apply" => {
+                normalized.push("patch".to_string());
+                normalized.push("apply".to_string());
+            }
+            "patch-create" => {
+                normalized.push("patch".to_string());
+                normalized.push("create".to_string());
+            }
+            "patch-validate" => {
+                normalized.push("patch".to_string());
+                normalized.push("validate".to_string());
+            }
+            value => normalized.push(value.to_string()),
+        }
+        index += 1;
+    }
+    normalized
 }
 
 fn run_json_events(args: &[&str], expected_code: i32) -> Vec<Value> {
@@ -1698,7 +1723,7 @@ fn terminal_progress_percent_uses_100_scale_for_core_commands() {
     let patch_create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch-create",
+            "patch", "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1725,7 +1750,7 @@ fn terminal_progress_percent_uses_100_scale_for_core_commands() {
     let patch_apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch-apply",
+            "patch", "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",

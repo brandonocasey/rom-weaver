@@ -35,7 +35,9 @@ export type PatchValidateCommand = { input: string, select?: Array<string>, no_e
 
 export type PatchCreateCommand = { original: string, modified: string, format: string, output: string, ignore_checksum_validation?: boolean, threads?: ThreadBudget, xdelta_secondary?: string, };
 
-export type Commands = { "type": "inspect", "args": InspectCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "batch-header-fixer", "args": BatchHeaderFixerCommand } | { "type": "patch-apply", "args": PatchApplyCommand } | { "type": "patch-validate", "args": PatchValidateCommand } | { "type": "patch-create", "args": PatchCreateCommand };
+export type PatchCommands = { "type": "apply", "args": PatchApplyCommand } | { "type": "validate", "args": PatchValidateCommand } | { "type": "create", "args": PatchCreateCommand };
+
+export type Commands = { "type": "inspect", "args": InspectCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "batch-header-fixer", "args": BatchHeaderFixerCommand } | { "type": "patch", "args": PatchCommands };
 
 export type RomWeaverRunOutputOptions = { json?: boolean, progress?: boolean, trace?: boolean, interactive_selection_enabled?: boolean, };
 

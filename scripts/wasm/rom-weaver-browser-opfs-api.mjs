@@ -50,9 +50,7 @@ const THREAD_AWARE_COMMANDS = new Set([
   'checksum',
   'compress',
   'extract',
-  'patch-apply',
-  'patch-create',
-  'patch-validate',
+  'patch',
   'trim',
 ]);
 const MAX_WASI_THREAD_ID = 0x1fffffff;
@@ -621,6 +619,26 @@ function normalizeRunCommand(command) {
   if (!type) {
     throw new TypeError('rom-weaver typed command requires a string `type` field');
   }
+  if (type === 'patch') {
+    const patchCommand = command.args;
+    if (!patchCommand || typeof patchCommand !== 'object' || Array.isArray(patchCommand)) {
+      throw new TypeError('rom-weaver patch command requires an object `args` payload');
+    }
+    const patchType = typeof patchCommand.type === 'string' ? patchCommand.type.trim() : '';
+    if (!patchType) {
+      throw new TypeError('rom-weaver patch command requires a string nested `type` field');
+    }
+    const patchArgs = patchCommand.args && typeof patchCommand.args === 'object' && !Array.isArray(patchCommand.args)
+      ? { ...patchCommand.args }
+      : {};
+    return {
+      args: {
+        args: patchArgs,
+        type: patchType,
+      },
+      type,
+    };
+  }
   const args = command.args && typeof command.args === 'object' && !Array.isArray(command.args)
     ? { ...command.args }
     : {};
@@ -657,7 +675,18 @@ function readRunRequestCommand(request) {
 }
 
 function readCommandArgs(command) {
+  if (command?.type === 'patch') {
+    return command?.args?.args && typeof command.args.args === 'object' ? command.args.args : {};
+  }
   return command?.args && typeof command.args === 'object' ? command.args : {};
+}
+
+function readCommandTypeForSwitch(command) {
+  if (command?.type === 'patch') {
+    const patchType = typeof command?.args?.type === 'string' ? command.args.type.trim() : '';
+    return patchType ? `patch-${patchType}` : 'patch';
+  }
+  return typeof command?.type === 'string' ? command.type : 'unknown';
 }
 
 function serializeRunRequestForStdin(request) {
@@ -2703,7 +2732,7 @@ function collectMountedInputPaths(request, knownInputPaths) {
 
 function collectRequestInputPaths(request) {
   const command = readRunRequestCommand(request);
-  const commandType = command?.type;
+  const commandType = readCommandTypeForSwitch(command);
   const args = readCommandArgs(command);
   const values = [];
 
@@ -4421,12 +4450,21 @@ function withBrowserThreadLimit(request, defaultThreads = DEFAULT_BROWSER_THREAD
 
 function replaceRunRequestCommandArgs(request, args) {
   const command = readRunRequestCommand(request);
+  const nextCommand = command?.type === 'patch'
+    ? {
+        ...command,
+        args: {
+          ...command.args,
+          args,
+        },
+      }
+    : {
+        ...command,
+        args,
+      };
   return {
     ...request,
-    command: {
-      ...command,
-      args,
-    },
+    command: nextCommand,
   };
 }
 

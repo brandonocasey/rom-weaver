@@ -75,7 +75,7 @@ function Size({ as = "span", bytes, className, value }: SizeProps) {
     <span className="relative inline-flex items-center" ref={rootRef}>
       <Element
         aria-describedby={interactive && open ? tooltipId : undefined}
-        aria-expanded={interactive ? String(open) : undefined}
+        aria-expanded={interactive ? open : undefined}
         className={resolvedClassName || undefined}
         data-size-bytes={interactive ? title : undefined}
         onBlur={() => setOpen(false)}

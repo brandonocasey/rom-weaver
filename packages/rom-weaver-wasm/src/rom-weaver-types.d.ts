@@ -24,6 +24,7 @@ export type {
   ExtractCommand,
   InspectCommand,
   PatchApplyCommand,
+  PatchCommands,
   PatchCreateCommand,
   PatchValidateCommand,
   RomWeaverCommand,

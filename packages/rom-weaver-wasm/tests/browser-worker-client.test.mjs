@@ -1228,7 +1228,7 @@ describe('rom-weaver-wasm browser runner parity', () => {
 
         assertRunJsonSucceeded(
           await worker.runJson([
-            'patch-create',
+            'patch', 'create',
             '--original',
             sourcePath,
             '--modified',
@@ -1248,7 +1248,7 @@ describe('rom-weaver-wasm browser runner parity', () => {
 
         assertRunJsonSucceeded(
           await worker.runJson([
-            'patch-apply',
+            'patch', 'apply',
             '--input',
             extractedPath,
             '--patch',

@@ -64,7 +64,7 @@ type BrowserFormatMatrixCoreOptions = {
   sourcePath: string;
 };
 export type BrowserFormatMatrixStep = {
-  command: RomWeaverCommand['type'];
+  command: string;
   durationMs?: number;
   error?: string;
   name: string;
@@ -83,12 +83,6 @@ type BrowserFormatMatrixState = {
   emitEvent: (event: RomWeaverRunJsonEvent) => void;
   summary: () => BrowserFormatMatrixSummary;
 };
-type BrowserFormatMatrixCommandType = RomWeaverCommand['type'];
-type BrowserFormatMatrixCommand<TType extends BrowserFormatMatrixCommandType> = Extract<
-  RomWeaverCommand,
-  { type: TType }
->;
-
 const TEXT_ENCODER = new TextEncoder();
 const DEFAULT_VCDIFF_FIXTURE_URLS = {
   patch: new URL('../../../tests/fixtures/vcdiff/secondary-djw.xdelta', import.meta.url),
@@ -521,11 +515,17 @@ async function runCreatedPatchApply(
   return { applyPath, applyResult };
 }
 
-function command<TType extends BrowserFormatMatrixCommandType>(
-  type: TType,
-  args: BrowserFormatMatrixCommand<TType>['args'],
-): BrowserFormatMatrixCommand<TType> {
-  return { args, type } as BrowserFormatMatrixCommand<TType>;
+function command(type: string, args: Record<string, unknown>): RomWeaverCommand {
+  if (type === 'patch-apply' || type === 'patch-create' || type === 'patch-validate') {
+    return {
+      args: {
+        args,
+        type: type.slice('patch-'.length),
+      },
+      type: 'patch',
+    } as RomWeaverCommand;
+  }
+  return { args, type } as RomWeaverCommand;
 }
 
 function createMatrixState({
@@ -561,8 +561,9 @@ async function runMatrixCommand(
   options: BrowserFormatMatrixRunOptions = {},
 ) {
   const startedAt = now();
+  const commandLabel = matrixCommandLabel(typedCommand);
   state.addStep({
-    command: typedCommand.type,
+    command: commandLabel,
     name,
     status: 'running',
     timestamp: new Date().toISOString(),
@@ -576,7 +577,7 @@ async function runMatrixCommand(
       },
     });
     state.addStep({
-      command: typedCommand.type,
+      command: commandLabel,
       durationMs: Math.round(now() - startedAt),
       name,
       status: 'succeeded',
@@ -586,7 +587,7 @@ async function runMatrixCommand(
     return result;
   } catch (error) {
     state.addStep({
-      command: typedCommand.type,
+      command: commandLabel,
       durationMs: Math.round(now() - startedAt),
       error: errorMessage(error),
       name,
@@ -595,6 +596,14 @@ async function runMatrixCommand(
     });
     throw error;
   }
+}
+
+function matrixCommandLabel(command: RomWeaverCommand): string {
+  if (command.type === 'patch') {
+    const patchType = typeof command.args?.type === 'string' ? command.args.type.trim() : '';
+    return patchType ? `patch-${patchType}` : 'patch';
+  }
+  return command.type;
 }
 
 function getTerminalEvent(result: BrowserFormatMatrixRunJsonResult): RomWeaverRunJsonEvent {
