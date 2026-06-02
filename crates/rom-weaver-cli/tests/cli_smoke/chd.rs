@@ -497,14 +497,14 @@ fn chd_extract_split_bin_forces_per_track_outputs_and_reports_emitted_files() {
         .as_array()
         .expect("emitted_files array");
     assert_eq!(emitted.len(), 3);
-    assert_emitted_file(&extract_json, out_dir.child("disc.cue").path(), Some("cue"));
+    assert_emitted_file(extract_json, out_dir.child("disc.cue").path(), Some("cue"));
     assert_emitted_file(
-        &extract_json,
+        extract_json,
         out_dir.child("disc.track01.bin").path(),
         Some("bin"),
     );
     assert_emitted_file(
-        &extract_json,
+        extract_json,
         out_dir.child("disc.track02.bin").path(),
         Some("bin"),
     );

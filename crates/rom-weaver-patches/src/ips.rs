@@ -185,10 +185,12 @@ impl PatchHandler for IpsPatchHandler {
         let (execution, create_result) = if planned_execution.used_parallelism {
             let (execution, pool) = context.build_pool(thread_capability)?;
             let create_result = create_ips_patch_parallel(
-                &request.original,
-                original_len,
-                &request.modified,
-                modified_len,
+                crate::PatchCreateSources {
+                    original_path: &request.original,
+                    original_len,
+                    modified_path: &request.modified,
+                    modified_len,
+                },
                 &pool,
                 &mut output,
                 context,
@@ -458,12 +460,12 @@ fn parse_ips_bytes(bytes: &[u8], flavor: IpsFlavor) -> Result<ParsedIpsPatch> {
                 },
             };
 
-            if let Some(size) = truncate_size {
-                if max_written_end > size {
-                    return Err(RomWeaverError::Validation(format!(
-                        "IPS record exceeded declared output size {size}"
-                    )));
-                }
+            if let Some(size) = truncate_size
+                && max_written_end > size
+            {
+                return Err(RomWeaverError::Validation(format!(
+                    "IPS record exceeded declared output size {size}"
+                )));
             }
 
             return Ok(ParsedIpsPatch {
@@ -657,15 +659,18 @@ fn create_ips_patch_streaming(
 }
 
 fn create_ips_patch_parallel(
-    original_path: &Path,
-    original_len: u64,
-    modified_path: &Path,
-    modified_len: u64,
+    sources: crate::PatchCreateSources,
     pool: &SharedThreadPool,
     output: &mut impl Write,
     context: &OperationContext,
     flavor: IpsFlavor,
 ) -> Result<IpsCreateResult> {
+    let crate::PatchCreateSources {
+        original_path,
+        original_len,
+        modified_path,
+        modified_len,
+    } = sources;
     if crate::patches_reads_source_on_main_thread() {
         let combined = original_len.saturating_add(modified_len);
         if combined > crate::IN_MEMORY_APPLY_LIMIT_BYTES {
@@ -889,11 +894,11 @@ fn merge_ips_diff_runs(chunk_runs: Vec<Vec<IpsDiffRun>>) -> Result<Vec<IpsDiffRu
     let mut merged = Vec::<IpsDiffRun>::new();
     for runs in chunk_runs {
         for run in runs {
-            if let Some(last) = merged.last_mut() {
-                if last.end()? == run.offset {
-                    last.bytes.extend_from_slice(&run.bytes);
-                    continue;
-                }
+            if let Some(last) = merged.last_mut()
+                && last.end()? == run.offset
+            {
+                last.bytes.extend_from_slice(&run.bytes);
+                continue;
             }
             merged.push(run);
         }
@@ -1089,8 +1094,8 @@ fn build_chunk_tasks(
             RomWeaverError::Validation("IPS record end exceeded chunk index range".into())
         })?;
 
-        for chunk_index in start_chunk..=end_chunk {
-            record_indexes[chunk_index].push(record_index);
+        for record_index_list in &mut record_indexes[start_chunk..=end_chunk] {
+            record_index_list.push(record_index);
         }
     }
 

@@ -53,6 +53,16 @@ use ups::UpsPatchHandler;
 
 pub(crate) const IN_MEMORY_APPLY_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 
+/// The original/modified file pair (with cached lengths) that a parallel/streaming patch-create
+/// pipeline diffs. Groups the four values that otherwise thread through every create helper.
+#[derive(Clone, Copy)]
+pub(crate) struct PatchCreateSources<'a> {
+    pub(crate) original_path: &'a Path,
+    pub(crate) original_len: u64,
+    pub(crate) modified_path: &'a Path,
+    pub(crate) modified_len: u64,
+}
+
 pub(crate) fn can_apply_in_memory(a: u64, b: u64) -> bool {
     a <= IN_MEMORY_APPLY_LIMIT_BYTES && b <= IN_MEMORY_APPLY_LIMIT_BYTES
 }
@@ -60,14 +70,10 @@ pub(crate) fn can_apply_in_memory(a: u64, b: u64) -> bool {
 /// On wasm32, spawned worker threads cannot open OPFS-backed files (Safari iOS
 /// returns os error 44). I/O must happen on the main runner thread; workers receive
 /// in-memory byte slices. Native: the same path is exercised via the env var for tests.
-#[cfg(target_arch = "wasm32")]
+///
+/// Delegates to the shared [`rom_weaver_core::reads_source_on_main_thread`] gate.
 pub(crate) fn patches_reads_source_on_main_thread() -> bool {
-    true
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn patches_reads_source_on_main_thread() -> bool {
-    std::env::var("ROM_WEAVER_PATCH_MAIN_THREAD_READER").as_deref() == Ok("1")
+    rom_weaver_core::reads_source_on_main_thread("ROM_WEAVER_PATCH_MAIN_THREAD_READER")
 }
 
 /// Reads a chunk of bytes from both `original_path` and `modified_path` on the calling

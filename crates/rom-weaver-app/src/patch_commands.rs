@@ -240,9 +240,11 @@ impl CliApp {
             let mut checksum_verification_labels = Vec::new();
             let apply_input = if strip_header {
                 self.emit_running(
-                    "patch-apply",
-                    OperationFamily::Patch,
-                    None,
+                    OperationLabel {
+                        command: "patch-apply",
+                        family: OperationFamily::Patch,
+                        format: None,
+                    },
                     "prepare",
                     "stripping ROM header before patch apply",
                     None,
@@ -273,9 +275,11 @@ impl CliApp {
             };
             if !cached_input_checksums.is_empty() {
                 self.emit_running(
-                    "patch-apply",
-                    OperationFamily::Patch,
-                    None,
+                    OperationLabel {
+                        command: "patch-apply",
+                        family: OperationFamily::Patch,
+                        format: None,
+                    },
                     "prepare",
                     format!(
                         "seeding {} requested input checksum cache value(s)",
@@ -298,9 +302,11 @@ impl CliApp {
             }
             if !expected_input_checksums.is_empty() {
                 self.emit_running(
-                    "patch-apply",
-                    OperationFamily::Patch,
-                    None,
+                    OperationLabel {
+                        command: "patch-apply",
+                        family: OperationFamily::Patch,
+                        format: None,
+                    },
                     "validate",
                     format!(
                         "validating {} requested input checksum(s)",
@@ -424,9 +430,11 @@ impl CliApp {
                 }
 
                 self.emit_running(
-                    "patch-apply",
-                    OperationFamily::Patch,
-                    Some(handler.descriptor().name),
+                    OperationLabel {
+                        command: "patch-apply",
+                        family: OperationFamily::Patch,
+                        format: Some(handler.descriptor().name),
+                    },
                     "apply",
                     if patch_count == 1 {
                         format!("applying patch using {}", handler.descriptor().name)
@@ -488,9 +496,11 @@ impl CliApp {
                 }
                 if !progress_tracker.saw_meaningful_running_progress() {
                     self.emit_running(
-                        "patch-apply",
-                        OperationFamily::Patch,
-                        Some(handler.descriptor().name),
+                        OperationLabel {
+                            command: "patch-apply",
+                            family: OperationFamily::Patch,
+                            format: Some(handler.descriptor().name),
+                        },
                         "apply",
                         if patch_count == 1 {
                             format!("applied patch using {}", handler.descriptor().name)
@@ -514,9 +524,11 @@ impl CliApp {
             let mut raw_ready_output = staged_output.clone();
             if report.status == OperationStatus::Succeeded && requires_compat_finalize {
                 self.emit_running(
-                    "patch-apply",
-                    OperationFamily::Patch,
-                    applied_formats.last().copied(),
+                    OperationLabel {
+                        command: "patch-apply",
+                        family: OperationFamily::Patch,
+                        format: applied_formats.last().copied(),
+                    },
                     "compat",
                     if add_header || repair_checksum {
                         "finalizing compatibility output transforms"
@@ -649,9 +661,11 @@ impl CliApp {
                     .unwrap_or("default")
                     .to_string();
                 self.emit_running(
-                    "patch-apply",
-                    OperationFamily::Patch,
-                    Some(compression_plan.format.as_str()),
+                    OperationLabel {
+                        command: "patch-apply",
+                        family: OperationFamily::Patch,
+                        format: Some(compression_plan.format.as_str()),
+                    },
                     "compress",
                     format!(
                         "compressing patched output as {} (codec={codec_label})",
@@ -808,9 +822,11 @@ impl CliApp {
             format: handler.descriptor().name.to_string(),
         };
         self.emit_running(
-            "patch-create",
-            OperationFamily::Patch,
-            Some(handler.descriptor().name),
+            OperationLabel {
+                command: "patch-create",
+                family: OperationFamily::Patch,
+                format: Some(handler.descriptor().name),
+            },
             "create",
             format!("creating {} patch", handler.descriptor().name),
             Some(0.0),

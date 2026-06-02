@@ -776,9 +776,8 @@ fn collect_ups_chunk_changes_from_bytes(
     let mut pending_xor = Vec::<u8>::new();
     let mut absolute = start;
 
-    for index in 0..target_bytes.len() {
+    for (index, &target_byte) in target_bytes.iter().enumerate() {
         let source_byte = source_bytes.get(index).copied().unwrap_or(0);
-        let target_byte = target_bytes[index];
         if source_byte != target_byte {
             if pending_start.is_none() {
                 pending_start = Some(absolute);

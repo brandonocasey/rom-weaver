@@ -372,12 +372,14 @@ fn apply_dldi_patch_to_file(
         relocate_pointer_range(
             &mut slot,
             patch,
-            DO_TEXT_START,
-            DO_DATA_END,
-            ddmem_start,
-            ddmem_end,
-            relocation,
-            "DLDI text/data",
+            PointerRelocation {
+                start_offset: DO_TEXT_START,
+                end_offset: DO_DATA_END,
+                ddmem_start,
+                ddmem_end,
+                relocation,
+                section_label: "DLDI text/data",
+            },
         )?;
     }
 
@@ -385,12 +387,14 @@ fn apply_dldi_patch_to_file(
         relocate_pointer_range(
             &mut slot,
             patch,
-            DO_GLUE_START,
-            DO_GLUE_END,
-            ddmem_start,
-            ddmem_end,
-            relocation,
-            "DLDI interwork glue",
+            PointerRelocation {
+                start_offset: DO_GLUE_START,
+                end_offset: DO_GLUE_END,
+                ddmem_start,
+                ddmem_end,
+                relocation,
+                section_label: "DLDI interwork glue",
+            },
         )?;
     }
 
@@ -398,12 +402,14 @@ fn apply_dldi_patch_to_file(
         relocate_pointer_range(
             &mut slot,
             patch,
-            DO_GOT_START,
-            DO_GOT_END,
-            ddmem_start,
-            ddmem_end,
-            relocation,
-            "DLDI global offset table",
+            PointerRelocation {
+                start_offset: DO_GOT_START,
+                end_offset: DO_GOT_END,
+                ddmem_start,
+                ddmem_end,
+                relocation,
+                section_label: "DLDI global offset table",
+            },
         )?;
     }
 
@@ -573,16 +579,28 @@ fn relocate_header_pointers(slot: &mut [u8], relocation: i64) -> Result<()> {
     Ok(())
 }
 
-fn relocate_pointer_range(
-    slot: &mut [u8],
-    patch: &[u8],
+/// A DLDI pointer-relocation pass over one driver section: the offset range to walk, the
+/// resident memory bounds (`ddmem_start`/`ddmem_end`), the address delta to apply, and a label
+/// used in validation errors.
+#[derive(Clone, Copy)]
+struct PointerRelocation<'a> {
     start_offset: usize,
     end_offset: usize,
     ddmem_start: i64,
     ddmem_end: i64,
     relocation: i64,
-    section_label: &str,
-) -> Result<()> {
+    section_label: &'a str,
+}
+
+fn relocate_pointer_range(slot: &mut [u8], patch: &[u8], reloc: PointerRelocation) -> Result<()> {
+    let PointerRelocation {
+        start_offset,
+        end_offset,
+        ddmem_start,
+        ddmem_end,
+        relocation,
+        section_label,
+    } = reloc;
     let (start, end) = section_range(patch, start_offset, end_offset, ddmem_start, section_label)?;
     for offset in start..end {
         if offset + 4 > slot.len() {

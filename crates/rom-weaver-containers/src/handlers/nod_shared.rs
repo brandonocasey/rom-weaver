@@ -105,9 +105,10 @@ impl NodHandlerCore {
     }
 
     fn read_options(&self, preloader_threads: usize) -> NodDiscOptions {
-        let mut options = NodDiscOptions::default();
-        options.preloader_threads = preloader_threads;
-        options
+        NodDiscOptions {
+            preloader_threads,
+            ..Default::default()
+        }
     }
 
     fn open_disc_with<E, F>(
@@ -343,12 +344,14 @@ impl NodHandlerCore {
             &mut plan.disc,
             &mut output,
             plan.disc_size,
-            context,
-            "extract",
-            self.format_name(),
-            "extract",
+            &ContainerProgressContext {
+                context,
+                command: "extract",
+                format: self.format_name(),
+                stage: "extract",
+                thread_execution: Some(&plan.execution),
+            },
             &progress_label,
-            Some(&plan.execution),
         )?;
         output.flush()?;
 
@@ -442,8 +445,10 @@ impl NodHandlerCore {
         // block funnels through this single callback on the main thread, so coalescing the
         // per-block writes into larger syscalls keeps the worker threads from stalling on I/O.
         let mut output = BufWriter::new(File::create(output_path)?);
-        let mut process_options = NodProcessOptions::default();
-        process_options.processor_threads = self.negotiated_threads(execution);
+        let process_options = NodProcessOptions {
+            processor_threads: self.negotiated_threads(execution),
+            ..Default::default()
+        };
         let finalization = writer
             .process(
                 |data, processed, total| {
@@ -499,8 +504,10 @@ impl NodHandlerCore {
         })?;
 
         let mut output_bytes = 0_u64;
-        let mut process_options = NodProcessOptions::default();
-        process_options.processor_threads = self.negotiated_threads(execution);
+        let process_options = NodProcessOptions {
+            processor_threads: self.negotiated_threads(execution),
+            ..Default::default()
+        };
         let finalization = writer
             .process(
                 |data, processed, total| {

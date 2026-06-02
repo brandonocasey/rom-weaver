@@ -1,9 +1,16 @@
+/// Identifies the operation a progress event belongs to: the command name, its family, and the
+/// optional format. Grouped so `emit_running` takes one label instead of three positional values.
+#[derive(Clone, Copy)]
+struct OperationLabel<'a> {
+    command: &'a str,
+    family: OperationFamily,
+    format: Option<&'a str>,
+}
+
 impl CliApp {
     fn emit_running(
         &self,
-        command: &str,
-        family: OperationFamily,
-        format: Option<&str>,
+        op: OperationLabel,
         stage: impl Into<String>,
         label: impl Into<String>,
         percent: Option<f32>,
@@ -12,6 +19,12 @@ impl CliApp {
         if !self.emit_progress_events {
             return;
         }
+
+        let OperationLabel {
+            command,
+            family,
+            format,
+        } = op;
 
         let stage = stage.into();
         let label = label.into();

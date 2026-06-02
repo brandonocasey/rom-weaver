@@ -583,8 +583,10 @@ impl ContainerRegistry {
     }
 
     pub fn recommend_compress_format(&self, path: &Path) -> CompressFormatRecommendation {
-        let mut options = NodDiscOptions::default();
-        options.preloader_threads = 0;
+        let options = NodDiscOptions {
+            preloader_threads: 0,
+            ..Default::default()
+        };
         if let Ok(file) = File::open(path)
             && let Ok(disc) = NodDiscReader::new_from_non_cloneable_read(file, &options)
         {
@@ -757,34 +759,32 @@ fn libarchive_open_create_archive(
 
         if let Some(threads) = config.format_threads
             && threads > 1
+            && config.format_compression.is_some()
         {
-            if config.format_compression.is_some() {
-                archive.try_set_format_option(
-                    None,
-                    "threads",
-                    &threads.to_string(),
-                    &format!(
-                        "{} create failed while setting format option `threads`",
-                        config.format_name
-                    ),
-                )?;
-            }
+            archive.try_set_format_option(
+                None,
+                "threads",
+                &threads.to_string(),
+                &format!(
+                    "{} create failed while setting format option `threads`",
+                    config.format_name
+                ),
+            )?;
         }
 
         if let Some(threads) = config.filter_threads
             && threads > 1
+            && let Some(module) = config.filter.module_name()
         {
-            if let Some(module) = config.filter.module_name() {
-                archive.try_set_filter_option(
-                    module,
-                    "threads",
-                    &threads.to_string(),
-                    &format!(
-                        "{} create failed while setting {module}:threads={threads}",
-                        config.format_name
-                    ),
-                )?;
-            }
+            archive.try_set_filter_option(
+                module,
+                "threads",
+                &threads.to_string(),
+                &format!(
+                    "{} create failed while setting {module}:threads={threads}",
+                    config.format_name
+                ),
+            )?;
         }
 
         archive.open_filename(
@@ -935,10 +935,13 @@ fn write_archive_with_libarchive(
             )?);
             if total_input_bytes == 0 {
                 emit_container_step_progress(
-                    context,
-                    "compress",
-                    config.format_name,
-                    "create",
+                    &ContainerProgressContext {
+                        context,
+                        command: "compress",
+                        format: config.format_name,
+                        stage: "create",
+                        thread_execution: Some(execution),
+                    },
                     entry_index.saturating_add(1),
                     total_entries,
                     format!(
@@ -947,7 +950,6 @@ fn write_archive_with_libarchive(
                         entry_index.saturating_add(1),
                         total_entries
                     ),
-                    Some(execution),
                 );
             }
         }
@@ -1086,21 +1088,36 @@ fn emit_container_indeterminate_progress(
     });
 }
 
+/// The stable descriptor of a container progress stream — everything that stays constant across
+/// the per-step/per-byte progress calls of a single create/extract operation. Groups the values
+/// that otherwise thread individually through every progress helper.
+#[derive(Clone, Copy)]
+struct ContainerProgressContext<'a> {
+    context: &'a OperationContext,
+    command: &'a str,
+    format: &'a str,
+    stage: &'a str,
+    thread_execution: Option<&'a ThreadExecution>,
+}
+
 fn emit_container_step_progress(
-    context: &OperationContext,
-    command: &str,
-    format: &str,
-    stage: &str,
+    progress: &ContainerProgressContext,
     completed_steps: usize,
     total_steps: usize,
     label: impl Into<String>,
-    thread_execution: Option<&ThreadExecution>,
 ) {
     if total_steps == 0 {
         return;
     }
     let completed = completed_steps.min(total_steps);
     let percent = (completed as f32 / total_steps as f32) * 100.0;
+    let ContainerProgressContext {
+        context,
+        command,
+        format,
+        stage,
+        thread_execution,
+    } = *progress;
     emit_container_running_progress(
         context,
         command,
@@ -1116,13 +1133,16 @@ fn copy_reader_with_progress<R: Read, W: Write>(
     reader: &mut R,
     writer: &mut W,
     total_bytes: u64,
-    context: &OperationContext,
-    command: &str,
-    format: &str,
-    stage: &str,
+    progress: &ContainerProgressContext,
     label: &str,
-    thread_execution: Option<&ThreadExecution>,
 ) -> Result<u64> {
+    let ContainerProgressContext {
+        context,
+        command,
+        format,
+        stage,
+        thread_execution,
+    } = *progress;
     let buffer_size = copy_progress_buffer_size(total_bytes);
     let mut buffer = vec![0_u8; buffer_size];
     let mut bytes_written = 0_u64;
@@ -1657,14 +1677,16 @@ fn extract_regular_archive_with_libarchive(
                 if total_file_bytes.is_none() {
                     completed = completed.saturating_add(1);
                     emit_container_step_progress(
-                        context,
-                        "extract",
-                        format_name,
-                        "extract",
+                        &ContainerProgressContext {
+                            context,
+                            command: "extract",
+                            format: format_name,
+                            stage: "extract",
+                            thread_execution: Some(&execution),
+                        },
                         completed,
                         total_tasks,
                         format!("extracting `{format_name}` ({completed}/{total_tasks})"),
-                        Some(&execution),
                     );
                 }
             },
@@ -1729,16 +1751,18 @@ fn extract_regular_archive_with_libarchive(
                             if total_file_bytes.is_none() {
                                 completed = completed.saturating_add(1);
                                 emit_container_step_progress(
-                                    &progress_context,
-                                    "extract",
-                                    format_name,
-                                    "extract",
+                                    &ContainerProgressContext {
+                                        context: &progress_context,
+                                        command: "extract",
+                                        format: format_name,
+                                        stage: "extract",
+                                        thread_execution: Some(&progress_execution),
+                                    },
                                     completed,
                                     total_tasks,
                                     format!(
                                         "extracting `{format_name}` ({completed}/{total_tasks})"
                                     ),
-                                    Some(&progress_execution),
                                 );
                             }
                             Ok(())
@@ -1751,25 +1775,24 @@ fn extract_regular_archive_with_libarchive(
                             if let Some(parent) = output_path.parent() {
                                 fs::create_dir_all(parent)?;
                             }
-                            if open_outputs.contains_key(&index) {
-                                Err(RomWeaverError::Validation(format!(
-                                    "{format_name} extract received duplicate start for entry {index} (`{archive_name}`)"
-                                )))
-                            } else {
+                            if let std::collections::btree_map::Entry::Vacant(e) =
+                                open_outputs.entry(index)
+                            {
                                 let writer = BufWriter::new(create_extract_output_file(
                                     &output_path,
                                     request.overwrite,
                                 )?);
-                                open_outputs.insert(
-                                    index,
-                                    LibarchiveOpenExtractOutput {
-                                        archive_name,
-                                        checksum: create_extract_checksum(context)?,
-                                        output_path,
-                                        writer,
-                                    },
-                                );
+                                e.insert(LibarchiveOpenExtractOutput {
+                                    archive_name,
+                                    checksum: create_extract_checksum(context)?,
+                                    output_path,
+                                    writer,
+                                });
                                 Ok(())
+                            } else {
+                                Err(RomWeaverError::Validation(format!(
+                                    "{format_name} extract received duplicate start for entry {index} (`{archive_name}`)"
+                                )))
                             }
                         }
                         LibarchiveExtractOutput::FileData {
@@ -1832,16 +1855,18 @@ fn extract_regular_archive_with_libarchive(
                             if total_file_bytes.is_none() {
                                 completed = completed.saturating_add(1);
                                 emit_container_step_progress(
-                                    &progress_context,
-                                    "extract",
-                                    format_name,
-                                    "extract",
+                                    &ContainerProgressContext {
+                                        context: &progress_context,
+                                        command: "extract",
+                                        format: format_name,
+                                        stage: "extract",
+                                        thread_execution: Some(&progress_execution),
+                                    },
                                     completed,
                                     total_tasks,
                                     format!(
                                         "extracting `{format_name}` ({completed}/{total_tasks})"
                                     ),
-                                    Some(&progress_execution),
                                 );
                             }
                             Ok(())
@@ -1859,9 +1884,7 @@ fn extract_regular_archive_with_libarchive(
                         "parallel {format_name} extract coordinator panicked"
                     ))
                 })?;
-                if let Err(error) = write_result {
-                    return Err(error);
-                }
+                write_result?;
                 producer_result?;
                 if let Some((index, output)) = open_outputs.into_iter().next() {
                     return Err(RomWeaverError::Validation(format!(
@@ -1901,14 +1924,16 @@ fn extract_regular_archive_with_libarchive(
                     if total_file_bytes.is_none() {
                         completed = completed.saturating_add(1);
                         emit_container_step_progress(
-                            &progress_context,
-                            "extract",
-                            format_name,
-                            "extract",
+                            &ContainerProgressContext {
+                                context: &progress_context,
+                                command: "extract",
+                                format: format_name,
+                                stage: "extract",
+                                thread_execution: Some(&progress_execution),
+                            },
                             completed,
                             total_tasks,
                             format!("extracting `{format_name}` ({completed}/{total_tasks})"),
-                            Some(&progress_execution),
                         );
                     }
                 },
@@ -1990,9 +2015,7 @@ where
         let producer_result = producer.join().map_err(|_| {
             RomWeaverError::Validation("parallel decode coordinator panicked".into())
         })?;
-        if let Err(error) = write_result {
-            return Err(error);
-        }
+        write_result?;
         producer_result
     })
 }
@@ -2034,7 +2057,7 @@ fn collect_archive_inputs_from_path(
         });
 
         let mut children = fs::read_dir(source)?.collect::<io::Result<Vec<_>>>()?;
-        children.sort_by(|left, right| left.path().cmp(&right.path()));
+        children.sort_by_key(|left| left.path());
         for child in children {
             let file_type = child.file_type()?;
             if file_type.is_dir() || file_type.is_file() {

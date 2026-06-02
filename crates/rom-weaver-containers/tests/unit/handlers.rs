@@ -388,7 +388,7 @@ mod tests {
             "iso data must align to 2352-byte sectors"
         );
         let mut padded_iso = iso_data.to_vec();
-        if padded_iso.len() % TEST_PBP_BLOCK_BYTES != 0 {
+        if !padded_iso.len().is_multiple_of(TEST_PBP_BLOCK_BYTES) {
             let padded_len = padded_iso.len().div_ceil(TEST_PBP_BLOCK_BYTES) * TEST_PBP_BLOCK_BYTES;
             padded_iso.resize(padded_len, 0);
         }
@@ -3754,7 +3754,7 @@ mod tests {
         let extracted_path = temp_dir.join("extracted.bin");
         let mut unique_hunks = Vec::with_capacity(128 * 4096);
         for hunk_index in 0..128 {
-            unique_hunks.extend(std::iter::repeat(hunk_index as u8).take(4096));
+            unique_hunks.extend(std::iter::repeat_n(hunk_index as u8, 4096));
         }
         let mut payload = Vec::with_capacity(unique_hunks.len() * 4);
         for _ in 0..4 {

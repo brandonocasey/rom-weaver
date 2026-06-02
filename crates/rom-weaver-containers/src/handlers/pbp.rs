@@ -1042,14 +1042,12 @@ impl ContainerHandlerOperations for PbpContainerHandler {
             }
             if write_cue {
                 let cue_path = request.out_dir.join(&output.cue_name);
-                if let Err(error) = self.write_cue_sheet(
+                self.write_cue_sheet(
                     &cue_path,
                     &output.bin_name,
                     &disc.toc_tracks,
                     request.overwrite,
-                ) {
-                    return Err(error);
-                }
+                )?;
                 produced_outputs.push(cue_path);
             }
         }

@@ -1058,10 +1058,8 @@ fn collect_dps_chunk_records_from_bytes(
     let mut pending_data = Vec::<u8>::new();
     let mut absolute = start;
 
-    for index in 0..target_bytes.len() {
-        let equal = source_bytes
-            .get(index)
-            .is_some_and(|s| *s == target_bytes[index]);
+    for (index, &target) in target_bytes.iter().enumerate() {
+        let equal = source_bytes.get(index).is_some_and(|s| *s == target);
         let current_offset = u32::try_from(absolute).map_err(|_| {
             RomWeaverError::Validation("DPS create offset exceeded 32-bit range".into())
         })?;
@@ -1102,7 +1100,7 @@ fn collect_dps_chunk_records_from_bytes(
             if pending_data_start.is_none() {
                 pending_data_start = Some(current_offset);
             }
-            pending_data.push(target_bytes[index]);
+            pending_data.push(target);
         }
         absolute = absolute
             .checked_add(1)

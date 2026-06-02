@@ -18,7 +18,6 @@ use rom_weaver_core::{
     ThreadCapability,
 };
 use serde_json::json;
-use tracing;
 
 const BPS_MAGIC: &[u8; 4] = b"BPS1";
 const BPS_FOOTER_SIZE: usize = 12;
@@ -203,11 +202,13 @@ impl PatchHandler for BpsPatchHandler {
         let output_file = File::create(&request.output)?;
         let mut output = BufWriter::new(output_file);
         let created = create_bps_patch_streaming(
-            &request.original,
-            original_len,
+            crate::PatchCreateSources {
+                original_path: &request.original,
+                original_len,
+                modified_path: &request.modified,
+                modified_len,
+            },
             source_checksum,
-            &request.modified,
-            modified_len,
             &pool,
             execution.used_parallelism,
             &mut output,
@@ -806,27 +807,21 @@ fn apply_patch_actions_in_memory(
 }
 
 fn create_bps_patch_streaming(
-    original_path: &Path,
-    original_len: u64,
+    sources: crate::PatchCreateSources,
     source_checksum: u32,
-    modified_path: &Path,
-    modified_len: u64,
     pool: &SharedThreadPool,
     use_parallel_scan: bool,
     output: &mut impl Write,
     context: &OperationContext,
 ) -> Result<CreatedBpsPatch> {
+    let crate::PatchCreateSources {
+        original_path,
+        original_len,
+        modified_path,
+        modified_len,
+    } = sources;
     if use_parallel_scan {
-        return create_bps_patch_parallel(
-            original_path,
-            original_len,
-            source_checksum,
-            modified_path,
-            modified_len,
-            pool,
-            output,
-            context,
-        );
+        return create_bps_patch_parallel(sources, source_checksum, pool, output, context);
     }
 
     let mut original = BufferedByteStream::new(BufReader::new(File::open(original_path)?));
@@ -1126,15 +1121,18 @@ fn bps_create_chunk_count(modified_len: u64) -> usize {
 }
 
 fn create_bps_patch_parallel(
-    original_path: &Path,
-    original_len: u64,
+    sources: crate::PatchCreateSources,
     source_checksum: u32,
-    modified_path: &Path,
-    modified_len: u64,
     pool: &SharedThreadPool,
     output: &mut impl Write,
     context: &OperationContext,
 ) -> Result<CreatedBpsPatch> {
+    let crate::PatchCreateSources {
+        original_path,
+        original_len,
+        modified_path,
+        modified_len,
+    } = sources;
     if fs::metadata(modified_path)?.len() != modified_len {
         return Err(RomWeaverError::Validation(
             "BPS create modified size changed during processing".into(),

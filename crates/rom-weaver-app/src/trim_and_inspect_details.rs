@@ -1,3 +1,13 @@
+/// The mode/operation settings for a single trim operation, grouped so `trim_file` takes one
+/// request descriptor instead of four positional flags.
+#[derive(Clone, Copy)]
+struct TrimRequest {
+    in_place: bool,
+    dry_run: bool,
+    operation: TrimOperation,
+    kind: TrimInputKind,
+}
+
 impl CliApp {
     fn format_mode_counts(mode_counts: &BTreeMap<&'static str, usize>) -> String {
         if mode_counts.is_empty() {
@@ -20,14 +30,12 @@ impl CliApp {
             .extension()
             .and_then(|value| value.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("iso"))
-        {
-            if let Ok(source_file) = File::options().read(true).open(path) {
+            && let Ok(source_file) = File::options().read(true).open(path) {
                 let source_reader = BufReader::new(source_file);
                 if XdvdfsOffsetWrapper::new(source_reader).is_ok() {
                     return Some(TrimInputKind::Xiso);
                 }
             }
-        }
 
         None
     }
@@ -338,12 +346,15 @@ impl CliApp {
         &self,
         source: &Path,
         destination: &Path,
-        in_place: bool,
-        dry_run: bool,
-        operation: TrimOperation,
-        kind: TrimInputKind,
+        request: TrimRequest,
         context: &OperationContext,
     ) -> Result<NdsTrimOutcome> {
+        let TrimRequest {
+            in_place,
+            dry_run,
+            operation,
+            kind,
+        } = request;
         match kind {
             TrimInputKind::NdsFamily => {
                 Self::trim_nds_file(source, destination, in_place, dry_run, operation)

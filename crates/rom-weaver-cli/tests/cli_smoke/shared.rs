@@ -194,10 +194,7 @@ fn assert_emitted_file(json: &Value, expected_path: &std::path::Path, expected_k
         entry["size_bytes"],
         fs::metadata(expected_path).expect("file metadata").len()
     );
-    match expected_kind {
-        Some(kind) => assert_eq!(entry["kind"], kind),
-        None => {}
-    }
+    if let Some(kind) = expected_kind { assert_eq!(entry["kind"], kind) }
 }
 
 fn label_digest_value<'a>(label: &'a str, key: &str) -> Option<&'a str> {
@@ -509,7 +506,7 @@ fn build_test_pbp_disc_psar(
         "iso data must align to 2352-byte sectors"
     );
     let mut padded_iso = iso_data.to_vec();
-    if padded_iso.len() % TEST_PBP_BLOCK_BYTES != 0 {
+    if !padded_iso.len().is_multiple_of(TEST_PBP_BLOCK_BYTES) {
         let padded_len = padded_iso.len().div_ceil(TEST_PBP_BLOCK_BYTES) * TEST_PBP_BLOCK_BYTES;
         padded_iso.resize(padded_len, 0);
     }

@@ -105,7 +105,7 @@ impl ZipContainerHandler {
             ZipCompressionMethod::Deflated => level,
             ZipCompressionMethod::Bzip2 => level,
             ZipCompressionMethod::Zstd => {
-                level.map(|value| Self::map_zstd_level_to_zip_level(value))
+                level.map(Self::map_zstd_level_to_zip_level)
             }
             _ => None,
         }

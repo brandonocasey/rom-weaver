@@ -490,7 +490,7 @@ fn validate_n64_source(input_path: &Path, expected: &ApsN64Header) -> Result<()>
 fn apply_aps_records_in_memory(
     output_size: u64,
     records: &[ApsRecord],
-    output: &mut Vec<u8>,
+    output: &mut [u8],
 ) -> Result<()> {
     for record in records {
         match record {
@@ -1047,9 +1047,8 @@ fn collect_diff_runs_from_bytes(
     let mut pending_start: Option<u64> = None;
     let mut pending_bytes = Vec::<u8>::new();
 
-    for index in 0..modified_bytes.len() {
+    for (index, &target) in modified_bytes.iter().enumerate() {
         let source = original_bytes.get(index).copied().unwrap_or(0);
-        let target = modified_bytes[index];
         if source == target {
             if !pending_bytes.is_empty() {
                 runs.push(ApsDiffRun {
@@ -1080,11 +1079,11 @@ fn merge_diff_runs(chunk_runs: Vec<Vec<ApsDiffRun>>) -> Result<Vec<ApsDiffRun>> 
     let mut merged = Vec::<ApsDiffRun>::new();
     for runs in chunk_runs {
         for run in runs {
-            if let Some(last) = merged.last_mut() {
-                if last.end()? == run.offset {
-                    last.bytes.extend_from_slice(&run.bytes);
-                    continue;
-                }
+            if let Some(last) = merged.last_mut()
+                && last.end()? == run.offset
+            {
+                last.bytes.extend_from_slice(&run.bytes);
+                continue;
             }
             merged.push(run);
         }
@@ -1126,7 +1125,7 @@ fn encode_runs_as_aps_records(runs: Vec<ApsDiffRun>) -> Result<Vec<ApsRecord>> {
 
 fn decode_description(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
-        .trim_end_matches(|c| c == '\0' || c == ' ')
+        .trim_end_matches(['\0', ' '])
         .to_string()
 }
 

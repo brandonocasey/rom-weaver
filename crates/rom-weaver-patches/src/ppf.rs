@@ -84,18 +84,16 @@ impl PatchHandler for PpfPatchHandler {
             context.patch_checksum_validation() == PatchChecksumValidation::Strict;
         let input_len = fs::metadata(&request.input)?.len();
 
-        if let Some(expected_len) = parsed.expected_input_len {
-            if input_len != expected_len {
-                return Err(RomWeaverError::Validation(format!(
-                    "PPF2 input size invalid; expected {expected_len}, got {input_len}"
-                )));
-            }
+        if let Some(expected_len) = parsed.expected_input_len
+            && input_len != expected_len
+        {
+            return Err(RomWeaverError::Validation(format!(
+                "PPF2 input size invalid; expected {expected_len}, got {input_len}"
+            )));
         }
 
-        if validate_checksums {
-            if let Some(blockcheck) = &parsed.blockcheck {
-                validate_blockcheck(&request.input, blockcheck)?;
-            }
+        if validate_checksums && let Some(blockcheck) = &parsed.blockcheck {
+            validate_blockcheck(&request.input, blockcheck)?;
         }
 
         if let Some(parent) = request.output.parent() {
@@ -804,10 +802,8 @@ fn collect_ppf_chunk_diff_runs_from_bytes(
     let mut pending_len = 0usize;
     let mut absolute = start;
 
-    for index in 0..modified_bytes.len() {
-        let differs = original_bytes
-            .get(index)
-            .is_none_or(|o| *o != modified_bytes[index]);
+    for (index, &target) in modified_bytes.iter().enumerate() {
+        let differs = original_bytes.get(index).is_none_or(|o| *o != target);
         if differs {
             if pending_start.is_none() {
                 pending_start = Some(absolute);
@@ -1567,7 +1563,7 @@ fn should_apply_undo_data_in_memory(bytes: &[u8], records: &[PpfRecord]) -> bool
 fn apply_records_in_memory(
     records: &[PpfRecord],
     use_undo_data: bool,
-    output: &mut Vec<u8>,
+    output: &mut [u8],
 ) -> Result<()> {
     for record in records {
         let payload = if use_undo_data {

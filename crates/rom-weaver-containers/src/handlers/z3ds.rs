@@ -265,24 +265,15 @@ impl<R: Read + Seek> Seek for Z3dsPayloadReader<R> {
     }
 }
 
-/// Whether the threaded z3ds create/extract pipelines must read the source on the calling
-/// (main) thread instead of opening it from spawned worker threads.
+/// Whether the threaded container create/extract pipelines (z3ds, cso) must read the source on
+/// the calling (main) thread instead of opening it from spawned worker threads.
 ///
-/// In the browser/wasm runtime only the main runner thread can open OPFS-backed files; spawned
-/// worker threads cannot `path_open` the OPFS source (the open fails with
-/// `No such file or directory (os error 44)`). Reading on the main thread keeps the CPU-bound
-/// zstd compress/decompress parallel while avoiding worker-thread OPFS access — the same shape
-/// the CHD create/extract paths already use (main does I/O, workers compute).
-#[cfg(target_arch = "wasm32")]
-fn z3ds_reads_source_on_main_thread() -> bool {
-    true
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn z3ds_reads_source_on_main_thread() -> bool {
-    // Native opens the source per worker for read/compute overlap; this escape hatch exercises
-    // the main-thread reader path in tests.
-    std::env::var("ROM_WEAVER_CONTAINER_MAIN_THREAD_READER").as_deref() == Ok("1")
+/// Delegates to the shared [`rom_weaver_core::reads_source_on_main_thread`] gate: always true on
+/// wasm32 (only the main runner thread can open OPFS-backed files; worker `path_open` fails with
+/// `os error 44`), and gated by [`crate::constants::MAIN_THREAD_READER_ENV`] on native so tests
+/// can exercise the main-thread reader path.
+fn container_reads_source_on_main_thread() -> bool {
+    rom_weaver_core::reads_source_on_main_thread(crate::constants::MAIN_THREAD_READER_ENV)
 }
 
 impl Z3dsContainerHandler {
@@ -722,7 +713,7 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
             };
 
             let decode_result: Result<()> = if execution.used_parallelism
-                && z3ds_reads_source_on_main_thread()
+                && container_reads_source_on_main_thread()
             {
                 // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
                 // runner thread, so the compressed payload range is read here into a single shared
@@ -864,7 +855,7 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
 
         let source = input_path.clone();
         let compress_result = if execution.used_parallelism
-            && z3ds_reads_source_on_main_thread()
+            && container_reads_source_on_main_thread()
         {
             // Read-on-main pipeline (browser/wasm): the OPFS source is owned by the main runner
             // thread, so all reads happen here while worker threads run zstd compression in

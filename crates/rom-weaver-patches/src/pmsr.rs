@@ -375,7 +375,7 @@ fn create_pmsr_patch_bytes(original: &[u8], modified: &[u8]) -> Result<CreatedPm
 fn apply_pmsr_records_in_memory(
     output_len: u64,
     records: &[PmsrRecord],
-    output: &mut Vec<u8>,
+    output: &mut [u8],
 ) -> Result<()> {
     for record in records {
         let end = checked_add(
@@ -799,9 +799,8 @@ fn collect_pmsr_records_from_bytes(
     let mut pending_data = Vec::new();
     let mut cursor = start;
 
-    for index in 0..modified_bytes.len() {
+    for (index, &target) in modified_bytes.iter().enumerate() {
         let source = original_bytes.get(index).copied().unwrap_or(0);
-        let target = modified_bytes[index];
         if source == target {
             if !pending_data.is_empty() {
                 records.push(PmsrRecord {
@@ -833,11 +832,11 @@ fn merge_pmsr_records(chunk_records: Vec<Vec<PmsrRecord>>) -> Result<Vec<PmsrRec
     let mut merged = Vec::<PmsrRecord>::new();
     for records in chunk_records {
         for record in records {
-            if let Some(last) = merged.last_mut() {
-                if last.end()? == record.offset {
-                    last.data.extend_from_slice(&record.data);
-                    continue;
-                }
+            if let Some(last) = merged.last_mut()
+                && last.end()? == record.offset
+            {
+                last.data.extend_from_slice(&record.data);
+                continue;
             }
             merged.push(record);
         }

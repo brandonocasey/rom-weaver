@@ -854,7 +854,7 @@ impl ContainerHandlerOperations for CsoContainerHandler {
             bounded_items_for_threads(execution.effective_threads),
         )?;
         let source = request.source.clone();
-        let decode_result = if execution.used_parallelism && z3ds_reads_source_on_main_thread() {
+        let decode_result = if execution.used_parallelism && container_reads_source_on_main_thread() {
             // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
             // runner thread, so the entire compressed cso file is read here once into a shared
             // buffer. Worker threads then decode from that in-memory buffer (never the file).
@@ -1054,7 +1054,7 @@ impl ContainerHandlerOperations for CsoContainerHandler {
             let create_capability = ThreadCapability::parallel(Some(create_tasks.len().max(1)));
             let (execution, pool) = context.build_pool(create_capability)?;
             let source = input.clone();
-            if execution.used_parallelism && z3ds_reads_source_on_main_thread() {
+            if execution.used_parallelism && container_reads_source_on_main_thread() {
                 // Read+write-on-main pipeline (browser/wasm): the OPFS source is owned by the main
                 // runner thread, which reads each task's raw sectors and assembles the final cso
                 // here. Worker threads only run lz4 compression on in-memory buffers and return the
@@ -1072,10 +1072,7 @@ impl ContainerHandlerOperations for CsoContainerHandler {
                     &create_progress_bytes,
                     &create_progress_bucket,
                 );
-                let mut chunks = match chunks_result {
-                    Ok(chunks) => chunks,
-                    Err(error) => return Err(error),
-                };
+                let mut chunks = chunks_result?;
                 chunks.sort_by_key(|chunk| chunk.start_sector);
                 let output_bytes = self.assemble_create_output_in_memory(
                     &request.output,

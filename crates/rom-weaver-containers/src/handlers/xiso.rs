@@ -120,28 +120,32 @@ impl ContainerHandlerOperations for XisoContainerHandler {
                         listed_entries = count;
                         let total_steps = listed_entries.saturating_add(listed_directories);
                         emit_container_step_progress(
-                            context,
-                            "extract",
-                            XISO.name,
-                            "extract",
+                            &ContainerProgressContext {
+                                context,
+                                command: "extract",
+                                format: XISO.name,
+                                stage: "extract",
+                                thread_execution: Some(&execution),
+                            },
                             completed_steps,
                             total_steps,
                             extract_progress_label.as_str(),
-                            Some(&execution),
                         );
                     }
                     xdvdfs::write::img::ProgressInfo::DirCount(count) => {
                         listed_directories = count;
                         let total_steps = listed_entries.saturating_add(listed_directories);
                         emit_container_step_progress(
-                            context,
-                            "extract",
-                            XISO.name,
-                            "extract",
+                            &ContainerProgressContext {
+                                context,
+                                command: "extract",
+                                format: XISO.name,
+                                stage: "extract",
+                                thread_execution: Some(&execution),
+                            },
                             completed_steps,
                             total_steps,
                             extract_progress_label.as_str(),
-                            Some(&execution),
                         );
                     }
                     xdvdfs::write::img::ProgressInfo::DirAdded(_, _)
@@ -149,14 +153,16 @@ impl ContainerHandlerOperations for XisoContainerHandler {
                         completed_steps = completed_steps.saturating_add(1);
                         let total_steps = listed_entries.saturating_add(listed_directories);
                         emit_container_step_progress(
-                            context,
-                            "extract",
-                            XISO.name,
-                            "extract",
+                            &ContainerProgressContext {
+                                context,
+                                command: "extract",
+                                format: XISO.name,
+                                stage: "extract",
+                                thread_execution: Some(&execution),
+                            },
                             completed_steps,
                             total_steps,
                             extract_progress_label.as_str(),
-                            Some(&execution),
                         );
                     }
                     xdvdfs::write::img::ProgressInfo::DiscoveredDirectory(_)

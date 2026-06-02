@@ -377,7 +377,7 @@ fn apply_rejects_md5_mismatch() {
     handler
         .create(
             &PatchCreateRequest {
-                original: original,
+                original,
                 modified,
                 output: patch.clone(),
                 format: "solid".into(),

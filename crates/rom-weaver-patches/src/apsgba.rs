@@ -429,7 +429,7 @@ fn create_apsgba_patch_bytes(source: &[u8], target: &[u8]) -> Result<CreatedApsG
 fn apply_apsgba_patch_in_memory(
     patch: &ParsedApsGbaPatch,
     source: &[u8],
-    output: &mut Vec<u8>,
+    output: &mut [u8],
     validate_checksums: bool,
 ) -> Result<()> {
     let output_len = output.len();

@@ -147,9 +147,11 @@ impl CliApp {
         let suppress_scaffold_percent =
             Self::container_handler_emits_incremental_byte_progress(handler.descriptor().name);
         self.emit_running(
-            "compress",
-            OperationFamily::Container,
-            Some(handler.descriptor().name),
+            OperationLabel {
+                command: "compress",
+                family: OperationFamily::Container,
+                format: Some(handler.descriptor().name),
+            },
             "create",
             format!(
                 "creating {} archive from {} input(s)",
@@ -160,9 +162,11 @@ impl CliApp {
             create_threads.clone(),
         );
         self.emit_running(
-            "compress",
-            OperationFamily::Container,
-            Some(handler.descriptor().name),
+            OperationLabel {
+                command: "compress",
+                family: OperationFamily::Container,
+                format: Some(handler.descriptor().name),
+            },
             "create",
             format!("preparing {} archive build", handler.descriptor().name),
             if suppress_scaffold_percent {
@@ -198,9 +202,11 @@ impl CliApp {
         }
         if report.status == OperationStatus::Succeeded {
             self.emit_running(
-                "compress",
-                OperationFamily::Container,
-                Some(handler.descriptor().name),
+                OperationLabel {
+                    command: "compress",
+                    family: OperationFamily::Container,
+                    format: Some(handler.descriptor().name),
+                },
                 "create",
                 format!("finalizing `{}` archive", handler.descriptor().name),
                 if suppress_scaffold_percent {
@@ -339,9 +345,11 @@ impl CliApp {
             };
 
             self.emit_running(
-                "trim",
-                OperationFamily::Command,
-                Some("nds"),
+                OperationLabel {
+                    command: "trim",
+                    family: OperationFamily::Command,
+                    format: Some("nds"),
+                },
                 operation.stage(),
                 format!(
                     "{} `{}` -> `{output_label}`",
@@ -355,10 +363,12 @@ impl CliApp {
             match self.trim_file(
                 &trim_source.path,
                 &output_path,
-                in_place,
-                dry_run,
-                operation,
-                trim_source.kind,
+                TrimRequest {
+                    in_place,
+                    dry_run,
+                    operation,
+                    kind: trim_source.kind,
+                },
                 &context,
             ) {
                 Ok(outcome) => {
@@ -628,9 +638,11 @@ impl CliApp {
             };
 
             self.emit_running(
-                "batch-header-fixer",
-                OperationFamily::Command,
-                Some("header-fix"),
+                OperationLabel {
+                    command: "batch-header-fixer",
+                    family: OperationFamily::Command,
+                    format: Some("header-fix"),
+                },
                 "fix",
                 format!(
                     "fixing ROM header `{}` -> `{output_label}`",

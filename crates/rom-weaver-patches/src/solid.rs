@@ -178,10 +178,12 @@ impl PatchHandler for SolidPatchHandler {
         };
         let descriptions = build_description_strings(&request.original, &request.output);
         let primitives = build_created_primitives_with_threads_from_paths(
-            &request.original,
-            original_len,
-            &request.modified,
-            modified_len,
+            crate::PatchCreateSources {
+                original_path: &request.original,
+                original_len,
+                modified_path: &request.modified,
+                modified_len,
+            },
             expansion.is_none(),
             &pool,
             execution.used_parallelism,
@@ -937,15 +939,18 @@ fn solid_create_chunk_count(shared_len: u64) -> usize {
 }
 
 fn build_created_primitives_with_threads_from_paths(
-    original_path: &Path,
-    original_len: u64,
-    modified_path: &Path,
-    modified_len: u64,
+    sources: crate::PatchCreateSources,
     include_suffix: bool,
     pool: &SharedThreadPool,
     use_parallel_scan: bool,
     context: &OperationContext,
 ) -> Result<Vec<CreatedPrimitive>> {
+    let crate::PatchCreateSources {
+        original_path,
+        original_len,
+        modified_path,
+        modified_len,
+    } = sources;
     let effective_parallel = use_parallel_scan && !crate::patches_reads_source_on_main_thread();
     let chunks = if effective_parallel {
         collect_created_chunks_parallel_from_paths(

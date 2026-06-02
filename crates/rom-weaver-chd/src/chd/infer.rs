@@ -71,15 +71,14 @@
         }
 
         fn should_auto_infer_single_track_cd(&self, input: &Path) -> bool {
-            match input
-                .extension()
-                .and_then(|value| value.to_str())
-                .map(|value| value.to_ascii_lowercase())
-                .as_deref()
-            {
-                Some("bin") | Some("iso") | None => true,
-                _ => false,
-            }
+            matches!(
+                input
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.to_ascii_lowercase())
+                    .as_deref(),
+                Some("bin") | Some("iso") | None
+            )
         }
 
         fn is_single_track_cd_sector_sized(&self, logical_bytes: u64) -> bool {

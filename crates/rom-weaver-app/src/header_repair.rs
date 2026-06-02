@@ -189,7 +189,9 @@ impl CliApp {
                     file_len,
                     &zeroed_ranges,
                 )?;
-                let mirror_count = (next_power_of_two - base_size) / excess_size;
+                let mirror_count = (next_power_of_two - base_size)
+                    .checked_div(excess_size)
+                    .unwrap_or(0);
                 sum = sum.wrapping_add(excess_sum.wrapping_mul(mirror_count as u32));
             }
             sum
@@ -439,7 +441,7 @@ impl CliApp {
             t6 = t6.wrapping_add(d);
             t3 ^= d;
 
-            let shift = (d & 0x1F) as u32;
+            let shift = d & 0x1F ;
             let rotated = if shift == 0 { d } else { d.rotate_left(shift) };
 
             t5 = t5.wrapping_add(rotated);

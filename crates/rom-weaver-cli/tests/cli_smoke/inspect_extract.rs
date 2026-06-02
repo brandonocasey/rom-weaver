@@ -339,10 +339,10 @@ fn extract_pbp_without_select_emits_all_discs() {
         .as_array()
         .expect("emitted_files array");
     assert_eq!(emitted.len(), 4);
-    assert_emitted_file(&json, out_dir.child("multi.disc01.cue").path(), Some("cue"));
-    assert_emitted_file(&json, out_dir.child("multi.disc01.bin").path(), Some("bin"));
-    assert_emitted_file(&json, out_dir.child("multi.disc02.cue").path(), Some("cue"));
-    assert_emitted_file(&json, out_dir.child("multi.disc02.bin").path(), Some("bin"));
+    assert_emitted_file(json, out_dir.child("multi.disc01.cue").path(), Some("cue"));
+    assert_emitted_file(json, out_dir.child("multi.disc01.bin").path(), Some("bin"));
+    assert_emitted_file(json, out_dir.child("multi.disc02.cue").path(), Some("cue"));
+    assert_emitted_file(json, out_dir.child("multi.disc02.bin").path(), Some("bin"));
     assert_eq!(
         fs::read(out_dir.child("multi.disc01.bin").path()).expect("disc01"),
         disc1

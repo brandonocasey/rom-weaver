@@ -145,9 +145,11 @@ impl CliApp {
                 parent: None,
             };
             self.emit_running(
-                "extract",
-                OperationFamily::Container,
-                Some(handler.descriptor().name),
+                OperationLabel {
+                    command: "extract",
+                    family: OperationFamily::Container,
+                    format: Some(handler.descriptor().name),
+                },
                 "nested-extract",
                 format!("extracting nested archive `{}`", source.display()),
                 None,

@@ -883,80 +883,80 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 self.truncate(args[0])?;
                 Ok(StepControl::Continue)
             }
-            0x20 | 0x21 | 0x22 | 0x23 => {
+            0x20..=0x23 => {
                 self.set_variable(args[0] as u8, args[1].wrapping_add(args[2]));
                 Ok(StepControl::Continue)
             }
-            0x24 | 0x25 | 0x26 | 0x27 => {
+            0x24..=0x27 => {
                 self.set_variable(args[0] as u8, args[1].wrapping_sub(args[2]));
                 Ok(StepControl::Continue)
             }
-            0x28 | 0x29 | 0x2A | 0x2B => {
+            0x28..=0x2B => {
                 self.set_variable(args[0] as u8, args[1].wrapping_mul(args[2]));
                 Ok(StepControl::Continue)
             }
-            0x2C | 0x2D | 0x2E | 0x2F => {
+            0x2C..=0x2F => {
                 if args[2] == 0 {
                     return Err("division by zero".to_string());
                 }
                 self.set_variable(args[0] as u8, args[1] / args[2]);
                 Ok(StepControl::Continue)
             }
-            0x30 | 0x31 | 0x32 | 0x33 => {
+            0x30..=0x33 => {
                 if args[2] == 0 {
                     return Err("division by zero".to_string());
                 }
                 self.set_variable(args[0] as u8, args[1] % args[2]);
                 Ok(StepControl::Continue)
             }
-            0x34 | 0x35 | 0x36 | 0x37 => {
+            0x34..=0x37 => {
                 self.set_variable(args[0] as u8, args[1] & args[2]);
                 Ok(StepControl::Continue)
             }
-            0x38 | 0x39 | 0x3A | 0x3B => {
+            0x38..=0x3B => {
                 self.set_variable(args[0] as u8, args[1] | args[2]);
                 Ok(StepControl::Continue)
             }
-            0x3C | 0x3D | 0x3E | 0x3F => {
+            0x3C..=0x3F => {
                 self.set_variable(args[0] as u8, args[1] ^ args[2]);
                 Ok(StepControl::Continue)
             }
-            0x40 | 0x41 | 0x42 | 0x43 => {
+            0x40..=0x43 => {
                 if args[0] < args[1] {
                     self.jump_opcode(args[2])
                 } else {
                     Ok(StepControl::Continue)
                 }
             }
-            0x44 | 0x45 | 0x46 | 0x47 => {
+            0x44..=0x47 => {
                 if args[0] <= args[1] {
                     self.jump_opcode(args[2])
                 } else {
                     Ok(StepControl::Continue)
                 }
             }
-            0x48 | 0x49 | 0x4A | 0x4B => {
+            0x48..=0x4B => {
                 if args[0] > args[1] {
                     self.jump_opcode(args[2])
                 } else {
                     Ok(StepControl::Continue)
                 }
             }
-            0x4C | 0x4D | 0x4E | 0x4F => {
+            0x4C..=0x4F => {
                 if args[0] >= args[1] {
                     self.jump_opcode(args[2])
                 } else {
                     Ok(StepControl::Continue)
                 }
             }
-            0x50 | 0x51 | 0x52 | 0x53 => {
+            0x50..=0x53 => {
                 if args[0] == args[1] {
                     self.jump_opcode(args[2])
                 } else {
                     Ok(StepControl::Continue)
                 }
             }
-            0x54 | 0x55 | 0x56 | 0x57 => {
+            0x54..=0x57 => {
                 if args[0] != args[1] {
                     self.jump_opcode(args[2])
                 } else {
@@ -1060,7 +1060,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 self.set_variable(variable, 0);
                 Ok(StepControl::Continue)
             }
-            0x6C | 0x6D | 0x6E | 0x6F => {
+            0x6C..=0x6F => {
                 let start = args[0];
                 let len = args[1];
                 let end = (self.current_file_pointer as u64) + (len as u64);
@@ -1088,7 +1088,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 }
                 Ok(StepControl::Continue)
             }
-            0x70 | 0x71 | 0x72 | 0x73 => {
+            0x70..=0x73 => {
                 let mut count = args[0];
                 let value = (args[1] & 0xFF) as u8;
                 if count == 0 {
@@ -1109,7 +1109,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 self.dirty = true;
                 Ok(StepControl::Continue)
             }
-            0x74 | 0x75 | 0x76 | 0x77 => {
+            0x74..=0x77 => {
                 let mut count = args[0];
                 let value = (args[1] & 0xFFFF) as u16;
                 if count == 0 {
@@ -1130,7 +1130,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 self.dirty = true;
                 Ok(StepControl::Continue)
             }
-            0x78 | 0x79 | 0x7A | 0x7B => {
+            0x78..=0x7B => {
                 let mut count = args[0];
                 let value = args[1];
                 if count == 0 {
@@ -1151,7 +1151,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 self.dirty = true;
                 Ok(StepControl::Continue)
             }
-            0x7C | 0x7D | 0x7E | 0x7F => {
+            0x7C..=0x7F => {
                 let start = args[0];
                 let len = args[1];
                 if (self.current_file_pointer as u64) + (len as u64) > u32::MAX as u64 {
@@ -1198,7 +1198,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 self.ipspatch_opcode(args[0] as u8, args[1])?;
                 Ok(StepControl::Continue)
             }
-            0x88 | 0x89 | 0x8A | 0x8B => {
+            0x88..=0x8B => {
                 let position = self.calculate_real_stack_position(args[0])?;
                 self.top_frame_mut().stack[position] = args[1];
                 Ok(StepControl::Continue)
@@ -1245,7 +1245,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 self.update_current_file_pointer(value);
                 Ok(StepControl::Continue)
             }
-            0x94 | 0x95 | 0x96 | 0x97 => self.bsppatch_opcode(args[0] as u8, args[1], args[2]),
+            0x94..=0x97 => self.bsppatch_opcode(args[0] as u8, args[1], args[2]),
             0x98 => {
                 let address_var = args[1] as u8;
                 let address = self.get_variable(address_var);
@@ -1360,7 +1360,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 self.set_variable(args[0] as u8, self.get_variable(args[1] as u8));
                 Ok(StepControl::Continue)
             }
-            0xB0 | 0xB1 | 0xB2 | 0xB3 => {
+            0xB0..=0xB3 => {
                 let variable = args[0] as u8;
                 let carry = args[1] as u8;
                 let first = args[2];
@@ -1374,7 +1374,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 }
                 Ok(StepControl::Continue)
             }
-            0xB4 | 0xB5 | 0xB6 | 0xB7 => {
+            0xB4..=0xB7 => {
                 let variable = args[0] as u8;
                 let borrow = args[1] as u8;
                 let first = args[2];
@@ -1387,7 +1387,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 }
                 Ok(StepControl::Continue)
             }
-            0xB8 | 0xB9 | 0xBA | 0xBB => {
+            0xB8..=0xBB => {
                 let low_var = args[0] as u8;
                 let high_var = args[1] as u8;
                 let wide = (args[2] as u64) * (args[3] as u64);
@@ -1399,7 +1399,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 }
                 Ok(StepControl::Continue)
             }
-            0xBC | 0xBD | 0xBE | 0xBF => {
+            0xBC..=0xBF => {
                 let low_var = args[0] as u8;
                 let high_var = args[1] as u8;
                 let first = args[2] as u64;

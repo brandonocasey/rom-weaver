@@ -1,3 +1,37 @@
+/// The destination and selection settings for an extract-with-interactive-fallback call,
+/// grouped so the helper takes one descriptor instead of six positional arguments.
+#[derive(Clone, Copy)]
+struct SelectionExtract<'a> {
+    out_dir: &'a Path,
+    selections: &'a [String],
+    split_bin: bool,
+    ignore_common_files: bool,
+    overwrite: bool,
+    source_label: &'a str,
+}
+
+/// Identifies the inner payload selected from a tar stream for the streamed-checksum fast path.
+#[derive(Clone, Copy)]
+struct TarStreamCandidate<'a> {
+    tar_format: &'a str,
+    candidate_name: &'a str,
+    candidate_index: usize,
+}
+
+/// The checksum command's stream/auto-extract option flags, grouped so the streaming-checksum
+/// helpers take one descriptor instead of threading eight individual arguments.
+#[derive(Clone, Copy)]
+struct ChecksumStreamOptions<'a> {
+    algo: &'a [String],
+    select: &'a [String],
+    no_extract: bool,
+    no_ignore: bool,
+    strip_header: bool,
+    no_trim_fix: bool,
+    start: Option<u64>,
+    length: Option<u64>,
+}
+
 impl CliApp {
     fn new(
         reporter: Arc<dyn ProgressSink>,
@@ -54,9 +88,11 @@ impl CliApp {
         let inspect_recommendation = self.inspect_compress_recommendation(&source);
 
         self.emit_running(
-            "inspect",
-            OperationFamily::Command,
-            None,
+            OperationLabel {
+                command: "inspect",
+                family: OperationFamily::Command,
+                format: None,
+            },
             "probe",
             format!("probing handlers for `{}`", source.display()),
             Some(0.0),
@@ -65,9 +101,11 @@ impl CliApp {
 
         if let Some(handler) = self.containers.probe(&source) {
             self.emit_running(
-                "inspect",
-                OperationFamily::Container,
-                Some(handler.descriptor().name),
+                OperationLabel {
+                    command: "inspect",
+                    family: OperationFamily::Container,
+                    format: Some(handler.descriptor().name),
+                },
                 "inspect",
                 format!("inspecting `{}`", source.display()),
                 Some(0.0),
@@ -88,9 +126,11 @@ impl CliApp {
             let mut listed_entries: Option<Vec<ContainerListEntry>> = None;
             if report.status == OperationStatus::Succeeded && args.list {
                 self.emit_running(
-                    "inspect",
-                    OperationFamily::Container,
-                    Some(handler.descriptor().name),
+                    OperationLabel {
+                        command: "inspect",
+                        family: OperationFamily::Container,
+                        format: Some(handler.descriptor().name),
+                    },
                     "list",
                     format!("listing entries for `{}`", source.display()),
                     None,
@@ -135,9 +175,11 @@ impl CliApp {
 
         if let Some(handler) = self.patches.probe(&source) {
             self.emit_running(
-                "inspect",
-                OperationFamily::Patch,
-                Some(handler.descriptor().name),
+                OperationLabel {
+                    command: "inspect",
+                    family: OperationFamily::Patch,
+                    format: Some(handler.descriptor().name),
+                },
                 "inspect",
                 format!("parsing `{}`", source.display()),
                 Some(0.0),
@@ -307,18 +349,22 @@ impl CliApp {
             Self::container_handler_emits_incremental_byte_progress(handler.descriptor().name);
         let extract_threads = Some(context.plan_threads(handler.capabilities().extract_threads));
         self.emit_running(
-            "extract",
-            OperationFamily::Container,
-            Some(handler.descriptor().name),
+            OperationLabel {
+                command: "extract",
+                family: OperationFamily::Container,
+                format: Some(handler.descriptor().name),
+            },
             "extract",
             format!("extracting `{}`", source.display()),
             Some(0.0),
             extract_threads.clone(),
         );
         self.emit_running(
-            "extract",
-            OperationFamily::Container,
-            Some(handler.descriptor().name),
+            OperationLabel {
+                command: "extract",
+                family: OperationFamily::Container,
+                format: Some(handler.descriptor().name),
+            },
             "extract",
             format!("preparing extraction for `{}`", source.display()),
             if suppress_scaffold_percent {
@@ -332,12 +378,14 @@ impl CliApp {
             .extract_with_selection_fallback(
                 handler.as_ref(),
                 &source,
-                &out_dir,
-                &selections,
-                extract_split_bin,
-                !no_ignore,
-                !no_overwrite,
-                "extract input",
+                SelectionExtract {
+                    out_dir: &out_dir,
+                    selections: &selections,
+                    split_bin: extract_split_bin,
+                    ignore_common_files: !no_ignore,
+                    overwrite: !no_overwrite,
+                    source_label: "extract input",
+                },
                 &context,
             )
             .unwrap_or_else(|error| {
@@ -374,9 +422,11 @@ impl CliApp {
         if report.status == OperationStatus::Succeeded && !no_nested_extract {
             let progress_execution = report.thread_execution.clone();
             self.emit_running(
-                "extract",
-                OperationFamily::Container,
-                Some(handler.descriptor().name),
+                OperationLabel {
+                    command: "extract",
+                    family: OperationFamily::Container,
+                    format: Some(handler.descriptor().name),
+                },
                 "extract",
                 format!("extracting `{}`", source.display()),
                 if suppress_scaffold_percent {
@@ -387,9 +437,11 @@ impl CliApp {
                 progress_execution,
             );
             self.emit_running(
-                "extract",
-                OperationFamily::Container,
-                Some(handler.descriptor().name),
+                OperationLabel {
+                    command: "extract",
+                    family: OperationFamily::Container,
+                    format: Some(handler.descriptor().name),
+                },
                 "nested-extract",
                 "checking nested archives in extracted outputs".to_string(),
                 None,
@@ -423,9 +475,11 @@ impl CliApp {
         if report.status == OperationStatus::Succeeded {
             report = Self::attach_emitted_files_details(report, primary_emitted_files, None);
             self.emit_running(
-                "extract",
-                OperationFamily::Container,
-                Some(handler.descriptor().name),
+                OperationLabel {
+                    command: "extract",
+                    family: OperationFamily::Container,
+                    format: Some(handler.descriptor().name),
+                },
                 "extract",
                 format!("finalizing extracted output from `{}`", source.display()),
                 if suppress_scaffold_percent {
@@ -496,15 +550,20 @@ impl CliApp {
             );
         }
 
-        match self.try_run_checksum_chd_raw_sha1_fast_path(
-            &source,
-            &algo,
-            &select,
+        let checksum_options = ChecksumStreamOptions {
+            algo: &algo,
+            select: &select,
             no_extract,
+            no_ignore,
             strip_header,
             no_trim_fix,
             start,
             length,
+        };
+
+        match self.try_run_checksum_chd_raw_sha1_fast_path(
+            &source,
+            &checksum_options,
             &context,
             thread_execution.clone(),
         ) {
@@ -526,14 +585,7 @@ impl CliApp {
 
         match self.try_run_checksum_tar_stream_auto_extract(
             &source,
-            &algo,
-            &select,
-            no_extract,
-            no_ignore,
-            no_trim_fix,
-            strip_header,
-            start,
-            length,
+            &checksum_options,
             &context,
             thread_execution.clone(),
         ) {
@@ -555,12 +607,7 @@ impl CliApp {
 
         if let Some(stream_format) = self.select_streamed_checksum_auto_extract_format(
             &source,
-            &select,
-            no_extract,
-            no_trim_fix,
-            strip_header,
-            start,
-            length,
+            &checksum_options,
         ) {
             return self.finish(
                 "checksum",
@@ -618,9 +665,11 @@ impl CliApp {
         } = resolved;
 
         self.emit_running(
-            "checksum",
-            OperationFamily::Checksum,
-            Some(self.checksum.name()),
+            OperationLabel {
+                command: "checksum",
+                family: OperationFamily::Checksum,
+                format: Some(self.checksum.name()),
+            },
             "checksum",
             format!("computing {} checksum algorithm(s)", algo.len()),
             Some(0.0),
@@ -637,9 +686,11 @@ impl CliApp {
         let should_auto_trim_fix = !no_trim_fix && !user_requested_range;
         if strip_header {
             self.emit_running(
-                "checksum",
-                OperationFamily::Checksum,
-                Some(self.checksum.name()),
+                OperationLabel {
+                    command: "checksum",
+                    family: OperationFamily::Checksum,
+                    format: Some(self.checksum.name()),
+                },
                 "prepare",
                 "stripping ROM header before checksum",
                 None,
@@ -683,9 +734,11 @@ impl CliApp {
         let checksum_source = resolved_source.clone();
         if should_auto_trim_fix {
             self.emit_running(
-                "checksum",
-                OperationFamily::Checksum,
-                Some(self.checksum.name()),
+                OperationLabel {
+                    command: "checksum",
+                    family: OperationFamily::Checksum,
+                    format: Some(self.checksum.name()),
+                },
                 "prepare",
                 "resolving trim boundary before checksum",
                 None,
@@ -728,9 +781,11 @@ impl CliApp {
             .checksum
             .checksum_report_with_progress(&request, &context, checksum_stage, &mut |progress| {
                 self.emit_running(
-                    "checksum",
-                    OperationFamily::Checksum,
-                    Some(self.checksum.name()),
+                    OperationLabel {
+                        command: "checksum",
+                        family: OperationFamily::Checksum,
+                        format: Some(self.checksum.name()),
+                    },
                     "checksum",
                     format!(
                         "computing {} checksum algorithm(s)",
@@ -789,16 +844,20 @@ impl CliApp {
     fn try_run_checksum_chd_raw_sha1_fast_path(
         &self,
         source: &Path,
-        algo: &[String],
-        select: &[String],
-        no_extract: bool,
-        strip_header: bool,
-        no_trim_fix: bool,
-        start: Option<u64>,
-        length: Option<u64>,
+        options: &ChecksumStreamOptions,
         context: &OperationContext,
         thread_execution: Option<ThreadExecution>,
     ) -> Result<Option<OperationReport>> {
+        let ChecksumStreamOptions {
+            algo,
+            select,
+            no_extract,
+            strip_header,
+            no_trim_fix,
+            start,
+            length,
+            ..
+        } = *options;
         if self.interactive_selection_enabled
             || no_extract
             || strip_header
@@ -880,17 +939,20 @@ impl CliApp {
     fn try_run_checksum_tar_stream_auto_extract(
         &self,
         source: &Path,
-        algo: &[String],
-        select: &[String],
-        no_extract: bool,
-        no_ignore: bool,
-        no_trim_fix: bool,
-        strip_header: bool,
-        start: Option<u64>,
-        length: Option<u64>,
+        options: &ChecksumStreamOptions,
         context: &OperationContext,
         thread_execution: Option<ThreadExecution>,
     ) -> Result<Option<OperationReport>> {
+        let ChecksumStreamOptions {
+            algo,
+            select,
+            no_extract,
+            no_ignore,
+            strip_header,
+            no_trim_fix,
+            start,
+            length,
+        } = *options;
         if no_extract || strip_header || !select.is_empty() || start.is_some() || length.is_some() {
             return Ok(None);
         }
@@ -929,9 +991,11 @@ impl CliApp {
 
         let report = self.run_checksum_tar_stream_auto_extract(
             source,
-            tar_format,
-            &candidate_name,
-            candidate_index,
+            TarStreamCandidate {
+                tar_format,
+                candidate_name: &candidate_name,
+                candidate_index,
+            },
             algo,
             context,
             thread_execution,
@@ -942,13 +1006,16 @@ impl CliApp {
     fn run_checksum_tar_stream_auto_extract(
         &self,
         source: &Path,
-        tar_format: &str,
-        candidate_name: &str,
-        candidate_index: usize,
+        candidate: TarStreamCandidate,
         algo: &[String],
         context: &OperationContext,
         thread_execution: Option<ThreadExecution>,
     ) -> Result<OperationReport> {
+        let TarStreamCandidate {
+            tar_format,
+            candidate_name,
+            candidate_index,
+        } = candidate;
         trace!(
             source = %source.display(),
             tar_format,
@@ -958,9 +1025,11 @@ impl CliApp {
             "running streamed tar checksum auto-extract fast path"
         );
         self.emit_running(
-            "checksum",
-            OperationFamily::Checksum,
-            Some(self.checksum.name()),
+            OperationLabel {
+                command: "checksum",
+                family: OperationFamily::Checksum,
+                format: Some(self.checksum.name()),
+            },
             "prepare",
             format!(
                 "streaming checksum payload `{candidate_name}` from `{}` ({tar_format})",
@@ -987,9 +1056,11 @@ impl CliApp {
                     context,
                     &mut |progress| {
                         self.emit_running(
-                            "checksum",
-                            OperationFamily::Checksum,
-                            Some(self.checksum.name()),
+                            OperationLabel {
+                                command: "checksum",
+                                family: OperationFamily::Checksum,
+                                format: Some(self.checksum.name()),
+                            },
                             "checksum",
                             format!(
                                 "computing {} checksum algorithm(s)",
@@ -1050,13 +1121,17 @@ impl CliApp {
     fn select_streamed_checksum_auto_extract_format(
         &self,
         source: &Path,
-        select: &[String],
-        no_extract: bool,
-        no_trim_fix: bool,
-        strip_header: bool,
-        start: Option<u64>,
-        length: Option<u64>,
+        options: &ChecksumStreamOptions,
     ) -> Option<&'static str> {
+        let ChecksumStreamOptions {
+            select,
+            no_extract,
+            no_trim_fix,
+            strip_header,
+            start,
+            length,
+            ..
+        } = *options;
         if no_extract || strip_header || !select.is_empty() || start.is_some() || length.is_some() {
             return None;
         }
@@ -1100,9 +1175,11 @@ impl CliApp {
             "running streamed checksum auto-extract fast path"
         );
         self.emit_running(
-            "checksum",
-            OperationFamily::Checksum,
-            Some(self.checksum.name()),
+            OperationLabel {
+                command: "checksum",
+                family: OperationFamily::Checksum,
+                format: Some(self.checksum.name()),
+            },
             "prepare",
             format!(
                 "streaming checksum payload from `{}` ({stream_format})",
@@ -1126,9 +1203,11 @@ impl CliApp {
                     context,
                     &mut |progress| {
                         self.emit_running(
-                            "checksum",
-                            OperationFamily::Checksum,
-                            Some(self.checksum.name()),
+                            OperationLabel {
+                                command: "checksum",
+                                family: OperationFamily::Checksum,
+                                format: Some(self.checksum.name()),
+                            },
                             "checksum",
                             format!(
                                 "computing {} checksum algorithm(s)",
@@ -1332,9 +1411,11 @@ impl CliApp {
             }
 
             self.emit_running(
-                labels.command,
-                labels.family,
-                Some(handler.descriptor().name),
+                OperationLabel {
+                    command: labels.command,
+                    family: labels.family,
+                    format: Some(handler.descriptor().name),
+                },
                 "prepare",
                 format!(
                     "extracting {} payload from `{}`",
@@ -1350,12 +1431,14 @@ impl CliApp {
             self.extract_with_selection_fallback(
                 handler.as_ref(),
                 &current_source,
-                &out_dir,
-                select,
-                false,
-                false,
-                true,
-                labels.source_label,
+                SelectionExtract {
+                    out_dir: &out_dir,
+                    selections: select,
+                    split_bin: false,
+                    ignore_common_files: false,
+                    overwrite: true,
+                    source_label: labels.source_label,
+                },
                 context,
             )
             .map_err(|error| {
@@ -1527,14 +1610,17 @@ impl CliApp {
         &self,
         handler: &dyn ContainerHandler,
         source: &Path,
-        out_dir: &Path,
-        selections: &[String],
-        split_bin: bool,
-        ignore_common_files: bool,
-        overwrite: bool,
-        source_label: &str,
+        extract: SelectionExtract,
         context: &OperationContext,
     ) -> Result<OperationReport> {
+        let SelectionExtract {
+            out_dir,
+            selections,
+            split_bin,
+            ignore_common_files,
+            overwrite,
+            source_label,
+        } = extract;
         let request = ContainerExtractRequest {
             source: source.to_path_buf(),
             selections: selections.to_vec(),
