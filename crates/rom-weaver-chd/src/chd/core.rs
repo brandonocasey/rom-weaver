@@ -62,9 +62,10 @@
                     .fetch_add(delta_bytes, Ordering::Relaxed)
                     .saturating_add(delta_bytes)
                     .min(total_bytes);
-                maybe_emit_chd_byte_progress(
+                maybe_emit_container_byte_progress(
                     &context,
                     command,
+                    CHD.name,
                     stage,
                     completed,
                     total_bytes,
