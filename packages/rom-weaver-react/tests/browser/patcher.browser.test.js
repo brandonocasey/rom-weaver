@@ -7,6 +7,7 @@ import {
   inertDialogController,
   inertOutputController,
   inertStackController,
+  useLocalApplyPatchFormSession,
 } from "../../src/public/react/patcher-form-session.ts";
 import { createEmptyPatcherUiState } from "../../src/public/react/patcher-ui-state.ts";
 import { resetRomWeaverRunner, warmupRomWeaverRunner } from "../../src/workers/rom-weaver/rom-weaver-runner.ts";
@@ -20,6 +21,8 @@ const MULTI_ROM_ZIP = "tests/fixtures/archives/multi-rom.zip";
 const RVZ_INPUT = "tests/fixtures/browser-generated/game.rvz";
 const CHD_INPUT = "tests/fixtures/browser-generated/game-cd.chd";
 const WRONG_INPUT_BPS = "tests/fixtures/browser-generated/wrong-input-same-size.bps";
+const VALID_BPS = "tests/fixtures/browser-generated/patch-matrix/raw/change.bps";
+const VALID_UPS = "tests/fixtures/browser-generated/patch-matrix/raw/change.ups";
 
 let mountedRoot = null;
 
@@ -128,6 +131,92 @@ const waitForApplyOutcome = async () => {
     if (canTriggerApply && !hasStagingProgress()) applyButton.click();
     return null;
   }, 60000);
+};
+
+const createChecksumOverrideHarnessElement = (applyPatchesSpy, stagedPatchInfoOverrides = {}) => {
+  const inputFile = new File([new Uint8Array([0, 1, 2, 3])], "game.bin", {
+    type: "application/octet-stream",
+  });
+  const patchFile = new File([new Uint8Array([0x42, 0x50, 0x53, 0x31])], "change.bps", {
+    type: "application/octet-stream",
+  });
+  const stagedInputInfo = {
+    checksums: {
+      crc32: "00000000",
+      md5: "d41d8cd98f00b204e9800998ecf8427e",
+      sha1: "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+    },
+    fileName: "game.bin",
+    id: "input-1",
+    order: 0,
+    parentCompressions: [
+      {
+        decompressionTimeMs: 5,
+        fileName: "roms.zip",
+        outputSize: 4096,
+        sourceSize: 8192,
+      },
+    ],
+    size: 4096,
+    sourceSize: 4096,
+  };
+  const stagedPatchInfo = {
+    checksumPreflightMismatch: true,
+    fileName: "change.bps",
+    id: "patch-1",
+    order: 0,
+    parentCompressions: [
+      {
+        decompressionTimeMs: 7,
+        fileName: "patches.7z",
+        outputSize: 4096,
+        sourceSize: 16384,
+      },
+    ],
+    size: 4096,
+    sourceSize: 4096,
+    targetLabel: "Target: game.bin",
+    validationActualValue: "size=4 B, crc32=00000000",
+    validationLabel: "Expected",
+    validationMessage: "Actual input",
+    validationState: "invalid",
+    validationValues: ["size=4.00 KiB (4096 B)", "min_size=1.00 KiB (1024 B)", "crc32=deadbeef"],
+    ...stagedPatchInfoOverrides,
+  };
+  const Harness = () => {
+    const { localNoticeController, localOutputController, localStackController, localUiController } =
+      useLocalApplyPatchFormSession({
+        applyPatches: applyPatchesSpy,
+        applyReady: true,
+        defaultSettings: {
+          output: {
+            compression: "none",
+          },
+          validation: {
+            requireInputChecksumMatch: true,
+          },
+        },
+        downloadOutput: () => undefined,
+        inputs: [inputFile],
+        patches: [patchFile],
+        stageInput: async (_snapshot, handlers) => {
+          handlers.onState(stagedInputInfo);
+          handlers.onChecksum(stagedInputInfo);
+          return [stagedInputInfo];
+        },
+        stagePatches: async () => [stagedPatchInfo],
+      });
+    return createElement(ApplyWorkflowFormView, {
+      controllers: {
+        dialog: inertDialogController,
+        notice: localNoticeController,
+        output: localOutputController,
+        patchStack: localStackController,
+        ui: localUiController,
+      },
+    });
+  };
+  return createElement(Harness);
 };
 
 const clickCandidateSelectionOption = async (label) => {
@@ -1079,7 +1168,7 @@ test("output compression selector keeps expected apply options", async () => {
   expect(document.getElementById("rom-weaver-select-output-format")?.value).toBe("zip");
 });
 
-test("runtime failures surface actionable error messaging", async () => {
+test("strict checksum mismatch blocks apply until override is checked", async () => {
   mount(
     createElement(ApplyPatchForm, {
       defaultSettings: {
@@ -1095,11 +1184,182 @@ test("runtime failures surface actionable error messaging", async () => {
   selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
   selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(WRONG_INPUT_BPS));
 
+  const checksumOverrideCheckbox = await waitForState(() => {
+    const checkbox = document.getElementById("rom-weaver-checkbox-checksum-override");
+    return checkbox instanceof HTMLInputElement ? checkbox : null;
+  }, 60000);
+  expect(checksumOverrideCheckbox).toBeInstanceOf(HTMLInputElement);
+  await expect
+    .poll(() => document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation.invalid"), {
+      timeout: 60000,
+    })
+    .not.toBeNull();
+  await expect
+    .poll(() => document.getElementById("rom-weaver-button-apply") instanceof HTMLButtonElement, {
+      timeout: 30000,
+    })
+    .toBe(true);
+  const applyButton = document.getElementById("rom-weaver-button-apply");
+  expect(applyButton).toBeInstanceOf(HTMLButtonElement);
+  expect(applyButton.disabled).toBe(true);
+
+  checksumOverrideCheckbox.click();
   await waitForApplyButtonEnabled();
   await clickApplyButton();
+  await expect.poll(() => checksumOverrideCheckbox.checked, { timeout: 30000 }).toBe(false);
 
   const applyState = await waitForApplyOutcome();
   expect(applyState).not.toBeNull();
   expect(applyState?.kind).toBe("error");
   expect("errorText" in (applyState || {}) ? applyState.errorText : "").toMatch(/(checksum|mismatch|failed|invalid)/i);
+});
+
+test("source-check patch formats report runtime patch validation success", async () => {
+  for (const patchPath of [VALID_BPS, VALID_UPS]) {
+    mount(
+      createElement(ApplyPatchForm, {
+        defaultSettings: {
+          output: {
+            compression: "none",
+          },
+        },
+      }),
+    );
+
+    await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+
+    selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
+    selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(patchPath));
+
+    const validation = await waitForState(() => {
+      const element = document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation.valid");
+      if (!(element instanceof HTMLElement)) return null;
+      return /patch validation passed/i.test(element.textContent || "") ? element : null;
+    }, 60000);
+    expect(validation).toBeInstanceOf(HTMLElement);
+    expect(validation.textContent).toMatch(/patch validation passed/i);
+  }
+});
+
+test("checksum override dispatch uses one-shot validation relax", async () => {
+  const applyPatchesSpy = vi.fn(async () => {
+    throw new Error("forced apply failure");
+  });
+  mount(createChecksumOverrideHarnessElement(applyPatchesSpy));
+
+  await expect
+    .poll(() => document.getElementById("rom-weaver-button-apply") instanceof HTMLButtonElement, { timeout: 30000 })
+    .toBe(true);
+  const applyButton = document.getElementById("rom-weaver-button-apply");
+  expect(applyButton).toBeInstanceOf(HTMLButtonElement);
+  expect(applyButton.disabled).toBe(true);
+
+  const checksumOverrideCheckbox = await waitForState(() => {
+    const checkbox = document.getElementById("rom-weaver-checkbox-checksum-override");
+    return checkbox instanceof HTMLInputElement ? checkbox : null;
+  }, 30000);
+  expect(checksumOverrideCheckbox).toBeInstanceOf(HTMLInputElement);
+  checksumOverrideCheckbox.click();
+
+  await expect
+    .poll(() => document.getElementById("rom-weaver-button-apply") instanceof HTMLButtonElement, { timeout: 30000 })
+    .toBe(true);
+  await expect.poll(() => applyButton.disabled, { timeout: 30000 }).toBe(false);
+  applyButton.click();
+
+  await expect.poll(() => applyPatchesSpy.mock.calls.length, { timeout: 30000 }).toBe(1);
+  await expect.poll(() => checksumOverrideCheckbox.checked, { timeout: 30000 }).toBe(false);
+  const callInput = applyPatchesSpy.mock.calls[0]?.[0];
+  expect(callInput?.options?.validation?.requireInputChecksumMatch).toBe(false);
+});
+
+test("expected validation sizes use byte tooltips and hide legacy actual input text", async () => {
+  mount(createChecksumOverrideHarnessElement(vi.fn(async () => undefined)));
+
+  const sizeValidationCode = await waitForState(() => {
+    const code = document.querySelector(
+      "#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation-required code",
+    );
+    return code instanceof HTMLElement ? code : null;
+  }, 30000);
+  expect(sizeValidationCode).toBeInstanceOf(HTMLElement);
+  expect(sizeValidationCode?.textContent?.trim()).toBe("size=4.00 KiB");
+  expect(sizeValidationCode?.getAttribute("data-size-bytes")).toBe("4096 B");
+  expect(sizeValidationCode?.className).toMatch(/underline/);
+  expect(sizeValidationCode?.getAttribute("aria-expanded")).toBe("false");
+  sizeValidationCode?.click();
+  await expect.poll(() => sizeValidationCode?.getAttribute("aria-expanded"), { timeout: 30000 }).toBe("true");
+  await expect
+    .poll(() => {
+      const tooltip = sizeValidationCode?.parentElement?.querySelector("[role='tooltip']");
+      return tooltip?.getAttribute("aria-hidden");
+    }, { timeout: 30000 })
+    .toBe("false");
+  sizeValidationCode?.click();
+  await expect.poll(() => sizeValidationCode?.getAttribute("aria-expanded"), { timeout: 30000 }).toBe("false");
+  await expect
+    .poll(() => {
+      const tooltip = sizeValidationCode?.parentElement?.querySelector("[role='tooltip']");
+      return tooltip?.getAttribute("aria-hidden");
+    }, { timeout: 30000 })
+    .toBe("true");
+  const minSizeValidationCode = Array.from(
+    document.querySelectorAll("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation-required code"),
+  ).find((entry) => entry.textContent?.trim().startsWith("min_size="));
+  expect(minSizeValidationCode).toBeInstanceOf(HTMLElement);
+  expect(minSizeValidationCode?.className).not.toMatch(/underline/);
+  expect(minSizeValidationCode?.getAttribute("data-size-bytes")).toBeNull();
+  await expect
+    .poll(
+      () =>
+        document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file span[data-size-bytes='8192 B']"),
+      { timeout: 30000 },
+    )
+    .not.toBeNull();
+  const inputTimingLabel = Array.from(
+    document.querySelectorAll("#rom-weaver-list-input-stack .rom-weaver-input-stack-file span"),
+  ).find((entry) => entry.textContent?.trim().startsWith("time:"));
+  expect(inputTimingLabel).toBeInstanceOf(HTMLElement);
+  expect(inputTimingLabel?.className).not.toMatch(/underline/);
+  expect(inputTimingLabel?.getAttribute("data-size-bytes")).toBeNull();
+  await expect
+    .poll(
+      () =>
+        document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file span[data-size-bytes='16384 B']"),
+      { timeout: 30000 },
+    )
+    .not.toBeNull();
+  const patchRowSize = document.querySelector(
+    "#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file span[data-size-bytes='16384 B']",
+  );
+  expect(patchRowSize).toBeInstanceOf(HTMLElement);
+  patchRowSize?.click();
+  await expect.poll(() => patchRowSize?.getAttribute("aria-expanded"), { timeout: 30000 }).toBe("true");
+
+  const statusText =
+    document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation-status")?.textContent || "";
+  expect(statusText).not.toMatch(/actual input/i);
+  expect(statusText).not.toMatch(/crc32=/i);
+});
+
+test("patch stack mentions when patch validation passed", async () => {
+  mount(
+    createChecksumOverrideHarnessElement(
+      vi.fn(async () => undefined),
+      {
+        checksumPreflightMismatch: false,
+        validationActualValue: "",
+        validationLabel: "Validation",
+        validationMessage: "Patch validation passed",
+        validationState: "valid",
+        validationValues: ["dry-run apply"],
+      },
+    ),
+  );
+
+  const validation = await waitForState(() => {
+    const element = document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation.valid");
+    return element instanceof HTMLElement ? element : null;
+  }, 30000);
+  expect(validation.textContent).toMatch(/patch validation passed/i);
 });

@@ -6,6 +6,7 @@ import { formatByteSize } from "../../../presentation/workflow-presentation.ts";
 import type { ArchivePathEntry, PatchStackState } from "../patcher-presentation.ts";
 import { InputProgress } from "../patcher-react-shared.tsx";
 import { cx, patchStackClasses } from "../tailwind-classes";
+import { Size, toFiniteBytes } from "./size.tsx";
 
 type PatchStackController = {
   subscribe: (listener: () => void) => () => void;
@@ -19,14 +20,53 @@ const normalizeArchiveSegments = (archiveFileName: string) =>
     .map((segment) => segment.trim())
     .filter(Boolean);
 
+const HUMAN_SIZE_BYTES_SUFFIX_REGEX = /^(.*)\((\d+)\s*B\)\s*$/;
+const LEGACY_ACTUAL_INPUT_MESSAGE_REGEX = /^actual input$/i;
+const NON_INTERACTIVE_VALIDATION_SIZE_KEYS = new Set(["min size", "min_size", "minimum size", "minimum_source_size"]);
+
+const getValidationKey = (value: string) => {
+  const separatorIndex = value.indexOf("=");
+  if (separatorIndex <= 0) return "";
+  return value.slice(0, separatorIndex).trim().toLowerCase();
+};
+
+const toHumanReadableValueWithBytesTooltip = (value: string) => {
+  const normalized = String(value || "").trim();
+  if (!normalized) return { bytes: undefined, displayValue: "" };
+  const validationKey = getValidationKey(normalized);
+  const nonInteractive = NON_INTERACTIVE_VALIDATION_SIZE_KEYS.has(validationKey);
+  const match = normalized.match(HUMAN_SIZE_BYTES_SUFFIX_REGEX);
+  if (!match) return { bytes: undefined, displayValue: normalized };
+  const displayValue = String(match[1] || "").trim();
+  const bytesValue = String(match[2] || "").trim();
+  return {
+    bytes: nonInteractive ? undefined : toFiniteBytes(bytesValue),
+    displayValue: displayValue || normalized,
+  };
+};
+
+const toPatchValidationStatusMessage = (message: string) => {
+  const normalizedMessage = String(message || "").trim();
+  if (!normalizedMessage) return "";
+  if (LEGACY_ACTUAL_INPUT_MESSAGE_REGEX.test(normalizedMessage)) return "";
+  return normalizedMessage;
+};
+
+const resolveArchiveSizeBytes = (entry: ArchivePathEntry, fallbackSize?: number) =>
+  toFiniteBytes(entry.sourceSize) ?? toFiniteBytes(entry.outputSize) ?? toFiniteBytes(fallbackSize);
+
 const formatArchiveStepDetail = (entry: ArchivePathEntry, fallbackSize?: number) => {
-  const currentSize =
-    formatByteSize(entry.sourceSize) || formatByteSize(entry.outputSize) || formatByteSize(fallbackSize);
+  const sizeBytes = resolveArchiveSizeBytes(entry, fallbackSize);
+  const sizeLabel = formatByteSize(sizeBytes);
   const timing =
     typeof entry.decompressionTimeMs === "number" && Number.isFinite(entry.decompressionTimeMs)
       ? formatTiming(createTiming(entry.decompressionTimeMs))
       : "";
-  return [currentSize, timing ? `time: ${timing}` : ""].filter(Boolean).join(", ");
+  return {
+    bytes: sizeBytes,
+    sizeLabel: sizeLabel || "",
+    timingLabel: timing ? `time: ${timing}` : "",
+  };
 };
 
 const buildArchiveStepDetails = (
@@ -36,19 +76,34 @@ const buildArchiveStepDetails = (
 ) => {
   if (!entries?.length) return [];
   const filteredEntries = entries.filter((entry) => !!entry.fileName);
-  const steps = filteredEntries.map<{ fileName: string; detail: string }>((entry, index) => {
+  const steps = filteredEntries.map<{
+    detailBytes?: number;
+    fileName: string;
+    sizeLabel: string;
+    timingLabel: string;
+  }>((entry, index) => {
     const nextEntry = filteredEntries[index + 1];
     const inferredSize =
       typeof nextEntry?.sourceSize === "number" && Number.isFinite(nextEntry.sourceSize)
         ? nextEntry.sourceSize
         : undefined;
     const detail = formatArchiveStepDetail(entry, inferredSize);
-    return { detail, fileName: entry.fileName };
+    return {
+      detailBytes: detail.bytes,
+      fileName: entry.fileName,
+      sizeLabel: detail.sizeLabel,
+      timingLabel: detail.timingLabel,
+    };
   });
   const lastStep = steps[steps.length - 1];
   if (finalFileName && (!lastStep || lastStep.fileName !== finalFileName)) {
     const finalSize = formatByteSize(finalFileSize);
-    steps.push({ detail: finalSize, fileName: finalFileName });
+    steps.push({
+      detailBytes: toFiniteBytes(finalFileSize),
+      fileName: finalFileName,
+      sizeLabel: finalSize || "",
+      timingLabel: "",
+    });
   }
   return steps;
 };
@@ -64,7 +119,23 @@ const renderArchiveStepDetails = (
   return (
     <div className="space-y-0.5">
       {steps.map((step, index) => {
-        const text = step.detail ? `${step.fileName} (${step.detail})` : step.fileName;
+        const detailParts = [step.sizeLabel, step.timingLabel].filter(Boolean);
+        const detail =
+          detailParts.length > 0 ? (
+            <>
+              {" ("}
+              {step.sizeLabel ? <Size bytes={step.detailBytes} value={step.sizeLabel} /> : null}
+              {step.sizeLabel && step.timingLabel ? ", " : null}
+              {step.timingLabel ? <span>{step.timingLabel}</span> : null}
+              {")"}
+            </>
+          ) : null;
+        const text = (
+          <>
+            {step.fileName}
+            {detail}
+          </>
+        );
         return (
           <div key={`${step.fileName}-${index}`} style={{ paddingLeft: `${index * 0.45}rem` }}>
             {index === lastIndex ? <strong>{text}</strong> : <span>{text}</span>}
@@ -91,10 +162,20 @@ const renderPathWithFile = (
   if (!segments.length) return null;
   if (segments.length === 1) {
     const sizeLabel = formatByteSize(fileSize);
-    const text = sizeLabel ? `${segments[0]} (${sizeLabel})` : segments[0];
-    return <strong>{text}</strong>;
+    return (
+      <>
+        <strong>{segments[0]}</strong>
+        {sizeLabel ? (
+          <>
+            {" "}
+            <Size bytes={fileSize} value={`(${sizeLabel})`} />
+          </>
+        ) : null}
+      </>
+    );
   }
   const lastIndex = segments.length - 1;
+  const sizeLabel = formatByteSize(fileSize);
   return (
     <>
       {segments.map((segment, index) => (
@@ -103,6 +184,12 @@ const renderPathWithFile = (
           {index === lastIndex ? <strong>{segment}</strong> : <span>{segment}</span>}
         </span>
       ))}
+      {sizeLabel ? (
+        <>
+          {" "}
+          <Size bytes={fileSize} value={`(${sizeLabel})`} />
+        </>
+      ) : null}
     </>
   );
 };
@@ -270,19 +357,25 @@ function PatcherPatchStackRows({ controller }: { controller: PatchStackControlle
                 {item.validationValues.map((value, valueIndex) => (
                   <span key={`${item.fileName}-${item.validationLabel}-${value}`}>
                     {valueIndex > 0 ? ", " : null}
-                    <code className={patchStackClasses.validationCode}>{value}</code>
+                    {(() => {
+                      const rendered = toHumanReadableValueWithBytesTooltip(value);
+                      return (
+                        <Size
+                          as="code"
+                          bytes={rendered.bytes}
+                          className={patchStackClasses.validationCode}
+                          value={rendered.displayValue}
+                        />
+                      );
+                    })()}
                   </span>
                 ))}
               </div>
-              <div className="rom-weaver-patch-stack-validation-status">
-                {item.validationMessage}
-                {item.validationActualValue ? (
-                  <>
-                    {": "}
-                    <code className={patchStackClasses.validationCode}>{item.validationActualValue}</code>
-                  </>
-                ) : null}
-              </div>
+              {(() => {
+                const statusMessage = toPatchValidationStatusMessage(item.validationMessage);
+                if (!statusMessage) return null;
+                return <div className="rom-weaver-patch-stack-validation-status">{statusMessage}</div>;
+              })()}
             </div>
           ) : null}
           {item.progress ? (

@@ -1152,7 +1152,7 @@ const useLocalApplyPatchFormSession = ({
           canRemove: !(busy || disabled),
           detailText: patchInfo?.targetLabel || "",
           fileName: patchInfo?.fileName || getBinarySourceFileName(patch, `Patch ${index + 1}`),
-          fileSize: patchInfo?.size ?? getBinarySourceSize(patch) ?? undefined,
+          fileSize: patchInfo?.size ?? patchInfo?.sourceSize ?? getBinarySourceSize(patch) ?? undefined,
           index: index + 1,
           key,
           progress: patchProgressByKey[key] || null,
