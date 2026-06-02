@@ -7,6 +7,7 @@ import { getFileNameWithoutExtension } from "../../lib/path-utils.ts";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
 import { ApplyWorkflow, type BrowserApplyResult, type WorkflowProgress } from "../../platform/browser/browser-api.ts";
 import { getErrorCode } from "../../presentation/errors.ts";
+import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
 import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime.ts";
@@ -104,6 +105,47 @@ const getAutomaticApplyOutputName = (
   return buildPatchedOutputBaseName(inputBase, patchNames);
 };
 
+const formatPatchValidationValue = (label: string, value: number | string | undefined) => {
+  if (value === undefined || value === "") return "";
+  if (label !== "size") return `${label}=${value}`;
+  const numericValue = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  if (!Number.isFinite(numericValue)) return `${label}=${value}`;
+  const bytesLabel = formatByteSize(numericValue);
+  return bytesLabel
+    ? `${label}=${bytesLabel} (${Math.floor(numericValue)} B)`
+    : `${label}=${Math.floor(numericValue)} B`;
+};
+
+const getPatchValidationDetails = (patch: ApplyWorkflowPatchState) => {
+  const requirementValues = [
+    formatPatchValidationValue("size", patch.requirements?.sourceSize),
+    formatPatchValidationValue("crc32", patch.requirements?.sourceCrc32),
+  ].filter(Boolean);
+  const actualValue = [
+    formatPatchValidationValue("size", patch.checksumPreflight?.actualSize),
+    formatPatchValidationValue("crc32", patch.checksumPreflight?.actualCrc32),
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const status = patch.checksumPreflight?.status || (requirementValues.length ? "pending" : "unknown");
+  const message =
+    status === "valid"
+      ? "Actual input"
+      : status === "invalid"
+        ? "Actual input"
+        : status === "pending"
+          ? "Actual input pending"
+          : "Patch does not provide source requirements";
+  return {
+    checksumMismatch: status === "invalid",
+    validationActualValue: actualValue,
+    validationLabel: "Expected",
+    validationMessage: message,
+    validationState: status,
+    validationValues: requirementValues,
+  };
+};
+
 const toPatchStageInfo = (
   patch: ApplyWorkflowPatchState | undefined,
   originalName: string,
@@ -128,8 +170,10 @@ const toPatchStageInfo = (
   } else if (originalName && fileName && originalName !== fileName) {
     archiveName = originalName;
   }
+  const validation = getPatchValidationDetails(patch);
   return {
     archiveName,
+    checksumPreflightMismatch: validation.checksumMismatch,
     decompressionTimeMs: patch.decompressionTimeMs,
     fileName,
     id: patch.id,
@@ -138,6 +182,11 @@ const toPatchStageInfo = (
     size: patch.size,
     sourceSize: patch.sourceSize,
     targetLabel,
+    validationActualValue: validation.validationActualValue,
+    validationLabel: validation.validationLabel,
+    validationMessage: validation.validationMessage,
+    validationState: validation.validationState,
+    validationValues: validation.validationValues,
     wasDecompressed: patch.wasDecompressed,
   };
 };

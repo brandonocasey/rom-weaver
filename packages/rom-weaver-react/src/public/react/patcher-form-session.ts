@@ -60,6 +60,12 @@ type StagedInputInfo = {
   sourceSize?: number;
   splitBinAvailable?: boolean;
   wasDecompressed?: boolean;
+  validationActualValue?: string;
+  validationLabel?: string;
+  validationMessage?: string;
+  validationState?: string;
+  validationValues?: string[];
+  checksumPreflightMismatch?: boolean;
 };
 type ApplyWorkflowStageSnapshot = {
   inputs: BinarySource[];
@@ -613,6 +619,7 @@ const useLocalApplyPatchFormSession = ({
   const [internalInputs, setInternalInputs] = useState(defaultInputs);
   const [internalPatches, setInternalPatches] = useState(defaultPatches);
   const [internalSettings, setInternalSettings] = useState<ApplyPatchFormSettings>(defaultSettings);
+  const [checksumOverrideChecked, setChecksumOverrideChecked] = useState(false);
   const [localState, setLocalState] = useReducer(
     localPatcherSessionStateReducer,
     undefined,
@@ -985,10 +992,18 @@ const useLocalApplyPatchFormSession = ({
   );
   const chdSplitBinVisible = romInputs.some((entry) => entry.splitBinAvailable);
   const chdSplitBinChecked = activeSettings.input?.chdSplitBin !== false;
+  const strictInputChecksumValidation = activeSettings.validation?.requireInputChecksumMatch === true;
+  const hasStrictInputChecksumMismatch =
+    strictInputChecksumValidation && stagedPatchInfos.some((info) => info.checksumPreflightMismatch === true);
+  const strictInputChecksumBlocked = hasStrictInputChecksumMismatch && !checksumOverrideChecked;
   const multiInputOutputError = getMultiInputOutputError(displayedCompression, getLogicalRomInputCount(romInputs));
   const effectiveOutputNoticeMessage = outputErrorMessage || multiInputOutputError;
   const canQueueApply =
-    !!effectiveInputs.length && !multiInputOutputError && applyReady && !(inputStaging || patchStaging);
+    !!effectiveInputs.length &&
+    !multiInputOutputError &&
+    applyReady &&
+    !(inputStaging || patchStaging) &&
+    !strictInputChecksumBlocked;
   const disposeActiveOutput = useCallback(() => {
     const cleanup = activeOutputCleanupRef.current;
     activeOutputCleanupRef.current = null;
@@ -1052,6 +1067,11 @@ const useLocalApplyPatchFormSession = ({
     });
   }, [activePatches, getPatchKey]);
 
+  useEffect(() => {
+    if (hasStrictInputChecksumMismatch) return;
+    setChecksumOverrideChecked(false);
+  }, [hasStrictInputChecksumMismatch]);
+
   const localUiState = useMemo(
     () => ({
       ...createInertState(),
@@ -1060,6 +1080,12 @@ const useLocalApplyPatchFormSession = ({
         disabled: disabled || busy || inputStaging,
         label: "Split BIN tracks",
         visible: chdSplitBinVisible,
+      },
+      checksumOverride: {
+        checked: checksumOverrideChecked,
+        disabled: disabled || busy || inputStaging || patchStaging,
+        label: createInertState().checksumOverride.label,
+        visible: hasStrictInputChecksumMismatch,
       },
       outputNotice: {
         level: "error" as const,
@@ -1097,11 +1123,13 @@ const useLocalApplyPatchFormSession = ({
     [
       activePatches.length,
       busy,
+      checksumOverrideChecked,
       chdSplitBinChecked,
       chdSplitBinVisible,
       disabled,
       effectiveInputs,
       inputStaging,
+      hasStrictInputChecksumMismatch,
       localPatcherSectionTimings,
       effectiveOutputNoticeMessage,
       patchProgress,
@@ -1128,11 +1156,11 @@ const useLocalApplyPatchFormSession = ({
           index: index + 1,
           key,
           progress: patchProgressByKey[key] || null,
-          validationActualValue: "",
-          validationLabel: "",
-          validationMessage: "",
-          validationState: "",
-          validationValues: [],
+          validationActualValue: patchInfo?.validationActualValue || "",
+          validationLabel: patchInfo?.validationLabel || "",
+          validationMessage: patchInfo?.validationMessage || "",
+          validationState: patchInfo?.validationState || "",
+          validationValues: patchInfo?.validationValues || [],
         };
       }),
     }),
@@ -1193,21 +1221,24 @@ const useLocalApplyPatchFormSession = ({
 
   const updateSettings = useCallback(
     (nextSettings: ApplyPatchFormSettings) => {
+      setChecksumOverrideChecked(false);
       invalidateCompletedOutputState();
       if (settings === undefined) setInternalSettings(nextSettings);
       onSettingsChange?.(nextSettings);
     },
-    [invalidateCompletedOutputState, onSettingsChange, settings],
+    [invalidateCompletedOutputState, onSettingsChange, setChecksumOverrideChecked, settings],
   );
   const commitSettings = useCallback(
     (nextSettings: ApplyPatchFormSettings) => {
+      setChecksumOverrideChecked(false);
       if (settings === undefined) setInternalSettings(nextSettings);
       onSettingsChange?.(nextSettings);
     },
-    [onSettingsChange, settings],
+    [onSettingsChange, setChecksumOverrideChecked, settings],
   );
   const updatePatches = useCallback(
     (nextPatches: BinarySource[]) => {
+      setChecksumOverrideChecked(false);
       invalidateCompletedOutputState();
       setPatchInfoByKey((current) => {
         const nextInfoByKey: Record<string, StagedInputInfo> = {};
@@ -1220,7 +1251,7 @@ const useLocalApplyPatchFormSession = ({
       if (patches === undefined) setInternalPatches(nextPatches);
       onPatchesChange?.(nextPatches);
     },
-    [getPatchKey, invalidateCompletedOutputState, onPatchesChange, patches],
+    [getPatchKey, invalidateCompletedOutputState, onPatchesChange, patches, setChecksumOverrideChecked],
   );
   const getStableInputInfo = useCallback(
     (info: StagedInputInfo, sources: BinarySource[]) => {
@@ -1291,6 +1322,7 @@ const useLocalApplyPatchFormSession = ({
   );
   const updateInputs = useCallback(
     (nextInputs: BinarySource[]) => {
+      setChecksumOverrideChecked(false);
       invalidateCompletedOutputState();
       inputStageGenerationRef.current += 1;
       inputProgressGenerationRef.current += 1;
@@ -1335,7 +1367,15 @@ const useLocalApplyPatchFormSession = ({
       });
       return inputStageGenerationRef.current;
     },
-    [effectiveInputs.length, emitSessionTrace, getInputKey, invalidateCompletedOutputState, inputs, onInputsChange],
+    [
+      effectiveInputs.length,
+      emitSessionTrace,
+      getInputKey,
+      invalidateCompletedOutputState,
+      inputs,
+      onInputsChange,
+      setChecksumOverrideChecked,
+    ],
   );
   const syncPatchFiles = useCallback(
     (
@@ -1835,6 +1875,9 @@ const useLocalApplyPatchFormSession = ({
           },
         });
       },
+      setChecksumOverride: (checked: boolean) => {
+        setChecksumOverrideChecked(checked);
+      },
       subscribe: localUiStoreController.subscribe,
       toggleRomInputChecksums: (id: string) => {
         setRomInputs((current) =>
@@ -1855,6 +1898,7 @@ const useLocalApplyPatchFormSession = ({
       emitSessionTrace,
       localUiStoreController,
       romInputs,
+      setChecksumOverrideChecked,
       updateInputs,
       updatePatches,
       updateSettings,
@@ -1898,6 +1942,14 @@ const useLocalApplyPatchFormSession = ({
           return;
         }
         if (!canQueueApply) return;
+        const useChecksumOverride = hasStrictInputChecksumMismatch && checksumOverrideChecked;
+        if (useChecksumOverride) setChecksumOverrideChecked(false);
+        const runtimeValidationSettings = useChecksumOverride
+          ? {
+              ...(activeSettings.validation || {}),
+              requireInputChecksumMatch: false,
+            }
+          : activeSettings.validation;
         const abortController = new AbortController();
         activeAbortControllerRef.current = abortController;
         setBusy(true);
@@ -1972,6 +2024,7 @@ const useLocalApplyPatchFormSession = ({
                 outputName: requestedOutputName,
               },
               signal: abortController.signal,
+              validation: runtimeValidationSettings,
               workers: {
                 ...activeSettings.workers,
                 threads: resolvedWorkerThreads,
@@ -2110,11 +2163,14 @@ const useLocalApplyPatchFormSession = ({
       requestedOutputName,
       activeCompression,
       canQueueApply,
+      checksumOverrideChecked,
       effectiveResolvedOutputName,
       hasPendingDownload,
+      hasStrictInputChecksumMismatch,
       mergeRomInput,
       pendingDownloadFileName,
       setPendingDownloadReadyFileName,
+      setChecksumOverrideChecked,
     ],
   );
   const localNoticeController = useMemo(
