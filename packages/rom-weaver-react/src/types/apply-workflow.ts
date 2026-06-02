@@ -64,6 +64,23 @@ type ApplyWorkflowPatchState = {
   sourceSize?: number;
   wasDecompressed?: boolean;
   warnings: WorkflowWarning[];
+  requirements?: {
+    format?: string;
+    patchCrc32?: string;
+    recordCount?: number;
+    sourceCrc32?: string;
+    sourceSize?: number;
+    targetCrc32?: string;
+    targetSize?: number;
+  };
+  checksumPreflight?: {
+    actualCrc32?: string;
+    actualSize?: number;
+    mismatchReason?: "crc32" | "size" | "size+crc32";
+    requiredCrc32?: string;
+    requiredSize?: number;
+    status: "invalid" | "pending" | "unknown" | "valid";
+  };
 };
 
 type ApplyWorkflowProgressKind = WorkflowProgress["stage"];

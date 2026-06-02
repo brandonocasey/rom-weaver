@@ -12,6 +12,7 @@ import {
   normalizeCodecEntries,
   runRomWeaverChecksumWorker,
   runRomWeaverInspectListWorker,
+  runRomWeaverInspectPatchWorker,
   selectRomWeaverOutputPath,
 } from "../../lib/runtime/rom-weaver-runtime.ts";
 import { assertBrowserBinarySource } from "../../lib/runtime/source-normalization.ts";
@@ -1432,8 +1433,8 @@ const createBrowserCompressionRuntime = (workerIo: RuntimeWorkerIo): WorkflowRun
   return createSharedCompressionRuntime(archiveRuntime, discRuntime);
 };
 
-const createBrowserPatchRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["patch"] =>
-  createSharedPatchRuntime({
+const createBrowserPatchRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["patch"] => {
+  const sharedPatchRuntime = createSharedPatchRuntime({
     invokeApplyPatchWorker: (input, onProgress, onLog) =>
       invokeRomWeaverPatchApplyWorker(input, onProgress, onLog, (outputPath) =>
         removeBrowserVfsOutputPaths(
@@ -1448,6 +1449,32 @@ const createBrowserPatchRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["
     workerIo,
     workerOutputFailureMessage: "Patch worker did not return browser output",
   });
+  return {
+    ...sharedPatchRuntime,
+    inspectPatch: async ({ patch, patchFileName, logLevel, onLog, onProgress }) => {
+      const workerSource = await workerIo.stageSource({
+        fallbackFileName: patchFileName || "patch.bin",
+        pathBucket: "patches",
+        pathPrefix: "inspect-patch",
+        scope: "apply",
+        source: patch,
+        trace: { logLevel, onLog },
+      });
+      try {
+        return await runRomWeaverInspectPatchWorker(
+          {
+            logLevel,
+            sourcePath: workerSource.filePath,
+          },
+          onProgress,
+          onLog,
+        );
+      } finally {
+        await workerSource.cleanup().catch(() => undefined);
+      }
+    },
+  };
+};
 
 const createBrowserRuntime = (): WorkflowRuntime => {
   configureBrowserSourcePrimitives();

@@ -103,6 +103,19 @@ const toBrowserSyncAccessMode = (value: unknown): RomWeaverBrowserSyncAccessMode
 
 const XDELTA_PATCH_FILE_EXTENSION_REGEX = /\.(?:xdelta|vcdiff)$/i;
 const BPS_PATCH_FILE_EXTENSION_REGEX = /\.bps$/i;
+const PATCH_FORMAT_NORMALIZE_REGEX = /[^a-z0-9]+/g;
+
+const normalizePatchFormat = (value: unknown): string => {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase().replace(PATCH_FORMAT_NORMALIZE_REGEX, "");
+};
+
+const isXdeltaPatchFormat = (value: unknown) => {
+  const normalized = normalizePatchFormat(value);
+  return normalized === "xdelta" || normalized === "vcdiff";
+};
+
+const isBpsPatchFormat = (value: unknown) => normalizePatchFormat(value) === "bps";
 
 const isXdeltaPatchPath = (value: unknown) => {
   if (typeof value !== "string") return false;
@@ -120,13 +133,17 @@ const isBpsPatchPath = (value: unknown) => {
 
 const resolvePatchApplyThreadArg = (
   requestedThreadArg: ThreadBudget | null,
-  patchFiles: Array<{ patchFileName?: string; patchFilePath?: string }>,
+  patchFiles: Array<{ patchFileName?: string; patchFilePath?: string; patchFormat?: string }>,
 ) => {
   const hasXdeltaPatch = patchFiles.some((patch) => {
-    return isXdeltaPatchPath(patch.patchFilePath) || isXdeltaPatchPath(patch.patchFileName);
+    return isXdeltaPatchFormat(patch.patchFormat)
+      || isXdeltaPatchPath(patch.patchFilePath)
+      || isXdeltaPatchPath(patch.patchFileName);
   });
   const hasBpsPatch = patchFiles.some((patch) => {
-    return isBpsPatchPath(patch.patchFilePath) || isBpsPatchPath(patch.patchFileName);
+    return isBpsPatchFormat(patch.patchFormat)
+      || isBpsPatchPath(patch.patchFilePath)
+      || isBpsPatchPath(patch.patchFileName);
   });
   if (hasXdeltaPatch) {
     return {
@@ -392,6 +409,54 @@ const getContainerEntriesFromInspect = (result: RomWeaverRunJsonResult): Compres
     });
   }
   return output;
+};
+
+type RomWeaverInspectPatchDetails = {
+  format: string | null;
+  patch_crc32: number | null;
+  record_count: number | null;
+  source_crc32: number | null;
+  source_size: number | null;
+  target_crc32: number | null;
+  target_size: number | null;
+};
+
+const toNullableInt = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value));
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+};
+
+const toNullableUint32 = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value >>> 0;
+  if (typeof value !== "string") return null;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/^0x/, "");
+  if (!normalized) return null;
+  if (/^[0-9a-f]+$/i.test(normalized) && normalized.length <= 8) return Number.parseInt(normalized, 16) >>> 0;
+  if (/^\d+$/.test(normalized)) return Number.parseInt(normalized, 10) >>> 0;
+  return null;
+};
+
+const getPatchDetailsFromInspect = (result: RomWeaverRunJsonResult): RomWeaverInspectPatchDetails => {
+  const terminal = getTerminalEvent(result);
+  const details = asRecord(terminal ? getRomWeaverRunEventDetails(terminal) : null);
+  const patch = asRecord(details?.patch);
+  const formatValue = patch?.format ?? patch?.patch_format ?? details?.format;
+  return {
+    format: typeof formatValue === "string" && formatValue.trim() ? formatValue.trim() : null,
+    patch_crc32: toNullableUint32(patch?.patch_crc32 ?? patch?.patchCrc32),
+    record_count: toNullableInt(patch?.record_count ?? patch?.recordCount),
+    source_crc32: toNullableUint32(patch?.source_crc32 ?? patch?.sourceCrc32),
+    source_size: toNullableInt(patch?.source_size ?? patch?.sourceSize),
+    target_crc32: toNullableUint32(patch?.target_crc32 ?? patch?.targetCrc32),
+    target_size: toNullableInt(patch?.target_size ?? patch?.targetSize),
+  };
 };
 
 const toSimpleProgress = (
@@ -731,6 +796,44 @@ const runRomWeaverInspectListWorker = async (
   return { entries };
 };
 
+const runRomWeaverInspectPatchWorker = async (
+  input: {
+    logLevel?: LogLevel | string;
+    sourcePath: string;
+  },
+  onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
+  onLog?: (log: WorkflowRuntimeLog) => void,
+): Promise<RomWeaverInspectPatchDetails> => {
+  const sourcePath = String(input.sourcePath || "").trim();
+  if (!sourcePath) throw new Error("Patch inspect source path is required");
+  const command: RomWeaverCommand = {
+    args: {
+      source: sourcePath,
+    },
+    type: "inspect",
+  };
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson inspect-patch dispatch", {
+    command,
+    sourcePath,
+  });
+  const result = await runRomWeaverJson(
+    command,
+    toRomWeaverOptions({
+      logLevel: input.logLevel,
+      onEvent: (event) => {
+        const progress = toSimpleProgress(event);
+        if (progress) onProgress?.(progress);
+      },
+      onLog,
+    }),
+  );
+  if (!(result.ok && result.exitCode === 0)) {
+    const failureMessage = getRomWeaverFailureMessage(result, "Patch inspection failed");
+    throw new Error(failureMessage);
+  }
+  return getPatchDetailsFromInspect(result);
+};
+
 const invokeRomWeaverPatchApplyWorker = async (
   input: RuntimePatchApplyWorkerInput,
   onProgress?: (progress: RuntimePatchWorkerProgress) => void,
@@ -1023,5 +1126,6 @@ export {
   resolvePatchApplyThreadArg,
   runRomWeaverChecksumWorker,
   runRomWeaverInspectListWorker,
+  runRomWeaverInspectPatchWorker,
   selectRomWeaverOutputPath,
 };

@@ -99,6 +99,14 @@ const toWorkerSourceRef = (file: PatchFileInstance, fallbackFileName: string): S
   throw new Error(`Patch worker source is not file-backed: ${file.fileName || fallbackFileName || "input.bin"}`);
 };
 
+const getParsedPatchFormatHint = (patch: ParsedPatchLike): string | undefined => {
+  const directFormat = typeof patch?.format === "string" ? patch.format.trim() : "";
+  if (directFormat) return directFormat;
+  if ((patch as { isXdeltaPatch?: unknown })?.isXdeltaPatch === true) return "vcdiff";
+  const constructorFormat = String((patch as { constructor?: { name?: unknown } })?.constructor?.name || "").trim();
+  return constructorFormat || undefined;
+};
+
 const summarizePreparedInputMetrics = (assets: InputAsset[]) => {
   const seen = new Set<string>();
   let inputSourceSize = 0;
@@ -420,6 +428,7 @@ const runApplyWorkflow = async (
               if (!patchFile) throw new Error("Patch worker source was not found");
               return {
                 patchFile: toWorkerSourceRef(patchFile, `patch-${patchIndex + 1}.bin`),
+                patchFormat: getParsedPatchFormatHint(patch),
                 patchFileName: patchFile.fileName || `patch-${patchIndex + 1}.bin`,
               };
             });

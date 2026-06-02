@@ -73,14 +73,28 @@ let confirmationDialogState = createEmptyConfirmationDialogState();
 let renderWebappRootIfReady = () => undefined;
 let resolvePendingConfirmation: ((accepted: boolean) => void) | null = null;
 let vitePageUpdateState = createEmptyVitePageUpdateState();
-let suppressNextViteReloadTimer = false;
 let fileSelectionInProgress = false;
 let fileSelectionTrackerInstalled = false;
-let formInteractionDetected = false;
-let formInteractionTrackerInstalled = false;
+let pageInteractionDetected = false;
+let pageInteractionTrackerInstalled = false;
 const VITE_PAGE_RELOAD_TIMEOUT_MS = 20;
 const WORKFLOW_PROGRESS_SELECTOR = ".rom-weaver-input-progress";
 const VITE_RELOAD_PATTERN = /\blocation\.reload\s*\(/;
+const PAGE_INTERACTION_EVENTS = [
+  "change",
+  "click",
+  "cut",
+  "dragenter",
+  "drop",
+  "focusin",
+  "input",
+  "keydown",
+  "paste",
+  "pointerdown",
+  "submit",
+  "touchstart",
+  "wheel",
+] as const;
 
 const deferViteReload = (payload?: { label?: string; source?: string }) => {
   vitePageUpdateState = createVitePageUpdateState(payload || { source: "vite" });
@@ -222,7 +236,7 @@ const isDocumentHidden = () => {
 };
 
 const shouldDeferViteReload = () =>
-  formInteractionDetected ||
+  pageInteractionDetected ||
   fileSelectionInProgress ||
   hasVisibleWorkflowProgress() ||
   isDocumentHidden() ||
@@ -261,45 +275,29 @@ const installFileSelectionTracker = () => {
   window.addEventListener("focus", () => endSelection());
 };
 
-const getFormControlFromTarget = (target: EventTarget | null): Element | null => {
-  if (!(target instanceof Element)) return null;
-  if (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLSelectElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLButtonElement
-  )
-    return target;
-  return target.closest("input, select, textarea, button");
-};
-
-const installFormInteractionTracker = () => {
-  if (formInteractionTrackerInstalled || typeof document === "undefined") return;
-  formInteractionTrackerInstalled = true;
+const installPageInteractionTracker = () => {
+  if (pageInteractionTrackerInstalled || typeof document === "undefined") return;
+  pageInteractionTrackerInstalled = true;
   const markInteracted = (event: Event) => {
-    if (formInteractionDetected || !event.isTrusted) return;
-    if (!getFormControlFromTarget(event.target)) return;
-    formInteractionDetected = true;
+    if (pageInteractionDetected || !event.isTrusted) return;
+    pageInteractionDetected = true;
   };
-  document.addEventListener("focusin", markInteracted, true);
-  document.addEventListener("click", markInteracted, true);
-  document.addEventListener("input", markInteracted, true);
-  document.addEventListener("change", markInteracted, true);
-  document.addEventListener("keydown", markInteracted, true);
+  for (const eventName of PAGE_INTERACTION_EVENTS) document.addEventListener(eventName, markInteracted, true);
 };
 
 const installViteDirtyReloadGuard = () => {
   if (!(import.meta.hot && typeof window !== "undefined")) return;
-  const guardedSetTimeout = window.setTimeout as typeof window.setTimeout & { __romPatcherDirtyGuard?: boolean };
-  if (guardedSetTimeout.__romPatcherDirtyGuard) return;
+  const guardedSetTimeout = window.setTimeout as typeof window.setTimeout & { __romWeaverViteReloadGuard?: boolean };
+  if (guardedSetTimeout.__romWeaverViteReloadGuard) return;
   const originalSetTimeout = window.setTimeout.bind(window) as typeof window.setTimeout;
   const nextSetTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
-    if (suppressNextViteReloadTimer && isLikelyViteReloadTimer(handler, timeout)) {
+    if (isLikelyViteReloadTimer(handler, timeout) && shouldDeferViteReload()) {
+      deferViteReload({ source: "vite" });
       return originalSetTimeout(() => undefined, 0);
     }
     return originalSetTimeout(handler, timeout, ...args);
-  }) as typeof window.setTimeout & { __romPatcherDirtyGuard?: boolean };
-  nextSetTimeout.__romPatcherDirtyGuard = true;
+  }) as typeof window.setTimeout & { __romWeaverViteReloadGuard?: boolean };
+  nextSetTimeout.__romWeaverViteReloadGuard = true;
   window.setTimeout = nextSetTimeout;
 };
 
@@ -324,10 +322,6 @@ import.meta.hot?.on("rom-weaver:reload-available", (payload) => {
 import.meta.hot?.on("vite:beforeFullReload", (payload) => {
   // Defer full reload to the in-app update guard whenever user work may be at risk.
   if (!shouldDeferViteReload()) return;
-  suppressNextViteReloadTimer = true;
-  queueMicrotask(() => {
-    suppressNextViteReloadTimer = false;
-  });
   deferViteReload({ label: payload?.path, source: "vite" });
 });
 
@@ -402,7 +396,7 @@ renderWebappRootIfReady = renderWebappRoot;
 webappController.subscribe(renderWebappRoot);
 installViteDirtyReloadGuard();
 installFileSelectionTracker();
-installFormInteractionTracker();
+installPageInteractionTracker();
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("storage", (event) => {

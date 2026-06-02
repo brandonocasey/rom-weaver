@@ -41,6 +41,7 @@ type WorkflowRomFileLike = WorkflowBinaryBackedFileLike &
 
 type PatchFileEntry<TFile = BinaryPayload> = {
   patchFile?: TFile;
+  patchFormat?: string;
   patchFilePath?: string;
   patchFileName?: string;
 };

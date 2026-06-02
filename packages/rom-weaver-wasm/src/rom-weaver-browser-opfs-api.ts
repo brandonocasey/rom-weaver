@@ -28,8 +28,6 @@ type AnyRecord = Record<string, any>;
 type LineHandler = (line: string) => void;
 type TraceLine = (line: string) => void;
 type BrowserOpfsCreateOptions = RomWeaverBrowserOpfsOptions & {
-  preferThreadedWasm?: boolean;
-  threadedWasmUrl?: string | URL;
   threadScratchFilePoolSize?: number;
 };
 type BrowserOpfsRunOptions = RomWeaverBrowserOpfsRunOptions &
@@ -65,9 +63,6 @@ const DEFAULT_BROWSER_WASM_URLS = [
   new URL('../rom-weaver-app.wasm', import.meta.url).href,
   new URL('./rom-weaver-app.wasm', import.meta.url).href,
 ];
-// The threaded build is the only shipped bundle (rom-weaver-app.wasm); there is no separate
-// `-threaded.wasm` artifact, so the threaded runtime uses the same bundle.
-const DEFAULT_BROWSER_THREADED_WASM_URLS = DEFAULT_BROWSER_WASM_URLS;
 const DEFAULT_SCRATCH_FILE_POOL_SIZE = 16;
 const DEFAULT_THREAD_SCRATCH_FILE_POOL_SIZE = DEFAULT_SCRATCH_FILE_POOL_SIZE;
 const DEFAULT_SHARED_MEMORY_INITIAL_PAGES = 256;
@@ -148,8 +143,6 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
 
   const { module, wasmUrl } = await resolveBrowserModule({
     module: options.module,
-    preferThreadedWasm: options.preferThreadedWasm,
-    threadedWasmUrl: options.threadedWasmUrl,
     wasmUrl: options.wasmUrl,
   });
   const moduleImports = WebAssembly.Module.imports(module);
@@ -4596,8 +4589,6 @@ function isDirectoryHandle(handle) {
 
 async function resolveBrowserModule({
   module,
-  preferThreadedWasm,
-  threadedWasmUrl,
   wasmUrl,
 } = {}) {
   if (module instanceof WebAssembly.Module) {
@@ -4607,74 +4598,18 @@ async function resolveBrowserModule({
     };
   }
 
-  const runtimeSupportsThreadedWasm = canUseThreadedWasmRuntime();
-  const requestedThreadedWasm = preferThreadedWasm === undefined
-    ? runtimeSupportsThreadedWasm
-    : Boolean(preferThreadedWasm);
-  const shouldUseThreadedWasm = requestedThreadedWasm && runtimeSupportsThreadedWasm;
-
-  const hasExplicitWasmUrl = hasConfiguredWasmUrl(wasmUrl);
   const resolvedWasmUrls = normalizeConfiguredWasmUrls(wasmUrl, DEFAULT_BROWSER_WASM_URLS);
-  const resolvedThreadedWasmUrls = normalizeConfiguredWasmUrls(
-    threadedWasmUrl,
-    hasExplicitWasmUrl
-      ? resolveThreadedWasmUrlFallbacks(wasmUrl)
-      : DEFAULT_BROWSER_THREADED_WASM_URLS,
-  );
-  const useThreadedCandidate = shouldUseThreadedWasm && resolvedThreadedWasmUrls.length > 0;
-  const primaryUrls = useThreadedCandidate
-    ? resolvedThreadedWasmUrls
-    : resolvedWasmUrls;
-  return compileBrowserModuleFromUrls(primaryUrls);
+  return compileBrowserModuleFromUrls(resolvedWasmUrls);
 }
 
 function canUseThreadedWasmRuntime() {
   return typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated === true;
 }
 
-function hasConfiguredWasmUrl(url) {
-  return url instanceof URL || (typeof url === 'string' && url.trim().length > 0);
-}
-
 function normalizeConfiguredWasmUrls(url, fallbacks) {
   if (url instanceof URL) return [url.href];
   if (typeof url === 'string' && url.trim().length > 0) return [url];
   return fallbacks;
-}
-
-function resolveThreadedWasmUrlFallbacks(wasmUrl) {
-  const candidates = normalizeConfiguredWasmUrls(wasmUrl, []);
-  return uniqueUrls(
-    candidates
-      .map((candidate) => deriveThreadedWasmUrl(candidate))
-      .filter(Boolean),
-  );
-}
-
-function deriveThreadedWasmUrl(urlLike) {
-  if (typeof urlLike !== 'string' || urlLike.trim().length === 0) return null;
-  // The single shipped bundle (rom-weaver-app.wasm) is already the threaded build; there is no
-  // separate `-threaded.wasm` artifact, so the threaded runtime loads the configured URL as-is.
-  return toAbsoluteUrl(urlLike);
-}
-
-function toAbsoluteUrl(urlLike) {
-  if (typeof URL.canParse === 'function' && URL.canParse(urlLike)) {
-    return urlLike;
-  }
-  const base = globalThis.location?.href ?? 'http://localhost/';
-  return new URL(urlLike, base).href;
-}
-
-function uniqueUrls(urls) {
-  const seen = new Set();
-  const out = [];
-  for (const url of urls) {
-    if (typeof url !== 'string' || url.length === 0 || seen.has(url)) continue;
-    seen.add(url);
-    out.push(url);
-  }
-  return out;
 }
 
 async function compileBrowserModuleFromUrls(urls) {

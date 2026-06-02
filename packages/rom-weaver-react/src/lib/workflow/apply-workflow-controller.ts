@@ -13,6 +13,7 @@ import type { WorkflowOptions, WorkflowWarning } from "../../types/workflow-cont
 import type { ApplyWorkflowOptions, PatchInput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { ParsedPatchLike, PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
+import { getPatchInspectRequirements } from "../apply/patch-apply-service.ts";
 import { patchWorkflowDeps, runApplyWorkflow } from "../apply/workflow.ts";
 import {
   getCompressionOutputExtension,
@@ -57,6 +58,8 @@ import { traceWorkflowControllerEvent } from "./workflow-tracing.ts";
 type SourceValidator<TSource> = (sources: TSource | TSource[] | undefined) => void;
 type SourceRole = "input" | "patch";
 type SourceStatus = ApplyWorkflowInputState["status"];
+type InternalPatchRequirements = NonNullable<ApplyWorkflowPatchState["requirements"]>;
+type InternalPatchChecksumPreflight = NonNullable<ApplyWorkflowPatchState["checksumPreflight"]>;
 type InternalSourceState = {
   id: string;
   fileName?: string;
@@ -73,6 +76,8 @@ type InternalSourceState = {
   warnings: WorkflowWarning[];
   checksums?: ApplyWorkflowChecksums;
   checksumTimeMs?: number;
+  requirements?: InternalPatchRequirements;
+  checksumPreflight?: InternalPatchChecksumPreflight;
   role: SourceRole;
 };
 type InternalCandidate<TSource> = {
@@ -111,6 +116,27 @@ const getPatchFilePrecomputedChecksums = (file: PatchFileInstance | undefined): 
   }
   return out;
 };
+const toNormalizedCrc32 = (value: unknown): string | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) return (value >>> 0).toString(16).padStart(8, "0");
+  if (typeof value !== "string") return undefined;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/^0x/, "");
+  if (!normalized) return undefined;
+  if (/^[0-9a-f]+$/i.test(normalized) && normalized.length <= 8)
+    return Number.parseInt(normalized, 16).toString(16).padStart(8, "0");
+  if (/^\d+$/.test(normalized)) return (Number.parseInt(normalized, 10) >>> 0).toString(16).padStart(8, "0");
+  return undefined;
+};
+
+const clonePatchRequirements = (requirements: InternalPatchRequirements | undefined): InternalPatchRequirements | undefined =>
+  requirements ? { ...requirements } : undefined;
+
+const clonePatchChecksumPreflight = (
+  preflight: InternalPatchChecksumPreflight | undefined,
+): InternalPatchChecksumPreflight | undefined => (preflight ? { ...preflight } : undefined);
+
 const PATCH_OUTPUT_LABEL_PATTERN = /\[([^\]]+)\](?:\.[^.]+)?\d*$/;
 const PATCH_TARGET_SELECTION_ERROR_CODES = new Set(["AMBIGUOUS_SELECTION", "PATCH_TARGET_MISMATCH"]);
 const MAX_INPUT_SELECTION_RETRY_COUNT = 12;
@@ -164,10 +190,12 @@ const clonePatchState = (
   parentCompressions: ApplyWorkflowParentCompression[],
 ): ApplyWorkflowPatchState => ({
   candidates: state.candidates.map(cloneCandidate),
+  checksumPreflight: clonePatchChecksumPreflight(state.checksumPreflight),
   decompressionTimeMs: state.decompressionTimeMs,
   fileName: state.fileName,
   id: state.id,
   parentCompressions: parentCompressions.map((entry) => ({ ...entry })),
+  requirements: clonePatchRequirements(state.requirements),
   selectedCandidateId: state.selectedCandidateId,
   size: state.size,
   sourceSize: state.sourceSize,
@@ -314,6 +342,8 @@ const releasePreparedSource = (source?: StagedSource<unknown>) => {
   source.preparedInputAssets = undefined;
   source.preparedPatchFile = undefined;
   source.parsedPatch = undefined;
+  source.state.requirements = undefined;
+  source.state.checksumPreflight = undefined;
 };
 
 const releasePreparedFileAndWait = async (file?: PatchFileInstance) => {
@@ -328,6 +358,8 @@ const releasePreparedSourceAndWait = async (source?: StagedSource<unknown>) => {
   source.preparedInputAssets = undefined;
   source.preparedPatchFile = undefined;
   source.parsedPatch = undefined;
+  source.state.requirements = undefined;
+  source.state.checksumPreflight = undefined;
 };
 
 const getPreparedAssetFileName = (asset: InputAsset | undefined, fallback?: string) =>
@@ -1140,6 +1172,8 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     stage.state.selectedCandidateId = undefined;
     stage.state.targetInputId = undefined;
     stage.state.targetInputFileName = undefined;
+    stage.state.requirements = undefined;
+    stage.state.checksumPreflight = undefined;
     stage.state.status = "needsSelection";
     stage.state.wasDecompressed = undefined;
     stage.parentCompressions = [];
@@ -1280,12 +1314,16 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     const patchFile = stage.preparedPatchFile;
     if (!patchFile) {
       stage.state.status = "needsSelection";
+      stage.state.requirements = undefined;
+      stage.state.checksumPreflight = undefined;
       return;
     }
     const parsed = await patchWorkflowDeps.parsePatchForApply(patchFile, this.runtime);
     if (!parsed)
       throw new RomWeaverError("INVALID_INPUT", `Invalid patch file: ${patchFile.fileName || stage.state.fileName}`);
     stage.parsedPatch = parsed;
+    stage.state.requirements = clonePatchRequirements(getPatchInspectRequirements(parsed));
+    stage.state.checksumPreflight = undefined;
   }
 
   private addCandidateRequest(stage: StagedSource<TSource>, request: CandidateSelectionRequest) {
@@ -1501,11 +1539,63 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   private clearPatchTarget(stage: StagedSource<TSource>) {
     stage.state.targetInputId = undefined;
     stage.state.targetInputFileName = undefined;
+    stage.state.checksumPreflight = undefined;
   }
 
   private assignPatchTarget(stage: StagedSource<TSource>, target: InputAsset) {
     stage.state.targetInputId = target.id;
     stage.state.targetInputFileName = target.fileName;
+  }
+
+  private createPatchChecksumPreflight(
+    stage: StagedSource<TSource>,
+    target: InputAsset,
+  ): InternalPatchChecksumPreflight {
+    const requirements = stage.state.requirements;
+    const actualSize = typeof target.size === "number" && Number.isFinite(target.size) ? target.size : undefined;
+    const actualCrc32 = toNormalizedCrc32(getInputAssetChecksums(target)?.crc32);
+    const requiredSize =
+      typeof requirements?.sourceSize === "number" && Number.isFinite(requirements.sourceSize)
+        ? requirements.sourceSize
+        : undefined;
+    const requiredCrc32 = toNormalizedCrc32(requirements?.sourceCrc32);
+    if (requiredSize === undefined && !requiredCrc32) {
+      return {
+        actualCrc32,
+        actualSize,
+        status: "unknown",
+      };
+    }
+    const sizeMismatch = requiredSize !== undefined && actualSize !== undefined && actualSize !== requiredSize;
+    const crcMismatch = !!(requiredCrc32 && actualCrc32 && actualCrc32 !== requiredCrc32);
+    if (sizeMismatch || crcMismatch) {
+      const mismatchReason = sizeMismatch && crcMismatch ? "size+crc32" : sizeMismatch ? "size" : "crc32";
+      return {
+        actualCrc32,
+        actualSize,
+        mismatchReason,
+        requiredCrc32,
+        requiredSize,
+        status: "invalid",
+      };
+    }
+    const missingActual = (requiredSize !== undefined && actualSize === undefined) || (requiredCrc32 && !actualCrc32);
+    if (missingActual) {
+      return {
+        actualCrc32,
+        actualSize,
+        requiredCrc32,
+        requiredSize,
+        status: "pending",
+      };
+    }
+    return {
+      actualCrc32,
+      actualSize,
+      requiredCrc32,
+      requiredSize,
+      status: "valid",
+    };
   }
 
   private createPatchTargetSelectionRequest(stage: StagedSource<TSource>, assets: InputAsset[]) {
@@ -1591,6 +1681,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     try {
       const target = await this.resolvePatchTargetForStage(stage, assets);
       stage.state.status = target ? "ready" : "needsSelection";
+      stage.state.checksumPreflight = target ? this.createPatchChecksumPreflight(stage, target) : undefined;
       if (!target) {
         this.pushWarning(
           stage,

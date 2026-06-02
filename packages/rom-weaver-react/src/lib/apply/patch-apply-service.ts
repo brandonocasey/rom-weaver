@@ -18,6 +18,25 @@ type PatchSourceValidator = {
   validateSourceAsync?: (file: PatchFileInstance) => boolean | Promise<boolean>;
 };
 
+type PatchInspectRequirements = {
+  format?: string;
+  patchCrc32?: string;
+  recordCount?: number;
+  sourceCrc32?: string;
+  sourceSize?: number;
+  targetCrc32?: string;
+  targetSize?: number;
+};
+
+type ParsedPatchWithInspectRequirements = ParsedPatchLike & {
+  __romWeaverPatchInspectRequirements?: PatchInspectRequirements;
+};
+
+const PATCH_INSPECT_REQUIREMENTS_KEY = "__romWeaverPatchInspectRequirements";
+const HEX_PREFIX_REGEX = /^0x/i;
+const HEX_DIGITS_REGEX = /^[0-9a-f]+$/i;
+const DECIMAL_DIGITS_REGEX = /^\d+$/;
+
 const PATCH_MAGIC_BY_EXTENSION = {
   bps: "BPS1",
   ips: "PATCH",
@@ -38,6 +57,55 @@ const isXdeltaPatchFileName = (fileName: string | undefined) => {
 
 const getPatchFileExtension = (fileName: string | undefined) => getFileNameExtension(fileName);
 
+const toOptionalFiniteInt = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value));
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  if (!DECIMAL_DIGITS_REGEX.test(normalized)) return undefined;
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : undefined;
+};
+
+const toOptionalCrc32Hex = (value: unknown): string | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) return (value >>> 0).toString(16).padStart(8, "0");
+  if (typeof value !== "string") return undefined;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(HEX_PREFIX_REGEX, "");
+  if (!normalized) return undefined;
+  if (HEX_DIGITS_REGEX.test(normalized) && normalized.length <= 8)
+    return Number.parseInt(normalized, 16).toString(16).padStart(8, "0");
+  if (DECIMAL_DIGITS_REGEX.test(normalized))
+    return (Number.parseInt(normalized, 10) >>> 0).toString(16).padStart(8, "0");
+  return undefined;
+};
+
+const normalizePatchInspectRequirements = (
+  details: Awaited<ReturnType<NonNullable<WorkflowRuntime["patch"]["inspectPatch"]>>> | null | undefined,
+): PatchInspectRequirements | undefined => {
+  if (!details || typeof details !== "object") return undefined;
+  const format =
+    typeof details.format === "string" && details.format.trim() ? details.format.trim().toUpperCase() : undefined;
+  const sourceSize = toOptionalFiniteInt(details.source_size);
+  const targetSize = toOptionalFiniteInt(details.target_size);
+  const recordCount = toOptionalFiniteInt(details.record_count);
+  const sourceCrc32 = toOptionalCrc32Hex(details.source_crc32);
+  const targetCrc32 = toOptionalCrc32Hex(details.target_crc32);
+  const patchCrc32 = toOptionalCrc32Hex(details.patch_crc32);
+  if (!(format || sourceSize !== undefined || targetSize !== undefined || sourceCrc32 || targetCrc32 || patchCrc32))
+    return undefined;
+  return {
+    ...(format ? { format } : {}),
+    ...(patchCrc32 ? { patchCrc32 } : {}),
+    ...(recordCount !== undefined ? { recordCount } : {}),
+    ...(sourceCrc32 ? { sourceCrc32 } : {}),
+    ...(sourceSize !== undefined ? { sourceSize } : {}),
+    ...(targetCrc32 ? { targetCrc32 } : {}),
+    ...(targetSize !== undefined ? { targetSize } : {}),
+  };
+};
+
 const readPatchHeader = async (patchFile: PatchFileInstance, length: number): Promise<string | null> => {
   try {
     patchFile.littleEndian = false;
@@ -56,7 +124,10 @@ const readPatchHeader = async (patchFile: PatchFileInstance, length: number): Pr
   }
 };
 
-const createParsedPatchProxy = async (patchFile: PatchFileInstance): Promise<ParsedPatchLike | null> => {
+const createParsedPatchProxy = async (
+  patchFile: PatchFileInstance,
+  inspectRequirements?: PatchInspectRequirements,
+): Promise<ParsedPatchLike | null> => {
   const extension = getPatchFileExtension(patchFile.fileName);
   if (!extension) return null;
   const expectedMagic = PATCH_MAGIC_BY_EXTENSION[extension as keyof typeof PATCH_MAGIC_BY_EXTENSION];
@@ -64,14 +135,16 @@ const createParsedPatchProxy = async (patchFile: PatchFileInstance): Promise<Par
     const header = await readPatchHeader(patchFile, Math.max(8, expectedMagic.length));
     if (header !== null && !header.startsWith(expectedMagic)) return null;
   }
-  return {
+  const parsedPatch = {
     _originalPatchFile: patchFile,
     constructor: { name: getPatchSummaryFormatName(patchFile.fileName) },
     description: null,
     getDescription: () => null,
     getValidationInfo: () => null,
     isXdeltaPatch: isXdeltaPatchFileName(patchFile.fileName),
-  } as unknown as ParsedPatchLike;
+  } as unknown as ParsedPatchWithInspectRequirements;
+  if (inspectRequirements) parsedPatch[PATCH_INSPECT_REQUIREMENTS_KEY] = inspectRequirements;
+  return parsedPatch as ParsedPatchLike;
 };
 
 const normalizePatchOptions = (options?: ApplyWorkflowOptions) => {
@@ -102,12 +175,39 @@ const normalizePatchOptions = (options?: ApplyWorkflowOptions) => {
   };
 };
 
+const getPatchInspectRequirements = (
+  patch: ParsedPatchLike | null | undefined,
+): PatchInspectRequirements | undefined => {
+  if (!patch || typeof patch !== "object") return undefined;
+  const requirements = (patch as ParsedPatchWithInspectRequirements)[PATCH_INSPECT_REQUIREMENTS_KEY];
+  return requirements ? { ...requirements } : undefined;
+};
+
+const inspectPatchRequirementsForApply = async (
+  patchFile: PatchFileInstance,
+  runtime?: WorkflowRuntime,
+): Promise<PatchInspectRequirements | undefined> => {
+  const inspectPatch = runtime?.patch.inspectPatch;
+  if (!inspectPatch) return undefined;
+  const externalSource = getPatchFileExternalSource(patchFile, patchFile.fileName || "patch.bin");
+  if (!externalSource) return undefined;
+  try {
+    const details = await inspectPatch({
+      patch: externalSource.source,
+      patchFileName: patchFile.fileName || "patch.bin",
+    });
+    return normalizePatchInspectRequirements(details);
+  } catch (_error) {
+    return undefined;
+  }
+};
+
 const parsePatchForApply = async (
   patchFile: PatchFileInstance,
   runtime?: WorkflowRuntime,
 ): Promise<ParsedPatchLike | null> => {
-  void runtime;
-  return createParsedPatchProxy(patchFile);
+  const inspectRequirements = await inspectPatchRequirementsForApply(patchFile, runtime);
+  return createParsedPatchProxy(patchFile, inspectRequirements);
 };
 
 const verifyPatchedOutputIfRequired = async (
@@ -195,6 +295,7 @@ const resolvePatchTargets = async (
 };
 
 export {
+  getPatchInspectRequirements,
   normalizePatchOptions,
   parsePatchForApply,
   resolvePatchTargets,

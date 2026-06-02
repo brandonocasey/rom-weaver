@@ -195,9 +195,10 @@ type BrowserCreatePatchWorkerResult = {
 type BrowserApplyPatchWorkerInput = {
   logLevel?: string;
   options?: Record<string, JsonValue>;
+  patchFormat?: string;
   patchFilePath?: string;
   patchFileName?: string;
-  patchFiles?: Array<{ patchFilePath: string; patchFileName?: string }>;
+  patchFiles?: Array<{ patchFilePath: string; patchFileName?: string; patchFormat?: string }>;
   romFilePath?: string;
   romFileName?: string;
 };

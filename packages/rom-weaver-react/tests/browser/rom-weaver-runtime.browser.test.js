@@ -31,6 +31,15 @@ test("resolvePatchApplyThreadArg forces single-thread for xdelta patches", () =>
   });
 });
 
+test("resolvePatchApplyThreadArg forces single-thread when patch format is vcdiff without extension", () => {
+  const result = resolvePatchApplyThreadArg("8", [{ patchFilePath: "/work/patch-1.bin", patchFormat: "VCDIFF" }]);
+  expect(result).toMatchObject({
+    forcedSingleThread: true,
+    hasXdeltaPatch: true,
+    threadArg: 1,
+  });
+});
+
 test("resolvePatchApplyThreadArg preserves configured thread count for non-xdelta patches", () => {
   const result = resolvePatchApplyThreadArg("4", [{ patchFilePath: "/work/patch.ips" }]);
   expect(result).toMatchObject({

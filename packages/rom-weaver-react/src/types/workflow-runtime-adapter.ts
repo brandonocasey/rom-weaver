@@ -187,9 +187,10 @@ type RuntimePatchWorkerProgress = {
 type RuntimePatchApplyWorkerInput = {
   logLevel?: LogLevel;
   options?: JsonObject;
+  patchFormat?: string;
   patchFileName?: string;
   patchFilePath?: string;
-  patchFiles: Array<{ patchFileName: string; patchFilePath: string }>;
+  patchFiles: Array<{ patchFileName: string; patchFilePath: string; patchFormat?: string }>;
   romFileName: string;
   romFilePath: string;
 };
@@ -238,12 +239,28 @@ type WorkflowRuntimePatch = {
     patches: Array<{
       patchFile: SourceRef;
       patchFileName?: string;
+      patchFormat?: string;
     }>;
     options?: JsonObject;
     logLevel?: LogLevel;
     onLog?: (log: WorkflowRuntimeLog) => void;
     onProgress?: (progress: WorkflowCreatePatchProgress) => void;
   }) => Promise<PublicOutput>;
+  inspectPatch?: (input: {
+    patch: SourceRef;
+    patchFileName?: string;
+    logLevel?: LogLevel;
+    onLog?: (log: WorkflowRuntimeLog) => void;
+    onProgress?: (progress: WorkflowRuntimeProgress) => void;
+  }) => Promise<{
+    format?: string | null;
+    patch_crc32?: number | null;
+    record_count?: number | null;
+    source_crc32?: number | null;
+    source_size?: number | null;
+    target_crc32?: number | null;
+    target_size?: number | null;
+  }>;
   createPatch?: (input: {
     original: SourceRef;
     modified: SourceRef;

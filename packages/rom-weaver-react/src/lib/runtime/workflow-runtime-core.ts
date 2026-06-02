@@ -139,10 +139,14 @@ const summarizeRuntimeWorkerPathSource = (source: RuntimeWorkerPathSource | unde
       }
     : null;
 
-const toPatchWorkerFiles = (sources: RuntimeWorkerPathSource[]) =>
-  sources.map((patchSource) => ({
+const toPatchWorkerFiles = (
+  sources: RuntimeWorkerPathSource[],
+  patchMetadata: Array<{ patchFormat?: string }> = [],
+) =>
+  sources.map((patchSource, index) => ({
     patchFileName: patchSource.fileName,
     patchFilePath: patchSource.filePath,
+    patchFormat: patchMetadata[index]?.patchFormat,
   }));
 
 const attachApplySummary = <TOutput extends PublicOutput>(
@@ -206,9 +210,10 @@ const createSharedPatchRuntime = (adapter: PatchRuntimeAdapter): WorkflowRuntime
           {
             logLevel,
             options,
+            patchFormat: patches[0]?.patchFormat,
             patchFileName: patchSources[0]?.fileName || "patch.bin",
             patchFilePath: patchSources[0]?.filePath,
-            patchFiles: toPatchWorkerFiles(patchSources),
+            patchFiles: toPatchWorkerFiles(patchSources, patches),
             romFileName: inputSource.fileName,
             romFilePath: inputSource.filePath,
           },
