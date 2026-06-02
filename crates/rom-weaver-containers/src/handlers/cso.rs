@@ -89,16 +89,24 @@ struct InMemoryCsoReader {
 
 impl ciso::read::Read<io::Error> for InMemoryCsoReader {
     fn size(&mut self) -> std::result::Result<u64, io::Error> {
-        u64::try_from(self.bytes.len())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "cso source size overflowed u64"))
+        u64::try_from(self.bytes.len()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "cso source size overflowed u64")
+        })
     }
 
     fn read(&mut self, pos: u64, buf: &mut [u8]) -> std::result::Result<(), io::Error> {
-        let start = usize::try_from(pos)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "cso read offset overflowed usize"))?;
-        let end = start
-            .checked_add(buf.len())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cso read range overflowed usize"))?;
+        let start = usize::try_from(pos).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cso read offset overflowed usize",
+            )
+        })?;
+        let end = start.checked_add(buf.len()).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cso read range overflowed usize",
+            )
+        })?;
         let source = self.bytes.as_slice();
         if end > source.len() {
             return Err(io::Error::new(
@@ -237,7 +245,11 @@ impl CsoContainerHandler {
         })
     }
 
-    fn open_reader_from_buffer(&self, source: &Path, bytes: Arc<Vec<u8>>) -> Result<CsoImageReader> {
+    fn open_reader_from_buffer(
+        &self,
+        source: &Path,
+        bytes: Arc<Vec<u8>>,
+    ) -> Result<CsoImageReader> {
         CsoReader::new(CsoSourceReader::InMemory(InMemoryCsoReader { bytes })).map_err(|error| {
             RomWeaverError::Validation(format!(
                 "cso source `{}` is invalid: {error}",
@@ -551,15 +563,12 @@ impl CsoContainerHandler {
                     .sector_count
                     .checked_mul(CSO_DEFAULT_BLOCK_BYTES)
                     .ok_or_else(|| {
-                        RomWeaverError::Validation(
-                            "cso create task length overflowed usize".into(),
-                        )
+                        RomWeaverError::Validation("cso create task length overflowed usize".into())
                     })?;
                 let mut data = vec![0_u8; read_len];
                 input.read_exact(&mut data)?;
                 if logical_bytes > 0 {
-                    let task_logical_bytes =
-                        self.create_task_logical_bytes(task, logical_bytes)?;
+                    let task_logical_bytes = self.create_task_logical_bytes(task, logical_bytes)?;
                     let completed = create_progress_bytes
                         .fetch_add(task_logical_bytes, Ordering::Relaxed)
                         .saturating_add(task_logical_bytes)
@@ -869,7 +878,43 @@ impl ContainerHandlerOperations for CsoContainerHandler {
             bounded_items_for_threads(execution.effective_threads),
         )?;
         let source = request.source.clone();
-        let decode_result = if execution.used_parallelism && container_reads_source_on_main_thread() {
+        let mut write_chunk = |chunk: CsoDecodedExtractChunk, task_len: u64| -> Result<()> {
+            let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
+                RomWeaverError::Validation("cso extract chunk length overflowed".into())
+            })?;
+            if chunk_len != task_len {
+                return Err(RomWeaverError::Validation(format!(
+                    "cso extract chunk {} wrote {} bytes but expected {}",
+                    chunk.index, chunk_len, task_len
+                )));
+            }
+            let chunk_index = u64::try_from(chunk.index).map_err(|_| {
+                RomWeaverError::Validation("cso extract chunk index overflowed".into())
+            })?;
+            ordered_writer.write_chunk(chunk_index, chunk.data)?;
+            if logical_bytes > 0 {
+                let completed = extract_progress_bytes
+                    .fetch_add(chunk_len, Ordering::Relaxed)
+                    .saturating_add(chunk_len)
+                    .min(logical_bytes);
+                maybe_emit_container_byte_progress(
+                    context,
+                    completed,
+                    logical_bytes,
+                    ContainerByteProgress {
+                        command: "extract",
+                        format: self.descriptor.name,
+                        stage: "extract",
+                        label: &extract_progress_label,
+                        thread_execution: Some(&execution),
+                        emitted_progress_bucket: extract_progress_bucket.as_ref(),
+                    },
+                );
+            }
+            Ok(())
+        };
+        let decode_result = if execution.used_parallelism && container_reads_source_on_main_thread()
+        {
             // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
             // runner thread, so the entire compressed cso file is read here once into a shared
             // buffer. Worker threads then decode from that in-memory buffer (never the file).
@@ -881,141 +926,49 @@ impl ContainerHandlerOperations for CsoContainerHandler {
                     source.display()
                 ))
             })?);
-            let progress_context = context.clone();
-            let progress_execution = execution.clone();
-            write_decoded_chunks_from_workers(
-                &pool,
-                &tasks,
-                bounded_items_for_threads(execution.effective_threads),
-                "cso extract output receiver closed",
-                |task| {
-                    let chunk = self.decode_extract_task_from_buffer(
-                        &source,
-                        Arc::clone(&source_bytes),
-                        task,
-                    )?;
-                    let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
-                        RomWeaverError::Validation("cso extract chunk length overflowed".into())
-                    })?;
-                    if chunk_len != task.len {
-                        return Err(RomWeaverError::Validation(format!(
-                            "cso extract chunk {} wrote {} bytes but expected {}",
-                            task.index, chunk_len, task.len
-                        )));
-                    }
-                    let chunk_index = u64::try_from(chunk.index).map_err(|_| {
-                        RomWeaverError::Validation("cso extract chunk index overflowed".into())
-                    })?;
-                    Ok((chunk_index, chunk.data, chunk_len))
-                },
-                |(chunk_index, data, chunk_len)| {
-                    ordered_writer.write_chunk(chunk_index, data)?;
-                    if logical_bytes > 0 {
-                        let completed = extract_progress_bytes
-                            .fetch_add(chunk_len, Ordering::Relaxed)
-                            .saturating_add(chunk_len)
-                            .min(logical_bytes);
-                        maybe_emit_container_byte_progress(
-                            &progress_context,
-                            completed,
-                            logical_bytes,
-                            ContainerByteProgress {
-                                command: "extract",
-                                format: self.descriptor.name,
-                                stage: "extract",
-                                label: &extract_progress_label,
-                                thread_execution: Some(&progress_execution),
-                                emitted_progress_bucket: extract_progress_bucket.as_ref(),
-                            },
-                        );
-                    }
-                    Ok(())
-                },
-            )
+            let batch_size = bounded_items_for_threads(execution.effective_threads);
+            for task_batch in tasks.chunks(batch_size) {
+                let mut chunks = pool.install(|| {
+                    task_batch
+                        .par_iter()
+                        .map(|task| {
+                            self.decode_extract_task_from_buffer(
+                                &source,
+                                Arc::clone(&source_bytes),
+                                task,
+                            )
+                            .map(|chunk| (task.len, chunk))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })?;
+                chunks.sort_by_key(|(_, chunk)| chunk.index);
+                for (task_len, chunk) in chunks {
+                    write_chunk(chunk, task_len)?;
+                }
+            }
+            Ok(())
         } else if execution.used_parallelism {
-            let progress_context = context.clone();
-            let progress_execution = execution.clone();
-            write_decoded_chunks_from_workers(
-                &pool,
-                &tasks,
-                bounded_items_for_threads(execution.effective_threads),
-                "cso extract output receiver closed",
-                |task| {
-                    let chunk = self.decode_extract_task(&source, task)?;
-                    let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
-                        RomWeaverError::Validation("cso extract chunk length overflowed".into())
-                    })?;
-                    if chunk_len != task.len {
-                        return Err(RomWeaverError::Validation(format!(
-                            "cso extract chunk {} wrote {} bytes but expected {}",
-                            task.index, chunk_len, task.len
-                        )));
-                    }
-                    let chunk_index = u64::try_from(chunk.index).map_err(|_| {
-                        RomWeaverError::Validation("cso extract chunk index overflowed".into())
-                    })?;
-                    Ok((chunk_index, chunk.data, chunk_len))
-                },
-                |(chunk_index, data, chunk_len)| {
-                    ordered_writer.write_chunk(chunk_index, data)?;
-                    if logical_bytes > 0 {
-                        let completed = extract_progress_bytes
-                            .fetch_add(chunk_len, Ordering::Relaxed)
-                            .saturating_add(chunk_len)
-                            .min(logical_bytes);
-                        maybe_emit_container_byte_progress(
-                            &progress_context,
-                            completed,
-                            logical_bytes,
-                            ContainerByteProgress {
-                                command: "extract",
-                                format: self.descriptor.name,
-                                stage: "extract",
-                                label: &extract_progress_label,
-                                thread_execution: Some(&progress_execution),
-                                emitted_progress_bucket: extract_progress_bucket.as_ref(),
-                            },
-                        );
-                    }
-                    Ok(())
-                },
-            )
+            let batch_size = bounded_items_for_threads(execution.effective_threads);
+            for task_batch in tasks.chunks(batch_size) {
+                let mut chunks = pool.install(|| {
+                    task_batch
+                        .par_iter()
+                        .map(|task| {
+                            self.decode_extract_task(&source, task)
+                                .map(|chunk| (task.len, chunk))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })?;
+                chunks.sort_by_key(|(_, chunk)| chunk.index);
+                for (task_len, chunk) in chunks {
+                    write_chunk(chunk, task_len)?;
+                }
+            }
+            Ok(())
         } else {
             tasks.iter().try_for_each(|task| {
                 let chunk = self.decode_extract_task(&source, task)?;
-                let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
-                    RomWeaverError::Validation("cso extract chunk length overflowed".into())
-                })?;
-                if chunk_len != task.len {
-                    return Err(RomWeaverError::Validation(format!(
-                        "cso extract chunk {} wrote {} bytes but expected {}",
-                        task.index, chunk_len, task.len
-                    )));
-                }
-                let chunk_index = u64::try_from(chunk.index).map_err(|_| {
-                    RomWeaverError::Validation("cso extract chunk index overflowed".into())
-                })?;
-                ordered_writer.write_chunk(chunk_index, chunk.data)?;
-                if logical_bytes > 0 {
-                    let completed = extract_progress_bytes
-                        .fetch_add(chunk_len, Ordering::Relaxed)
-                        .saturating_add(chunk_len)
-                        .min(logical_bytes);
-                    maybe_emit_container_byte_progress(
-                        context,
-                        completed,
-                        logical_bytes,
-                        ContainerByteProgress {
-                            command: "extract",
-                            format: self.descriptor.name,
-                            stage: "extract",
-                            label: &extract_progress_label,
-                            thread_execution: Some(&execution),
-                            emitted_progress_bucket: extract_progress_bucket.as_ref(),
-                        },
-                    );
-                }
-                Ok(())
+                write_chunk(chunk, task.len)
             })
         };
         if let Err(error) = decode_result {
@@ -1097,11 +1050,8 @@ impl ContainerHandlerOperations for CsoContainerHandler {
                 );
                 let mut chunks = chunks_result?;
                 chunks.sort_by_key(|chunk| chunk.start_sector);
-                let output_bytes = self.assemble_create_output_in_memory(
-                    &request.output,
-                    logical_bytes,
-                    &chunks,
-                )?;
+                let output_bytes =
+                    self.assemble_create_output_in_memory(&request.output, logical_bytes, &chunks)?;
                 return Ok(OperationReport::succeeded(
                     OperationFamily::Container,
                     Some(self.descriptor.name.to_string()),

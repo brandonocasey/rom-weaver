@@ -106,6 +106,45 @@ mod tests {
         )
     }
 
+    fn write_xorshift_fixture(path: &Path, byte_len: usize, seed: u32) {
+        let mut file = File::create(path).expect("create xorshift fixture");
+        let mut state = seed;
+        let mut chunk = vec![0_u8; 1024 * 1024];
+        let mut remaining = byte_len;
+        while remaining > 0 {
+            let len = remaining.min(chunk.len());
+            for byte in &mut chunk[..len] {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                *byte = (state & 0xff) as u8;
+            }
+            file.write_all(&chunk[..len]).expect("write fixture chunk");
+            remaining -= len;
+        }
+    }
+
+    fn assert_files_equal(left: &Path, right: &Path) {
+        let mut left_file = File::open(left).expect("open left file");
+        let mut right_file = File::open(right).expect("open right file");
+        let mut left_chunk = vec![0_u8; 1024 * 1024];
+        let mut right_chunk = vec![0_u8; 1024 * 1024];
+
+        loop {
+            let left_len = left_file
+                .read(&mut left_chunk)
+                .expect("read left file chunk");
+            let right_len = right_file
+                .read(&mut right_chunk)
+                .expect("read right file chunk");
+            assert_eq!(left_len, right_len, "file lengths differ");
+            if left_len == 0 {
+                break;
+            }
+            assert_eq!(&left_chunk[..left_len], &right_chunk[..right_len]);
+        }
+    }
+
     fn run_with_large_stack(label: &str, test_fn: impl FnOnce() + Send + 'static) {
         std::thread::Builder::new()
             .name(label.to_string())
@@ -2719,6 +2758,53 @@ mod tests {
 
         let extracted = fs::read(output_dir.join("disc.iso")).expect("read extracted output");
         assert_eq!(extracted, source);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn cso_extract_with_four_threads_handles_wide_reordering() {
+        let temp_dir = temp_dir_path("cso-extract-four-thread-reorder");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+        let input_path = temp_dir.join("source.iso");
+        let output_path = temp_dir.join("source.cso");
+        let output_dir = temp_dir.join("out");
+        write_xorshift_fixture(&input_path, 96 * 1024 * 1024, 0x0bad_c0de);
+
+        let registry = ContainerRegistry::new();
+        let handler = registry.find_by_name("cso").expect("cso handler");
+        handler
+            .create(
+                &ContainerCreateRequest {
+                    inputs: vec![input_path.clone()],
+                    output: output_path.clone(),
+                    format: "cso".to_string(),
+                    codec: Some("store".to_string()),
+                    level: None,
+                    parent: None,
+                },
+                &test_context(&temp_dir, 4),
+            )
+            .expect("create cso");
+
+        let extract_report = handler
+            .extract(
+                &rom_weaver_core::ContainerExtractRequest {
+                    source: output_path,
+                    out_dir: output_dir.clone(),
+                    selections: Vec::new(),
+                    split_bin: false,
+                    ignore_common_files: false,
+                    overwrite: true,
+                    parent: None,
+                },
+                &test_context(&temp_dir, 4),
+            )
+            .expect("extract cso with four threads");
+        let extract_execution = extract_report.thread_execution.expect("thread execution");
+        assert_eq!(extract_execution.requested_threads, 4);
+        assert_files_equal(&input_path, &output_dir.join("source.iso"));
 
         let _ = fs::remove_dir_all(temp_dir);
     }
