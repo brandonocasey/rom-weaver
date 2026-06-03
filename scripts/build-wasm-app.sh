@@ -199,18 +199,11 @@ build_target "wasm32-wasip1-threads" "rom-weaver-app.wasm" "$THREADED_RUSTFLAGS"
 
 postprocess_artifact "$OUT_DIR/rom-weaver-app.wasm" "threaded"
 
-if [[ "$OUT_DIR" == "$WASM_PACKAGE_DIR" ]]; then
-  mkdir -p "$OUT_DIR/src/workers"
-  if [[ -f "$RUNTIME_UTILS_SOURCE" ]]; then
-    cp "$RUNTIME_UTILS_SOURCE" "$OUT_DIR/src/rom-weaver-runtime-utils.mjs"
-  fi
-  if [[ -f "$BROWSER_OPFS_API_SOURCE" ]]; then
-    cp "$BROWSER_OPFS_API_SOURCE" "$OUT_DIR/src/rom-weaver-browser-opfs-api.mjs"
-  fi
-  if [[ -f "$BROWSER_WASI_THREAD_WORKER_SOURCE" ]]; then
-    cp "$BROWSER_WASI_THREAD_WORKER_SOURCE" "$OUT_DIR/src/workers/browser-wasi-thread-worker.mjs"
-  fi
-else
+# Only emit the standalone .mjs runtime (+ README) when building to a separate artifact
+# directory. The npm package consumes the .ts sources directly — its exports and
+# src/index.mjs point at the .ts files — so copying these into the package src/ only left
+# unused, untracked .mjs files behind after every build.
+if [[ "$OUT_DIR" != "$WASM_PACKAGE_DIR" ]]; then
   mkdir -p "$OUT_DIR/workers"
   if [[ -f "$RUNTIME_UTILS_SOURCE" ]]; then
     cp "$RUNTIME_UTILS_SOURCE" "$OUT_DIR/rom-weaver-runtime-utils.mjs"
