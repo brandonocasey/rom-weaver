@@ -28,10 +28,59 @@ import {
 
 const DEFAULT_WORKFLOW_VIEW: WorkflowView = "patcher";
 const VALID_WORKFLOW_VIEWS: readonly WorkflowView[] = ["patcher", "creator", "trim"];
+const ACTIVE_VIEW_STORAGE_KEY = "rom-weaver-active-view";
 
 const normalizeWorkflowView = (value: unknown): WorkflowView | null => {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
   return VALID_WORKFLOW_VIEWS.includes(normalized as WorkflowView) ? (normalized as WorkflowView) : null;
+};
+
+/** Restore the last-used workflow tab so a reload returns to the same tab. */
+const loadPersistedWorkflowView = (storage?: ControllerOptions["storage"]): WorkflowView => {
+  try {
+    const stored = storage && typeof storage.getItem === "function" ? storage.getItem(ACTIVE_VIEW_STORAGE_KEY) : null;
+    return normalizeWorkflowView(stored) || DEFAULT_WORKFLOW_VIEW;
+  } catch {
+    return DEFAULT_WORKFLOW_VIEW;
+  }
+};
+
+const persistWorkflowView = (storage: ControllerOptions["storage"] | undefined, view: WorkflowView): void => {
+  try {
+    if (storage && typeof storage.setItem === "function") storage.setItem(ACTIVE_VIEW_STORAGE_KEY, view);
+  } catch {
+    // Ignore storage write failures (private mode, quota, etc.).
+  }
+};
+
+// Lightweight hash router: each tab is a `#/<slug>` route so reload, back/forward,
+// and shared links land on the same tab. Hash routing needs no service-worker or
+// server navigation fallback (the fragment never reaches the network).
+const VIEW_TO_HASH_SLUG: Record<WorkflowView, string> = { creator: "create", patcher: "apply", trim: "trim" };
+const HASH_SLUG_TO_VIEW: Record<string, WorkflowView> = { apply: "patcher", create: "creator", trim: "trim" };
+
+const readHashSlug = (): string => {
+  if (typeof window === "undefined") return "";
+  return window.location.hash.replace(/^#\/?/, "").trim().toLowerCase();
+};
+
+/** Parse the active view from the URL hash (accepts the friendly slug or the raw view id). */
+const readWorkflowViewFromHash = (): WorkflowView | null => {
+  const slug = readHashSlug();
+  return HASH_SLUG_TO_VIEW[slug] || normalizeWorkflowView(slug);
+};
+
+const writeWorkflowViewToHash = (view: WorkflowView): void => {
+  if (typeof window === "undefined") return;
+  const slug = VIEW_TO_HASH_SLUG[view];
+  if (readHashSlug() !== slug) {
+    const nextHash = `#/${slug}`;
+    if (typeof window.history?.replaceState === "function") {
+      window.history.replaceState(window.history.state, "", nextHash);
+    } else {
+      window.location.hash = nextHash;
+    }
+  }
 };
 
 type WebappState = {
@@ -112,9 +161,12 @@ const mergeDraftSettings = (
 
 const createWebappRootController = (options: ControllerOptions) => {
   const settings = loadSettings(options.storage);
+  // The URL hash wins (deep links / reload), then the last persisted tab, then the default.
+  const initialView = readWorkflowViewFromHash() || loadPersistedWorkflowView(options.storage);
+  writeWorkflowViewToHash(initialView);
   const store = createStore<WebappState>(() => ({
     creatorSession: createEmptyCreatorSessionState(),
-    currentView: DEFAULT_WORKFLOW_VIEW,
+    currentView: initialView,
     draftSettings: copySettings(settings),
     patcherSession: createEmptyPatcherSessionState(),
     settings,
@@ -171,6 +223,8 @@ const createWebappRootController = (options: ControllerOptions) => {
 
   const commitMode = (mode: WorkflowView) => {
     setState({ currentView: mode });
+    persistWorkflowView(options.storage, mode);
+    writeWorkflowViewToHash(mode);
   };
 
   const updatePatcherSession = (nextPatcherSession: Partial<PatcherSessionState>) => {
@@ -363,4 +417,4 @@ const createWebappRootController = (options: ControllerOptions) => {
   };
 };
 
-export { createWebappRootController };
+export { createWebappRootController, readWorkflowViewFromHash };

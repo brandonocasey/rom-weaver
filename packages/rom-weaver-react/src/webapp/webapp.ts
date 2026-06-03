@@ -15,7 +15,7 @@ import {
   shouldConfirmDiscardSettings,
   shouldWarnBeforeUnload,
 } from "./unload-guard.ts";
-import { createWebappRootController } from "./webapp-controller.ts";
+import { createWebappRootController, readWorkflowViewFromHash } from "./webapp-controller.ts";
 import { type ConfirmationDialogState, createEmptyConfirmationDialogState } from "./webapp-layout.tsx";
 import { WebappRoot } from "./webapp-root.tsx";
 
@@ -411,6 +411,11 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
     if (typeof localStorage !== "undefined" && event.storageArea && event.storageArea !== localStorage) return;
     webappController.reloadPersistedSettings();
   });
+  // Hash router: respond to deep links, manual hash edits, and history navigation.
+  window.addEventListener("hashchange", () => {
+    const view = readWorkflowViewFromHash();
+    if (view && view !== webappController.getState().currentView) webappController.selectView(view);
+  });
 }
 
 const initializeWebapp = () => {
@@ -421,7 +426,7 @@ const initializeWebapp = () => {
   webappController.setStartupState("loading");
   renderWebappRoot();
 
-  const initialMode = getConfiguredInitialMode() || "patcher";
+  const initialMode = getConfiguredInitialMode() || readWorkflowViewFromHash() || "patcher";
   webappController.setStartupState("ready");
   webappController.activateInitialView(initialMode, { fallbackOnError: true });
   const configuredOnInitialize = getConfiguredRuntimeSettings().oninitialize;
