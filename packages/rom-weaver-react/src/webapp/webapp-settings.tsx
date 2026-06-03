@@ -1,8 +1,4 @@
-import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.js";
-import Save from "lucide-react/dist/esm/icons/save.js";
-import X from "lucide-react/dist/esm/icons/x.js";
-import type { CSSProperties, ReactNode } from "react";
-import { APP_BUILD_VERSION } from "./build-version.ts";
+import type { ReactNode } from "react";
 import { InfoToggle } from "./components/info-toggle.tsx";
 import type { SettingsDraftState, SettingsFieldKey, SettingsUiState } from "./settings/settings-state.ts";
 import {
@@ -17,13 +13,14 @@ import {
   SETTINGS_FIELD_METADATA,
   SETTINGS_PANEL_FIELD_ORDER,
 } from "./settings/settings-state.ts";
-import { buttonClasses, cx, formClasses, settingsClasses, tabClasses } from "./tailwind-classes.ts";
-import type { ValidationState, WorkflowView } from "./webapp-state-types.ts";
+import type { ValidationState } from "./webapp-state-types.ts";
 
-type TabProps = {
-  currentView: WorkflowView;
-  onSelectView: (mode: WorkflowView) => void;
-};
+/**
+ * Settings panel rendered in the dark-pro grouped layout (`.setgroup` /
+ * `.setrow` / `.setchecks` / `.srange`). All field metadata, value resolution,
+ * change handling, and validation wiring are preserved from the original
+ * field-driven implementation; only the surrounding markup changed.
+ */
 
 type SettingsPanelProps = {
   draftSettings: SettingsDraftState;
@@ -35,91 +32,26 @@ type SettingsPanelProps = {
   onSaveClose: () => void;
 };
 
-type SettingsFieldRowProps = Pick<SettingsPanelProps, "draftSettings" | "uiState" | "validation" | "onDraftChange"> & {
+type FieldRenderProps = Pick<SettingsPanelProps, "draftSettings" | "uiState" | "validation" | "onDraftChange"> & {
   fieldKey: SettingsFieldKey;
 };
 
 const settingsPanelSections: Array<{ fields: SettingsFieldKey[]; title: string }> = [
-  {
-    fields: ["requireInputChecksumMatch", "requireOutputChecksumMatch"],
-    title: "Validation",
-  },
-  {
-    fields: ["fixChecksum"],
-    title: "Compatibility",
-  },
-  {
-    fields: ["compressionProfile"],
-    title: "Output",
-  },
-  {
-    fields: ["sevenZipCodec", "sevenZipLevel", "zipCodec", "zipLevel"],
-    title: "ZIP / 7z",
-  },
-  {
-    fields: ["rvzCompression", "rvzCompressionLevel", "rvzBlockSize", "rvzScrub"],
-    title: "RVZ",
-  },
-  {
-    fields: ["chdCreateCdCodecs", "chdCreateDvdCodecs"],
-    title: "CHD",
-  },
-  {
-    fields: ["z3dsCompressionLevel"],
-    title: "Z3DS",
-  },
-  {
-    fields: ["workerThreads"],
-    title: "Workers",
-  },
-  {
-    fields: ["language", "logLevel", "erudaDevTools"],
-    title: "Logging",
-  },
+  { fields: ["language", "logLevel", "erudaDevTools"], title: "General" },
+  { fields: ["requireInputChecksumMatch", "requireOutputChecksumMatch"], title: "Verification" },
+  { fields: ["fixChecksum"], title: "Fixes" },
+  { fields: ["compressionProfile", "workerThreads"], title: "Compression" },
+  { fields: ["zipCodec", "zipLevel"], title: "ZIP" },
+  { fields: ["sevenZipCodec", "sevenZipLevel"], title: "7z" },
+  { fields: ["rvzCompression", "rvzCompressionLevel", "rvzBlockSize", "rvzScrub"], title: "RVZ" },
+  { fields: ["chdCreateCdCodecs", "chdCreateDvdCodecs"], title: "CHD" },
+  { fields: ["z3dsCompressionLevel"], title: "z3ds" },
 ];
 
-const tabClassName = (currentView: WorkflowView, tabMode: WorkflowView) =>
-  [currentView === tabMode ? `active ${tabClasses.buttonActive}` : "", tabClasses.button].filter(Boolean).join(" ");
+const TOGGLE_KINDS = new Set(["checkbox", "choice-checkbox"]);
 
-const settingsSelectClassName = cx(formClasses.select, formClasses.invalid, settingsClasses.control);
-const settingsTextClassName = cx(formClasses.base, formClasses.disabled, formClasses.invalid, settingsClasses.control);
-const settingsRangeClassName = cx(settingsClasses.compressionRange, formClasses.invalid);
-
-function WorkflowTabs({ currentView, onSelectView }: TabProps) {
-  return (
-    <>
-      <button
-        aria-controls="rom-weaver-container"
-        aria-selected={currentView === "patcher" ? "true" : "false"}
-        className={tabClassName(currentView, "patcher")}
-        id="tab-patcher"
-        onClick={() => onSelectView("patcher")}
-        role="tab"
-        type="button"
-      >
-        Patcher
-      </button>
-      <button
-        aria-controls="patch-builder-container"
-        aria-selected={currentView === "creator" ? "true" : "false"}
-        className={tabClassName(currentView, "creator")}
-        id="tab-creator"
-        onClick={() => onSelectView("creator")}
-        role="tab"
-        type="button"
-      >
-        Creator
-      </button>
-    </>
-  );
-}
-
-const invalidProps = (validation: ValidationState, id: string) =>
-  validation.invalidFields.includes(id)
-    ? {
-        "aria-invalid": true,
-      }
-    : {};
+const isInvalid = (validation: ValidationState, id: string) =>
+  validation.invalidFields.includes(id) ? { "aria-invalid": true as const } : {};
 
 const handleSettingsEvent = (
   target: HTMLInputElement | HTMLSelectElement,
@@ -161,34 +93,13 @@ const getChoiceCheckboxValue = (fieldKey: SettingsFieldKey, draftSettings: Setti
   return String(getSettingsFieldDefaultValue(fieldKey));
 };
 
-const getFieldClasses = (fieldKey: SettingsFieldKey) => {
-  const field = SETTINGS_FIELD_METADATA[fieldKey];
-  return field.layout === "large"
-    ? {
-        label: settingsClasses.labelLarge,
-        value: settingsClasses.valueLarge,
-      }
-    : {
-        label: settingsClasses.label,
-        value: settingsClasses.value,
-      };
-};
-
-const renderFieldInfoToggle = (
-  fieldKey: SettingsFieldKey,
-  draftSettings: SettingsDraftState,
-  uiState: SettingsUiState,
-) => {
+const renderFieldInfo = (fieldKey: SettingsFieldKey, draftSettings: SettingsDraftState, uiState: SettingsUiState) => {
   const suggestion = getSettingsFieldSuggestion(fieldKey, draftSettings, uiState);
-  const suggestionDataLocalize = getSettingsFieldSuggestionDataLocalize(fieldKey, draftSettings, uiState);
   if (!suggestion) return null;
+  const suggestionDataLocalize = getSettingsFieldSuggestionDataLocalize(fieldKey, draftSettings, uiState);
+  const label = SETTINGS_FIELD_METADATA[fieldKey].label || fieldKey;
   return (
-    <InfoToggle
-      ariaLabel={`Show ${SETTINGS_FIELD_METADATA[fieldKey].label || fieldKey} details`}
-      panelClassName={settingsClasses.infoPanel}
-      portalPanel
-      title={`Show ${SETTINGS_FIELD_METADATA[fieldKey].label || fieldKey} details`}
-    >
+    <InfoToggle ariaLabel={`Show ${label} details`} portalPanel title={`Show ${label} details`}>
       <div data-localize={typeof suggestionDataLocalize === "string" ? suggestionDataLocalize : undefined}>
         {suggestion}
       </div>
@@ -196,331 +107,173 @@ const renderFieldInfoToggle = (
   );
 };
 
-const renderFieldLabel = (fieldKey: SettingsFieldKey) => {
+/** The control element (select / text / number input) for a non-toggle field. */
+const FieldControl = ({ fieldKey, draftSettings, uiState, validation, onDraftChange }: FieldRenderProps) => {
   const field = SETTINGS_FIELD_METADATA[fieldKey];
-  if (!field.label) return null;
+  const disabled = isSettingsFieldDisabled(fieldKey, draftSettings, uiState);
+  if (field.kind === "select") {
+    return (
+      <select
+        className="select"
+        disabled={disabled}
+        id={field.id}
+        onChange={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
+        value={getFieldValue(fieldKey, draftSettings)}
+        {...isInvalid(validation, field.id)}
+      >
+        {(field.options || []).map((option) => (
+          <option key={`${field.id}-${option.value}`} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  const inputType = field.kind === "number" && fieldKey !== "workerThreads" ? "number" : "text";
   return (
-    <label data-localize={field.labelDataLocalize} htmlFor={field.id}>
+    <input
+      className="input mono"
+      disabled={disabled}
+      id={field.id}
+      max={inputType === "number" ? getSettingsFieldMax(fieldKey, draftSettings, uiState) : undefined}
+      min={inputType === "number" ? getSettingsFieldMin(fieldKey, draftSettings, uiState) : undefined}
+      onChange={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
+      placeholder={getSettingsFieldPlaceholder(fieldKey, draftSettings, uiState)}
+      step={inputType === "number" ? field.step : undefined}
+      type={inputType}
+      value={getFieldValue(fieldKey, draftSettings)}
+      {...isInvalid(validation, field.id)}
+    />
+  );
+};
+
+const SettingsRow = (props: FieldRenderProps) => {
+  const field = SETTINGS_FIELD_METADATA[props.fieldKey];
+  return (
+    <div className="setrow">
+      <span className="slabel">
+        <label htmlFor={field.id}>{field.label}</label>
+        {renderFieldInfo(props.fieldKey, props.draftSettings, props.uiState)}
+      </span>
+      <span className="sctl">
+        <FieldControl {...props} />
+      </span>
+    </div>
+  );
+};
+
+const SettingsToggle = ({ fieldKey, draftSettings, uiState, onDraftChange }: FieldRenderProps) => {
+  const field = SETTINGS_FIELD_METADATA[fieldKey];
+  const disabled = isSettingsFieldDisabled(fieldKey, draftSettings, uiState);
+  const checked =
+    field.kind === "choice-checkbox"
+      ? getChoiceCheckboxValue(fieldKey, draftSettings) === field.checkedValue
+      : getCheckboxValue(fieldKey, draftSettings);
+  return (
+    <label className="opt">
+      <input
+        checked={checked}
+        disabled={disabled}
+        id={field.id}
+        onChange={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
+        type="checkbox"
+      />
       {field.label}
     </label>
   );
 };
 
-function SettingsFieldRowLayout({
-  fieldKey,
-  info,
-  children,
-}: {
-  fieldKey: SettingsFieldKey;
-  info?: ReactNode;
-  children: ReactNode;
-}) {
-  const fieldClasses = getFieldClasses(fieldKey);
+const SettingsRange = ({ fieldKey, draftSettings, uiState, validation, onDraftChange }: FieldRenderProps) => {
+  const field = SETTINGS_FIELD_METADATA[fieldKey];
+  const scaleLabels = field.scaleLabels || [];
+  const current = scaleLabels[uiState.compressionProfileIndex] || "";
   return (
-    <div className={settingsClasses.row}>
-      <div className={fieldClasses.label}>
-        <span className={settingsClasses.labelWithInfo}>
-          {renderFieldLabel(fieldKey)}
-          {info}
+    <div className="srange">
+      <div className="srange-head">
+        <span>
+          <label htmlFor={field.id}>{field.label}</label>
+          {renderFieldInfo(fieldKey, draftSettings, uiState)}
         </span>
+        <span className="v">{current}</span>
       </div>
-      <div className={fieldClasses.value}>{children}</div>
+      <input
+        id={field.id}
+        max={getSettingsFieldMax(fieldKey, draftSettings, uiState)}
+        min={getSettingsFieldMin(fieldKey, draftSettings, uiState)}
+        onChange={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
+        onInput={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
+        step={field.step}
+        type="range"
+        value={uiState.compressionProfileIndex}
+        {...isInvalid(validation, field.id)}
+      />
+      <div aria-hidden="true" className="srange-scale">
+        {scaleLabels.map((label) => (
+          <span key={`${field.id}-${label}`}>{label}</span>
+        ))}
+      </div>
     </div>
   );
-}
+};
 
-function SettingsCheckboxField({
-  fieldKey,
-  checked,
-  disabled,
-  onDraftChange,
-}: {
-  fieldKey: SettingsFieldKey;
-  checked: boolean;
-  disabled: boolean;
-  onDraftChange: SettingsPanelProps["onDraftChange"];
-}) {
-  const field = SETTINGS_FIELD_METADATA[fieldKey];
-  return (
-    <input
-      checked={checked}
-      className={formClasses.checkbox}
-      disabled={disabled}
-      id={field.id}
-      onChange={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
-      type="checkbox"
-    />
-  );
-}
-
-function SettingsScalarInputField({
-  fieldKey,
-  type,
-  value,
-  disabled,
-  placeholder,
-  min,
-  max,
+const SettingsGroup = ({
+  section,
+  draftSettings,
+  uiState,
   validation,
   onDraftChange,
-}: {
-  fieldKey: SettingsFieldKey;
-  type: "text" | "number";
-  value: string;
-  disabled: boolean;
-  placeholder?: string;
-  min?: number;
-  max?: number;
-  validation: ValidationState;
-  onDraftChange: SettingsPanelProps["onDraftChange"];
-}) {
-  const field = SETTINGS_FIELD_METADATA[fieldKey];
-  return (
-    <input
-      className={settingsTextClassName}
-      disabled={disabled}
-      id={field.id}
-      max={type === "number" ? max : undefined}
-      min={type === "number" ? min : undefined}
-      onChange={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
-      placeholder={placeholder}
-      step={type === "number" ? field.step : undefined}
-      type={type}
-      value={value}
-      {...invalidProps(validation, field.id)}
-    />
+}: { section: { fields: SettingsFieldKey[]; title: string } } & Pick<
+  SettingsPanelProps,
+  "draftSettings" | "uiState" | "validation" | "onDraftChange"
+>) => {
+  const shared = { draftSettings, onDraftChange, uiState, validation };
+  const fields = section.fields.filter(
+    (fieldKey) => SETTINGS_PANEL_FIELD_ORDER.includes(fieldKey) && SETTINGS_FIELD_METADATA[fieldKey].kind !== "hidden",
   );
-}
-
-function SettingsFieldRow({ fieldKey, draftSettings, uiState, validation, onDraftChange }: SettingsFieldRowProps) {
-  const field = SETTINGS_FIELD_METADATA[fieldKey];
-  const disabled = isSettingsFieldDisabled(fieldKey, draftSettings, uiState);
-  const placeholder = getSettingsFieldPlaceholder(fieldKey, draftSettings, uiState);
-  const min = getSettingsFieldMin(fieldKey, draftSettings, uiState);
-  const max = getSettingsFieldMax(fieldKey, draftSettings, uiState);
-  const info = renderFieldInfoToggle(fieldKey, draftSettings, uiState);
-
-  if (field.kind === "hidden") return null;
-
-  if (field.kind === "checkbox") {
-    return (
-      <SettingsFieldRowLayout fieldKey={fieldKey} info={info}>
-        <SettingsCheckboxField
-          checked={getCheckboxValue(fieldKey, draftSettings)}
-          disabled={disabled}
-          fieldKey={fieldKey}
-          onDraftChange={onDraftChange}
-        />
-      </SettingsFieldRowLayout>
-    );
-  }
-
-  if (field.kind === "choice-checkbox") {
-    return (
-      <SettingsFieldRowLayout fieldKey={fieldKey} info={info}>
-        <SettingsCheckboxField
-          checked={getChoiceCheckboxValue(fieldKey, draftSettings) === field.checkedValue}
-          disabled={disabled}
-          fieldKey={fieldKey}
-          onDraftChange={onDraftChange}
-        />
-      </SettingsFieldRowLayout>
-    );
-  }
-
-  if (field.kind === "select") {
-    return (
-      <SettingsFieldRowLayout fieldKey={fieldKey} info={info}>
-        <select
-          className={settingsSelectClassName}
-          disabled={disabled}
-          id={field.id}
-          onChange={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
-          value={getFieldValue(fieldKey, draftSettings)}
-          {...invalidProps(validation, field.id)}
-        >
-          {(field.options || []).map((option) => (
-            <option key={`${field.id}-${option.value}`} value={option.value}>
-              {option.label}
-            </option>
+  if (!fields.length) return null;
+  const toggles = fields.filter((fieldKey) => TOGGLE_KINDS.has(SETTINGS_FIELD_METADATA[fieldKey].kind));
+  const rows = fields.filter((fieldKey) => !TOGGLE_KINDS.has(SETTINGS_FIELD_METADATA[fieldKey].kind));
+  return (
+    <div className="setgroup">
+      <div className="gtitle">{section.title}</div>
+      {rows.map((fieldKey) =>
+        SETTINGS_FIELD_METADATA[fieldKey].kind === "range" ? (
+          <SettingsRange fieldKey={fieldKey} key={fieldKey} {...shared} />
+        ) : (
+          <SettingsRow fieldKey={fieldKey} key={fieldKey} {...shared} />
+        ),
+      )}
+      {toggles.length ? (
+        <div className="setchecks">
+          {toggles.map((fieldKey) => (
+            <SettingsToggle fieldKey={fieldKey} key={fieldKey} {...shared} />
           ))}
-        </select>
-      </SettingsFieldRowLayout>
-    );
-  }
-
-  if (field.kind === "text") {
-    return (
-      <SettingsFieldRowLayout fieldKey={fieldKey} info={info}>
-        <SettingsScalarInputField
-          disabled={disabled}
-          fieldKey={fieldKey}
-          onDraftChange={onDraftChange}
-          placeholder={placeholder}
-          type="text"
-          validation={validation}
-          value={getFieldValue(fieldKey, draftSettings)}
-        />
-      </SettingsFieldRowLayout>
-    );
-  }
-
-  if (field.kind === "number") {
-    const inputType = fieldKey === "workerThreads" ? "text" : "number";
-    return (
-      <SettingsFieldRowLayout fieldKey={fieldKey} info={info}>
-        <SettingsScalarInputField
-          disabled={disabled}
-          fieldKey={fieldKey}
-          max={max}
-          min={min}
-          onDraftChange={onDraftChange}
-          placeholder={placeholder}
-          type={inputType}
-          validation={validation}
-          value={getFieldValue(fieldKey, draftSettings)}
-        />
-      </SettingsFieldRowLayout>
-    );
-  }
-
-  if (field.kind === "range") {
-    const scaleLabels = field.scaleLabels || [];
-    const scaleStepCount = Math.max(1, scaleLabels.length - 1);
-
-    return (
-      <div className={settingsClasses.rangeRow}>
-        <div className={settingsClasses.rangeHeader}>
-          <div className={settingsClasses.rangeLabelBlock}>
-            <span className={settingsClasses.labelWithInfo}>
-              {renderFieldLabel(fieldKey)}
-              {info}
-            </span>
-          </div>
         </div>
-        <div className={settingsClasses.compressionControl}>
-          <input
-            className={settingsRangeClassName}
-            id={field.id}
-            max={max}
-            min={min}
-            onChange={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
-            onInput={(event) => handleSettingsEvent(event.currentTarget, onDraftChange)}
-            step={field.step}
-            type="range"
-            value={uiState.compressionProfileIndex}
-            {...invalidProps(validation, field.id)}
-          />
-          <div aria-hidden="true" className={settingsClasses.compressionScale}>
-            {scaleLabels.map((label, index) => (
-              <span
-                className={settingsClasses.compressionScaleLabel}
-                data-localize={label}
-                key={`${field.id}-${label}`}
-                style={
-                  {
-                    "--compression-scale-position": `${(index / scaleStepCount) * 100}%`,
-                  } as CSSProperties
-                }
-              >
-                {label}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-}
-
-function RuntimeDiagnosticsPanel() {
-  return (
-    <section className={settingsClasses.section}>
-      <h3 className={settingsClasses.sectionTitle}>Version / Runtime</h3>
-      <div className="grid gap-2 text-left text-[12px] leading-[1.3] text-[#4f5757]">
-        <div>
-          <div className="font-bold text-[#243232]">Version</div>
-          <div className="break-all font-mono text-[11px]">{APP_BUILD_VERSION}</div>
-        </div>
-      </div>
-    </section>
+      ) : null}
+    </div>
   );
-}
+};
 
-function SettingsPanel({ draftSettings, uiState, validation, onDraftChange }: SettingsPanelProps) {
+function SettingsPanel({ draftSettings, uiState, validation, onDraftChange }: SettingsPanelProps): ReactNode {
   return (
-    <div className={settingsClasses.panel}>
+    <div>
       {settingsPanelSections.map((section) => (
-        <section className={settingsClasses.section} key={section.fields.join("-")}>
-          <h3 className={settingsClasses.sectionTitle}>{section.title}</h3>
-          <div className={settingsClasses.grid}>
-            {section.fields
-              .filter((fieldKey) => SETTINGS_PANEL_FIELD_ORDER.includes(fieldKey))
-              .map((fieldKey) => (
-                <SettingsFieldRow
-                  draftSettings={draftSettings}
-                  fieldKey={fieldKey}
-                  key={fieldKey}
-                  onDraftChange={onDraftChange}
-                  uiState={uiState}
-                  validation={validation}
-                />
-              ))}
-          </div>
-        </section>
+        <SettingsGroup
+          draftSettings={draftSettings}
+          key={section.title}
+          onDraftChange={onDraftChange}
+          section={section}
+          uiState={uiState}
+          validation={validation}
+        />
       ))}
-
-      <div aria-live="polite" className={settingsClasses.validation} id="settings-validation-message" role="alert">
-        {validation.messages.join(" ")}
-      </div>
-      <RuntimeDiagnosticsPanel />
+      {validation.messages.length ? (
+        <div aria-live="polite" className="validation bad" id="settings-validation-message" role="alert">
+          {validation.messages.join(" ")}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function SettingsHeaderActions({
-  onClose,
-  onRestoreDefaults,
-  onSaveClose,
-}: Pick<SettingsPanelProps, "onClose" | "onRestoreDefaults" | "onSaveClose">) {
-  return (
-    <>
-      <button
-        aria-label="Restore defaults"
-        className={cx(buttonClasses.primary, settingsClasses.actionButton, settingsClasses.actionWarning)}
-        data-localize="Restore defaults"
-        id="settings-restore-defaults"
-        onClick={onRestoreDefaults}
-        title="Restore defaults"
-        type="button"
-      >
-        <RotateCcw aria-hidden="true" className={settingsClasses.actionIcon} />
-      </button>
-      <button
-        aria-label="Save settings"
-        className={cx(buttonClasses.primary, settingsClasses.actionButton, settingsClasses.actionSuccess)}
-        data-localize="Save and close"
-        id="settings-save-close"
-        onClick={onSaveClose}
-        title="Save settings"
-        type="button"
-      >
-        <Save aria-hidden="true" className={settingsClasses.actionIcon} />
-      </button>
-      <button
-        aria-label="Close settings"
-        className={cx(buttonClasses.primary, settingsClasses.actionButton, settingsClasses.actionDanger)}
-        id="settings-close"
-        onClick={onClose}
-        title="Close settings"
-        type="button"
-      >
-        <X aria-hidden="true" className={settingsClasses.actionIcon} />
-      </button>
-    </>
-  );
-}
-
-export { SettingsHeaderActions, SettingsPanel, WorkflowTabs };
+export { SettingsPanel };

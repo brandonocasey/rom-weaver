@@ -1,6 +1,4 @@
-import {
-  type BrowserStorageManagerLike,
-} from "./browser-storage-estimate.ts";
+import type { BrowserStorageManagerLike } from "./browser-storage-estimate.ts";
 
 type BrowserOutputStorageGuardOptions = {
   operationLabel: string;
@@ -59,7 +57,4 @@ const withBrowserOutputStorageFailureContext = async (
   );
 };
 
-export {
-  ensureBrowserStorageAvailableForOutput,
-  withBrowserOutputStorageFailureContext,
-};
+export { ensureBrowserStorageAvailableForOutput, withBrowserOutputStorageFailureContext };

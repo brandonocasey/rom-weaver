@@ -186,9 +186,7 @@ const normalizePatchOptions = (options?: ApplyWorkflowOptions) => {
   };
 };
 
-const getPatchProbeRequirements = (
-  patch: ParsedPatchLike | null | undefined,
-): PatchProbeRequirements | undefined => {
+const getPatchProbeRequirements = (patch: ParsedPatchLike | null | undefined): PatchProbeRequirements | undefined => {
   if (!patch || typeof patch !== "object") return undefined;
   const requirements = (patch as ParsedPatchWithProbeRequirements)[PATCH_PROBE_REQUIREMENTS_KEY];
   return requirements ? { ...requirements } : undefined;

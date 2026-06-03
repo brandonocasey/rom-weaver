@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { formatByteSize } from "../../../presentation/workflow-presentation.ts";
 
 type SizeProps = {
@@ -23,7 +23,6 @@ function Size({ as = "span", bytes, className, value }: SizeProps) {
   const Element = as;
   const normalizedBytes = toFiniteBytes(bytes);
   const displayValue = value ?? (typeof normalizedBytes === "number" ? formatByteSize(normalizedBytes) : "");
-  if (!displayValue) return null;
   const title = toBytesTitle(bytes);
   const interactive = !!title;
   const tooltipId = useId();
@@ -49,6 +48,8 @@ function Size({ as = "span", bytes, className, value }: SizeProps) {
       document.removeEventListener("keydown", handleEscape, true);
     };
   }, [open]);
+
+  if (!displayValue) return null;
 
   const resolvedClassName = [
     className || "",

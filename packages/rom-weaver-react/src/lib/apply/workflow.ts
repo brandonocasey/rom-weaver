@@ -428,8 +428,8 @@ const runApplyWorkflow = async (
               if (!patchFile) throw new Error("Patch worker source was not found");
               return {
                 patchFile: toWorkerSourceRef(patchFile, `patch-${patchIndex + 1}.bin`),
-                patchFormat: getParsedPatchFormatHint(patch),
                 patchFileName: patchFile.fileName || `patch-${patchIndex + 1}.bin`,
+                patchFormat: getParsedPatchFormatHint(patch),
               };
             });
             const workerOutput = (await applyPatchInRuntime({

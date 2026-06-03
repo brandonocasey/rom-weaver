@@ -119,8 +119,7 @@ const classifyPatcherInput = (source: InputSourceValue): PatcherInputClassificat
     };
   }
   const isDiscDecompressionOutput =
-    isInputSourceObject(source) &&
-    !!(source as InputSourceObject & DiscMagicProbeableSource)._discDecompressionOutput;
+    isInputSourceObject(source) && !!(source as InputSourceObject & DiscMagicProbeableSource)._discDecompressionOutput;
   const canProbeDiscMagic = canProbeDiscMagicSynchronously(source);
   for (const registration of DISC_COMPRESSION_FORMAT_REGISTRATIONS) {
     const matchedByExtension = registration.extensionRegex.test(fileName);

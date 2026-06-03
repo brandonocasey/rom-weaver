@@ -1290,18 +1290,24 @@ test("expected validation sizes use byte tooltips and hide legacy actual input t
   sizeValidationCode?.click();
   await expect.poll(() => sizeValidationCode?.getAttribute("aria-expanded"), { timeout: 30000 }).toBe("true");
   await expect
-    .poll(() => {
-      const tooltip = sizeValidationCode?.parentElement?.querySelector("[role='tooltip']");
-      return tooltip?.getAttribute("aria-hidden");
-    }, { timeout: 30000 })
+    .poll(
+      () => {
+        const tooltip = sizeValidationCode?.parentElement?.querySelector("[role='tooltip']");
+        return tooltip?.getAttribute("aria-hidden");
+      },
+      { timeout: 30000 },
+    )
     .toBe("false");
   sizeValidationCode?.click();
   await expect.poll(() => sizeValidationCode?.getAttribute("aria-expanded"), { timeout: 30000 }).toBe("false");
   await expect
-    .poll(() => {
-      const tooltip = sizeValidationCode?.parentElement?.querySelector("[role='tooltip']");
-      return tooltip?.getAttribute("aria-hidden");
-    }, { timeout: 30000 })
+    .poll(
+      () => {
+        const tooltip = sizeValidationCode?.parentElement?.querySelector("[role='tooltip']");
+        return tooltip?.getAttribute("aria-hidden");
+      },
+      { timeout: 30000 },
+    )
     .toBe("true");
   const minSizeValidationCode = Array.from(
     document.querySelectorAll("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation-required code"),
@@ -1312,7 +1318,9 @@ test("expected validation sizes use byte tooltips and hide legacy actual input t
   await expect
     .poll(
       () =>
-        document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file span[data-size-bytes='8192 B']"),
+        document.querySelector(
+          "#rom-weaver-list-input-stack .rom-weaver-input-stack-file span[data-size-bytes='8192 B']",
+        ),
       { timeout: 30000 },
     )
     .not.toBeNull();
@@ -1325,7 +1333,9 @@ test("expected validation sizes use byte tooltips and hide legacy actual input t
   await expect
     .poll(
       () =>
-        document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file span[data-size-bytes='16384 B']"),
+        document.querySelector(
+          "#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file span[data-size-bytes='16384 B']",
+        ),
       { timeout: 30000 },
     )
     .not.toBeNull();
