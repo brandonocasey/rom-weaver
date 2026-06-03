@@ -1,4 +1,7 @@
 import "./browser-runtime-diagnostics.ts";
 import "./eruda-loader.ts";
+// Applies the persisted/system theme to <html data-theme> before first paint.
+import "./theme.ts";
 import "./style.css";
+import "./design-system.css";
 import "./webapp.ts";
