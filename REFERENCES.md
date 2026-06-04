@@ -32,6 +32,11 @@ It is intentionally a living document. Some patch families do not have stable fo
   - <https://github.com/Alcaro/Flips>
   - IPS delta creator: <https://github.com/Alcaro/Flips/blob/master/libips.cpp>
   - BPS suffix-array delta creator: <https://github.com/Alcaro/Flips/blob/master/libbps-suf.cpp>
+- MultiPatch (macOS reference app; PPF routes through ApplyPPF/MakePPF):
+  - <https://github.com/Sappharad/MultiPatch>
+  - PPF adapter: <https://github.com/Sappharad/MultiPatch/blob/master/adapters/PPFAdapter.m>
+  - PPF apply implementation: <https://github.com/Sappharad/MultiPatch/blob/master/ppfdev/applyppf3_linux.c>
+  - PPF create implementation: <https://github.com/Sappharad/MultiPatch/blob/master/ppfdev/makeppf3_linux.c>
 - xdelta3 (VCDIFF-compatible toolchain): <https://github.com/jmacd/xdelta>
 - open-vcdiff (RFC 3284 implementation): <https://github.com/google/open-vcdiff>
 
@@ -61,7 +66,7 @@ It is intentionally a living document. Some patch families do not have stable fo
 | `GDIFF`               | `rom-weaver` handler implementation (no single canonical spec linked yet) |
 | `APS`, `APSGBA`       | RomPatcher.js APS/APSGBA implementations                                  |
 | `RUP`                 | RomPatcher.js RUP implementation                                          |
-| `PPF`                 | RomPatcher.js PPF implementation                                          |
+| `PPF`                 | RomPatcher.js PPF implementation, MultiPatch/ApplyPPF                     |
 | `PAT` / `FFP`         | `rom-weaver` handler implementation (public spec is scarce)               |
 | `BDF/BSDIFF40`        | BSDIFF paper, RomPatcher.js BDF implementation                            |
 | `BSP`                 | `rom-weaver` BSP implementation                                           |
@@ -69,6 +74,18 @@ It is intentionally a living document. Some patch families do not have stable fo
 | `DLDI`                | Chishm DLDI page, `rom-weaver` DLDI implementation                        |
 | `DPS`                 | `rom-weaver` DPS implementation                                           |
 | `SOLID`               | `rom-weaver` SOLID implementation                                         |
+
+## PPF Comparison: MultiPatch / ApplyPPF
+
+Comparison target: MultiPatch `master`, whose PPF path wraps Icarus/Paradox
+`ApplyPPF3.c` and `MakePPF3.c`.
+
+| Area | MultiPatch / ApplyPPF | `rom-weaver` |
+| ---- | --------------------- | ------------ |
+| Apply mode | GUI apply calls `applyPPF`, which always uses APPLY mode. PPF3 undo data is skipped unless the separate command-line undo mode is used. | Normal apply always writes forward patch bytes. PPF3 undo data is parsed and reported, but not auto-applied. |
+| Validation | PPF2 validates original size and the block at `0x9320`; PPF3 validates `0x9320` for BIN and `0x80A0` for GI when blockcheck is enabled. | Uses the same validation offsets under strict checksum validation; the shared ignore mode can skip blockcheck bytes. |
+| File IDs | Supports PPF2/PPF3 `file_id.diz` trailers when the footer magic/length marker is present. | Skips PPF2 and PPF3 trailers during file parsing, including the 2-byte PPF3 trailer and padded 4-byte variant. |
+| Create | Creates PPF3 with BIN image type, blockcheck enabled by default, no undo by default, and optional CLI switches for undo, validation, image type, description, and file ID. | Creates PPF3 forward patches with BIN-style blockcheck when the source is large enough; no explicit undo/file-id/image-type options yet. |
 
 ## Notes
 

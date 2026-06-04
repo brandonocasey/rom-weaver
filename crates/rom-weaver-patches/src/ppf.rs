@@ -64,6 +64,9 @@ impl PatchHandler for PpfPatchHandler {
         if parsed.blockcheck.is_some() {
             label.push_str("; includes blockcheck validation bytes");
         }
+        if parsed.has_undo_data() {
+            label.push_str("; includes undo data");
+        }
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
@@ -106,8 +109,7 @@ impl PatchHandler for PpfPatchHandler {
         let execution = if crate::can_apply_in_memory(input_len, ppf_output_len) {
             let mut output_bytes = fs::read(&request.input)?;
             output_bytes.resize(ppf_output_len as usize, 0);
-            let use_undo = should_apply_undo_data_in_memory(&output_bytes, &parsed.records);
-            apply_records_in_memory(&parsed.records, use_undo, &mut output_bytes)?;
+            apply_records_in_memory(&parsed.records, &mut output_bytes)?;
             fs::write(&request.output, &output_bytes)?;
             let mut execution = planned_execution;
             execution.effective_threads = 1;
@@ -119,15 +121,13 @@ impl PatchHandler for PpfPatchHandler {
                 .read(true)
                 .write(true)
                 .open(&request.output)?;
-            let use_undo_data = should_apply_undo_data(&mut output, &parsed.records)?;
             let execution = if planned_execution.used_parallelism {
                 let (execution, pool) = context.build_pool(thread_capability)?;
-                let prepared =
-                    prepare_ppf_writes_parallel(&parsed.records, use_undo_data, &pool, context)?;
+                let prepared = prepare_ppf_writes_parallel(&parsed.records, &pool, context)?;
                 apply_prepared_ppf_writes(&mut output, &prepared)?;
                 execution
             } else {
-                apply_records(&mut output, &parsed.records, use_undo_data)?;
+                apply_records(&mut output, &parsed.records)?;
                 planned_execution
             };
             output.flush()?;
@@ -276,6 +276,12 @@ struct ParsedPpfPatch {
     expected_input_len: Option<u64>,
     blockcheck: Option<PpfBlockcheck>,
     records: Vec<PpfRecord>,
+}
+
+impl ParsedPpfPatch {
+    fn has_undo_data(&self) -> bool {
+        self.records.iter().any(|record| record.undo_data.is_some())
+    }
 }
 
 #[derive(Debug)]
@@ -1591,29 +1597,9 @@ fn ppf_required_output_len(input_len: u64, records: &[PpfRecord]) -> u64 {
     })
 }
 
-fn should_apply_undo_data_in_memory(bytes: &[u8], records: &[PpfRecord]) -> bool {
-    let Some(first) = records.first() else {
-        return false;
-    };
-    if first.undo_data.is_none() {
-        return false;
-    }
-    let start = first.offset as usize;
-    let end = start + first.data.len();
-    bytes.get(start..end) == Some(first.data.as_slice())
-}
-
-fn apply_records_in_memory(
-    records: &[PpfRecord],
-    use_undo_data: bool,
-    output: &mut [u8],
-) -> Result<()> {
+fn apply_records_in_memory(records: &[PpfRecord], output: &mut [u8]) -> Result<()> {
     for record in records {
-        let payload = if use_undo_data {
-            record.undo_data.as_deref().unwrap_or(record.data.as_ref())
-        } else {
-            record.data.as_ref()
-        };
+        let payload = record.data.as_slice();
         let start = record.offset as usize;
         let end = start + payload.len();
         if end > output.len() {
@@ -1626,42 +1612,16 @@ fn apply_records_in_memory(
     Ok(())
 }
 
-fn should_apply_undo_data(file: &mut File, records: &[PpfRecord]) -> Result<bool> {
-    let Some(first_record) = records.first() else {
-        return Ok(false);
-    };
-    if first_record.undo_data.is_none() {
-        return Ok(false);
-    }
-
-    file.seek(SeekFrom::Start(first_record.offset))?;
-    let mut current_bytes = vec![0u8; first_record.data.len()];
-    if let Err(error) = file.read_exact(&mut current_bytes) {
-        if error.kind() == std::io::ErrorKind::UnexpectedEof {
-            return Ok(false);
-        }
-        return Err(error.into());
-    }
-
-    Ok(current_bytes.as_slice() == first_record.data.as_slice())
-}
-
-fn apply_records(file: &mut File, records: &[PpfRecord], use_undo_data: bool) -> Result<()> {
+fn apply_records(file: &mut File, records: &[PpfRecord]) -> Result<()> {
     for record in records {
         file.seek(SeekFrom::Start(record.offset))?;
-        let payload = if use_undo_data {
-            record.undo_data.as_deref().unwrap_or(record.data.as_ref())
-        } else {
-            record.data.as_ref()
-        };
-        file.write_all(payload)?;
+        file.write_all(&record.data)?;
     }
     Ok(())
 }
 
 fn prepare_ppf_writes_parallel(
     records: &[PpfRecord],
-    use_undo_data: bool,
     pool: &SharedThreadPool,
     context: &OperationContext,
 ) -> Result<Vec<PreparedPpfWrite>> {
@@ -1670,14 +1630,9 @@ fn prepare_ppf_writes_parallel(
             .par_iter()
             .map(|record| {
                 context.cancel().check()?;
-                let payload = if use_undo_data {
-                    record.undo_data.as_deref().unwrap_or(record.data.as_ref())
-                } else {
-                    record.data.as_ref()
-                };
                 Ok(PreparedPpfWrite {
                     offset: record.offset,
-                    data: payload.to_vec(),
+                    data: record.data.clone(),
                 })
             })
             .collect::<Result<Vec<_>>>()

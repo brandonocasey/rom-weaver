@@ -6,7 +6,7 @@ use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
 use super::{
     CREATE_THREAD_SCAN_CHUNK_BYTES, FILE_ID_BEGIN_MARKER, FILE_ID_END_MARKER,
     PPF_VALIDATION_BLOCK_SIZE, PPF2_BLOCKCHECK_OFFSET, PpfPatchHandler, PpfVersion,
-    parse_ppf_bytes,
+    parse_ppf_bytes, parse_ppf_file,
 };
 use crate::{
     PPF,
@@ -222,15 +222,13 @@ fn apply_round_trip_for_ppf3_with_undo_and_blockcheck() {
 }
 
 #[test]
-fn apply_uses_undo_data_when_reapplying_ppf3_undo_patch() {
+fn apply_ignores_ppf3_undo_data_in_normal_apply_mode() {
     let temp = TestDir::new();
     let input_path = temp.child("input.bin");
     let patch_path = temp.child("update.ppf");
-    let once_path = temp.child("once.bin");
-    let twice_path = temp.child("twice.bin");
+    let output_path = temp.child("output.bin");
 
-    let original = b"abcdefghij".to_vec();
-    fs::write(&input_path, &original).expect("fixture");
+    fs::write(&input_path, b"abXYZfghij").expect("fixture");
     fs::write(
         &patch_path,
         build_ppf3_patch(
@@ -239,11 +237,18 @@ fn apply_uses_undo_data_when_reapplying_ppf3_undo_patch() {
             false,
             true,
             None,
-            vec![V3Record {
-                offset: 2,
-                data: b"XYZ".to_vec(),
-                undo: b"cde".to_vec(),
-            }],
+            vec![
+                V3Record {
+                    offset: 2,
+                    data: b"XYZ".to_vec(),
+                    undo: b"cde".to_vec(),
+                },
+                V3Record {
+                    offset: 7,
+                    data: b"12".to_vec(),
+                    undo: b"hi".to_vec(),
+                },
+            ],
         ),
     )
     .expect("fixture");
@@ -252,26 +257,14 @@ fn apply_uses_undo_data_when_reapplying_ppf3_undo_patch() {
     handler
         .apply(
             &PatchApplyRequest {
-                input: input_path.clone(),
-                patches: vec![patch_path.clone()],
-                output: once_path.clone(),
-            },
-            &test_context_with_threads(&temp, 1),
-        )
-        .expect("first apply");
-    assert_eq!(fs::read(&once_path).expect("first output"), b"abXYZfghij");
-
-    handler
-        .apply(
-            &PatchApplyRequest {
-                input: once_path,
+                input: input_path,
                 patches: vec![patch_path],
-                output: twice_path.clone(),
+                output: output_path.clone(),
             },
             &test_context_with_threads(&temp, 1),
         )
-        .expect("second apply");
-    assert_eq!(fs::read(twice_path).expect("second output"), original);
+        .expect("apply");
+    assert_eq!(fs::read(output_path).expect("output"), b"abXYZfg12j");
 }
 
 #[test]
@@ -319,6 +312,82 @@ fn parse_accepts_ppf3_with_rompatcher_style_file_id_diz_trailer() {
     assert_eq!(parsed.records.len(), 1);
     assert_eq!(parsed.records[0].offset, 1);
     assert_eq!(parsed.records[0].data.as_slice(), b"AB");
+}
+
+#[test]
+fn parse_file_accepts_ppf3_with_multipatch_file_id_diz_trailer() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("update.ppf");
+    let mut patch = build_ppf3_patch(
+        "with file id",
+        0,
+        false,
+        false,
+        None,
+        vec![V3Record {
+            offset: 1,
+            data: b"AB".to_vec(),
+            undo: Vec::new(),
+        }],
+    );
+    append_multipatch_file_id_diz_trailer(&mut patch, "hello from file id");
+    fs::write(&patch_path, patch).expect("fixture");
+
+    let parsed = parse_ppf_file(&patch_path).expect("parse should succeed");
+    assert_eq!(parsed.version, PpfVersion::V3);
+    assert_eq!(parsed.records.len(), 1);
+    assert_eq!(parsed.records[0].offset, 1);
+    assert_eq!(parsed.records[0].data.as_slice(), b"AB");
+}
+
+#[test]
+fn parse_file_accepts_ppf3_with_padded_file_id_diz_trailer() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("update.ppf");
+    let mut patch = build_ppf3_patch(
+        "with file id",
+        0,
+        false,
+        false,
+        None,
+        vec![V3Record {
+            offset: 1,
+            data: b"AB".to_vec(),
+            undo: Vec::new(),
+        }],
+    );
+    append_rompatcher_file_id_diz_trailer(&mut patch, "hello from file id");
+    fs::write(&patch_path, patch).expect("fixture");
+
+    let parsed = parse_ppf_file(&patch_path).expect("parse should succeed");
+    assert_eq!(parsed.version, PpfVersion::V3);
+    assert_eq!(parsed.records.len(), 1);
+    assert_eq!(parsed.records[0].offset, 1);
+    assert_eq!(parsed.records[0].data.as_slice(), b"AB");
+}
+
+#[test]
+fn parse_file_accepts_ppf2_with_file_id_diz_trailer() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("update.ppf");
+    let block = vec![0u8; PPF_VALIDATION_BLOCK_SIZE];
+    let mut patch = build_ppf2_patch(
+        "PPF2 with file id",
+        128,
+        &block,
+        vec![V1V2Record {
+            offset: 4,
+            data: b"ZZ".to_vec(),
+        }],
+    );
+    append_ppf2_file_id_diz_trailer(&mut patch, "hello from file id");
+    fs::write(&patch_path, patch).expect("fixture");
+
+    let parsed = parse_ppf_file(&patch_path).expect("parse should succeed");
+    assert_eq!(parsed.version, PpfVersion::V2);
+    assert_eq!(parsed.records.len(), 1);
+    assert_eq!(parsed.records[0].offset, 4);
+    assert_eq!(parsed.records[0].data.as_slice(), b"ZZ");
 }
 
 #[test]
@@ -618,5 +687,23 @@ fn append_rompatcher_file_id_diz_trailer(bytes: &mut Vec<u8>, diz: &str) {
     let diz_len = u16::try_from(diz.len()).expect("diz length must fit u16");
     bytes.extend_from_slice(&diz_len.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
+}
+
+fn append_multipatch_file_id_diz_trailer(bytes: &mut Vec<u8>, diz: &str) {
+    bytes.extend_from_slice(FILE_ID_BEGIN_MARKER);
+    bytes.extend_from_slice(diz.as_bytes());
+    bytes.extend_from_slice(FILE_ID_END_MARKER);
+
+    let diz_len = u16::try_from(diz.len()).expect("diz length must fit u16");
+    bytes.extend_from_slice(&diz_len.to_le_bytes());
+}
+
+fn append_ppf2_file_id_diz_trailer(bytes: &mut Vec<u8>, diz: &str) {
+    bytes.extend_from_slice(FILE_ID_BEGIN_MARKER);
+    bytes.extend_from_slice(diz.as_bytes());
+    bytes.extend_from_slice(FILE_ID_END_MARKER);
+
+    let diz_len = u32::try_from(diz.len()).expect("diz length must fit u32");
+    bytes.extend_from_slice(&diz_len.to_le_bytes());
 }
 /* jscpd:ignore-end */
