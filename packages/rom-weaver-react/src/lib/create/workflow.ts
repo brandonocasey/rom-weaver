@@ -14,6 +14,7 @@ import { classifyPatcherInput, getInputSourceFileName } from "../../lib/input/in
 import {
   createCompressionProgressLabelFromEvent,
   getProgressEventPercent,
+  isCompressionWriteTelemetryProgress,
 } from "../../presentation/workflow-presentation.ts";
 import { getNamedSource, getNamedSourceFileName } from "../../storage/shared/binary/source-file-utils.ts";
 import type { DirectSource, SourceRef } from "../../types/source.ts";
@@ -179,6 +180,7 @@ const runCreateWorkflow = async (
       compressionProfile:
         compressionSettings.compressionProfile as SevenZipZstdCompressionOptions["compressionProfile"],
       onProgress: (progress: SharedProgressEventLike) => {
+        if (isCompressionWriteTelemetryProgress(progress)) return;
         const formatLabel = compression === "zip" ? "ZIP" : "7z";
         const progressDetails =
           progress.details && typeof progress.details === "object" && !Array.isArray(progress.details)

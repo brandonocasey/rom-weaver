@@ -3,6 +3,7 @@ import {
   createCompressionProgressLabelFromEvent,
   getProgressEventPercent,
   getRawProgressLabel,
+  isCompressionWriteTelemetryProgress,
 } from "../../presentation/workflow-presentation.ts";
 import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
 import type { ArchiveEntryInput, JsonValue, ProgressEvent as SharedProgressEvent } from "../../types/runtime.ts";
@@ -84,6 +85,7 @@ const getDefaultChdCompressionCodecs = (mode: string | null | undefined, compres
 
 const createArchiveProgressReporter =
   (compression: "zip" | "7z", options: ApplyWorkflowOptions | undefined) => (progress: SharedProgressEvent) => {
+    if (isCompressionWriteTelemetryProgress(progress)) return;
     const formatLabel = compression === "zip" ? "ZIP" : "7z";
     const progressDetails =
       progress.details && typeof progress.details === "object" && !Array.isArray(progress.details)

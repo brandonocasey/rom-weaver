@@ -402,6 +402,15 @@ const getCompressedBytesWritten = (progress: WorkflowValue | object | null | und
   return typeof value === "number" || typeof value === "string" ? normalizeByteCount(value) : null;
 };
 
+const isCompressionWriteTelemetryProgress = (progress: WorkflowValue | object | null | undefined): boolean => {
+  if (!isRecord(progress)) return false;
+  return (
+    progress.stage === "write" &&
+    getCompressedBytesWritten(progress) !== null &&
+    getProgressEventPercent(progress) === null
+  );
+};
+
 const formatByteSize = (value: string | number | null | undefined): string => {
   const bytes = normalizeByteCount(value);
   if (bytes === null) return "";
@@ -421,9 +430,10 @@ const createCompressionProgressLabelFromEvent = (options: CompressionProgressLab
   const compressedBytesWritten = getCompressedBytesWritten(options.progress);
   const writtenLabel = formatByteSize(compressedBytesWritten);
   const fallbackLabel = String(options.fallbackLabel || `Compressing to${formatLabel ? ` ${formatLabel}` : ""}`);
-  const label = writtenLabel
-    ? `Compressing to${formatLabel ? ` ${formatLabel}` : ""} - wrote ${writtenLabel}`
-    : getRawProgressLabel(options.progress || null, String(options.label || ""));
+  const label =
+    writtenLabel && !isCompressionWriteTelemetryProgress(options.progress)
+      ? `Compressing to${formatLabel ? ` ${formatLabel}` : ""} - wrote ${writtenLabel}`
+      : getRawProgressLabel(options.progress || null, String(options.label || ""));
   return createCompressionProgressLabel({
     fallbackLabel,
     formatLabel,
@@ -570,6 +580,7 @@ export {
   getProgressEventPercent,
   getProgressEventVisualPercent,
   getRawProgressLabel,
+  isCompressionWriteTelemetryProgress,
   normalizeByteCount,
   normalizeProgressDisplayPercent,
   normalizeProgressPercent,
