@@ -60,3 +60,18 @@ test("z3ds output naming falls back to z3ds metadata when source extension is mi
 
   expect(savePlan.finalOutputFileName).toBe("output.zcci");
 });
+
+test("archive recompression preserves the rom extension for the inner entry", () => {
+  const savePlan = createPatchedRomSavePlan({
+    compressionFormat: "zip",
+    compressionSettings: {},
+    patchedFileName: "Crash Bandicoot (USA) - Quality of Life",
+    romFile: {
+      fileName: "Crash Bandicoot (USA).bin",
+      getExtension: () => "bin",
+    },
+  });
+
+  expect(savePlan.finalOutputFileName).toBe("Crash Bandicoot (USA) - Quality of Life.zip");
+  expect(savePlan.archiveEntryFileName).toBe("Crash Bandicoot (USA) - Quality of Life.bin");
+});

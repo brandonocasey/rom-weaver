@@ -1,6 +1,6 @@
 import type { JsonValue } from "../../types/runtime.ts";
 import type { WorkflowRomFileLike as RomFileLike } from "../../types/workflow-source.ts";
-import { getBaseFileName, replaceFileNameExtension } from "../input/path-utils.ts";
+import { getBaseFileName, hasFileNameExtension, replaceFileNameExtension } from "../input/path-utils.ts";
 import { getCompressedOutputFileName } from "./output-files.ts";
 
 const ARCHIVE_OUTPUT_EXTENSION_REGEX = /\.(?:7z|zip|zipx)$/i;
@@ -42,11 +42,14 @@ const createCueOutputEntry = ({
 };
 
 const getArchivePatchedRomEntryName = (
-  _romFile: RomFileLike | null | undefined,
+  romFile: RomFileLike | null | undefined,
   outputName?: string | null,
 ): string => {
   const fileName = getBaseFileName(outputName || "patched.bin");
-  return fileName.replace(ARCHIVE_OUTPUT_EXTENSION_REGEX, "") || fileName;
+  const archiveEntryFileName = fileName.replace(ARCHIVE_OUTPUT_EXTENSION_REGEX, "") || fileName;
+  if (hasFileNameExtension(archiveEntryFileName)) return archiveEntryFileName;
+  const sourceExtension = typeof romFile?.getExtension === "function" ? romFile.getExtension() : "";
+  return sourceExtension ? replaceFileNameExtension(archiveEntryFileName, sourceExtension) : archiveEntryFileName;
 };
 
 const createPatchedRomSavePlan = ({
