@@ -1,4 +1,6 @@
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.js";
+import { createTiming, formatTiming } from "../../../../lib/progress/timing.ts";
+import { formatByteSize } from "../../../../presentation/workflow-presentation.ts";
 
 /**
  * Nested-extraction view. When a ROM/patch came from one or more archives, the
@@ -15,6 +17,51 @@ type ExtractionLevel = {
   sizeBytes?: number;
   rawBytes?: string;
   timing?: string;
+};
+
+type ExtractionParentLevel = {
+  fileName: string;
+  sourceSize?: number;
+  outputSize?: number;
+  decompressionTimeMs?: number;
+};
+
+type ExtractPanelProps = {
+  decompressionTimeMs?: number;
+  fileName: string;
+  fileSize?: number;
+  legacyArchiveClassName?: string;
+  legacyFileClassName?: string;
+  parentCompressions?: ExtractionParentLevel[];
+  timing?: string;
+};
+
+const formatExtractionElapsedMs = (ms?: number) =>
+  typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : undefined;
+
+const buildExtractionLevels = (
+  fileName: string,
+  fileSize: number | undefined,
+  parentCompressions: ExtractionParentLevel[] | undefined,
+): ExtractionLevel[] => {
+  const levels: ExtractionLevel[] = (parentCompressions || []).map((entry) => {
+    const sizeBytes = entry.sourceSize ?? entry.outputSize;
+    return {
+      name: entry.fileName,
+      sizeBytes,
+      sizeLabel: typeof sizeBytes === "number" ? formatByteSize(sizeBytes) : undefined,
+      timing: formatExtractionElapsedMs(entry.decompressionTimeMs),
+    };
+  });
+  const last = levels[levels.length - 1];
+  if (!last || last.name !== fileName) {
+    levels.push({
+      name: fileName,
+      sizeBytes: fileSize,
+      sizeLabel: typeof fileSize === "number" ? formatByteSize(fileSize) : undefined,
+    });
+  }
+  return levels;
 };
 
 const Size = ({ label, rawBytes }: { label?: string; rawBytes?: string }) =>
@@ -90,4 +137,68 @@ const ExtractionTree = ({ levels, timing }: { levels: ExtractionLevel[]; timing?
   );
 };
 
-export { type ExtractionLevel, ExtractionTree };
+const LegacyExtractionLabel = ({
+  archiveClassName,
+  archiveEntries,
+  className,
+  fileName,
+  size,
+}: {
+  archiveClassName: string;
+  archiveEntries?: ExtractionParentLevel[];
+  className: string;
+  fileName: string;
+  size?: number;
+}) => {
+  const sizeLabel = typeof size === "number" ? formatByteSize(size) : "";
+  const archiveSize = archiveEntries?.[0]?.sourceSize ?? archiveEntries?.[0]?.outputSize;
+  const archiveSizeLabel = typeof archiveSize === "number" ? formatByteSize(archiveSize) : "";
+  return (
+    <span className={`${className} sr-only`}>
+      <strong>{fileName}</strong>
+      {sizeLabel ? <span data-size-bytes={sizeLabel}>{sizeLabel}</span> : null}
+      {archiveEntries?.length ? (
+        <span className={archiveClassName}>
+          <strong>{fileName}</strong>
+          {archiveSizeLabel ? ` ${archiveSizeLabel}` : ""}
+          {archiveEntries.map((entry) => ` ${entry.fileName}`).join("")}
+        </span>
+      ) : null}
+    </span>
+  );
+};
+
+const ExtractPanel = ({
+  decompressionTimeMs,
+  fileName,
+  fileSize,
+  legacyArchiveClassName = "rom-weaver-patch-stack-archive",
+  legacyFileClassName,
+  parentCompressions,
+  timing,
+}: ExtractPanelProps) => (
+  <>
+    {legacyFileClassName ? (
+      <LegacyExtractionLabel
+        archiveClassName={legacyArchiveClassName}
+        archiveEntries={parentCompressions}
+        className={legacyFileClassName}
+        fileName={fileName}
+        size={fileSize}
+      />
+    ) : null}
+    <ExtractionTree
+      levels={buildExtractionLevels(fileName, fileSize, parentCompressions)}
+      timing={timing ?? formatExtractionElapsedMs(decompressionTimeMs)}
+    />
+  </>
+);
+
+export {
+  buildExtractionLevels,
+  type ExtractionLevel,
+  type ExtractionParentLevel,
+  ExtractionTree,
+  ExtractPanel,
+  type ExtractPanelProps,
+};

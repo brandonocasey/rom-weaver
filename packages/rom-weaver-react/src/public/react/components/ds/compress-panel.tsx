@@ -1,5 +1,6 @@
+import type { ReactNode } from "react";
 import type { CompressField } from "../../compress-options.ts";
-import { OutputField } from "./output-card.tsx";
+import { type FormatOption, type OutputCompressPanel, OutputField } from "./output-card.tsx";
 
 /**
  * Body of the output "Compress" collapsible: one labeled control per compression
@@ -49,4 +50,64 @@ const CompressPanelBody = ({
   </>
 );
 
-export { CompressPanelBody };
+type OutputCompressionPanelConfig = {
+  disabled?: boolean;
+  fields?: CompressField[] | null;
+  format?: string;
+  formatId?: string;
+  formatLabel?: string;
+  formatOptions?: FormatOption[];
+  formatValue?: string;
+  onFieldChange?: (key: string, value: string) => void;
+  onFormatChange?: (value: string) => void;
+  summary?: ReactNode;
+  timing?: ReactNode;
+};
+
+type CompressionFormatLabelOptions = {
+  noneLabel?: string;
+  uncompressedValues?: string[];
+};
+
+const getOutputCompressionFormatLabel = (
+  formatValue: string,
+  formatOptions: FormatOption[],
+  { noneLabel = "None", uncompressedValues = ["none"] }: CompressionFormatLabelOptions = {},
+) =>
+  uncompressedValues.includes(formatValue)
+    ? noneLabel
+    : formatOptions.find((option) => option.value === formatValue)?.label;
+
+const buildOutputCompressionPanel = ({
+  disabled,
+  fields,
+  format,
+  formatId,
+  formatLabel = "Type",
+  formatOptions,
+  formatValue,
+  onFieldChange,
+  onFormatChange,
+  summary,
+  timing,
+}: OutputCompressionPanelConfig): OutputCompressPanel => ({
+  children:
+    fields?.length && onFieldChange ? (
+      <CompressPanelBody disabled={disabled} fields={fields} onChange={onFieldChange} />
+    ) : null,
+  format,
+  formatId,
+  formatLabel,
+  formatOptions,
+  formatValue,
+  onFormatChange,
+  summary,
+  timing,
+});
+
+export {
+  buildOutputCompressionPanel,
+  CompressPanelBody,
+  getOutputCompressionFormatLabel,
+  type OutputCompressionPanelConfig,
+};

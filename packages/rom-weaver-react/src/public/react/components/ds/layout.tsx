@@ -57,6 +57,7 @@ const DropZone = ({
   disabled,
   onFiles,
   id,
+  inputId,
 }: {
   label: ReactNode;
   hint?: ReactNode;
@@ -66,8 +67,10 @@ const DropZone = ({
   disabled?: boolean;
   onFiles: (files: File[]) => void;
   id?: string;
+  inputId?: string;
 }) => {
-  const inputId = useId();
+  const generatedInputId = useId();
+  const resolvedInputId = inputId || generatedInputId;
   const [dragging, setDragging] = useState(false);
 
   const emit = (list: FileList | null) => {
@@ -81,7 +84,7 @@ const DropZone = ({
     <label
       aria-disabled={disabled || undefined}
       className={join("drop", big && "big", dragging && "dragging")}
-      htmlFor={inputId}
+      htmlFor={resolvedInputId}
       id={id}
       onDragLeave={() => setDragging(false)}
       onDragOver={(event) => {
@@ -106,7 +109,7 @@ const DropZone = ({
         aria-label={typeof label === "string" ? label : undefined}
         className="absolute h-px w-px overflow-hidden opacity-0"
         disabled={disabled}
-        id={inputId}
+        id={resolvedInputId}
         multiple={multiple}
         onChange={(event) => {
           emit(event.currentTarget.files);

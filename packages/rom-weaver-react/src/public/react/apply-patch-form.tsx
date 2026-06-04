@@ -33,6 +33,7 @@ import {
   toBrowserPublicBinarySource,
   toReactProgressEvent,
 } from "./workflow-adapters.ts";
+import { createReactWorkflowId } from "./workflow-form-utils.ts";
 
 type ApplyWorkflowSessionInput = {
   inputs: BinarySource[];
@@ -277,11 +278,6 @@ const createBaseApplyWorkflowSettings = (
   };
 };
 
-const createWorkflowId = (prefix: string) =>
-  typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? `${prefix}-${crypto.randomUUID()}`
-    : `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-
 const createWorkflowSettingsKey = (settings: Partial<ApplyPatchFormSettings>) =>
   JSON.stringify(settings, (_key, value) => (typeof value === "function" ? "[function]" : value));
 
@@ -423,11 +419,10 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   const [resolvedOutputCompression, setResolvedOutputCompression] = useState<CompressionFormat | undefined>(undefined);
   const [resolvedOutputName, setResolvedOutputName] = useState("");
   const [resolvedOutputNameKey, setResolvedOutputNameKey] = useState("");
-  const workflowIdRef = useRef(createWorkflowId("react-apply"));
+  const workflowIdRef = useRef(createReactWorkflowId("react-apply"));
   const mutationQueueRef = useRef(Promise.resolve<void>(undefined));
-  const selectedInputCandidateIdRef = useRef<string | null>(null);
-  const selectedPatchCandidateIdsRef = useRef(new Map<string, string>());
-  const selectedPatchArchiveCandidateIdsRef = useRef(new Map<string, string>());
+  const selectFileRef = useRef(selectFile);
+  selectFileRef.current = selectFile;
   const lastInputsRef = useRef<BinarySource[]>([]);
   const lastPatchOrderRef = useRef("");
   const forcePatchWorkflowRefreshRef = useRef(false);
@@ -439,8 +434,6 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   });
   const workflowOutputOverridesKeyRef = useRef("");
   const prepareHandlersRef = useRef<ApplyWorkflowPrepareHandlers | null>(null);
-  const selectFileRef = useRef(selectFile);
-  selectFileRef.current = selectFile;
   const propsWithSettings = {
     ...props,
     defaultSettings: props.defaultSettings || providerSettings,
@@ -463,17 +456,12 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   );
 
   const syncInputSelectionRefs = useCallback((inputs: BinarySource[]) => {
-    if (!sameBinarySourceLists(lastInputsRef.current, inputs)) {
-      selectedInputCandidateIdRef.current = null;
-      lastInputsRef.current = inputs.slice();
-    }
+    if (!sameBinarySourceLists(lastInputsRef.current, inputs)) lastInputsRef.current = inputs.slice();
   }, []);
 
   const syncPatchSelectionRefs = useCallback((patches: BinarySource[]) => {
     const patchOrder = getBinarySourceListStableIds(patches).join("|");
     if (lastPatchOrderRef.current !== patchOrder) {
-      selectedPatchCandidateIdsRef.current.clear();
-      selectedPatchArchiveCandidateIdsRef.current.clear();
       forcePatchWorkflowRefreshRef.current = true;
       lastPatchOrderRef.current = patchOrder;
     }
@@ -537,22 +525,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         const promptPatchSelection = handlers?.selection?.promptPatchSelection !== false;
         if ((request.role === "input" && !promptInputSelection) || (request.role === "patch" && !promptPatchSelection))
           throw createWorkflowFormError("WORKFLOW_SELECTION_SKIPPED", `${request.sourceName} requires selection`);
-        if (request.role === "input" && selectedInputCandidateIdRef.current) {
-          const existing = request.candidates.find((candidate) => candidate.id === selectedInputCandidateIdRef.current);
-          if (existing?.selectable) return { id: existing.id };
-        }
-        if (request.role === "patch") {
-          const existing = request.sourceName
-            ? selectedPatchArchiveCandidateIdsRef.current.get(request.sourceName)
-            : undefined;
-          const matchingCandidate = request.candidates.find((candidate) => candidate.id === existing);
-          if (matchingCandidate?.selectable) return { id: matchingCandidate.id };
-        }
-        const selection = await selectFileRef.current(request);
-        if (request.role === "input") selectedInputCandidateIdRef.current = selection.id;
-        if (request.role === "patch" && request.sourceName)
-          selectedPatchArchiveCandidateIdsRef.current.set(request.sourceName, selection.id);
-        return selection;
+        return selectFileRef.current(request);
       },
     });
     return workflowRef.current;
@@ -600,27 +573,6 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
       workflowOutputOverridesKeyRef.current = outputOverridesKey;
     },
     [applyOutputOverrides],
-  );
-
-  const resolveSelections = useCallback(
-    async (
-      workflow: ApplyWorkflow,
-      patches: BinarySource[],
-      _selectionOptions: ApplyWorkflowPrepareHandlers["selection"] = {},
-    ) => {
-      if (workflow.getInput()?.selectedCandidateId) {
-        selectedInputCandidateIdRef.current = workflow.getInput()?.selectedCandidateId || null;
-      }
-      const workflowPatches = workflow.getPatches();
-      const patchKeys = getBinarySourceListStableIds(patches);
-      for (const [index, patch] of workflowPatches.entries()) {
-        const patchKey = patchKeys[index] || "";
-        if (patchKey && patch.selectedCandidateId) {
-          selectedPatchCandidateIdsRef.current.set(patchKey, patch.selectedCandidateId);
-        }
-      }
-    },
-    [],
   );
 
   const prepareWorkflow = useCallback(
@@ -711,7 +663,6 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           }
         }
 
-        await resolveSelections(workflow, snapshot.patches, handlers.selection);
         await syncWorkflowOutputOverrides(workflow, snapshot, baseSettings, settingsChanged);
         workflowSyncRef.current = {
           inputs: snapshot.inputs.slice(),
@@ -761,7 +712,6 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     [
       getWorkflow,
       props.workerThreads,
-      resolveSelections,
       setResolvedOutputNameForSnapshot,
       syncSelectionRefs,
       syncWorkflowOutputOverrides,

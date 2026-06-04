@@ -9,6 +9,32 @@ import type { ReactNode } from "react";
  */
 
 type FormatOption = { value: string; label: string };
+type OutputCompressPanel = {
+  summary?: ReactNode;
+  timing?: ReactNode;
+  children: ReactNode;
+  format?: string;
+  formatValue?: string;
+  formatOptions?: FormatOption[];
+  formatLabel?: string;
+  formatId?: string;
+  onFormatChange?: (value: string) => void;
+};
+type OutputCardProps = {
+  fileName: string;
+  onFileNameChange: (value: string) => void;
+  fileNamePlaceholder?: string;
+  fileNameLabel?: string;
+  fileNameId?: string;
+  format: string;
+  formatOptions: FormatOption[];
+  onFormatChange: (value: string) => void;
+  formatLabel?: string;
+  formatId?: string;
+  compress?: OutputCompressPanel | null;
+  disabled?: boolean;
+  action?: ReactNode;
+};
 const HEADER_SUMMARY_SEPARATOR = " · ";
 
 /** One labeled control row inside the Compress panel. */
@@ -33,31 +59,7 @@ const OutputCard = ({
   compress,
   disabled,
   action,
-}: {
-  fileName: string;
-  onFileNameChange: (value: string) => void;
-  fileNamePlaceholder?: string;
-  fileNameLabel?: string;
-  fileNameId?: string;
-  format: string;
-  formatOptions: FormatOption[];
-  onFormatChange: (value: string) => void;
-  formatLabel?: string;
-  formatId?: string;
-  compress?: {
-    summary?: ReactNode;
-    timing?: ReactNode;
-    children: ReactNode;
-    format?: string;
-    formatValue?: string;
-    formatOptions?: FormatOption[];
-    formatLabel?: string;
-    formatId?: string;
-    onFormatChange?: (value: string) => void;
-  } | null;
-  disabled?: boolean;
-  action?: ReactNode;
-}) => (
+}: OutputCardProps) => (
   <div className="outcard">
     <div className="fname-group">
       <textarea
@@ -134,4 +136,4 @@ const OutputCard = ({
   </div>
 );
 
-export { type FormatOption, OutputCard, OutputField };
+export { type FormatOption, OutputCard, type OutputCardProps, type OutputCompressPanel, OutputField };

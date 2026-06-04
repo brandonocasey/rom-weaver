@@ -5,10 +5,45 @@
  */
 
 export { ChecksumList, ChecksumRow } from "./checksum-list.tsx";
-export { type ExtractionLevel, ExtractionTree } from "./extraction-tree.tsx";
-export { FileProgress, InlineProgress, Notice, type NoticeLevel, ProgressTrack, RunButton } from "./feedback.tsx";
+export {
+  buildOutputCompressionPanel,
+  CompressPanelBody,
+  getOutputCompressionFormatLabel,
+  type OutputCompressionPanelConfig,
+} from "./compress-panel.tsx";
+export { type ExtractionLevel, ExtractionTree, ExtractPanel, type ExtractPanelProps } from "./extraction-tree.tsx";
+export {
+  type DownloadMeta,
+  FileProgress,
+  type FileProgressProps,
+  InlineProgress,
+  Notice,
+  type NoticeLevel,
+  ProgressTrack,
+  RunButton,
+} from "./feedback.tsx";
 export { FileCard, type FileState, FileTargetPill, RemoveButton } from "./file-card.tsx";
+export { FixesPanel, type FixesPanelProps, type TrimFixDetails } from "./fixes-panel.tsx";
 export { DropZone, InfoPopover, StepSection } from "./layout.tsx";
 export { ConfirmDialog, Modal, ModalShell } from "./modal.tsx";
-export { type FormatOption, OutputCard, OutputField } from "./output-card.tsx";
+export {
+  type FormatOption,
+  OutputCard,
+  type OutputCardProps,
+  type OutputCompressPanel,
+  OutputField,
+} from "./output-card.tsx";
+export { type RomInputInfoPanelProps, RomInputPanels, type RomInputPanelsProps } from "./rom-input-panels.tsx";
 export { type SelectionItem, SelectionTree } from "./selection.tsx";
+export { type SourceInfoChecksums, SourceInfoList, type SourceInfoProgress } from "./source-info-list.tsx";
+export {
+  OutputRunAction,
+  type OutputRunActionProps,
+  WorkflowOutputStep,
+  type WorkflowOutputStepProps,
+} from "./workflow-output-step.tsx";
+export {
+  WorkflowRomInputStep,
+  type WorkflowRomInputStepItem,
+  type WorkflowRomInputStepProps,
+} from "./workflow-rom-input-step.tsx";

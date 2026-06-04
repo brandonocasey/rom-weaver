@@ -37,6 +37,7 @@ type GeneratedOutputSource = GeneratedOutputBinarySource | GeneratedPatchNameSou
 
 const EXTENSION_REGEX = /\.([^./\\\s]+)$/;
 const FILE_NAME_SEPARATOR_REGEX = /[/\\]+/;
+const CREATE_PATCH_FORMATS = ["aps", "bdf", "bps", "ebp", "ips", "pmsr", "ppf", "rup", "ups", "vcdiff", "xdelta"];
 
 const getFileNameWithoutExtension = (fileName: string) =>
   getBaseFileName(fileName).replace(EXTENSION_REGEX, "") || getBaseFileName(fileName);
@@ -164,6 +165,26 @@ const createOutputOptions = (
     value: option,
   }));
 
+const createApplyOutputOptions = createOutputOptions;
+
+const normalizeExtensionValue = (value: string, fallback: string) =>
+  String(value || "")
+    .trim()
+    .replace(/^\./, "") || fallback;
+
+const createCreateOutputCompressionOptions = (patchType: string): OutputOption[] => [
+  { label: `.${normalizeExtensionValue(patchType, "patch")}`, value: "none" },
+  ...createOutputOptions(["zip", "7z"]),
+];
+
+const createCreatePatchFormatOptions = (): OutputOption[] =>
+  CREATE_PATCH_FORMATS.map((value) => ({ label: `.${value}`, value }));
+
+const createTrimOutputOptions = (rawExtension: string): OutputOption[] => [
+  { label: `.${normalizeExtensionValue(rawExtension, "raw")}`, value: normalizeExtensionValue(rawExtension, "raw") },
+  ...createOutputOptions(["zip", "7z"]),
+];
+
 const formatLabeledByteSize = (label: string, value?: number | null) => {
   const formattedSize = formatByteSize(value);
   return formattedSize ? `${label}: ${formattedSize}` : "";
@@ -209,4 +230,13 @@ const combineSectionTimingText = (timingText?: string | null, sizeText?: string 
   [String(timingText || ""), String(sizeText || "")].filter(Boolean).join(" | ");
 
 export type { OutputOption, OutputOptionLabelMap, SectionSizeSummary };
-export { combineSectionTimingText, createOutputOptions, createSectionSizeText, getGeneratedOutputName };
+export {
+  combineSectionTimingText,
+  createApplyOutputOptions,
+  createCreateOutputCompressionOptions,
+  createCreatePatchFormatOptions,
+  createOutputOptions,
+  createSectionSizeText,
+  createTrimOutputOptions,
+  getGeneratedOutputName,
+};

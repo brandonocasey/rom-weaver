@@ -2,7 +2,13 @@ import { expect, test } from "vitest";
 import OutputCompressionManager from "../../src/lib/compression/output-compression-manager.ts";
 import { buildPatchedOutputBaseName } from "../../src/lib/output/output-name-composition.ts";
 import { createPatchedRomSavePlan } from "../../src/lib/output/output-save-plan.ts";
-import { getGeneratedOutputName } from "../../src/public/react/output-view-model.ts";
+import {
+  createApplyOutputOptions,
+  createCreateOutputCompressionOptions,
+  createCreatePatchFormatOptions,
+  createTrimOutputOptions,
+  getGeneratedOutputName,
+} from "../../src/public/react/output-view-model.ts";
 
 test("buildPatchedOutputBaseName strips duplicated input prefixes from patch names", () => {
   expect(buildPatchedOutputBaseName("Crash Bandicoot (USA)", ["Crash Bandicoot (USA)_Quality of Life"])).toBe(
@@ -83,4 +89,41 @@ test("archive compression appends archive extension after explicit rom extension
   expect(OutputCompressionManager.getCompressedFileName({ fileName: "patched.sfc" }, "zip", {})).toBe(
     "patched.sfc.zip",
   );
+});
+
+test("apply output options preserve configured compression order and labels", () => {
+  expect(createApplyOutputOptions(["none", "zip", "7z"], { fileName: "game.gba" })).toEqual([
+    { label: ".gba", value: "none" },
+    { label: ".zip", value: "zip" },
+    { label: ".7z", value: "7z" },
+  ]);
+});
+
+test("create output options expose patch format and archive choices", () => {
+  expect(createCreateOutputCompressionOptions("bps")).toEqual([
+    { label: ".bps", value: "none" },
+    { label: ".zip", value: "zip" },
+    { label: ".7z", value: "7z" },
+  ]);
+  expect(createCreatePatchFormatOptions().map((option) => option.value)).toEqual([
+    "aps",
+    "bdf",
+    "bps",
+    "ebp",
+    "ips",
+    "pmsr",
+    "ppf",
+    "rup",
+    "ups",
+    "vcdiff",
+    "xdelta",
+  ]);
+});
+
+test("trim output options keep raw source extension alongside archive choices", () => {
+  expect(createTrimOutputOptions("nds")).toEqual([
+    { label: ".nds", value: "nds" },
+    { label: ".zip", value: "zip" },
+    { label: ".7z", value: "7z" },
+  ]);
 });

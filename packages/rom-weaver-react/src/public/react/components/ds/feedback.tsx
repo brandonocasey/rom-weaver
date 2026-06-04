@@ -85,8 +85,10 @@ const InlineProgress = ({
   </div>
 );
 
+type FileProgressProps = Parameters<typeof InlineProgress>[0];
+
 /** {@link InlineProgress} wrapped in a contained card, for in-row file work. */
-const FileProgress = (props: Parameters<typeof InlineProgress>[0]) => (
+const FileProgress = (props: FileProgressProps) => (
   <div className="fileprog">
     <InlineProgress {...props} />
   </div>
@@ -119,6 +121,7 @@ const RunButton = ({
     {icon}
     {download ? (
       <>
+        <span className="sr-only">Download </span>
         {download.format ? <span className="dl-fmt">{download.format}</span> : null}
         {download.name ? <span className="dl-name">{download.name}</span> : null}
         {download.size ? (
@@ -135,4 +138,13 @@ const RunButton = ({
   </button>
 );
 
-export { FileProgress, InlineProgress, Notice, type NoticeLevel, ProgressTrack, RunButton };
+export {
+  type DownloadMeta,
+  FileProgress,
+  type FileProgressProps,
+  InlineProgress,
+  Notice,
+  type NoticeLevel,
+  ProgressTrack,
+  RunButton,
+};

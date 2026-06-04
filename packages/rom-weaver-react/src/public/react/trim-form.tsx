@@ -13,18 +13,17 @@ import {
 } from "../../platform/browser/browser-api.ts";
 import { formatCodedErrorForDisplay, getErrorCode } from "../../presentation/errors.ts";
 import { createBrowserLocalizer } from "../../presentation/localization/index.ts";
-import { createProgressViewModelFromEvent, formatByteSize } from "../../presentation/workflow-presentation.ts";
+import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import type { TrimWorkflowSourceState } from "../../types/trim-workflow.ts";
 import { useCandidateSelection } from "./candidate-selection.tsx";
-import { ChecksumList, ChecksumRow } from "./components/ds/checksum-list.tsx";
-import { CompressPanelBody } from "./components/ds/compress-panel.tsx";
-import { type ExtractionLevel, ExtractionTree } from "./components/ds/extraction-tree.tsx";
-import { FileProgress, Notice, RunButton } from "./components/ds/feedback.tsx";
-import { FileCard } from "./components/ds/file-card.tsx";
-import { DropZone, InfoPopover, StepSection } from "./components/ds/layout.tsx";
+import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./components/ds/compress-panel.tsx";
+import { Notice } from "./components/ds/feedback.tsx";
+import { InfoPopover } from "./components/ds/layout.tsx";
 import { ConfirmDialog } from "./components/ds/modal.tsx";
-import { OutputCard } from "./components/ds/output-card.tsx";
+import { OutputRunAction, WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
+import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
 import { buildCompressPanel } from "./compress-options.ts";
+import { createTrimOutputOptions } from "./output-view-model.ts";
 import type { BinarySource } from "./patcher-form.ts";
 import type { CandidateSelectionPrompt, TrimPatchFormProps, TrimPatchFormSettings } from "./public-types.ts";
 import {
@@ -34,37 +33,27 @@ import {
   useCreateSettings,
   useRomWeaverAssetBaseUrl,
 } from "./settings-context.tsx";
+import { getReactBinarySourceFileName, toBrowserPublicBinarySource } from "./workflow-adapters.ts";
+import { createReactWorkflowId, createSettingsDependencyKey, mergeSettingsWithOutput } from "./workflow-form-utils.ts";
 import {
-  getReactBinarySourceFileName,
-  toBrowserPublicBinarySource,
-  toReactProgressEvent,
-} from "./workflow-adapters.ts";
+  createIndeterminateWorkflowProgress,
+  toWorkflowChecksumProgressProps,
+  toWorkflowFileProgressProps,
+  useActiveAbortController,
+  useDisposableWorkflowOutput,
+  useWorkflowProgressState,
+} from "./workflow-run-hooks.ts";
 
 const FILE_EXTENSION_REGEX = /\.[^./\\]+$/;
 
-const createWorkflowId = (prefix: string) =>
-  typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? `${prefix}-${crypto.randomUUID()}`
-    : `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-
 type BrowserTrimWorkflow = InstanceType<typeof TrimWorkflow>;
-
-const mergeTrimSettings = (
-  baseSettings: TrimPatchFormSettings | undefined,
-  overrideSettings: TrimPatchFormSettings | undefined,
-): TrimPatchFormSettings => {
-  const merged = { ...(baseSettings || {}), ...(overrideSettings || {}) } as TrimPatchFormSettings;
-  if (baseSettings?.output || overrideSettings?.output) {
-    merged.output = {
-      ...(baseSettings?.output || {}),
-      ...(overrideSettings?.output || {}),
-    };
-  }
-  return merged;
+type CompletedTrimOutput = {
+  fileName: string;
+  inputSize?: number;
+  rawSize?: number;
+  saveAs: (destination?: BrowserSaveDestination) => Promise<void>;
+  size?: number;
 };
-
-const createSettingsDependencyKey = (value: unknown) =>
-  JSON.stringify(value, (_key, entry) => (typeof entry === "function" ? "[function]" : entry));
 
 // Raw extension keeps the trimmed bytes uncompressed; zip/7z wrap the trimmed file in an archive.
 const getSourceExtension = (fileName: string) => {
@@ -132,16 +121,6 @@ const getCompletedDownloadMeta = (
   };
 };
 
-type TrimProgressState = {
-  indeterminate: boolean;
-  label: string;
-  message: string;
-  percent: number | null;
-  role?: string;
-  stage?: string;
-  visualPercent: number | null;
-};
-
 const getProgressDetails = (event: WorkflowProgress): Record<string, unknown> =>
   event.details && typeof event.details === "object" && !Array.isArray(event.details)
     ? (event.details as Record<string, unknown>)
@@ -149,98 +128,6 @@ const getProgressDetails = (event: WorkflowProgress): Record<string, unknown> =>
 
 const formatElapsedMs = (ms?: number) =>
   typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : undefined;
-
-const toExtractionLevels = (
-  fileName: string,
-  fileSize: number | undefined,
-  sourceState: TrimWorkflowSourceState | null,
-): ExtractionLevel[] => {
-  const levels: ExtractionLevel[] = (sourceState?.parentCompressions || []).map((entry) => {
-    const sizeBytes = entry.sourceSize ?? entry.outputSize;
-    return {
-      name: entry.fileName,
-      sizeBytes,
-      sizeLabel: typeof sizeBytes === "number" ? formatByteSize(sizeBytes) : undefined,
-      timing: formatElapsedMs(entry.decompressionTimeMs),
-    };
-  });
-  const last = levels[levels.length - 1];
-  if (!last || last.name !== fileName) {
-    levels.push({
-      name: fileName,
-      sizeBytes: fileSize,
-      sizeLabel: typeof fileSize === "number" ? formatByteSize(fileSize) : undefined,
-    });
-  }
-  return levels;
-};
-
-const getTrimFixLabel = (sourceState: TrimWorkflowSourceState | null) => {
-  const trim = sourceState?.romProbe?.trim;
-  if (!trim?.detected) return "Not detected";
-  const details = [
-    typeof trim.trimmedInputBytes === "number" ? formatByteSize(trim.trimmedInputBytes) : "",
-    trim.mode ? `mode ${trim.mode}` : "",
-    trim.preservedDownloadPlayCert ? "download-play cert preserved" : "",
-  ].filter(Boolean);
-  return details.length ? `Detected (${details.join(" · ")})` : "Detected";
-};
-
-const TrimFixes = ({ sourceState }: { sourceState: TrimWorkflowSourceState | null }) => (
-  <ChecksumList
-    defaultOpen={false}
-    label="Fixes"
-    sublabel={sourceState?.romProbe?.trim.detected ? "trim detected" : "trim not detected"}
-  >
-    <ChecksumRow label="HEADER" value="No change" />
-    <ChecksumRow label="TRIM" value={getTrimFixLabel(sourceState)} />
-  </ChecksumList>
-);
-
-const TrimInfo = ({
-  progress,
-  sourceState,
-}: {
-  progress: TrimProgressState | null;
-  sourceState: TrimWorkflowSourceState | null;
-}) => {
-  const checksumProgress = progress?.stage === "checksum" ? progress : null;
-  const bytes = sourceState?.size ?? sourceState?.sourceSize;
-  const checksums = sourceState?.checksums;
-  if (!(checksumProgress || checksums || typeof bytes === "number")) return null;
-  return (
-    <ChecksumList
-      defaultOpen={false}
-      label="Info"
-      lead={
-        checksumProgress ? (
-          <FileProgress
-            indeterminate={checksumProgress.indeterminate}
-            label={checksumProgress.label || checksumProgress.message || "Checksum"}
-            percent={
-              typeof checksumProgress.visualPercent === "number"
-                ? checksumProgress.visualPercent
-                : checksumProgress.percent
-            }
-            value={
-              typeof checksumProgress.percent === "number" ? `${Math.round(checksumProgress.percent)}%` : "working"
-            }
-          />
-        ) : undefined
-      }
-      timing={formatElapsedMs(sourceState?.checksumTimeMs)}
-    >
-      <ChecksumRow
-        copyValue={typeof bytes === "number" ? String(Math.floor(bytes)) : ""}
-        label="BYTES"
-        value={typeof bytes === "number" ? String(Math.floor(bytes)) : ""}
-      />
-      <ChecksumRow label="CRC32" value={checksums?.crc32 || ""} />
-      <ChecksumRow label="MD5" value={checksums?.md5 || ""} />
-      <ChecksumRow label="SHA-1" value={checksums?.sha1 || ""} />
-    </ChecksumList>
-  );
-};
 
 function TrimPatchForm(props: TrimPatchFormProps) {
   const providerSettings = useCreateSettings();
@@ -252,7 +139,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   });
   const [internalSource, setInternalSource] = useState<BinarySource | null>(props.defaultSource || null);
   const [internalSettings, setInternalSettings] = useState<TrimPatchFormSettings>(() =>
-    mergeTrimSettings(providerSettings, props.defaultSettings),
+    mergeSettingsWithOutput(providerSettings, props.defaultSettings),
   );
   const [internalOutputFormat, setInternalOutputFormat] = useState(props.defaultOutputFormat || "");
   const [busy, setBusy] = useState(false);
@@ -261,27 +148,16 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   const [message, setMessage] = useState("");
   const [errorCode, setErrorCode] = useState("");
   const [sourceState, setSourceState] = useState<TrimWorkflowSourceState | null>(null);
-  const [completedOutput, setCompletedOutput] = useState<{
-    fileName: string;
-    inputSize?: number;
-    rawSize?: number;
-    saveAs: (destination?: BrowserSaveDestination) => Promise<void>;
-    size?: number;
-  } | null>(null);
+  const { clearCompletedOutput, completedOutput, disposeActiveOutput, rememberOutputDispose, setCompletedOutput } =
+    useDisposableWorkflowOutput<CompletedTrimOutput>();
+  const { abortActiveOperation, activeAbortControllerRef, rememberAbortController } = useActiveAbortController();
+  const { clearProgressForStage, createProgressHandler, progress, reportProgressEvent, setProgress } =
+    useWorkflowProgressState({
+      onProgress: props.onProgress,
+    });
   const [completedCompressionTimeMs, setCompletedCompressionTimeMs] = useState<number | null>(null);
   const [completedTrimTimeMs, setCompletedTrimTimeMs] = useState<number | null>(null);
-  const [progress, setProgress] = useState<{
-    indeterminate: boolean;
-    label: string;
-    message: string;
-    percent: number | null;
-    role?: string;
-    stage?: string;
-    visualPercent: number | null;
-  } | null>(null);
   const [outputName, setOutputName] = useState("");
-  const activeOutputDisposeRef = useRef<(() => Promise<void> | void) | null>(null);
-  const activeAbortControllerRef = useRef<AbortController | null>(null);
   const stagedTrimWorkflowRef = useRef<BrowserTrimWorkflow | null>(null);
   const stagedTrimWorkflowGenerationRef = useRef(0);
   const stagedTrimWorkflowReadyRef = useRef<Promise<void> | null>(null);
@@ -289,19 +165,16 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     compressionStartedAt: null,
     trimStartedAt: null,
   });
-  const workflowIdRef = useRef(createWorkflowId("react-trim"));
-  const selectedSourceCandidateIdRef = useRef<string | null>(null);
+  const workflowIdRef = useRef(createReactWorkflowId("react-trim"));
 
   const source = props.source === undefined ? internalSource : props.source;
   const settings = props.settings || internalSettings || providerSettings;
   const traceSettingsRef = useRef(settings);
-  const onProgressRef = useRef(props.onProgress);
   const onErrorRef = useRef(props.onError);
   useEffect(() => {
     traceSettingsRef.current = settings;
-    onProgressRef.current = props.onProgress;
     onErrorRef.current = props.onError;
-  }, [props.onError, props.onProgress, settings]);
+  }, [props.onError, settings]);
   const emitTrimFormTrace = useCallback((message: string, details: Record<string, unknown> = {}) => {
     const traceSettings = traceSettingsRef.current;
     emitTraceLog(
@@ -364,26 +237,19 @@ function TrimPatchForm(props: TrimPatchFormProps) {
 
   useEffect(() => {
     if (props.settings !== undefined) return;
-    setInternalSettings(mergeTrimSettings(providerSettings, props.defaultSettings));
+    setInternalSettings(mergeSettingsWithOutput(providerSettings, props.defaultSettings));
   }, [props.defaultSettings, props.settings, providerSettings]);
-
-  const disposeActiveOutput = useCallback(() => {
-    const dispose = activeOutputDisposeRef.current;
-    activeOutputDisposeRef.current = null;
-    if (dispose) void Promise.resolve(dispose()).catch(() => undefined);
-  }, []);
 
   const clearCompletedRunState = useCallback(() => {
     setCompletedCompressionTimeMs(null);
-    setCompletedOutput(null);
+    clearCompletedOutput();
     setCompletedTrimTimeMs(null);
     trimExecutionTimingRef.current = { compressionStartedAt: null, trimStartedAt: null };
-  }, []);
+  }, [clearCompletedOutput]);
 
   const updateSource = (file: BinarySource | null) => {
     disposeActiveOutput();
     clearCompletedRunState();
-    selectedSourceCandidateIdRef.current = null;
     stagedTrimWorkflowGenerationRef.current += 1;
     setSourceState(null);
     if (props.source === undefined) setInternalSource(file);
@@ -432,15 +298,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     const workflow = new TrimWorkflow({
       ...(resolvedAssetBaseUrl ? { assetBaseUrl: resolvedAssetBaseUrl } : {}),
       id: `${workflowIdRef.current}:stage:${generation}`,
-      selectFile: async (request) => {
-        const preferredCandidate = request.candidates.find(
-          (candidate) => candidate.id === selectedSourceCandidateIdRef.current,
-        );
-        if (preferredCandidate?.selectable) return { id: preferredCandidate.id };
-        const choice = await selectFile(request);
-        selectedSourceCandidateIdRef.current = choice.id;
-        return choice;
-      },
+      selectFile,
       settings: stagingSettingsRef.current,
     });
     emitTrimFormTrace("stage.workflow.created", {
@@ -449,14 +307,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       workflowId: workflow.id,
     });
     stagedTrimWorkflowRef.current = workflow;
-    const handleProgress = (event: WorkflowProgress) => {
-      onProgressRef.current?.(toReactProgressEvent(event));
-      setProgress({
-        ...createProgressViewModelFromEvent(event, { stage: event.stage || "input" }),
-        role: typeof event.role === "string" ? event.role : undefined,
-        stage: typeof event.stage === "string" ? event.stage : "input",
-      });
-    };
+    const handleProgress = createProgressHandler("input");
     workflow.on("progress", handleProgress);
     setSourceStaging(true);
     emitTrimFormTrace("stage.set-input.start", {
@@ -495,7 +346,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
             workflowId: workflow.id,
           });
           setSourceStaging(false);
-          setProgress((current) => (current?.stage === "input" ? null : current));
+          clearProgressForStage("input");
         } else {
           emitTrimFormTrace("stage.finish.stale", {
             currentGeneration: stagedTrimWorkflowGenerationRef.current,
@@ -522,6 +373,8 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       workflow.dispose().catch(() => undefined);
     };
   }, [
+    clearProgressForStage,
+    createProgressHandler,
     emitTrimFormTrace,
     props.workerThreads,
     resolvedAssetBaseUrl,
@@ -538,21 +391,13 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     }
     if (!source) return;
     const abortController = new AbortController();
-    activeAbortControllerRef.current = abortController;
+    rememberAbortController(abortController);
     setBusy(true);
     setMessage("");
     setErrorCode("");
     disposeActiveOutput();
     clearCompletedRunState();
-    setProgress({
-      indeterminate: true,
-      label: "Trimming...",
-      message: "Trimming...",
-      percent: null,
-      role: "worker",
-      stage: "trim",
-      visualPercent: null,
-    });
+    setProgress(createIndeterminateWorkflowProgress({ label: "Trimming...", role: "worker", stage: "trim" }));
     const outputCompression =
       resolvedOutputFormat === "zip" || resolvedOutputFormat === "7z" ? resolvedOutputFormat : "none";
     await stagedTrimWorkflowReadyRef.current?.catch(() => undefined);
@@ -561,13 +406,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       new TrimWorkflow({
         ...(resolvedAssetBaseUrl ? { assetBaseUrl: resolvedAssetBaseUrl } : {}),
         id: workflowIdRef.current,
-        selectFile: async (request) => {
-          const preferredCandidate = request.candidates.find(
-            (candidate) => candidate.id === selectedSourceCandidateIdRef.current,
-          );
-          if (preferredCandidate?.selectable) return { id: preferredCandidate.id };
-          return selectFile(request);
-        },
+        selectFile,
         settings: toCreateWorkflowSettings(
           { ...settings, output: { ...settings.output, compression: outputCompression } } as CreateSettings,
           executionOutputName,
@@ -590,12 +429,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
           setCompletedTrimTimeMs(Math.max(0, now - trimExecutionTimingRef.current.trimStartedAt));
         }
       }
-      onProgressRef.current?.(toReactProgressEvent(event));
-      setProgress({
-        ...createProgressViewModelFromEvent(event, { stage: event.stage || "trim" }),
-        role: typeof event.role === "string" ? event.role : undefined,
-        stage: typeof event.stage === "string" ? event.stage : "trim",
-      });
+      reportProgressEvent(event, "trim");
     };
     trimWorkflow.on("progress", handleProgress);
     const abortWorkflow = () => trimWorkflow.abort(abortController.signal.reason);
@@ -637,7 +471,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
         trimTimeMs,
         workflowId: trimWorkflow.id,
       });
-      activeOutputDisposeRef.current = result.output.dispose;
+      rememberOutputDispose(result.output.dispose);
       setCompletedOutput({
         fileName: result.output.fileName,
         inputSize: result.sizeSummary?.inputSize,
@@ -673,14 +507,14 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       abortController.signal.removeEventListener("abort", abortWorkflow);
       trimWorkflow.off("progress", handleProgress);
       if (!usingStagedWorkflow) await trimWorkflow.dispose();
-      if (activeAbortControllerRef.current === abortController) activeAbortControllerRef.current = null;
+      if (activeAbortControllerRef.current === abortController) rememberAbortController(null);
       setBusy(false);
     }
   };
 
   const onRunClick = () => {
     if (busy) {
-      activeAbortControllerRef.current?.abort();
+      abortActiveOperation();
       return;
     }
     if (!source) return;
@@ -694,42 +528,48 @@ function TrimPatchForm(props: TrimPatchFormProps) {
 
   useEffect(
     () => () => {
-      activeAbortControllerRef.current?.abort();
+      abortActiveOperation();
       stagedTrimWorkflowRef.current?.dispose().catch(() => undefined);
       stagedTrimWorkflowRef.current = null;
       disposeActiveOutput();
     },
-    [disposeActiveOutput],
+    [abortActiveOperation, disposeActiveOutput],
   );
 
-  const progressProps = progress
-    ? {
-        indeterminate: progress.indeterminate && progress.visualPercent === null && progress.percent === null,
-        label: progress.label || progress.message || "Working…",
-        percent: typeof progress.visualPercent === "number" ? progress.visualPercent : progress.percent,
-        value: typeof progress.percent === "number" ? `${Math.round(progress.percent)}%` : "working",
-      }
-    : null;
+  const progressProps = toWorkflowFileProgressProps(progress);
   const showInputProgress =
     sourceStaging || (busy && progressProps && progress?.stage === "input" && progress.role === "input");
 
   const rawExtensionOption = rawOutputFormat;
-  const formatOptions = [
-    { label: `.${rawExtensionOption}`, value: rawExtensionOption },
-    { label: ".zip", value: "zip" },
-    { label: ".7z", value: "7z" },
-  ];
+  const formatOptions = useMemo(() => createTrimOutputOptions(rawExtensionOption), [rawExtensionOption]);
   const compressFormatOptions = formatOptions;
-  const compressHeaderFormat =
-    resolvedOutputFormat === rawExtensionOption
-      ? "None"
-      : compressFormatOptions.find((option) => option.value === resolvedOutputFormat)?.label;
+  const compressHeaderFormat = getOutputCompressionFormatLabel(resolvedOutputFormat, compressFormatOptions, {
+    uncompressedValues: [rawExtensionOption],
+  });
   const trimTimingText = formatElapsedMs(completedTrimTimeMs ?? undefined);
   const compressTimingText = formatElapsedMs(completedCompressionTimeMs ?? undefined);
+  const checksumProgress = progress?.stage === "checksum" ? progress : null;
+  const trimCompressPanel = buildCompressPanel(
+    resolvedOutputFormat,
+    settings as Record<string, unknown>,
+    source
+      ? ({ ...(source as unknown as Record<string, unknown>), fileName: resolvedSourceFileName } as Record<
+          string,
+          unknown
+        >)
+      : null,
+  );
 
   return (
     <main aria-labelledby="tab-trim" className="panel" id="trim-builder-container">
-      <StepSection
+      <WorkflowRomInputStep
+        dropZone={{
+          big: !source,
+          disabled,
+          hint: source ? undefined : "archives are extracted",
+          label: source ? "Replace ROM · drop or browse" : "Select ROM · drop or browse",
+          onFiles: (files) => updateSource(files[0] ?? null),
+        }}
         info={
           <InfoPopover title="ROM input">
             <strong>ROM</strong>
@@ -739,37 +579,88 @@ function TrimPatchForm(props: TrimPatchFormProps) {
             </ul>
           </InfoPopover>
         }
+        items={
+          source
+            ? [
+                showInputProgress && progressProps
+                  ? {
+                      id: "trim-input-progress",
+                      progress: progressProps,
+                    }
+                  : {
+                      card: {
+                        extract: {
+                          fileName: resolvedSourceFileName,
+                          fileSize: sourceState?.size,
+                          parentCompressions: sourceState?.parentCompressions,
+                          timing: formatElapsedMs(sourceState?.decompressionTimeMs),
+                        },
+                        onRemove: () => updateSource(null),
+                        panels: {
+                          fixes: {
+                            trim: sourceState?.romProbe?.trim,
+                          },
+                          info: {
+                            bytes: sourceState?.size ?? sourceState?.sourceSize,
+                            checksums: sourceState?.checksums,
+                            defaultOpen: false,
+                            progress: toWorkflowChecksumProgressProps(checksumProgress),
+                            timing: formatElapsedMs(sourceState?.checksumTimeMs),
+                          },
+                        },
+                        removeLabel: "Clear ROM",
+                      },
+                      id: "trim-input-card",
+                    },
+              ]
+            : []
+        }
         num="01"
         title="ROM"
-      >
-        {source ? (
-          showInputProgress && progressProps ? (
-            <FileProgress {...progressProps} />
-          ) : (
-            <FileCard
-              name={
-                <ExtractionTree
-                  levels={toExtractionLevels(resolvedSourceFileName, sourceState?.size, sourceState)}
-                  timing={formatElapsedMs(sourceState?.decompressionTimeMs)}
-                />
-              }
-              onRemove={() => updateSource(null)}
-              removeLabel="Clear ROM"
-            >
-              <TrimFixes sourceState={sourceState} />
-              <TrimInfo progress={progress} sourceState={sourceState} />
-            </FileCard>
-          )
-        ) : null}
-        <DropZone
-          big={!source}
-          disabled={disabled}
-          hint={source ? undefined : "archives are extracted"}
-          label={source ? "Replace ROM · drop or browse" : "Select ROM · drop or browse"}
-          onFiles={(files) => updateSource(files[0] ?? null)}
-        />
-      </StepSection>
-      <StepSection
+      />
+      <WorkflowOutputStep
+        action={
+          <OutputRunAction
+            disabled={actionDisabled}
+            download={
+              completedOutput
+                ? getCompletedDownloadMeta(
+                    completedOutput.fileName,
+                    completedOutput.size,
+                    completedOutput.inputSize ?? sourceState?.size,
+                    completedOutput.rawSize,
+                  )
+                : undefined
+            }
+            icon={
+              completedOutput ? <Download aria-hidden="true" /> : busy ? undefined : <Scissors aria-hidden="true" />
+            }
+            id="trim-builder-button-run"
+            onClick={() => (completedOutput ? void runTrim() : onRunClick())}
+            progress={busy && progressProps && progress?.stage !== "input" ? progressProps : null}
+          >
+            {busy ? "Cancel" : "TRIM & DOWNLOAD"}
+          </OutputRunAction>
+        }
+        compress={buildOutputCompressionPanel({
+          disabled,
+          fields: trimCompressPanel?.fields,
+          format: compressHeaderFormat,
+          formatId: "trim-builder-select-output-compression",
+          formatOptions: compressFormatOptions,
+          formatValue: resolvedOutputFormat,
+          onFieldChange: (key, value) => updateSettings({ ...settings, [key]: value }),
+          onFormatChange: updateOutputFormat,
+          summary: trimCompressPanel?.summary,
+          timing: compressTimingText,
+        })}
+        disabled={disabled}
+        fileName={resolvedOutputName}
+        fileNameId="trim-builder-output-file"
+        fileNamePlaceholder="Trimmed filename (no extension)"
+        format={resolvedOutputFormat}
+        formatId="trim-builder-select-output-format"
+        formatOptions={formatOptions}
         info={
           <InfoPopover title="Output options">
             <strong>Output</strong>
@@ -781,86 +672,24 @@ function TrimPatchForm(props: TrimPatchFormProps) {
           </InfoPopover>
         }
         meta={trimTimingText ? <span className="t">{trimTimingText}</span> : undefined}
+        notice={
+          message ? (
+            <Notice id="trim-builder-row-error-message" level={errorCode === "AMBIGUOUS_SELECTION" ? "warn" : "error"}>
+              {message}
+            </Notice>
+          ) : null
+        }
         num="02"
+        onFileNameChange={(value) => {
+          setOutputName(value);
+          updateSettings({
+            ...settings,
+            output: { ...settings.output, outputName: value.trim() || undefined },
+          });
+        }}
+        onFormatChange={updateOutputFormat}
         title="Trim"
-      >
-        <OutputCard
-          action={
-            <>
-              {busy && progressProps && progress?.stage !== "input" ? <FileProgress {...progressProps} /> : null}
-              <RunButton
-                disabled={actionDisabled}
-                download={
-                  completedOutput
-                    ? getCompletedDownloadMeta(
-                        completedOutput.fileName,
-                        completedOutput.size,
-                        completedOutput.inputSize ?? sourceState?.size,
-                        completedOutput.rawSize,
-                      )
-                    : undefined
-                }
-                icon={
-                  completedOutput ? <Download aria-hidden="true" /> : busy ? undefined : <Scissors aria-hidden="true" />
-                }
-                id="trim-builder-button-run"
-                onClick={() => (completedOutput ? void runTrim() : onRunClick())}
-              >
-                {busy ? "Cancel" : "TRIM & DOWNLOAD"}
-              </RunButton>
-            </>
-          }
-          compress={(() => {
-            const panel = buildCompressPanel(
-              resolvedOutputFormat,
-              settings as Record<string, unknown>,
-              source
-                ? ({ ...(source as unknown as Record<string, unknown>), fileName: resolvedSourceFileName } as Record<
-                    string,
-                    unknown
-                  >)
-                : null,
-            );
-            return {
-              children: panel ? (
-                <CompressPanelBody
-                  disabled={disabled}
-                  fields={panel.fields}
-                  onChange={(key, value) => updateSettings({ ...settings, [key]: value })}
-                />
-              ) : null,
-              format: compressHeaderFormat,
-              formatId: "trim-builder-select-output-compression",
-              formatLabel: "Type",
-              formatOptions: compressFormatOptions,
-              formatValue: resolvedOutputFormat,
-              onFormatChange: updateOutputFormat,
-              summary: panel?.summary,
-              timing: compressTimingText,
-            };
-          })()}
-          disabled={disabled}
-          fileName={resolvedOutputName}
-          fileNameId="trim-builder-output-file"
-          fileNamePlaceholder="Trimmed filename (no extension)"
-          format={resolvedOutputFormat}
-          formatId="trim-builder-select-output-format"
-          formatOptions={formatOptions}
-          onFileNameChange={(value) => {
-            setOutputName(value);
-            updateSettings({
-              ...settings,
-              output: { ...settings.output, outputName: value.trim() || undefined },
-            });
-          }}
-          onFormatChange={updateOutputFormat}
-        />
-        {message ? (
-          <Notice id="trim-builder-row-error-message" level={errorCode === "AMBIGUOUS_SELECTION" ? "warn" : "error"}>
-            {message}
-          </Notice>
-        ) : null}
-      </StepSection>
+      />
       <ConfirmDialog
         body={`Trimming is permanent — it removes trailing padding from ${sourceFileName} and can't be undone.`}
         cancelLabel="Cancel"
