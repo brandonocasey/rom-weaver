@@ -219,6 +219,88 @@ fn apply_report_includes_warning_for_trailing_bytes_after_eof() {
 }
 
 #[test]
+fn apply_report_warns_when_patch_does_not_change_output() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("no-change.ips");
+    let output_path = temp.child("output.bin");
+    fs::write(&input_path, b"abcdefgh").expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 2,
+                data: b"c".to_vec(),
+            }],
+            None,
+        ),
+    )
+    .expect("fixture");
+
+    let handler = IpsPatchHandler::new(&IPS);
+    let report = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect("apply report");
+
+    assert_eq!(fs::read(&output_path).expect("output"), b"abcdefgh");
+    assert!(
+        report
+            .label
+            .contains("warning=IPS patch did not change output"),
+        "label mismatch: {}",
+        report.label
+    );
+}
+
+#[test]
+fn apply_report_warns_when_truncate_footer_is_not_needed() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ips");
+    let output_path = temp.child("output.bin");
+    fs::write(&input_path, b"abcdefgh").expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 2,
+                data: b"Z".to_vec(),
+            }],
+            Some(12),
+        ),
+    )
+    .expect("fixture");
+
+    let handler = IpsPatchHandler::new(&IPS);
+    let report = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect("apply report");
+
+    assert_eq!(fs::read(&output_path).expect("output"), b"abZdefgh");
+    assert!(
+        report
+            .label
+            .contains("warning=IPS patch truncate footer was not needed"),
+        "label mismatch: {}",
+        report.label
+    );
+}
+
+#[test]
 fn apply_round_trips_overlaps_and_truncation() {
     let temp = TestDir::new();
     let input_path = temp.child("input.bin");
@@ -262,7 +344,7 @@ fn apply_round_trips_overlaps_and_truncation() {
         )
         .expect("report");
 
-    let execution = report.thread_execution.expect("thread execution");
+    let execution = report.thread_execution.as_ref().expect("thread execution");
     assert_eq!(execution.effective_threads, 1);
     assert!(!execution.used_parallelism);
     assert_eq!(fs::read(&output_path).expect("output"), b"a1XYZf!!!");
@@ -364,7 +446,7 @@ fn apply_uses_parallel_threads_for_large_output() {
         )
         .expect("report");
 
-    let execution = report.thread_execution.expect("thread execution");
+    let execution = report.thread_execution.as_ref().expect("thread execution");
     assert_eq!(execution.requested_threads, 8);
     assert_eq!(execution.effective_threads, 2);
     assert!(execution.used_parallelism);
@@ -403,6 +485,13 @@ fn create_round_trips_and_encodes_truncation_when_shrinking() {
     assert_eq!(execution.requested_threads, 8);
     assert_eq!(execution.effective_threads, 1);
     assert!(!execution.used_parallelism);
+    assert!(
+        report
+            .label
+            .contains("warning=IPS create input is larger than modified output"),
+        "label mismatch: {}",
+        report.label
+    );
 
     let patch =
         parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
@@ -776,7 +865,7 @@ fn create_unchanged_files_produce_empty_patch() {
     fs::write(&modified_path, &bytes).expect("fixture");
 
     let handler = IpsPatchHandler::new(&IPS);
-    handler
+    let report = handler
         .create(
             &PatchCreateRequest {
                 original: original_path,
@@ -787,6 +876,13 @@ fn create_unchanged_files_produce_empty_patch() {
             &test_context_with_threads(&temp, 1),
         )
         .expect("create");
+    assert!(
+        report
+            .label
+            .contains("warning=IPS patch will not change output"),
+        "label mismatch: {}",
+        report.label
+    );
 
     let patch = fs::read(&patch_path).expect("patch");
     assert_eq!(patch, b"PATCHEOF");

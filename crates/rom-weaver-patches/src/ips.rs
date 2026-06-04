@@ -152,14 +152,20 @@ impl PatchHandler for IpsPatchHandler {
             (planned_execution, render_result)
         };
 
-        if let Err(error) = render_result {
-            cleanup_chunk_files(&tasks);
-            return Err(error);
-        }
+        let rendered_chunks_changed = match render_result {
+            Ok(changed) => changed.into_iter().any(|changed| changed),
+            Err(error) => {
+                cleanup_chunk_files(&tasks);
+                return Err(error);
+            }
+        };
 
         let assemble_result = assemble_output(&request.output, &tasks, context);
         cleanup_chunk_files(&tasks);
         assemble_result?;
+        let did_change = output_size != input_len || rendered_chunks_changed;
+        let warnings =
+            ips_apply_warning_labels(self.descriptor.name, &patch, input_len, did_change);
 
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
@@ -171,7 +177,7 @@ impl PatchHandler for IpsPatchHandler {
                     self.descriptor.name,
                     patch.records.len()
                 ),
-                &patch.warnings,
+                &warnings,
             ),
             Some(100.0),
             Some(execution),
@@ -228,14 +234,23 @@ impl PatchHandler for IpsPatchHandler {
             (planned_execution, create_result)
         };
         output.flush()?;
+        let warnings = ips_create_warning_labels(
+            self.descriptor.name,
+            original_len,
+            modified_len,
+            &create_result,
+        );
 
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
             "create",
-            format!(
-                "created {} patch with {} record(s)",
-                self.descriptor.name, create_result.record_count
+            append_warning_labels(
+                format!(
+                    "created {} patch with {} record(s)",
+                    self.descriptor.name, create_result.record_count
+                ),
+                &warnings,
             ),
             Some(100.0),
             Some(execution),
@@ -576,6 +591,48 @@ fn warn_if_records_exceed_truncate_size(
             "IPS patch appears scrambled or malformed; records extend past truncate size {size}"
         ));
     }
+}
+
+fn ips_apply_warning_labels(
+    format_name: &str,
+    patch: &ParsedIpsPatch,
+    input_len: u64,
+    did_change: bool,
+) -> Vec<String> {
+    let mut warnings = patch.warnings.clone();
+    if !did_change {
+        warnings.push(format!(
+            "{format_name} patch did not change output; input may already be patched"
+        ));
+    } else if patch
+        .truncate_size
+        .is_some_and(|truncate_size| input_len <= truncate_size)
+    {
+        warnings.push(format!(
+            "{format_name} patch truncate footer was not needed; patch may not be intended for this input"
+        ));
+    }
+    warnings
+}
+
+fn ips_create_warning_labels(
+    format_name: &str,
+    original_len: u64,
+    modified_len: u64,
+    create_result: &IpsCreateResult,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if create_result.record_count == 0 && original_len == modified_len {
+        warnings.push(format!(
+            "{format_name} patch will not change output; inputs are identical"
+        ));
+    }
+    if original_len > modified_len {
+        warnings.push(format!(
+            "{format_name} create input is larger than modified output; double check file order"
+        ));
+    }
+    warnings
 }
 
 fn validate_ips_create_flips_limits(
@@ -1506,7 +1563,7 @@ fn render_chunk_task(
     input_len: u64,
     patch: &ParsedIpsPatch,
     context: &OperationContext,
-) -> Result<()> {
+) -> Result<bool> {
     context.cancel().check()?;
 
     let chunk_len = usize::try_from(task.chunk.len).map_err(|_| {
@@ -1514,6 +1571,7 @@ fn render_chunk_task(
     })?;
     let mut buffer = vec![0u8; chunk_len];
     read_input_chunk(input_path, input_len, &task.chunk, &mut buffer)?;
+    let mut changed = false;
 
     let chunk_start = task.chunk.offset;
     let chunk_end = checked_add(task.chunk.offset, task.chunk.len, "IPS chunk end")?;
@@ -1546,10 +1604,19 @@ fn render_chunk_task(
                     )
                 })?;
                 let src_end = src_start + overlap_len;
-                buffer[dst_start..dst_end].copy_from_slice(&data[src_start..src_end]);
+                let source = &data[src_start..src_end];
+                let target = &mut buffer[dst_start..dst_end];
+                if &*target != source {
+                    changed = true;
+                }
+                target.copy_from_slice(source);
             }
             IpsRecordData::Rle { byte } => {
-                buffer[dst_start..dst_end].fill(*byte);
+                let target = &mut buffer[dst_start..dst_end];
+                if target.iter().any(|value| value != byte) {
+                    changed = true;
+                }
+                target.fill(*byte);
             }
         }
     }
@@ -1560,7 +1627,7 @@ fn render_chunk_task(
     let mut writer = BufWriter::new(File::create(&task.temp_path)?);
     writer.write_all(&buffer)?;
     writer.flush()?;
-    Ok(())
+    Ok(changed)
 }
 
 fn read_input_chunk(

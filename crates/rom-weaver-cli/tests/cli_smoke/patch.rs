@@ -150,6 +150,56 @@ fn patch_apply_can_ignore_recoverable_ips_validation() {
 }
 
 #[test]
+fn patch_apply_warns_when_ips_does_not_change_output() {
+    let temp = setup_temp_dir();
+    fs::write(temp.child("input.bin").path(), b"abcdefgh").expect("fixture");
+    fs::write(
+        temp.child("update.ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 2,
+                data: b"c".to_vec(),
+            }],
+            None,
+        ),
+    )
+    .expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.bin").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.ips").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.bin").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-apply");
+    assert_eq!(json["format"], "IPS");
+    assert_eq!(json["status"], "succeeded");
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("warning=IPS patch did not change output"));
+    assert_eq!(
+        fs::read(temp.child("output.bin").path()).expect("output"),
+        b"abcdefgh"
+    );
+}
+
+#[test]
 fn patch_apply_reports_pds_as_explicitly_unsupported() {
     let temp = setup_temp_dir();
     fs::write(temp.child("input.bin").path(), b"abcdefgh").expect("fixture");
@@ -806,6 +856,47 @@ fn patch_create_succeeds_for_ips_and_round_trips() {
         fs::read(output.path()).expect("output"),
         fs::read(modified.path()).expect("modified")
     );
+}
+
+#[test]
+fn patch_create_warns_for_identical_ips_inputs() {
+    let temp = setup_temp_dir();
+    let original = temp.child("old.bin");
+    let modified = temp.child("new.bin");
+    let patch = temp.child("output.ips");
+    fs::write(original.path(), b"unchanged-input").expect("fixture");
+    fs::write(modified.path(), b"unchanged-input").expect("fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch",
+            "create",
+            "--original",
+            original.path().to_str().expect("path"),
+            "--modified",
+            modified.path().to_str().expect("path"),
+            "--format",
+            "ips",
+            "--output",
+            patch.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-create");
+    assert_eq!(json["format"], "IPS");
+    assert_eq!(json["status"], "succeeded");
+    assert!(json["label"]
+        .as_str()
+        .expect("label")
+        .contains("warning=IPS patch will not change output"));
+    assert_eq!(fs::read(patch.path()).expect("patch"), b"PATCHEOF");
 }
 
 #[test]
