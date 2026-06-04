@@ -152,7 +152,7 @@ const XDELTA: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
     name: "xdelta",
     aliases: &["xdelta3"],
-    extensions: &[".xdelta"],
+    extensions: &[".xdelta", ".delta", ".dat"],
 };
 const GDIFF: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Patch,
@@ -540,7 +540,10 @@ fn is_ebp_extension(path: &Path) -> bool {
 fn is_xdelta_extension(path: &Path) -> bool {
     path.file_name()
         .and_then(|value| value.to_str())
-        .is_some_and(|name| name.to_ascii_lowercase().ends_with(".xdelta"))
+        .is_some_and(|name| {
+            let name = name.to_ascii_lowercase();
+            name.ends_with(".xdelta") || name.ends_with(".delta") || name.ends_with(".dat")
+        })
 }
 
 fn read_signature_prefix(path: &Path, max_len: usize) -> Option<Vec<u8>> {

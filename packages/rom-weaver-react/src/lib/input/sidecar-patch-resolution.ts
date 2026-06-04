@@ -18,7 +18,7 @@ type IndexedResolvedSidecarPatch<TEntry extends SidecarPatchEntry> = ResolvedSid
   index: number;
 };
 
-const PATCH_EXTENSION_PATTERN = /\.(ips|ups|bps|aps|rup|ppf|ebp|bdf|bspatch|mod|xdelta|vcdiff)(\d*)$/i;
+const PATCH_EXTENSION_PATTERN = /\.(ips|ups|bps|aps|rup|ppf|ebp|bdf|bspatch|mod|xdelta|delta|dat|vcdiff)(\d*)$/i;
 const BRACKET_LABEL_PATTERN = /\[([^\]]+)\](?:\.[^.]+)?\d*$/;
 
 const getSidecarEntryFileName = (entry: SidecarPatchEntry | string | null | undefined): string => {

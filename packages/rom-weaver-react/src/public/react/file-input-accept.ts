@@ -22,6 +22,8 @@ const PATCH_FILE_EXTENSIONS = [
   "bspatch",
   "mod",
   "xdelta",
+  "delta",
+  "dat",
   "vcdiff",
 ];
 const PATCH_INPUT_ACCEPT = [

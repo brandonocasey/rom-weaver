@@ -31,3 +31,16 @@ test("Mobile Safari file inputs use the file-only accept fallback", () => {
   expect(accept.patch).not.toContain(".ips");
   expect(accept.rom).toBe(accept.patch);
 });
+
+test("desktop patch file inputs accept xdelta compatibility extensions", () => {
+  const accept = getFileInputAcceptAttributes({
+    maxTouchPoints: 0,
+    platform: "MacIntel",
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+  });
+
+  expect(accept.patch).toContain(".xdelta");
+  expect(accept.patch).toContain(".delta");
+  expect(accept.patch).toContain(".dat");
+});

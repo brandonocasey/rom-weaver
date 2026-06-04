@@ -255,6 +255,20 @@ fn probe_routes_unknown_extension_with_bps_signature_to_bps_handler() {
 }
 
 #[test]
+fn probe_routes_xdelta_compat_extensions_with_vcdiff_signature_to_xdelta_handler() {
+    for extension in ["xdelta", "delta", "dat"] {
+        let path = temp_file_path_with_extension("xdelta-compat-signature", extension);
+        fs::write(&path, [0xD6, 0xC3, 0xC4, 0x00, 0x00]).expect("fixture");
+
+        let registry = PatchRegistry::new();
+        let handler = registry.probe(&path).expect("xdelta probe");
+        assert_eq!(handler.descriptor().name, "xdelta", "{extension}");
+
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[test]
 fn probe_routes_unknown_extension_with_ninja1_signature_to_ninja1_handler() {
     let path = temp_file_path_with_extension("ninja1-signature", "bin");
     fs::write(&path, b"NINJA1\0\0\0\0").expect("fixture");

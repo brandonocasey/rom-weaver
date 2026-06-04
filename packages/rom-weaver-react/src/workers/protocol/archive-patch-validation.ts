@@ -4,7 +4,8 @@ import type { ArchiveEntry, ArchiveEntryInput, BrowserFileLike, ProgressEvent } 
 import { filterPatchEntries, getBlobSource } from "./archive-shared-utils.ts";
 
 const BPS_EXTENSION_REGEX = /\.bps\d*$/i;
-const PATCH_EXTENSION_DIGIT_SUFFIX_REGEX = /\.(ips|ups|bps|aps|rup|ppf|ebp|bdf|bspatch|mod|xdelta|vcdiff)\d*$/i;
+const PATCH_EXTENSION_DIGIT_SUFFIX_REGEX =
+  /\.(ips|ups|bps|aps|rup|ppf|ebp|bdf|bspatch|mod|xdelta|delta|dat|vcdiff)\d*$/i;
 
 type Awaitable<T> = T | Promise<T>;
 type ArchiveByteSource = ArrayBufferLike | Uint8Array | ArrayBufferView;
@@ -102,7 +103,12 @@ const isKnownPatchBySignature = (binFile: PatchPatchFile) => {
     if (normalizedPatchFileName.endsWith(".ppf")) return hasMagic(binFile, "PPF");
     if (normalizedPatchFileName.endsWith(".rup")) return hasMagic(binFile, "NINJA2");
     if (normalizedPatchFileName.endsWith(".aps")) return hasMagic(binFile, "APS10") || hasMagic(binFile, "APS1");
-    if (normalizedPatchFileName.endsWith(".vcdiff") || normalizedPatchFileName.endsWith(".xdelta"))
+    if (
+      normalizedPatchFileName.endsWith(".vcdiff") ||
+      normalizedPatchFileName.endsWith(".xdelta") ||
+      normalizedPatchFileName.endsWith(".delta") ||
+      normalizedPatchFileName.endsWith(".dat")
+    )
       return hasMagic(binFile, "\xd6\xc3\xc4");
   } finally {
     if (typeof binFile.seek === "function") binFile.seek(0);

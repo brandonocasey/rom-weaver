@@ -41,35 +41,39 @@ test("parsePatchForApply normalizes probe requirements for BPS patches", async (
 });
 
 test("parsePatchForApply normalizes VCDIFF source requirements without Adler values", async () => {
-  const patchFile = await createPatchFile(
-    await loadFixtureFile("tests/fixtures/browser-generated/patch-matrix/raw/change.xdelta"),
-    "change.xdelta",
-  );
-  const parsedPatch = await parsePatchForApply(patchFile, {
-    patch: {
-      probePatch: async () => ({
-        format: "xdelta",
-        minimum_source_size: 1048576,
-        patch_crc32: null,
-        record_count: 3,
-        source_crc32: null,
-        source_size: null,
-        source_window_count: 3,
-        target_crc32: null,
-        target_size: 1048600,
-        target_window_count: 0,
-        window_adler32_checksums: ["12345678", "89abcdef", "00112233"],
-        window_checksum_count: 3,
-      }),
-    },
-  });
-  expect(parsedPatch).not.toBeNull();
-  expect(getPatchProbeRequirements(parsedPatch)).toEqual({
-    format: "XDELTA",
-    minimumSourceSize: 1048576,
-    recordCount: 3,
-    targetSize: 1048600,
-  });
+  for (const extension of ["xdelta", "delta", "dat"]) {
+    const patchFile = await createPatchFile(
+      await loadFixtureFile("tests/fixtures/browser-generated/patch-matrix/raw/change.xdelta"),
+      `change.${extension}`,
+    );
+    const parsedPatch = await parsePatchForApply(patchFile, {
+      patch: {
+        probePatch: async () => ({
+          format: "xdelta",
+          minimum_source_size: 1048576,
+          patch_crc32: null,
+          record_count: 3,
+          source_crc32: null,
+          source_size: null,
+          source_window_count: 3,
+          target_crc32: null,
+          target_size: 1048600,
+          target_window_count: 0,
+          window_adler32_checksums: ["12345678", "89abcdef", "00112233"],
+          window_checksum_count: 3,
+        }),
+      },
+    });
+    expect(parsedPatch).not.toBeNull();
+    expect(parsedPatch?.constructor?.name).toBe("VCDIFF");
+    expect(parsedPatch?.isXdeltaPatch).toBe(true);
+    expect(getPatchProbeRequirements(parsedPatch)).toEqual({
+      format: "XDELTA",
+      minimumSourceSize: 1048576,
+      recordCount: 3,
+      targetSize: 1048600,
+    });
+  }
 });
 
 test("parsePatchForApply normalizes decimal and hex probe checksum variants", async () => {

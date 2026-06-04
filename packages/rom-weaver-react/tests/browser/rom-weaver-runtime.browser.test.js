@@ -23,12 +23,14 @@ test("normalizeChdCodecArgs preserves matching codec levels", () => {
 });
 
 test("resolvePatchApplyThreadArg forces single-thread for xdelta patches", () => {
-  const result = resolvePatchApplyThreadArg("4", [{ patchFilePath: "/work/patch.xdelta" }]);
-  expect(result).toMatchObject({
-    forcedSingleThread: true,
-    hasXdeltaPatch: true,
-    threadArg: 1,
-  });
+  for (const extension of ["xdelta", "delta", "dat", "vcdiff"]) {
+    const result = resolvePatchApplyThreadArg("4", [{ patchFilePath: `/work/patch.${extension}` }]);
+    expect(result).toMatchObject({
+      forcedSingleThread: true,
+      hasXdeltaPatch: true,
+      threadArg: 1,
+    });
+  }
 });
 
 test("resolvePatchApplyThreadArg forces single-thread when patch format is vcdiff without extension", () => {

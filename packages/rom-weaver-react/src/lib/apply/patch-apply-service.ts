@@ -44,16 +44,20 @@ const PATCH_MAGIC_BY_EXTENSION = {
   ups: "UPS1",
 } as const;
 
+const isXdeltaCompatiblePatchExtension = (extension: string | undefined) => {
+  return extension === "xdelta" || extension === "delta" || extension === "dat" || extension === "vcdiff";
+};
+
 const getPatchSummaryFormatName = (fileName: string | undefined) => {
   const extension = getFileNameExtension(fileName);
   if (extension === "ebp") return "IPS";
-  if (extension === "xdelta" || extension === "vcdiff") return "VCDIFF";
+  if (isXdeltaCompatiblePatchExtension(extension)) return "VCDIFF";
   return extension ? extension.toUpperCase() : "Patch";
 };
 
 const isXdeltaPatchFileName = (fileName: string | undefined) => {
   const extension = getFileNameExtension(fileName);
-  return extension === "xdelta" || extension === "vcdiff";
+  return isXdeltaCompatiblePatchExtension(extension);
 };
 
 const getPatchFileExtension = (fileName: string | undefined) => getFileNameExtension(fileName);

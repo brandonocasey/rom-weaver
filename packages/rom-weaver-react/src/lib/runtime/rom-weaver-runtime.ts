@@ -111,7 +111,7 @@ const toBrowserSyncAccessMode = (value: unknown): RomWeaverBrowserSyncAccessMode
   return BROWSER_SYNC_ACCESS_MODES.has(normalized) ? normalized : undefined;
 };
 
-const XDELTA_PATCH_FILE_EXTENSION_REGEX = /\.(?:xdelta|vcdiff)$/i;
+const XDELTA_PATCH_FILE_EXTENSION_REGEX = /\.(?:xdelta|delta|dat|vcdiff)$/i;
 const BPS_PATCH_FILE_EXTENSION_REGEX = /\.bps$/i;
 const PATCH_FORMAT_NORMALIZE_REGEX = /[^a-z0-9]+/g;
 

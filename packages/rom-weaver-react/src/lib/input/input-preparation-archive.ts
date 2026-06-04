@@ -101,7 +101,8 @@ type NestedArchiveOptions = {
 };
 const NESTED_ARCHIVE_SELECTION_PREFIX = "nested:";
 const PATH_BACKED_COMPRESSION_FORMATS = new Set(["chd", "rvz", "z3ds"]);
-const SYNC_READ_ARCHIVE_ENTRY_REGEX = /\.(?:cue|ips|ups|bps|aps|rup|ppf|ebp|bdf|bspatch|mod|xdelta|vcdiff)\d*$/i;
+const SYNC_READ_ARCHIVE_ENTRY_REGEX =
+  /\.(?:cue|ips|ups|bps|aps|rup|ppf|ebp|bdf|bspatch|mod|xdelta|delta|dat|vcdiff)\d*$/i;
 const validatedPatchArchiveEntriesByFile = new WeakMap<PatchFileInstance, ValidatedPatchArchiveEntryCache>();
 const patchArchiveValidationCleanupAttached = new WeakSet<PatchFileInstance>();
 

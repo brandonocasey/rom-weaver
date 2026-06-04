@@ -116,7 +116,7 @@ All listed formats support probe/parse (`probe`) and apply (`patch apply`).
 | `BPS`          | none                        | `.bps`                         | yes            |
 | `UPS`          | none                        | `.ups`                         | yes            |
 | `VCDIFF`       | `vcdiff`                    | `.vcdiff`                      | yes            |
-| `xdelta`       | `xdelta3`                   | `.xdelta`                      | yes            |
+| `xdelta`       | `xdelta3`                   | `.xdelta`, `.delta`, `.dat`    | yes            |
 | `GDIFF`        | `gdiff`                     | `.gdiff`, `.gdf`               | yes            |
 | `APS` (N64)    | none                        | `.aps`                         | yes            |
 | `APSGBA`       | `aps-gba`                   | `.apsgba`                      | yes            |
