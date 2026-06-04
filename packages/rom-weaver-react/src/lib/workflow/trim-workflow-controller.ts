@@ -1,7 +1,7 @@
 import type { ChecksumRomProbe } from "../../types/checksum.ts";
 import type { WorkflowProgress } from "../../types/progress.ts";
 import type { SelectedInputInfo, TrimResult } from "../../types/public.ts";
-import type { CandidateSelectionRequest, SelectionCandidate } from "../../types/selection.ts";
+import type { SelectionCandidate } from "../../types/selection.ts";
 import type { CreateSettings } from "../../types/settings.ts";
 import type {
   TrimWorkflowChecksums,
@@ -11,12 +11,8 @@ import type {
 import type { WorkflowOptions, WorkflowWarning } from "../../types/workflow-controller.ts";
 import type { CreateWorkflowOptions, TrimInput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
-import { RomWeaverError, throwIfAborted, toRomWeaverError, withAbortSignal } from "../errors.ts";
-import { getPatchFileCleanup } from "../input/binary-service.ts";
-import { getInputPreparationMetrics, type InputAsset } from "../input/input-assets.ts";
-import { prepareInputAssets } from "../input/input-preparation-service.ts";
+import { RomWeaverError, throwIfAborted, withAbortSignal } from "../errors.ts";
 import { getFileNameWithoutExtension } from "../input/path-utils.ts";
-import { selectionToArchiveEntry } from "../input/selection.ts";
 import { wrapPublicOutput } from "../output/index.ts";
 import { runTrimWorkflow, trimWorkflowDeps } from "../trim/workflow.ts";
 import {
@@ -26,10 +22,9 @@ import {
   createWorkflowId,
   createWorkflowProgress,
   getPreparationProgressStage,
-  getSourceFileName,
-  getSourceSize,
   isRecord,
 } from "./controller-utils.ts";
+import { type SharedRomStagedSource, StagedRomSourceController } from "./staged-rom-source.ts";
 import { WorkflowController } from "./workflow-controller.ts";
 import { traceWorkflowControllerEvent } from "./workflow-tracing.ts";
 
@@ -53,21 +48,7 @@ type InternalSourceState = {
   warnings: WorkflowWarning[];
   role: SourceRole;
 };
-type InternalCandidate<TSource> = {
-  archiveEntry?: string;
-  candidate: SelectionCandidate;
-  owner?: StagedSource<TSource>;
-  request?: CandidateSelectionRequest;
-};
-type StagedSource<TSource> = {
-  source: TSource;
-  allowLazyBrowserRomSource?: boolean;
-  index: number;
-  state: InternalSourceState;
-  internalCandidates: Map<string, InternalCandidate<TSource>>;
-  preparedInputAssets?: InputAsset[];
-  selectedArchiveEntry?: string;
-};
+type StagedSource<TSource> = SharedRomStagedSource<TSource, InternalSourceState>;
 
 const TRIM_INPUT_ROLE: SourceRole = "input";
 const TRIM_OUTPUT_FORMATS = new Set(["7z", "none", "zip"]);
@@ -98,33 +79,6 @@ const cloneSourceState = (state: InternalSourceState | null | undefined) =>
       } satisfies TrimWorkflowSourceState)
     : null;
 
-const releasePreparedSource = (source?: StagedSource<unknown>) => {
-  if (!source) return;
-  for (const asset of source.preparedInputAssets || []) {
-    const cleanup = getPatchFileCleanup(asset.file);
-    if (cleanup) void Promise.resolve(cleanup()).catch(() => undefined);
-  }
-  source.preparedInputAssets = undefined;
-};
-
-const releasePreparedSourceAndWait = async (source?: StagedSource<unknown>) => {
-  if (!source) return;
-  await Promise.all(
-    (source.preparedInputAssets || []).map(async (asset) => {
-      const cleanup = getPatchFileCleanup(asset.file);
-      if (cleanup) await Promise.resolve(cleanup()).catch(() => undefined);
-    }),
-  );
-  source.preparedInputAssets = undefined;
-};
-
-const canRecoverWithCandidateSelection = (error: unknown, requests: CandidateSelectionRequest[]) => {
-  if (!requests.length) return false;
-  const normalized = toRomWeaverError(error);
-  if (normalized.code === "AMBIGUOUS_SELECTION") return true;
-  return false;
-};
-
 const appendTrimmedMarker = (baseName: string) =>
   /\(trimmed\)$/i.test(baseName.trim()) ? baseName.trim() : `${baseName.trim() || "trimmed"} (trimmed)`;
 
@@ -140,10 +94,10 @@ class TrimWorkflowController<TSource, TDestination> extends WorkflowController<{
   private readonly abortController = new AbortController();
   private readonly constructorSignal?: AbortSignal;
   private readonly selectFile?: WorkflowOptions<CreateSettings>["selectFile"];
+  private readonly inputStages: StagedRomSourceController<TSource, InternalSourceState>;
   private disposed = false;
   private activeMutation: string | null = null;
   private progressSequence = 0;
-  private nextCandidateSequence = 0;
   private settings: Partial<CreateSettings>;
   private outputFormat: "7z" | "none" | "zip" = "none";
   private outputExtension = "";
@@ -163,6 +117,29 @@ class TrimWorkflowController<TSource, TDestination> extends WorkflowController<{
     this.settings = cloneValue(options.settings || {});
     this.constructorSignal = options.signal;
     this.selectFile = options.selectFile;
+    this.inputStages = new StagedRomSourceController<TSource, InternalSourceState>({
+      clearRequestsWhenSinglePatchableAsset: true,
+      emitProgress: (event) => this.emitProgress(event),
+      getExecutionOptions: () => this.createExecutionOptions(),
+      getPreparedFileName: (asset, fallback) => asset?.fileName || fallback,
+      getSourceId: (_role, index) => `${TRIM_INPUT_ROLE}-${index + 1}`,
+      id: this.id,
+      releasePreparedOnSelection: "always",
+      runtime: this.runtime,
+      selectFile: this.selectFile,
+      trace: (message, details = {}) =>
+        traceWorkflowControllerEvent(
+          {
+            logLevel: this.settings.logging?.level,
+            onLog: this.settings.logging?.sink,
+            workflow: "trim",
+            workflowId: this.id,
+          },
+          message,
+          details,
+        ),
+      workflow: "trim",
+    });
     const configuredCompression = this.settings.output?.compression;
     if (configuredCompression && TRIM_OUTPUT_FORMATS.has(String(configuredCompression))) {
       this.outputFormat = configuredCompression as "7z" | "none" | "zip";
@@ -192,13 +169,17 @@ class TrimWorkflowController<TSource, TDestination> extends WorkflowController<{
         await this.runtime.preload?.preloadCapability?.("compression", () => undefined, {
           workerThreads: this.settings.workers?.threads,
         });
-        const stage = await this.stageSource(this.createInitialSource(first, 0, { allowLazyBrowserRomSource: true }));
+        const stage = (await this.inputStages.stageSource(
+          this.inputStages.createInitialSource(TRIM_INPUT_ROLE, first, 0, {
+            allowLazyBrowserRomSource: true,
+          }),
+        )) as StagedSource<TSource>;
         this.inputStage = stage;
-        await this.maybeResolveBlockingStageSelection(stage);
+        await this.inputStages.maybeResolveBlockingStageSelection(stage);
         if (!this.manualOutputName) this.outputName = this.buildAutomaticOutputName();
       } catch (error) {
         await this.releaseInputStage();
-        await this.releaseRuntimeSources(sources);
+        await this.inputStages.releaseRuntimeSources(sources);
         throw error;
       }
     });
@@ -309,286 +290,23 @@ class TrimWorkflowController<TSource, TDestination> extends WorkflowController<{
     }
   }
 
-  private createInitialSource(
-    source: TSource,
-    index: number,
-    options: { allowLazyBrowserRomSource?: boolean } = {},
-  ): StagedSource<TSource> {
-    const fileName = getSourceFileName(source, `${TRIM_INPUT_ROLE}-${index + 1}`);
-    const sourceSize = getSourceSize(source);
-    return {
-      allowLazyBrowserRomSource: options.allowLazyBrowserRomSource,
-      index,
-      internalCandidates: new Map(),
-      source,
-      state: {
-        candidates: [],
-        fileName,
-        id: `${TRIM_INPUT_ROLE}-${index + 1}`,
-        parentCompressions: [],
-        role: TRIM_INPUT_ROLE,
-        size: sourceSize,
-        sourceSize,
-        status: "loading",
-        warnings: [],
-      },
-    };
-  }
-
-  private async stageSource(stage: StagedSource<TSource>): Promise<StagedSource<TSource>> {
-    const requests: CandidateSelectionRequest[] = [];
-    try {
-      stage.preparedInputAssets = await this.prepareStageAssets(stage, requests, undefined);
-    } catch (error) {
-      if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
-      if (!requests.length) this.pushWarning(stage, toRomWeaverError(error));
-    }
-    if (stage.preparedInputAssets?.filter((asset) => asset.patchable).length === 1) requests.length = 0;
-    for (const request of requests) this.addCandidateRequest(stage, request);
-    if (!stage.state.candidates.length) this.addDirectCandidate(stage, stage.index, stage.state.id);
-    const selectable = stage.state.candidates.filter((candidate) => candidate.selectable);
-    if (selectable.length === 1) {
-      stage.state.selectedCandidateId = selectable[0]?.id;
-      stage.selectedArchiveEntry = stage.internalCandidates.get(selectable[0]?.id || "")?.archiveEntry;
-      await this.prepareSelectedSource(stage);
-    } else {
-      stage.state.status = "needsSelection";
-      await this.maybeResolveBlockingStageSelection(stage);
-    }
-    return stage;
-  }
-
-  private async prepareSelectedSource(stage: StagedSource<TSource>): Promise<void> {
-    const requests: CandidateSelectionRequest[] = [];
-    const canReusePreparedAssets = !!stage.preparedInputAssets?.length;
-    traceWorkflowControllerEvent(
-      {
-        logLevel: this.settings.logging?.level,
-        onLog: this.settings.logging?.sink,
-        workflow: "trim",
-        workflowId: this.id,
-      },
-      "prepareSelectedSource",
-      {
-        assetCount: stage.preparedInputAssets?.length || 0,
-        canReusePreparedAssets,
-        selectedArchiveEntry: stage.selectedArchiveEntry || "",
-        sourceId: stage.state.id,
-      },
-    );
-    try {
-      if (!canReusePreparedAssets) {
-        stage.preparedInputAssets = await this.prepareStageAssets(stage, requests, stage.selectedArchiveEntry);
-      }
-      this.applyPreparedSourceMetadata(stage);
-      stage.state.status = "ready";
-    } catch (error) {
-      if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
-      if (requests.length) {
-        this.handleSourceSelectionRequests(stage, requests);
-        await this.maybeResolveBlockingStageSelection(stage);
-        return;
-      }
-      throw error;
-    }
-  }
-
-  private createSelectionRequest(state: InternalSourceState): CandidateSelectionRequest {
-    return {
-      candidates: state.candidates.map(cloneCandidate),
-      role: state.role,
-      sourceName: state.fileName || state.id,
-      warnings: state.warnings.map((warning) => warning.message),
-    };
-  }
-
-  private async maybeResolveBlockingStageSelection(stage: StagedSource<TSource>): Promise<boolean> {
-    if (
-      !(stage.state.status === "needsSelection" && !stage.state.selectedCandidateId && stage.state.candidates.length)
-    ) {
-      return false;
-    }
-    const selection = await this.resolveSelectionRequest(this.createSelectionRequest(stage.state), this.selectFile);
-    if (!selection) return false;
-    const owner = stage.internalCandidates.get(selection.id)?.owner || stage;
-    this.setSelectedCandidate(owner, selection.id);
-    await this.prepareSelectedSource(owner);
-    return true;
-  }
-
-  private createPreparationOptions(
-    stage: StagedSource<TSource>,
-    requests: CandidateSelectionRequest[],
-  ): Partial<CreateWorkflowOptions> {
-    return {
-      ...this.createExecutionOptions(),
-      onCandidatesFound: (request: CandidateSelectionRequest) => requests.push(request),
-      onProgress: (progress) => this.emitPreparationProgress(stage, progress),
-    } satisfies Partial<CreateWorkflowOptions>;
-  }
-
-  private emitPreparationProgress(
-    stage: StagedSource<TSource>,
-    progress: {
-      current?: number;
-      details?: unknown;
-      hasProgress?: boolean;
-      label?: string;
-      message?: string;
-      percent?: number | null;
-      total?: number;
-    },
-  ) {
-    const progressStage = getPreparationProgressStage(progress, stage.state.role);
-    this.emitProgress({
-      current: progress.current,
-      details: {
-        ...(isRecord(progress.details) ? progress.details : {}),
-        fileName: stage.state.fileName,
-        sourceId: stage.state.id,
-      },
-      hasProgress: progress.hasProgress,
-      id: `${this.id}:${stage.state.id}:${progressStage}`,
-      label: progress.label || progress.message || "Preparing input...",
-      percent: typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
-      role: stage.state.role,
-      stage: progressStage,
-      total: progress.total,
-    });
-  }
-
-  private async prepareStageAssets(
-    stage: StagedSource<TSource>,
-    requests: CandidateSelectionRequest[],
-    selectedArchiveEntry: string | undefined,
-  ): Promise<InputAsset[]> {
-    return prepareInputAssets(
-      stage.source as never,
-      this.createPreparationOptions(stage, requests) as never,
-      stage.index,
-      this.runtime,
-      selectedArchiveEntry,
-      { allowLazyBrowserRomSource: !!stage.allowLazyBrowserRomSource },
-    );
-  }
-
-  private setSelectedCandidate(stage: StagedSource<TSource>, candidateId: string): void {
-    if (!stage.internalCandidates.has(candidateId))
-      throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${candidateId}`);
-    releasePreparedSource(stage);
-    stage.state.selectedCandidateId = candidateId;
-    stage.selectedArchiveEntry = stage.internalCandidates.get(candidateId)?.archiveEntry;
-  }
-
-  private handleSourceSelectionRequests(stage: StagedSource<TSource>, requests: CandidateSelectionRequest[]) {
-    stage.internalCandidates.clear();
-    stage.state.candidates = [];
-    for (const request of requests) this.addCandidateRequest(stage, request);
-    stage.state.checksums = undefined;
-    stage.state.checksumTimeMs = undefined;
-    stage.state.decompressionTimeMs = undefined;
-    stage.state.parentCompressions = [];
-    stage.state.romProbe = undefined;
-    stage.state.selectedCandidateId = undefined;
-    stage.state.status = "needsSelection";
-    stage.state.wasDecompressed = undefined;
-    releasePreparedSource(stage);
-  }
-
-  private applyPreparedSourceMetadata(stage: StagedSource<TSource>) {
-    const assets = stage.preparedInputAssets || [];
-    const preparation = getInputPreparationMetrics(assets);
-    stage.state.fileName = assets[0]?.fileName || stage.state.fileName;
-    stage.state.size = assets.reduce((total, asset) => total + asset.size, 0) || stage.state.size;
-    stage.state.parentCompressions = (preparation?.parentCompressions || []).map((entry) => ({ ...entry }));
-    stage.state.sourceSize =
-      (typeof preparation?.sourceSize === "number" && Number.isFinite(preparation.sourceSize)
-        ? preparation.sourceSize
-        : stage.state.sourceSize) || stage.state.size;
-    stage.state.decompressionTimeMs =
-      typeof preparation?.decompressionTimeMs === "number" && Number.isFinite(preparation.decompressionTimeMs)
-        ? preparation.decompressionTimeMs
-        : undefined;
-    stage.state.wasDecompressed = preparation?.wasDecompressed === true;
-  }
-
-  private addCandidateRequest(stage: StagedSource<TSource>, request: CandidateSelectionRequest) {
-    const publicIdByCandidateId = new Map(
-      request.candidates.map((candidate) => [
-        candidate.id,
-        `${this.id}:${stage.state.role}:${++this.nextCandidateSequence}`,
-      ]),
-    );
-    const candidates = request.candidates.map((candidate) => {
-      const publicId = publicIdByCandidateId.get(candidate.id) as string;
-      const publicCandidate = cloneCandidate(candidate);
-      stage.internalCandidates.set(publicId, {
-        archiveEntry: candidate.selectable ? selectionToArchiveEntry(request, { id: candidate.id }) : undefined,
-        candidate,
-        owner: stage,
-        request,
-      });
-      return {
-        ...publicCandidate,
-        id: publicId,
-        ...(publicCandidate.type === "group"
-          ? {
-              candidateIds: (publicCandidate.candidateIds || []).map(
-                (candidateId) => publicIdByCandidateId.get(candidateId) || candidateId,
-              ),
-            }
-          : {
-              ...(publicCandidate.parentCandidateId
-                ? {
-                    parentCandidateId: publicIdByCandidateId.get(publicCandidate.parentCandidateId),
-                  }
-                : {}),
-            }),
-      } as SelectionCandidate;
-    });
-    stage.state.candidates = candidates;
-  }
-
-  private addDirectCandidate(stage: StagedSource<TSource>, index: number, internalId: string) {
-    const publicId = `${this.id}:${TRIM_INPUT_ROLE}:${++this.nextCandidateSequence}`;
-    const candidate: SelectionCandidate = {
-      fileName: stage.state.fileName || `${TRIM_INPUT_ROLE}-${index + 1}`,
-      id: publicId,
-      kind: "rom",
-      patchable: true,
-      selectable: true,
-      size: stage.state.size,
-      type: "file",
-    };
-    stage.state.candidates = [candidate];
-    stage.internalCandidates.set(publicId, {
-      candidate: { ...candidate, id: internalId },
-      owner: stage,
-    });
-  }
-
   private async releaseInputStage() {
     const stage = this.inputStage;
     this.inputStage = undefined;
     if (!stage) return;
-    const sources = [stage.source, ...this.getRuntimeSourcesForStage(stage)];
-    await releasePreparedSourceAndWait(stage);
-    await this.releaseRuntimeSources(sources);
-  }
-
-  private getRuntimeSourcesForStage(stage?: StagedSource<TSource>): unknown[] {
-    if (!stage) return [];
-    return (stage.preparedInputAssets || []).map((asset) => asset.file);
+    await this.inputStages.releaseSession({
+      role: TRIM_INPUT_ROLE,
+      sources: [stage.source],
+      stages: [stage],
+      synthetic: false,
+      view: stage,
+    });
   }
 
   private getPreparedTrimSource(stage: StagedSource<TSource>): unknown | undefined {
     return (
       (stage.preparedInputAssets || []).find((asset) => asset.patchable)?.file || stage.preparedInputAssets?.[0]?.file
     );
-  }
-
-  private async releaseRuntimeSources(sources: unknown[]): Promise<void> {
-    await this.runtime.workerIo?.releaseSources?.(sources).catch(() => undefined);
   }
 
   private getOutputCompression() {

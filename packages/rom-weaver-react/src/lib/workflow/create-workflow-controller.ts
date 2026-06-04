@@ -1,18 +1,14 @@
 import type { CreateWorkflowParentCompression, CreateWorkflowSourceState } from "../../types/create-workflow.ts";
 import type { WorkflowProgress } from "../../types/progress.ts";
 import type { CreateResult, SelectedInputInfo } from "../../types/public.ts";
-import type { CandidateSelectionRequest, SelectionCandidate } from "../../types/selection.ts";
+import type { SelectionCandidate } from "../../types/selection.ts";
 import type { CreateSettings, PatchFormat } from "../../types/settings.ts";
 import type { WorkflowOptions, WorkflowWarning } from "../../types/workflow-controller.ts";
 import type { CreatePatchInput, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import { createWorkflowDeps, runCreateWorkflow } from "../create/workflow.ts";
-import { RomWeaverError, throwIfAborted, toRomWeaverError, withAbortSignal } from "../errors.ts";
-import { getPatchFileCleanup } from "../input/binary-service.ts";
-import { getInputPreparationMetrics, type InputAsset } from "../input/input-assets.ts";
-import { prepareInputAssets, prepareMultipleDirectInputAssets } from "../input/input-preparation-service.ts";
+import { RomWeaverError, throwIfAborted, withAbortSignal } from "../errors.ts";
 import { getFileNameWithoutExtension } from "../input/path-utils.ts";
-import { selectionToArchiveEntry } from "../input/selection.ts";
 import { wrapPublicOutput } from "../output/index.ts";
 import {
   cloneCandidate,
@@ -21,10 +17,13 @@ import {
   createWorkflowId,
   createWorkflowProgress,
   getPreparationProgressStage,
-  getSourceFileName,
-  getSourceSize,
   isRecord,
 } from "./controller-utils.ts";
+import {
+  type SharedRomSourceSession,
+  type SharedRomStagedSource,
+  StagedRomSourceController,
+} from "./staged-rom-source.ts";
 import { WorkflowController } from "./workflow-controller.ts";
 import { traceWorkflowControllerEvent } from "./workflow-tracing.ts";
 
@@ -46,37 +45,8 @@ type InternalSourceState = {
   warnings: WorkflowWarning[];
   role: SourceRole;
 };
-type InternalCandidate<TSource> = {
-  archiveEntry?: string;
-  candidate: SelectionCandidate;
-  owner?: StagedSource<TSource>;
-  request?: CandidateSelectionRequest;
-};
-type StagedSource<TSource> = {
-  source: TSource;
-  allowLazyBrowserRomSource?: boolean;
-  index: number;
-  state: InternalSourceState;
-  internalCandidates: Map<string, InternalCandidate<TSource>>;
-  preparedInputAssets?: InputAsset[];
-  selectedArchiveEntry?: string;
-};
-type SourceSession<TSource> = {
-  role: SourceRole;
-  sources: TSource[];
-  stages: StagedSource<TSource>[];
-  view: StagedSource<TSource>;
-  synthetic: boolean;
-};
-type PreparationProgress = {
-  current?: number;
-  details?: unknown;
-  hasProgress?: boolean;
-  label?: string;
-  message?: string;
-  percent?: number | null;
-  total?: number;
-};
+type StagedSource<TSource> = SharedRomStagedSource<TSource, InternalSourceState>;
+type SourceSession<TSource> = SharedRomSourceSession<TSource, InternalSourceState>;
 
 const SUPPORTED_CREATE_PATCH_TYPES = new Set<PatchFormat | string>([
   "aps",
@@ -110,33 +80,6 @@ const cloneSourceState = (state: InternalSourceState | null | undefined) =>
       } satisfies CreateWorkflowSourceState)
     : null;
 
-const releasePreparedSource = (source?: StagedSource<unknown>) => {
-  if (!source) return;
-  for (const asset of source.preparedInputAssets || []) {
-    const cleanup = getPatchFileCleanup(asset.file);
-    if (cleanup) void Promise.resolve(cleanup()).catch(() => undefined);
-  }
-  source.preparedInputAssets = undefined;
-};
-
-const releasePreparedSourceAndWait = async (source?: StagedSource<unknown>) => {
-  if (!source) return;
-  await Promise.all(
-    (source.preparedInputAssets || []).map(async (asset) => {
-      const cleanup = getPatchFileCleanup(asset.file);
-      if (cleanup) await Promise.resolve(cleanup()).catch(() => undefined);
-    }),
-  );
-  source.preparedInputAssets = undefined;
-};
-
-const canRecoverWithCandidateSelection = (error: unknown, requests: CandidateSelectionRequest[]) => {
-  if (!requests.length) return false;
-  const normalized = toRomWeaverError(error);
-  if (normalized.code === "AMBIGUOUS_SELECTION") return true;
-  return false;
-};
-
 class CreateWorkflowController<TSource, TDestination> extends WorkflowController<{ progress: WorkflowProgress }> {
   readonly id: string;
   protected readonly runtime: WorkflowRuntime;
@@ -144,10 +87,10 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
   private readonly abortController = new AbortController();
   private readonly constructorSignal?: AbortSignal;
   private readonly selectFile?: WorkflowOptions<CreateSettings>["selectFile"];
+  private readonly sourceStages: StagedRomSourceController<TSource, InternalSourceState>;
   private disposed = false;
   private activeMutation: string | null = null;
   private progressSequence = 0;
-  private nextCandidateSequence = 0;
   private settings: Partial<CreateSettings>;
   private patchType?: PatchFormat | string;
   private outputName = "";
@@ -167,6 +110,30 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
     this.settings = cloneValue(options.settings || {});
     this.constructorSignal = options.signal;
     this.selectFile = options.selectFile;
+    this.sourceStages = new StagedRomSourceController<TSource, InternalSourceState>({
+      clearRequestsWhenSinglePatchableAsset: true,
+      emitProgress: (event) => this.emitProgress(event),
+      getExecutionOptions: () => this.createExecutionOptions(),
+      getPreparedFileName: (asset, fallback) => asset?.fileName || fallback,
+      getSessionId: (role) => role,
+      getSourceId: (role, index) => `${role}-${index + 1}`,
+      id: this.id,
+      releasePreparedOnSelection: "when-empty",
+      runtime: this.runtime,
+      selectFile: this.selectFile,
+      trace: (message, details = {}) =>
+        traceWorkflowControllerEvent(
+          {
+            logLevel: this.settings.logging?.level,
+            onLog: this.settings.logging?.sink,
+            workflow: "create",
+            workflowId: this.id,
+          },
+          message,
+          details,
+        ),
+      workflow: "create",
+    });
     this.patchType = this.settings.format;
     if (typeof this.settings.output?.outputName === "string") {
       this.manualOutputName = true;
@@ -327,369 +294,28 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
         await this.runtime.preload?.preloadCapability?.("compression", () => undefined, {
           workerThreads: this.settings.workers?.threads,
         });
-        const session = await this.stageSourceSession(role, sources);
+        const session = (await this.sourceStages.stageSession(role, sources, {
+          allowLazyBrowserRomSource: true,
+        })) as SourceSession<TSource>;
         if (role === "original") this.originalSession = session;
         else this.modifiedSession = session;
-        await this.maybeResolveBlockingSessionSelection(session);
+        await this.sourceStages.maybeResolveBlockingSessionSelection(session);
         await this.finalizeSourceStableState(session);
         if (!this.manualOutputName) this.outputName = this.buildAutomaticOutputName();
       } catch (error) {
         await this.releaseRoleSession(role);
-        await this.releaseRuntimeSources(sources);
+        await this.sourceStages.releaseRuntimeSources(sources);
         throw error;
       }
     });
   }
 
-  private createInitialSource(
-    role: SourceRole,
-    source: TSource,
-    index: number,
-    options: { allowLazyBrowserRomSource?: boolean } = {},
-  ): StagedSource<TSource> {
-    const fileName = getSourceFileName(source, `${role}-${index + 1}`);
-    const sourceSize = getSourceSize(source);
-    return {
-      allowLazyBrowserRomSource: options.allowLazyBrowserRomSource,
-      index,
-      internalCandidates: new Map(),
-      source,
-      state: {
-        candidates: [],
-        fileName,
-        id: `${role}-${index + 1}`,
-        parentCompressions: [],
-        role,
-        size: sourceSize,
-        sourceSize,
-        status: "loading",
-        warnings: [],
-      },
-    };
-  }
-
-  private createInitialView(role: SourceRole, sources: TSource[]) {
-    const first = sources[0];
-    if (first === undefined) throw new RomWeaverError("INVALID_INPUT", `No ${role} source was provided`);
-    return this.createInitialSource(role, first, 0);
-  }
-
-  private async stageSourceSession(role: SourceRole, sources: TSource[]): Promise<SourceSession<TSource>> {
-    if (sources.length === 1) {
-      const view = await this.stageSource(this.createInitialSource(role, sources[0] as TSource, 0));
-      return { role, sources, stages: [view], synthetic: false, view };
-    }
-    const requests: CandidateSelectionRequest[] = [];
-    const directAssets = await prepareMultipleDirectInputAssets(
-      sources as never,
-      {
-        ...this.createExecutionOptions(),
-        onCandidatesFound: (request: CandidateSelectionRequest) => requests.push(request),
-      } as never,
-    );
-    if (directAssets) {
-      const view = this.createInitialView(role, sources);
-      view.preparedInputAssets = directAssets;
-      this.applyPreparedSourceMetadata(view);
-      for (const request of requests) this.addCandidateRequest(view, request);
-      if (!view.state.candidates.length) this.addDirectCandidate(view, role, 0, view.state.id);
-      const selectable = view.state.candidates.filter((candidate) => candidate.selectable);
-      if (selectable.length === 1) {
-        view.state.selectedCandidateId = selectable[0]?.id;
-        view.selectedArchiveEntry = view.internalCandidates.get(selectable[0]?.id || "")?.archiveEntry;
-        view.state.status = "ready";
-      } else {
-        view.state.status = "needsSelection";
-      }
-      return { role, sources, stages: [view], synthetic: false, view };
-    }
-    const stages: Array<StagedSource<TSource>> = [];
-    for (let index = 0; index < sources.length; index += 1) {
-      stages.push(await this.stageSource(this.createInitialSource(role, sources[index] as TSource, index)));
-    }
-    return this.buildSyntheticSourceSession(role, sources, stages);
-  }
-
-  private buildSyntheticSourceSession(
-    role: SourceRole,
-    sources: TSource[],
-    stages: Array<StagedSource<TSource>>,
-  ): SourceSession<TSource> {
-    const view = this.createInitialView(role, sources);
-    view.state.id = role;
-    view.state.candidates = stages.flatMap((stage) => stage.state.candidates.map(cloneCandidate));
-    view.internalCandidates = new Map();
-    for (const stage of stages) {
-      for (const [id, candidate] of stage.internalCandidates) {
-        view.internalCandidates.set(id, { ...candidate, owner: stage });
-      }
-    }
-    const selectable = view.state.candidates.filter((candidate) => candidate.selectable);
-    if (selectable.length === 1) {
-      view.state.selectedCandidateId = selectable[0]?.id;
-      view.state.status = "ready";
-    } else {
-      view.state.status = "needsSelection";
-    }
-    const session = { role, sources, stages, synthetic: true, view };
-    this.syncSourceSessionView(session);
-    return session;
-  }
-
-  private async stageSource(stage: StagedSource<TSource>): Promise<StagedSource<TSource>> {
-    const requests: CandidateSelectionRequest[] = [];
-    try {
-      stage.preparedInputAssets = await this.prepareStageAssets(stage, requests, undefined);
-    } catch (error) {
-      if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
-      if (!requests.length) this.pushWarning(stage, toRomWeaverError(error));
-    }
-    for (const request of requests) this.addCandidateRequest(stage, request);
-    if (!stage.state.candidates.length) this.addDirectCandidate(stage, stage.state.role, stage.index, stage.state.id);
-    const selectable = stage.state.candidates.filter((candidate) => candidate.selectable);
-    if (selectable.length === 1) {
-      stage.state.selectedCandidateId = selectable[0]?.id;
-      stage.selectedArchiveEntry = stage.internalCandidates.get(selectable[0]?.id || "")?.archiveEntry;
-      if (this.getPreparedPatchSource(stage)) {
-        this.applyPreparedSourceMetadata(stage);
-        stage.state.status = "ready";
-      } else {
-        await this.prepareSelectedSource(stage);
-      }
-    } else {
-      stage.state.status = "needsSelection";
-      await this.maybeResolveBlockingStageSelection(stage);
-    }
-    return stage;
-  }
-
-  private async prepareSelectedSource(stage: StagedSource<TSource>): Promise<void> {
-    const requests: CandidateSelectionRequest[] = [];
-    try {
-      if (!stage.preparedInputAssets?.length) {
-        stage.preparedInputAssets = await this.prepareStageAssets(stage, requests, stage.selectedArchiveEntry);
-      }
-      this.applyPreparedSourceMetadata(stage);
-      stage.state.status = "ready";
-    } catch (error) {
-      if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
-      if (requests.length) {
-        this.handleSourceSelectionRequests(stage, requests);
-        await this.maybeResolveBlockingStageSelection(stage);
-        return;
-      }
-      throw error;
-    }
-  }
-
-  private createSelectionRequest(state: InternalSourceState): CandidateSelectionRequest {
-    return {
-      candidates: state.candidates.map(cloneCandidate),
-      role: state.role,
-      sourceName: state.fileName || state.id,
-      warnings: state.warnings.map((warning) => warning.message),
-    };
-  }
-
-  private async maybeResolveBlockingStageSelection(stage: StagedSource<TSource>): Promise<boolean> {
-    if (
-      !(stage.state.status === "needsSelection" && !stage.state.selectedCandidateId && stage.state.candidates.length)
-    ) {
-      return false;
-    }
-    const selection = await this.resolveSelectionRequest(this.createSelectionRequest(stage.state), this.selectFile);
-    if (!selection) return false;
-    const owner = stage.internalCandidates.get(selection.id)?.owner || stage;
-    this.setSelectedCandidate(owner, selection.id);
-    await this.prepareSelectedSource(owner);
-    return true;
-  }
-
-  private async maybeResolveBlockingSessionSelection(session: SourceSession<TSource>): Promise<boolean> {
-    if (!(session.view.state.status === "needsSelection" && !session.view.state.selectedCandidateId)) return false;
-    const selection = await this.resolveSelectionRequest(
-      this.createSelectionRequest(session.view.state),
-      this.selectFile,
-    );
-    if (!selection) return false;
-    const owner = session.view.internalCandidates.get(selection.id)?.owner || session.view;
-    this.setSelectedCandidate(owner, selection.id);
-    await this.prepareSelectedSource(owner);
-    this.syncSourceSessionView(session);
-    if (session.view.state.status === "needsSelection" && !session.view.state.selectedCandidateId)
-      return this.maybeResolveBlockingSessionSelection(session);
-    return true;
-  }
-
-  private createPreparationOptions(
-    stage: StagedSource<TSource>,
-    requests: CandidateSelectionRequest[],
-  ): Partial<CreateWorkflowOptions> {
-    return {
-      ...this.createExecutionOptions(),
-      onCandidatesFound: (request: CandidateSelectionRequest) => requests.push(request),
-      onProgress: (progress: PreparationProgress) => this.emitPreparationProgress(stage, progress),
-    } satisfies Partial<CreateWorkflowOptions>;
-  }
-
-  private emitPreparationProgress(stage: StagedSource<TSource>, progress: PreparationProgress) {
-    const progressStage = getPreparationProgressStage(progress, stage.state.role);
-    this.emitProgress({
-      current: progress.current,
-      details: {
-        ...(isRecord(progress.details) ? progress.details : {}),
-        fileName: stage.state.fileName,
-        sourceId: stage.state.id,
-      },
-      hasProgress: progress.hasProgress,
-      id: `${this.id}:${stage.state.id}:${progressStage}`,
-      label: progress.label || progress.message || "Preparing input...",
-      percent: typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
-      role: stage.state.role,
-      stage: progressStage,
-      total: progress.total,
-      workflow: "create",
-    });
-  }
-
-  private async prepareStageAssets(
-    stage: StagedSource<TSource>,
-    requests: CandidateSelectionRequest[],
-    selectedArchiveEntry: string | undefined,
-  ): Promise<InputAsset[]> {
-    return prepareInputAssets(
-      stage.source as never,
-      this.createPreparationOptions(stage, requests) as never,
-      stage.index,
-      this.runtime,
-      selectedArchiveEntry,
-      { allowLazyBrowserRomSource: !!stage.allowLazyBrowserRomSource },
-    );
-  }
-
-  private setSelectedCandidate(stage: StagedSource<TSource>, candidateId: string): void {
-    if (!stage.internalCandidates.has(candidateId))
-      throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${candidateId}`);
-    if (!stage.preparedInputAssets?.length) releasePreparedSource(stage);
-    stage.state.selectedCandidateId = candidateId;
-    stage.selectedArchiveEntry = stage.internalCandidates.get(candidateId)?.archiveEntry;
-  }
-
-  private handleSourceSelectionRequests(stage: StagedSource<TSource>, requests: CandidateSelectionRequest[]) {
-    stage.internalCandidates.clear();
-    stage.state.candidates = [];
-    for (const request of requests) this.addCandidateRequest(stage, request);
-    stage.state.decompressionTimeMs = undefined;
-    stage.state.parentCompressions = [];
-    stage.state.selectedCandidateId = undefined;
-    stage.state.status = "needsSelection";
-    stage.state.wasDecompressed = undefined;
-    releasePreparedSource(stage);
-  }
-
-  private applyPreparedSourceMetadata(stage: StagedSource<TSource>) {
-    const assets = stage.preparedInputAssets || [];
-    const preparation = getInputPreparationMetrics(assets);
-    stage.state.fileName = assets[0]?.fileName || stage.state.fileName;
-    stage.state.parentCompressions = (preparation?.parentCompressions || []).map((entry) => ({ ...entry }));
-    stage.state.size = assets.reduce((total, asset) => total + asset.size, 0) || stage.state.size;
-    stage.state.sourceSize =
-      (typeof preparation?.sourceSize === "number" && Number.isFinite(preparation.sourceSize)
-        ? preparation.sourceSize
-        : stage.state.sourceSize) || stage.state.size;
-    stage.state.decompressionTimeMs =
-      typeof preparation?.decompressionTimeMs === "number" && Number.isFinite(preparation.decompressionTimeMs)
-        ? preparation.decompressionTimeMs
-        : undefined;
-    stage.state.wasDecompressed = preparation?.wasDecompressed === true;
-  }
-
-  private addCandidateRequest(stage: StagedSource<TSource>, request: CandidateSelectionRequest) {
-    const publicIdByCandidateId = new Map(
-      request.candidates.map((candidate) => [
-        candidate.id,
-        `${this.id}:${stage.state.role}:${++this.nextCandidateSequence}`,
-      ]),
-    );
-    const candidates = request.candidates.map((candidate) => {
-      const publicId = publicIdByCandidateId.get(candidate.id) as string;
-      const publicCandidate = cloneCandidate(candidate);
-      stage.internalCandidates.set(publicId, {
-        archiveEntry: candidate.selectable ? selectionToArchiveEntry(request, { id: candidate.id }) : undefined,
-        candidate,
-        owner: stage,
-        request,
-      });
-      return {
-        ...publicCandidate,
-        id: publicId,
-        ...(publicCandidate.type === "group"
-          ? {
-              candidateIds: (publicCandidate.candidateIds || []).map(
-                (candidateId) => publicIdByCandidateId.get(candidateId) || candidateId,
-              ),
-            }
-          : {
-              ...(publicCandidate.parentCandidateId
-                ? {
-                    parentCandidateId: publicIdByCandidateId.get(publicCandidate.parentCandidateId),
-                  }
-                : {}),
-            }),
-      } as SelectionCandidate;
-    });
-    stage.state.candidates = candidates;
-  }
-
-  private addDirectCandidate(stage: StagedSource<TSource>, role: SourceRole, index: number, internalId: string) {
-    const publicId = `${this.id}:${role}:${++this.nextCandidateSequence}`;
-    const candidate: SelectionCandidate = {
-      fileName: stage.state.fileName || `${role}-${index + 1}`,
-      id: publicId,
-      kind: "rom",
-      patchable: true,
-      selectable: true,
-      size: stage.state.size,
-      type: "file",
-    };
-    stage.state.candidates = [candidate];
-    stage.internalCandidates.set(publicId, {
-      candidate: { ...candidate, id: internalId },
-      owner: stage,
-    });
-  }
-
   private syncSourceSessionView(session: SourceSession<TSource>) {
-    if (!session.synthetic) return;
-    const selectedOwner = this.getSelectedSourceOwner(session);
-    session.view.preparedInputAssets = session.stages.flatMap((stage) => stage.preparedInputAssets || []);
-    session.view.state.selectedCandidateId =
-      selectedOwner?.state.selectedCandidateId ||
-      (session.view.state.candidates.filter((candidate) => candidate.selectable).length === 1
-        ? session.view.state.candidates.find((candidate) => candidate.selectable)?.id
-        : undefined);
-    session.view.state.status = session.view.state.selectedCandidateId ? "ready" : "needsSelection";
-    session.view.state.fileName = selectedOwner?.state.fileName || session.stages[0]?.state.fileName;
-    session.view.state.size =
-      selectedOwner?.state.size ||
-      session.view.preparedInputAssets?.reduce((total, asset) => total + asset.size, 0) ||
-      undefined;
-    session.view.state.parentCompressions =
-      selectedOwner?.state.parentCompressions.map((entry) => ({ ...entry })) || [];
-    session.view.state.sourceSize =
-      selectedOwner?.state.sourceSize ||
-      session.stages.reduce((total, stage) => total + (stage.state.sourceSize || 0), 0) ||
-      undefined;
-    session.view.state.decompressionTimeMs = selectedOwner?.state.decompressionTimeMs;
-    session.view.state.wasDecompressed = selectedOwner?.state.wasDecompressed;
+    this.sourceStages.syncSessionView(session);
   }
 
   private getSelectedSourceOwner(session: SourceSession<TSource> | undefined): StagedSource<TSource> | undefined {
-    if (!session) return undefined;
-    if (!session.synthetic) return session.view;
-    const selectedId = session.view.state.selectedCandidateId;
-    if (!selectedId) return undefined;
-    return session.view.internalCandidates.get(selectedId)?.owner;
+    return this.sourceStages.getSelectedOwner(session) as StagedSource<TSource> | undefined;
   }
 
   private async finalizeSourceStableState(session: SourceSession<TSource>) {
@@ -698,19 +324,10 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
     if (session.synthetic) this.syncSourceSessionView(session);
   }
 
-  private getRuntimeSourcesForStage(stage?: StagedSource<TSource>): unknown[] {
-    if (!stage) return [];
-    return (stage.preparedInputAssets || []).map((asset) => asset.file);
-  }
-
   private getPreparedPatchSource(stage: StagedSource<TSource>): unknown | undefined {
     return (
       (stage.preparedInputAssets || []).find((asset) => asset.patchable)?.file || stage.preparedInputAssets?.[0]?.file
     );
-  }
-
-  private async releaseRuntimeSources(sources: unknown[]): Promise<void> {
-    await this.runtime.workerIo?.releaseSources?.(sources).catch(() => undefined);
   }
 
   private async releaseRoleSession(role: SourceRole) {
@@ -725,10 +342,7 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
 
   private async releaseSourceSession(session?: SourceSession<TSource>) {
     if (!session) return;
-    const sessionStages = [...session.stages, ...(session.stages.includes(session.view) ? [] : [session.view])];
-    const sources = [...session.sources, ...sessionStages.flatMap((stage) => this.getRuntimeSourcesForStage(stage))];
-    await Promise.all(sessionStages.map((stage) => releasePreparedSourceAndWait(stage)));
-    await this.releaseRuntimeSources(sources);
+    await this.sourceStages.releaseSession(session);
   }
 
   private getPatchType() {

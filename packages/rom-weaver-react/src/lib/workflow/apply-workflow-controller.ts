@@ -24,12 +24,7 @@ import {
 import { RomWeaverError, throwIfAborted, toRomWeaverError, withAbortSignal } from "../errors.ts";
 import { getPatchFileCleanup, getPatchFileExternalSource } from "../input/binary-service.ts";
 import { getInputPreparationMetrics, type InputAsset, type InputParentCompression } from "../input/input-assets.ts";
-import {
-  getBinarySourceSize,
-  prepareInputAssets,
-  prepareInputFile,
-  prepareMultipleDirectInputAssets,
-} from "../input/input-preparation-service.ts";
+import { prepareInputFile } from "../input/input-preparation-service.ts";
 import {
   appendFileNameExtension,
   getBaseFileName,
@@ -53,6 +48,12 @@ import {
   getSourceSize,
   isRecord,
 } from "./controller-utils.ts";
+import {
+  type SharedInternalCandidate,
+  type SharedRomSourceSession,
+  type SharedRomStagedSource,
+  StagedRomSourceController,
+} from "./staged-rom-source.ts";
 import { WorkflowController } from "./workflow-controller.ts";
 import { traceWorkflowControllerEvent } from "./workflow-tracing.ts";
 
@@ -84,31 +85,15 @@ type InternalSourceState = {
   patchValidation?: InternalPatchValidation;
   role: SourceRole;
 };
-type InternalCandidate<TSource> = {
-  archiveEntry?: string;
-  candidate: SelectionCandidate;
-  owner?: StagedSource<TSource>;
-  request?: CandidateSelectionRequest;
-};
-type StagedSource<TSource> = {
-  source: TSource;
-  allowLazyBrowserRomSource?: boolean;
-  index: number;
-  state: InternalSourceState;
-  internalCandidates: Map<string, InternalCandidate<TSource>>;
+type InternalCandidate<TSource> = SharedInternalCandidate<TSource, InternalSourceState>;
+type StagedSource<TSource> = SharedRomStagedSource<TSource, InternalSourceState> & {
   preparedInputAssets?: InputAsset[];
   preparedPatchFile?: PatchFileInstance;
   parsedPatch?: ParsedPatchLike;
   selectedArchiveEntry?: string;
   outputLabel?: string;
-  parentCompressions: ApplyWorkflowParentCompression[];
 };
-type InputSession<TSource> = {
-  sources: TSource[];
-  stages: StagedSource<TSource>[];
-  view: StagedSource<TSource>;
-  synthetic: boolean;
-};
+type InputSession<TSource> = SharedRomSourceSession<TSource, InternalSourceState>;
 const getPatchFilePrecomputedChecksums = (file: PatchFileInstance | undefined): ApplyWorkflowChecksums | undefined => {
   const checksums = (file as (PatchFileInstance & { checksums?: unknown }) | undefined)?.checksums;
   if (!isRecord(checksums)) return undefined;
@@ -153,7 +138,6 @@ const cloneChecksumRomProbe = (romProbe: ChecksumRomProbe | undefined): Checksum
 
 const PATCH_OUTPUT_LABEL_PATTERN = /\[([^\]]+)\](?:\.[^.]+)?\d*$/;
 const PATCH_TARGET_SELECTION_ERROR_CODES = new Set(["AMBIGUOUS_SELECTION", "PATCH_TARGET_MISMATCH"]);
-const MAX_INPUT_SELECTION_RETRY_COUNT = 12;
 
 const cloneInputState = (
   state: InternalSourceState | null | undefined,
@@ -402,6 +386,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   private readonly abortController = new AbortController();
   private readonly constructorSignal?: AbortSignal;
   private readonly selectFile?: WorkflowOptions<ApplySettings>["selectFile"];
+  private readonly inputStages: StagedRomSourceController<TSource, InternalSourceState>;
   private disposed = false;
   private progressSequence = 0;
   private nextCandidateSequence = 0;
@@ -439,6 +424,20 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       this.outputName = this.settings.output.outputName;
     }
     if (!this.manualOutputFormat) this.outputFormat = resolveAutomaticFormat(undefined, this.settings);
+    this.inputStages = new StagedRomSourceController<TSource, InternalSourceState>({
+      clearRequestsWhenSinglePatchableAsset: true,
+      emitProgress: (event) => this.emitProgress(event),
+      getExecutionOptions: () => this.createExecutionOptions(),
+      getPreparedFileName: getPreparedAssetFileName,
+      getSessionId: () => "input-session",
+      getSourceId: () => `input-${++this.nextInputSequence}`,
+      id: this.id,
+      releasePreparedOnSelection: "when-empty",
+      runtime: this.runtime,
+      selectFile: this.selectFile,
+      trace: (message, details) => this.trace(message, details),
+      workflow: "apply",
+    });
     if (options.signal?.aborted) this.abortController.abort(options.signal.reason);
     else options.signal?.addEventListener("abort", () => this.abort(options.signal?.reason), { once: true });
   }
@@ -472,6 +471,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
         if (!this.inputs.length) throw new RomWeaverError("INVALID_INPUT", "Input source is required");
         const initial = this.createInitialInputView(this.inputs);
         this.inputSession = {
+          role: "input",
           sources: this.inputs,
           stages: [],
           synthetic: false,
@@ -852,115 +852,24 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   }
 
   private createInitialInputView(sources: TSource[]): StagedSource<TSource> {
-    return this.createInitialSource("input", sources[0] as TSource, 0);
+    return this.inputStages.createInitialSource("input", sources[0] as TSource, 0) as StagedSource<TSource>;
   }
 
   private async stageInputSession(sources: TSource[]): Promise<InputSession<TSource>> {
-    this.trace("input.session.stage.start", {
-      sourceCount: sources.length,
-    });
-    if (sources.length === 1) {
-      this.trace("input.session.stage.single.start", {
-        fileName: getSourceFileName(sources[0] as never, "Input 1"),
-        size: getSourceSize(sources[0] as never),
-      });
-      const view = await this.stageSource(
-        this.createInitialSource("input", sources[0] as TSource, 0, {
-          allowLazyBrowserRomSource: true,
-        }),
-      );
-      this.trace("input.session.stage.single.finish", {
-        candidateCount: view.state.candidates.length,
-        fileName: view.state.fileName,
-        status: view.state.status,
-      });
-      return {
-        sources,
-        stages: [view],
-        synthetic: false,
-        view,
-      };
-    }
-    const requests: CandidateSelectionRequest[] = [];
-    const directAssets = await prepareMultipleDirectInputAssets(
-      sources as never,
-      {
-        ...this.createExecutionOptions(),
-        onCandidatesFound: (request: CandidateSelectionRequest) => requests.push(request),
-      } as never,
-    );
-    this.trace("input.session.stage.multi.direct-assets", {
-      found: !!directAssets,
-      requestCount: requests.length,
-      sourceCount: sources.length,
-    });
-    if (directAssets) {
-      const view = this.createInitialSource("input", sources[0] as TSource, 0);
-      view.preparedInputAssets = directAssets;
-      view.state.status = "ready";
-      view.state.id = "input-session";
-      view.state.fileName = directAssets[0]?.fileName || view.state.fileName;
-      view.state.size = directAssets.reduce((total, asset) => total + asset.size, 0);
-      view.state.sourceSize = sources.reduce((total, source) => total + (getBinarySourceSize(source as never) || 0), 0);
-      const metrics = getInputPreparationMetrics(directAssets);
-      view.parentCompressions = this.normalizeParentCompressions(metrics?.parentCompressions);
-      if (directAssets.filter((asset) => asset.patchable).length === 1) requests.length = 0;
-      for (const request of requests) this.addCandidateRequest(view, request);
-      if (!view.state.candidates.length) this.addDirectCandidate(view, "input", 0, view.state.id);
-      const selectable = view.state.candidates.filter((candidate) => candidate.selectable);
-      if (selectable.length === 1) view.state.selectedCandidateId = selectable[0]?.id;
-      else view.state.status = "needsSelection";
-      if (view.state.status === "ready") this.applyPreparedInputMetadata(view);
-      this.trace("input.session.stage.multi.direct-finish", {
-        assetCount: directAssets.length,
-        candidateCount: view.state.candidates.length,
-        status: view.state.status,
-      });
-      return { sources, stages: [view], synthetic: false, view };
-    }
-    const stages: Array<StagedSource<TSource>> = [];
-    for (let index = 0; index < sources.length; index += 1) {
-      this.trace("input.session.stage.multi.source", {
-        index,
-        sourceCount: sources.length,
-      });
-      stages.push(await this.stageSource(this.createInitialSource("input", sources[index] as TSource, index)));
-    }
-    this.trace("input.session.stage.multi.synthetic-finish", {
-      stageCount: stages.length,
-    });
-    return this.buildSyntheticInputSession(sources, stages);
-  }
-
-  private buildSyntheticInputSession(sources: TSource[], stages: Array<StagedSource<TSource>>): InputSession<TSource> {
-    const view = this.createInitialSource("input", sources[0] as TSource, 0);
-    view.state.id = "input-session";
-    view.state.candidates = stages.flatMap((stage) => stage.state.candidates.map(cloneCandidate));
-    view.internalCandidates = new Map();
-    for (const stage of stages) {
-      for (const [id, candidate] of stage.internalCandidates) {
-        view.internalCandidates.set(id, {
-          ...candidate,
-          owner: stage,
-        });
-      }
-    }
-    view.preparedInputAssets = stages.flatMap((stage) => stage.preparedInputAssets || []);
-    view.state.sourceSize = stages.reduce((total, stage) => total + (stage.state.sourceSize || 0), 0) || undefined;
-    const selectable = view.state.candidates.filter((candidate) => candidate.selectable);
-    if (selectable.length === 1) {
-      view.state.selectedCandidateId = selectable[0]?.id;
-      view.state.status = "ready";
-    } else {
-      view.state.status = "needsSelection";
-    }
-    const session = { sources, stages, synthetic: true, view };
+    const session = (await this.inputStages.stageSession("input", sources, {
+      allowLazyBrowserRomSource: true,
+    })) as InputSession<TSource>;
     this.inputSession = session;
-    this.syncInputSessionView();
+    this.refreshPreparedInputMetadata(session);
     return session;
   }
 
   private async stageSource(stage: StagedSource<TSource>): Promise<StagedSource<TSource>> {
+    if (stage.state.role === "input") {
+      const staged = (await this.inputStages.stageSource(stage)) as StagedSource<TSource>;
+      this.refreshPreparedInputMetadataForStage(staged);
+      return staged;
+    }
     this.trace("source.stage.start", {
       allowLazyBrowserRomSource: !!stage.allowLazyBrowserRomSource,
       fileName: stage.state.fileName,
@@ -1002,45 +911,25 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       },
     } satisfies Partial<ApplyWorkflowOptions>;
     try {
-      if (stage.state.role === "input") {
-        this.trace("source.stage.prepare-input-assets.start", {
-          fileName: stage.state.fileName,
-          order: stage.state.order,
-        });
-        stage.preparedInputAssets = await prepareInputAssets(
-          stage.source as never,
-          options as never,
-          stage.index,
-          this.runtime,
-          undefined,
-          { allowLazyBrowserRomSource: !!stage.allowLazyBrowserRomSource },
-        );
-        this.trace("source.stage.prepare-input-assets.finish", {
-          assetCount: stage.preparedInputAssets.length,
-          fileName: stage.state.fileName,
-          order: stage.state.order,
-        });
-      } else {
-        this.trace("source.stage.prepare-patch.start", {
-          fileName: stage.state.fileName,
-          order: stage.state.order,
-        });
-        const prepared = await prepareInputFile(
-          stage.source as never,
-          "patch",
-          options as never,
-          this.runtime,
-          undefined,
-          stage.index,
-        );
-        stage.preparedPatchFile = prepared.file;
-        this.applyPreparedPatchMetadata(stage, prepared);
-        this.trace("source.stage.prepare-patch.finish", {
-          fileName: stage.state.fileName,
-          order: stage.state.order,
-          preparedFileName: prepared.file.fileName,
-        });
-      }
+      this.trace("source.stage.prepare-patch.start", {
+        fileName: stage.state.fileName,
+        order: stage.state.order,
+      });
+      const prepared = await prepareInputFile(
+        stage.source as never,
+        "patch",
+        options as never,
+        this.runtime,
+        undefined,
+        stage.index,
+      );
+      stage.preparedPatchFile = prepared.file;
+      this.applyPreparedPatchMetadata(stage, prepared);
+      this.trace("source.stage.prepare-patch.finish", {
+        fileName: stage.state.fileName,
+        order: stage.state.order,
+        preparedFileName: prepared.file.fileName,
+      });
     } catch (error) {
       this.trace("source.stage.prepare.fail", {
         error,
@@ -1052,8 +941,6 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
       if (!requests.length) this.pushWarning(stage, toRomWeaverError(error));
     }
-    if (stage.state.role === "input" && stage.preparedInputAssets?.filter((asset) => asset.patchable).length === 1)
-      requests.length = 0;
     for (const request of requests) this.addCandidateRequest(stage, request);
     if (!stage.state.candidates.length)
       this.addDirectCandidate(
@@ -1077,11 +964,10 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
         order: stage.state.order,
         status: stage.state.status,
       });
-      if (stage.state.role === "patch") await this.parsePatch(stage);
+      await this.parsePatch(stage);
     } else {
       stage.state.status = "needsSelection";
-      if (stage.state.role === "input") await this.maybeResolveBlockingInputSelection();
-      else await this.maybeResolveBlockingPatchSelection(stage);
+      await this.maybeResolveBlockingPatchSelection(stage);
     }
     this.trace("source.stage.finish", {
       candidateCount: stage.state.candidates.length,
@@ -1095,6 +981,11 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   }
 
   private async prepareSelectedSource(stage: StagedSource<TSource>): Promise<void> {
+    if (stage.state.role === "input") {
+      await this.inputStages.prepareSelectedSource(stage);
+      this.refreshPreparedInputMetadataForStage(stage);
+      return;
+    }
     this.trace("source.prepare-selected.enter", {
       candidateId: stage.state.selectedCandidateId,
       fileName: stage.state.fileName,
@@ -1135,38 +1026,6 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       },
     } satisfies Partial<ApplyWorkflowOptions>;
     try {
-      if (stage.state.role === "input") {
-        const cachedFile = stage.preparedInputAssets?.[0]?.file;
-        this.trace("source.prepare-selected.input.start", {
-          cachedFile: !!cachedFile,
-          fileName: stage.state.fileName,
-          order: stage.state.order,
-          selectedArchiveEntry: stage.selectedArchiveEntry,
-        });
-        const file =
-          cachedFile ||
-          (await (async () => {
-            stage.preparedInputAssets = await prepareInputAssets(
-              stage.source as never,
-              options as never,
-              stage.index,
-              this.runtime,
-              stage.selectedArchiveEntry,
-              { allowLazyBrowserRomSource: !!stage.allowLazyBrowserRomSource },
-            );
-            return stage.preparedInputAssets[0]?.file;
-          })());
-        if (!file && requests.length) return this.handleSourceSelectionRequests(stage, requests);
-        this.applyPreparedInputMetadata(stage);
-        stage.state.status = "ready";
-        this.trace("source.prepare-selected.input.finish", {
-          fileName: stage.state.fileName,
-          order: stage.state.order,
-          preparedFileName: file?.fileName,
-          status: stage.state.status,
-        });
-        return;
-      }
       const prepared = stage.preparedPatchFile
         ? {
             decompressionTimeMs: stage.state.decompressionTimeMs || 0,
@@ -1197,8 +1056,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
       if (requests.length) {
         this.handleSourceSelectionRequests(stage, requests);
-        if (stage.state.role === "input") await this.maybeResolveBlockingInputSelection();
-        else await this.maybeResolveBlockingPatchSelection(stage);
+        await this.maybeResolveBlockingPatchSelection(stage);
         return;
       }
       throw error;
@@ -1235,60 +1093,10 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
 
   private async maybeResolveBlockingInputSelection(): Promise<boolean> {
     const session = this.inputSession;
-    if (!(session && session.view.state.status === "needsSelection" && !session.view.state.selectedCandidateId))
-      return false;
-    return this.maybeResolveBlockingInputSelectionWithRetryGuard(session, new Set<string>());
-  }
-
-  private async maybeResolveBlockingInputSelectionWithRetryGuard(
-    session: InputSession<TSource>,
-    attemptedSelectionKeys: Set<string>,
-  ): Promise<boolean> {
-    if (attemptedSelectionKeys.size >= MAX_INPUT_SELECTION_RETRY_COUNT)
-      throw new RomWeaverError(
-        "INVALID_INPUT",
-        `${session.view.state.fileName || "Input"} could not be prepared after repeated archive selection attempts`,
-      );
-    const selection = await this.resolveSelectionRequest(
-      this.createSelectionRequest(session.view.state),
-      this.selectFile,
-    );
-    if (!selection) return false;
-    const owner = session.view.internalCandidates.get(selection.id)?.owner || session.view;
-    const internalCandidate = owner.internalCandidates.get(selection.id);
-    if (!internalCandidate)
-      throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${selection.id}`);
-    const retryIdentity =
-      internalCandidate.archiveEntry ||
-      ("fileName" in internalCandidate.candidate ? String(internalCandidate.candidate.fileName || "") : "") ||
-      owner.selectedArchiveEntry ||
-      owner.state.fileName ||
-      owner.state.id;
-    const candidateRetryIdentity = String(internalCandidate.candidate.id || "")
-      .trim()
-      .toLowerCase();
-    const normalizedRetryIdentity = (
-      candidateRetryIdentity ||
-      getBaseFileName(retryIdentity) ||
-      String(retryIdentity || owner.state.id)
-    ).toLowerCase();
-    const selectionRetryKey = `${owner.state.id}:${normalizedRetryIdentity}`;
-    if (attemptedSelectionKeys.has(selectionRetryKey))
-      throw new RomWeaverError(
-        "INVALID_INPUT",
-        `${owner.state.fileName || "Input"} could not be prepared after repeated archive selection attempts`,
-      );
-    attemptedSelectionKeys.add(selectionRetryKey);
-    if (!owner.preparedInputAssets?.length) releasePreparedSource(owner);
-    owner.state.selectedCandidateId = selection.id;
-    owner.selectedArchiveEntry = internalCandidate.archiveEntry;
-    owner.state.checksums = undefined;
-    owner.state.checksumTimeMs = undefined;
-    await this.prepareSelectedSource(owner);
-    this.syncInputSessionView();
-    if (session.view.state.status === "needsSelection" && !session.view.state.selectedCandidateId)
-      return this.maybeResolveBlockingInputSelectionWithRetryGuard(session, attemptedSelectionKeys);
-    return true;
+    if (!session) return false;
+    const resolved = await this.inputStages.maybeResolveBlockingSessionSelection(session);
+    this.refreshPreparedInputMetadata(session);
+    return resolved;
   }
 
   private async maybeResolveBlockingPatchSelection(stage: StagedSource<TSource>): Promise<boolean> {
@@ -1327,6 +1135,18 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
         stage.state.checksumTimeMs = 0;
       }
     }
+  }
+
+  private refreshPreparedInputMetadataForStage(stage: StagedSource<TSource> | undefined) {
+    if (!(stage && stage.state.role === "input" && stage.preparedInputAssets?.length)) return;
+    this.applyPreparedInputMetadata(stage);
+  }
+
+  private refreshPreparedInputMetadata(session: InputSession<TSource> | undefined) {
+    if (!session) return;
+    for (const stage of session.stages) this.refreshPreparedInputMetadataForStage(stage as StagedSource<TSource>);
+    if (!session.stages.includes(session.view)) this.refreshPreparedInputMetadataForStage(session.view);
+    if (session.synthetic) this.syncInputSessionView();
   }
 
   private applyPreparedPatchMetadata(
@@ -1431,39 +1251,12 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   private syncInputSessionView() {
     const session = this.inputSession;
     if (!session?.synthetic) return;
-    const view = session.view;
-    const selectedOwner = this.getSelectedInputOwner();
-    view.preparedInputAssets = session.stages.flatMap((stage) => stage.preparedInputAssets || []);
-    view.state.selectedCandidateId =
-      selectedOwner?.state.selectedCandidateId ||
-      (view.state.candidates.filter((candidate) => candidate.selectable).length === 1
-        ? view.state.candidates.find((candidate) => candidate.selectable)?.id
-        : undefined);
-    view.state.status = view.state.selectedCandidateId ? "ready" : "needsSelection";
-    view.state.fileName = selectedOwner?.state.fileName || session.stages[0]?.state.fileName;
-    view.state.checksums = selectedOwner?.state.checksums;
-    view.state.checksumTimeMs = selectedOwner?.state.checksumTimeMs;
-    view.state.romProbe = cloneChecksumRomProbe(selectedOwner?.state.romProbe);
-    view.state.size =
-      selectedOwner?.state.size ||
-      view.preparedInputAssets?.reduce((total, asset) => total + asset.size, 0) ||
-      undefined;
-    view.state.sourceSize =
-      selectedOwner?.state.sourceSize ||
-      session.stages.reduce((total, stage) => total + (stage.state.sourceSize || 0), 0) ||
-      undefined;
-    view.state.decompressionTimeMs = selectedOwner?.state.decompressionTimeMs;
-    view.state.wasDecompressed = selectedOwner?.state.wasDecompressed;
-    view.parentCompressions = selectedOwner?.parentCompressions || [];
+    this.inputStages.syncSessionView(session);
+    session.view.state.romProbe = cloneChecksumRomProbe(session.view.state.romProbe);
   }
 
   private getSelectedInputOwner(): StagedSource<TSource> | undefined {
-    const session = this.inputSession;
-    if (!session) return undefined;
-    if (!session.synthetic) return session.view;
-    const selectedId = session.view.state.selectedCandidateId;
-    if (!selectedId) return undefined;
-    return session.view.internalCandidates.get(selectedId)?.owner;
+    return this.inputStages.getSelectedOwner(this.inputSession) as StagedSource<TSource> | undefined;
   }
 
   private async finalizeInputStableState(): Promise<boolean> {
@@ -1998,18 +1791,9 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   }
 
   private async releaseInputSession() {
-    if (!this.inputSession) return;
-    const sessionStages = [
-      ...this.inputSession.stages,
-      ...(this.inputSession.stages.includes(this.inputSession.view) ? [] : [this.inputSession.view]),
-    ];
-    const sources = [
-      ...this.inputSession.sources,
-      ...sessionStages.flatMap((stage) => this.getRuntimeSourcesForStage(stage)),
-    ];
-    await Promise.all(sessionStages.map((stage) => releasePreparedSourceAndWait(stage)));
+    const session = this.inputSession;
     this.inputSession = undefined;
-    await this.releaseRuntimeSources(sources);
+    await this.inputStages.releaseSession(session);
   }
 }
 
