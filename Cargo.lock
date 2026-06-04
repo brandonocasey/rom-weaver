@@ -1758,6 +1758,7 @@ dependencies = [
  "rom-weaver-xdelta",
  "serde_json",
  "sha1",
+ "suffix_array",
  "tracing",
 ]
 

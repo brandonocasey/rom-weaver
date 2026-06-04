@@ -1,13 +1,16 @@
 /* jscpd:ignore-start */
-use std::fs;
+use std::{fs, sync::Arc};
 
 use rom_weaver_core::{
-    PatchApplyRequest, PatchChecksumValidation, PatchCreateRequest, PatchHandler,
+    CancellationToken, OperationContext, PatchApplyRequest, PatchChecksumValidation,
+    PatchCreateRequest, PatchHandler, RecordingProgressSink, ThreadBudget,
 };
 
 use super::{
-    BPS_MAGIC, BpsAction, BpsPatchHandler, CREATE_THREAD_SCAN_CHUNK_BYTES, crc32_bytes,
-    encode_signed_offset, parse_bps_bytes, push_varint,
+    BPS_CREATE_MEMORY_LIMIT_BYTES, BPS_MAGIC, BpsAction, BpsPatchHandler,
+    bps_create_copy_match_is_worth, bps_create_estimated_suffix_memory_bytes, crc32_bytes,
+    encode_signed_offset, initial_bps_sorted_target_len, next_bps_sorted_target_len,
+    parse_bps_bytes, push_varint,
 };
 use crate::{
     BPS,
@@ -306,23 +309,20 @@ fn create_round_trips_for_small_patch() {
 }
 
 #[test]
-fn create_uses_parallel_threads_for_large_patch() {
+fn create_reports_single_threaded_when_threads_are_requested() {
     let temp = TestDir::new();
-    let original_path = temp.child("original-large.bin");
-    let modified_path = temp.child("modified-large.bin");
-    let patch_path = temp.child("update-large.bps");
-    let output_path = temp.child("output-large.bin");
+    let original_path = temp.child("original.bin");
+    let modified_path = temp.child("modified.bin");
+    let patch_path = temp.child("update.bps");
+    let output_path = temp.child("output.bin");
 
-    let mut original = vec![0u8; (CREATE_THREAD_SCAN_CHUNK_BYTES * 2) + 4096];
+    let mut original = vec![0u8; 4096];
     for (index, byte) in original.iter_mut().enumerate() {
         *byte = (index as u8).wrapping_mul(11);
     }
     let mut modified = original.clone();
     modified[0] = modified[0].wrapping_add(1);
-    let boundary = CREATE_THREAD_SCAN_CHUNK_BYTES;
-    for byte in &mut modified[(boundary - 64)..(boundary + 64)] {
-        *byte = byte.wrapping_add(2);
-    }
+    modified[2048] = modified[2048].wrapping_add(2);
 
     fs::write(&original_path, &original).expect("fixture");
     fs::write(&modified_path, &modified).expect("fixture");
@@ -341,8 +341,8 @@ fn create_uses_parallel_threads_for_large_patch() {
         .expect("create");
     let execution = report.thread_execution.expect("thread execution");
     assert_eq!(execution.requested_threads, 8);
-    assert!(execution.effective_threads >= 2);
-    assert!(execution.used_parallelism);
+    assert_eq!(execution.effective_threads, 1);
+    assert!(!execution.used_parallelism);
 
     handler
         .apply(
@@ -358,13 +358,207 @@ fn create_uses_parallel_threads_for_large_patch() {
 }
 
 #[test]
+fn create_uses_target_copy_for_repeated_target_data() {
+    let temp = TestDir::new();
+    let original_path = temp.child("original.bin");
+    let modified_path = temp.child("modified.bin");
+    let patch_path = temp.child("update.bps");
+    let output_path = temp.child("output.bin");
+    let mut original = b"prefix-".to_vec();
+    original.extend_from_slice(b"source-only");
+    let mut modified = b"prefix-".to_vec();
+    modified.extend(vec![b'Z'; 8192]);
+    fs::write(&original_path, &original).expect("fixture");
+    fs::write(&modified_path, &modified).expect("fixture");
+
+    let handler = BpsPatchHandler::new(&BPS);
+    handler
+        .create(
+            &PatchCreateRequest {
+                original: original_path.clone(),
+                modified: modified_path.clone(),
+                output: patch_path.clone(),
+                format: "BPS".into(),
+            },
+            &test_context_with_threads(&temp, 4),
+        )
+        .expect("create");
+
+    let patch_bytes = fs::read(&patch_path).expect("patch");
+    let patch = parse_bps_bytes(&patch_bytes).expect("parse");
+    assert!(
+        patch
+            .actions
+            .iter()
+            .any(|action| matches!(action, BpsAction::TargetCopy { .. }))
+    );
+    assert!(
+        patch_bytes.len() < modified.len() / 4,
+        "target-copy patch should be much smaller than literal target data"
+    );
+
+    handler
+        .apply(
+            &PatchApplyRequest {
+                input: original_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 4),
+        )
+        .expect("apply");
+
+    assert_eq!(fs::read(output_path).expect("output"), modified);
+}
+
+#[test]
+fn create_rejects_inputs_that_exceed_suffix_memory_budget_before_reading() {
+    let temp = TestDir::new();
+    let original_path = temp.child("original.bin");
+    let modified_path = temp.child("modified.bin");
+    let patch_path = temp.child("update.bps");
+    let sparse_len = 128 * 1024 * 1024;
+    fs::File::create(&original_path)
+        .expect("original")
+        .set_len(sparse_len)
+        .expect("original len");
+    fs::File::create(&modified_path)
+        .expect("modified")
+        .set_len(sparse_len)
+        .expect("modified len");
+    assert!(
+        bps_create_estimated_suffix_memory_bytes(sparse_len, sparse_len).expect("estimate")
+            > u128::from(BPS_CREATE_MEMORY_LIMIT_BYTES)
+    );
+
+    let handler = BpsPatchHandler::new(&BPS);
+    let error = handler
+        .create(
+            &PatchCreateRequest {
+                original: original_path,
+                modified: modified_path,
+                output: patch_path,
+                format: "BPS".into(),
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect_err("oversized suffix index should fail before reading sparse files");
+
+    assert!(error.to_string().contains("suffix-index memory"));
+}
+
+#[test]
+fn create_reports_progress_during_suffix_indexing_and_output() {
+    let temp = TestDir::new();
+    let original_path = temp.child("original.bin");
+    let modified_path = temp.child("modified.bin");
+    let patch_path = temp.child("update.bps");
+    fs::write(&original_path, patterned_tail(4096)).expect("fixture");
+    let mut modified = patterned_tail(4096);
+    modified.splice(128..128, b"inserted-data".iter().copied());
+    fs::write(&modified_path, &modified).expect("fixture");
+
+    let progress = Arc::new(RecordingProgressSink::default());
+    let context = OperationContext::new(
+        ThreadBudget::Fixed(1),
+        temp.child("progress-temp"),
+        progress.clone(),
+        CancellationToken::new(),
+    );
+    BpsPatchHandler::new(&BPS)
+        .create(
+            &PatchCreateRequest {
+                original: original_path,
+                modified: modified_path,
+                output: patch_path,
+                format: "BPS".into(),
+            },
+            &context,
+        )
+        .expect("create");
+
+    let events = progress.snapshot();
+    assert!(events.iter().any(|event| event.command == "patch-create"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.label == "indexing BPS copy candidates")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.label == "creating BPS patch")
+    );
+    assert!(
+        events
+            .windows(2)
+            .all(|pair| pair[0].percent.unwrap_or(0.0) <= pair[1].percent.unwrap_or(0.0))
+    );
+}
+
+#[test]
+fn sorted_target_window_grows_like_flips() {
+    assert_eq!(initial_bps_sorted_target_len(64, 8192), 512);
+    assert_eq!(next_bps_sorted_target_len(128, 512, 8192), 512);
+    assert_eq!(next_bps_sorted_target_len(256, 512, 8192), 2051);
+    assert_eq!(next_bps_sorted_target_len(2048, 2051, 8192), 8192);
+}
+
+#[test]
+fn copy_match_threshold_matches_flips_use_match_shape() {
+    assert!(!bps_create_copy_match_is_worth(2, 0, false).expect("threshold"));
+    assert!(bps_create_copy_match_is_worth(3, 0, false).expect("threshold"));
+    assert!(!bps_create_copy_match_is_worth(3, 0, true).expect("threshold"));
+    assert!(bps_create_copy_match_is_worth(4, 0, true).expect("threshold"));
+}
+
+#[test]
+fn create_round_trips_when_target_growth_forces_suffix_reindex() {
+    let temp = TestDir::new();
+    let original_path = temp.child("original.bin");
+    let modified_path = temp.child("modified.bin");
+    let patch_path = temp.child("update.bps");
+    let output_path = temp.child("output.bin");
+    let original = patterned_tail(64);
+    let mut modified = patterned_tail(8192);
+    modified[1536..1600].copy_from_slice(&original);
+    fs::write(&original_path, &original).expect("fixture");
+    fs::write(&modified_path, &modified).expect("fixture");
+
+    let handler = BpsPatchHandler::new(&BPS);
+    handler
+        .create(
+            &PatchCreateRequest {
+                original: original_path.clone(),
+                modified: modified_path.clone(),
+                output: patch_path.clone(),
+                format: "BPS".into(),
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect("create");
+    handler
+        .apply(
+            &PatchApplyRequest {
+                input: original_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect("apply");
+
+    assert_eq!(fs::read(output_path).expect("output"), modified);
+}
+
+#[test]
 fn create_uses_source_copy_to_resync_after_insertion() {
     let temp = TestDir::new();
     let original_path = temp.child("original.bin");
     let modified_path = temp.child("modified.bin");
     let patch_path = temp.child("update.bps");
     let output_path = temp.child("output.bin");
-    let tail = vec![b'A'; 8192];
+    let tail = patterned_tail(8192);
     let mut modified = b"prefix-".to_vec();
     modified.extend_from_slice(b"INSERT-");
     modified.extend_from_slice(&tail);
@@ -416,7 +610,7 @@ fn create_uses_source_copy_to_resync_after_deletion() {
     let patch_path = temp.child("update.bps");
     let output_path = temp.child("output.bin");
     let head = vec![b'B'; 4096];
-    let tail = vec![b'C'; 4096];
+    let tail = patterned_tail(4096);
     let mut original = head.clone();
     original.extend_from_slice(b"REMOVE-ME");
     original.extend_from_slice(&tail);
@@ -458,6 +652,12 @@ fn create_uses_source_copy_to_resync_after_deletion() {
         .expect("apply");
 
     assert_eq!(fs::read(output_path).expect("output"), modified);
+}
+
+fn patterned_tail(len: usize) -> Vec<u8> {
+    (0..len)
+        .map(|index| ((index.wrapping_mul(37) + (index / 251)) & 0xff) as u8)
+        .collect()
 }
 
 fn build_bps_patch(source: &[u8], target: &[u8], actions: Vec<TestAction>) -> Vec<u8> {
