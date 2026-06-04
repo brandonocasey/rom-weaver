@@ -472,7 +472,7 @@ const formatElapsedTiming = (elapsedMs: number | null) => {
 const formatDownloadCompressionRatio = (inputBytes: number | null, outputBytes: number | null) => {
   if (!(typeof inputBytes === "number" && inputBytes > 0 && typeof outputBytes === "number" && outputBytes >= 0))
     return "";
-  return `${formatPercentFixed((outputBytes / inputBytes) * 100)}%`;
+  return formatPercentFixed((outputBytes / inputBytes) * 100);
 };
 
 const createInertState = (): PatcherUiState => createInertPatcherUiSessionState();

@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ApplyWorkflowFormView } from "../../src/public/react/apply-workflow-form-view.tsx";
+import { PatcherPrimaryAction } from "../../src/public/react/components/patcher-output-controls.tsx";
 import { ApplyPatchForm } from "../../src/public/react/index.tsx";
 import {
   inertDialogController,
@@ -9,6 +10,7 @@ import {
   inertStackController,
   useLocalApplyPatchFormSession,
 } from "../../src/public/react/patcher-form-session.ts";
+import { createEmptyPatcherOutputState } from "../../src/public/react/patcher-presentation.ts";
 import { createEmptyPatcherUiState } from "../../src/public/react/patcher-ui-state.ts";
 import { resetRomWeaverRunner, warmupRomWeaverRunner } from "../../src/workers/rom-weaver/rom-weaver-runner.ts";
 
@@ -828,6 +830,35 @@ test("split-bin checkbox renders only when CHD split-bin is available", async ()
   expect(splitBinCheckbox.checked).toBe(true);
   splitBinCheckbox.click();
   expect(setChdSplitBin).toHaveBeenCalledWith(false);
+});
+
+test("download-ready apply button does not duplicate ratio percent signs", async () => {
+  const outputState = createEmptyPatcherOutputState();
+  outputState.applyButton.disabled = false;
+  outputState.disabled = false;
+  outputState.compressionFormat = "zip";
+  outputState.displayFileName = "game - change";
+  outputState.options = [{ label: "ZIP", value: "zip" }];
+  outputState.pendingDownloadFileName = "game - change.zip";
+  outputState.downloadSummary = {
+    format: "ZIP",
+    ratio: "73.4%",
+    size: "11.7 MiB",
+  };
+
+  mount(
+    createElement(PatcherPrimaryAction, {
+      controller: createStaticController(outputState, {
+        runPrimaryAction: () => undefined,
+        setDisplayFileName: () => undefined,
+        setOutputCompression: () => undefined,
+        setOutputCompressOption: () => undefined,
+      }),
+    }),
+  );
+
+  await expect.poll(() => document.getElementById("rom-weaver-button-apply")?.textContent || "").toContain("73.4%");
+  expect(document.getElementById("rom-weaver-button-apply")?.textContent || "").not.toContain("%%");
 });
 
 test("clearing a selected archive input requires selection again when re-added", async () => {
