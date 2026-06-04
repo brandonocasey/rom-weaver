@@ -671,6 +671,7 @@ const stageBrowserCompressionEntries = async (
 const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<WorkflowRuntime["compression"]> => ({
   create: async (workflowInput) => {
     if (!("entries" in workflowInput)) throw new Error("archive runtime received non-archive create input");
+    const trace = { logLevel: workflowInput.options?.logLevel, onLog: workflowInput.options?.onLog };
     const staged = await stageBrowserCompressionEntries(workflowInput.entries, workerIo);
     try {
       const format = workflowInput.format || workflowInput.options?.compression || "7z";
@@ -681,6 +682,16 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
       const fallbackOutputPathSource = staged.stagedEntries[0]?.filePath || `${WORKER_OPFS_MOUNTPOINT}/archive.bin`;
       const outputFileName = workflowInput.options?.outputName || (format === "zip" ? "archive.zip" : "archive.7z");
       const outputPath = selectRomWeaverOutputPath(fallbackOutputPathSource, outputFileName, staged.inputPaths);
+      emitBrowserWorkflowTrace(trace, "archive create names resolved", {
+        codec,
+        entryFileNames: normalizeCompressionWorkerEntries(workflowInput.entries).map(
+          (entry) => entry.fileName || entry.filename || entry.name || "",
+        ),
+        format,
+        inputPaths: staged.inputPaths,
+        outputFileName,
+        outputPath,
+      });
       await removeBrowserVfsOutputPaths([outputPath], staged.inputPaths);
       return {
         output: await workerIo.createWorkerOutput(

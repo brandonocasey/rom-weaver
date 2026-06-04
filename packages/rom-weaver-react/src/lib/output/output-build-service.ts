@@ -60,6 +60,21 @@ const getRequestedOutputName = (options: ApplyWorkflowOptions | undefined) => {
   return typeof outputName === "string" ? outputName.trim() : "";
 };
 
+const traceOutputName = (
+  options: ApplyWorkflowOptions | undefined,
+  message: string,
+  details: Record<string, unknown>,
+) => {
+  if (getLogLevel(options) !== "trace") return;
+  options?.onLog?.({
+    details,
+    level: "trace",
+    message,
+    namespace: "workflow:apply",
+    timestamp: new Date().toISOString(),
+  });
+};
+
 const getDefaultChdCompressionCodecs = (mode: string | null | undefined, compressionProfile: string) =>
   OutputCompressionManager.getChdCodecsForMode(mode, {
     chdCreateCdCodecs: DEFAULT_CHD_CREATE_CD_CODECS,
@@ -324,6 +339,17 @@ const buildOutputFiles = async (
         size: data.byteLength,
       });
     }
+    traceOutputName(options, "output.archive.plan", {
+      archiveEntryFileName,
+      compression,
+      cueOutputFileName: outputPlan.cueOutput?.fileName || "",
+      entryFileNames: entries.map((entry) => entry.entry.filename || entry.entry.fileName || entry.entry.name || ""),
+      finalOutputFileName: outputPlan.finalOutputFileName,
+      patchedRomFileName: patchedRom.fileName,
+      requestedOutputName: getRequestedOutputName(options),
+      romFileName: romFile?.fileName || "",
+      sourceExtension: typeof romFile?.getExtension === "function" ? romFile.getExtension() : "",
+    });
     const compressed = await createCompressedArchive(
       entries.map((entry) => entry.entry),
       compression,
@@ -371,6 +397,15 @@ const createCompressedArchive = async (
     zipLevel: archiveSettings.zipLevel,
   });
   if (!runtime?.compression.create) throw new Error("Runtime compression create capability is unavailable");
+  traceOutputName(options, "output.archive.create", {
+    archiveFileName: fileName,
+    compression,
+    entryFileNames: entries.map((entry) => entry.filename || entry.fileName || entry.name || ""),
+    sevenZipCodec: levels.sevenZipCodec,
+    sevenZipLevel: levels.sevenZipLevel,
+    zipCodec: levels.zipCodec,
+    zipLevel: levels.zipLevel,
+  });
   const result = await runtime.compression.create({
     entries: entries.map((entry) => toRuntimeCompressionEntry(entry)),
     format: compression,

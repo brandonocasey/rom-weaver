@@ -350,11 +350,32 @@ impl CliApp {
             let requires_compat_finalize = add_header || repair_checksum || patch_count > 1;
             let needs_staged_output = requires_compat_finalize || compression_options.enabled;
             let staged_output = if needs_staged_output {
-                let staged_path = context
-                    .temp_paths()
-                    .next_path("patch-apply-output-staged", Some("bin"));
-                temp_paths.push(staged_path.clone());
-                staged_path
+                if compression_options.enabled {
+                    match Self::patch_apply_raw_output_path(
+                        &output,
+                        &resolved_input,
+                        &context,
+                        "patch-apply-output-staged",
+                        &mut temp_paths,
+                    ) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            return OperationReport::failed(
+                                OperationFamily::Patch,
+                                None,
+                                "prepare",
+                                error.to_string(),
+                                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            );
+                        }
+                    }
+                } else {
+                    let staged_path = context
+                        .temp_paths()
+                        .next_path("patch-apply-output-staged", Some("bin"));
+                    temp_paths.push(staged_path.clone());
+                    staged_path
+                }
             } else {
                 output.clone()
             };
@@ -550,11 +571,24 @@ impl CliApp {
                     Some(context.plan_threads(ThreadCapability::single_threaded())),
                 );
                 let finalized_output_path = if compression_options.enabled {
-                    let raw_path = context
-                        .temp_paths()
-                        .next_path("patch-apply-output-raw-final", Some("bin"));
-                    temp_paths.push(raw_path.clone());
-                    raw_path
+                    match Self::patch_apply_raw_output_path(
+                        &output,
+                        &resolved_input,
+                        &context,
+                        "patch-apply-output-raw-final",
+                        &mut temp_paths,
+                    ) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            return OperationReport::failed(
+                                OperationFamily::Patch,
+                                report.format.clone(),
+                                "prepare",
+                                error.to_string(),
+                                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            );
+                        }
+                    }
                 } else {
                     output.clone()
                 };
@@ -668,8 +702,6 @@ impl CliApp {
                     &raw_ready_output,
                     &output,
                     &resolved_input,
-                    &context,
-                    &mut temp_paths,
                 ) {
                     Ok(path) => path,
                     Err(error) => {
@@ -769,30 +801,73 @@ impl CliApp {
         self.finish("patch-apply", report)
     }
 
-    fn stage_patch_apply_archive_input(
-        raw_ready_output: &Path,
+    fn patch_apply_raw_output_path(
         requested_output: &Path,
         extension_source: &Path,
         context: &OperationContext,
+        purpose: &str,
         temp_paths: &mut Vec<PathBuf>,
     ) -> Result<PathBuf> {
         let entry_file_name =
             Self::patch_apply_archive_entry_file_name(requested_output, extension_source);
+        let source_extension = extension_source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("");
+        let entry_dir = context.temp_paths().next_path(purpose, None);
+        fs::create_dir_all(&entry_dir)?;
+        let raw_output = entry_dir.join(&entry_file_name);
+        trace!(
+            raw_output = %raw_output.display(),
+            requested_output = %requested_output.display(),
+            extension_source = %extension_source.display(),
+            source_extension,
+            archive_entry_name = %entry_file_name.to_string_lossy(),
+            "patch apply raw output path resolved with archive entry name"
+        );
+        temp_paths.push(entry_dir);
+        Ok(raw_output)
+    }
+
+    fn stage_patch_apply_archive_input(
+        raw_ready_output: &Path,
+        requested_output: &Path,
+        extension_source: &Path,
+    ) -> Result<PathBuf> {
+        let entry_file_name =
+            Self::patch_apply_archive_entry_file_name(requested_output, extension_source);
+        let source_extension = extension_source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("");
         if raw_ready_output
             .file_name()
             .is_some_and(|file_name| file_name == entry_file_name.as_os_str())
         {
+            trace!(
+                raw_ready_output = %raw_ready_output.display(),
+                requested_output = %requested_output.display(),
+                extension_source = %extension_source.display(),
+                source_extension,
+                archive_entry_name = %entry_file_name.to_string_lossy(),
+                "patch apply archive input already matches requested entry name"
+            );
             return Ok(raw_ready_output.to_path_buf());
         }
 
-        let entry_dir = context
-            .temp_paths()
-            .next_path("patch-apply-output-archive-entry", None);
-        fs::create_dir_all(&entry_dir)?;
-        let archive_input = entry_dir.join(&entry_file_name);
-        fs::copy(raw_ready_output, &archive_input)?;
-        temp_paths.push(entry_dir);
-        Ok(archive_input)
+        trace!(
+            raw_ready_output = %raw_ready_output.display(),
+            requested_output = %requested_output.display(),
+            extension_source = %extension_source.display(),
+            source_extension,
+            archive_entry_name = %entry_file_name.to_string_lossy(),
+            "patch apply archive input name did not match requested entry name"
+        );
+        Err(RomWeaverError::Validation(format!(
+            "patched output `{}` does not match archive entry name `{}`",
+            raw_ready_output.display(),
+            entry_file_name.to_string_lossy()
+        )))
     }
 
     fn patch_apply_archive_entry_file_name(

@@ -7,7 +7,7 @@ import {
   prepareInputAssets,
   prepareMultipleDirectInputAssets,
 } from "../../lib/input/input-preparation-service.ts";
-import { getBaseFileName } from "../../lib/input/path-utils.ts";
+import { getBaseFileName, hasFileNameExtension, replaceFileNameExtension } from "../../lib/input/path-utils.ts";
 import { applySidecarPatchOutputLabel, resolveSidecarPatchEntries } from "../../lib/input/sidecar-patch-resolution.ts";
 import { buildSessionOutputFiles } from "../../lib/output/output-build-service.ts";
 import { requireOutputName } from "../../lib/output/output-name-validation.ts";
@@ -135,12 +135,25 @@ const summarizePreparedInputMetrics = (assets: InputAsset[]) => {
   };
 };
 
-const createWorkerApplyOptions = (options: PatchInput["options"]) => ({
+const getInputAssetExtension = (asset: InputAsset): string => {
+  const extension = typeof asset.file?.getExtension === "function" ? asset.file.getExtension() : "";
+  return String(extension || "").trim();
+};
+
+const resolveWorkerApplyOutputName = (options: PatchInput["options"], asset: InputAsset): string | undefined => {
+  const outputName = typeof options?.output?.outputName === "string" ? options.output.outputName.trim() : "";
+  if (!outputName) return undefined;
+  if (hasFileNameExtension(outputName)) return outputName;
+  const sourceExtension = getInputAssetExtension(asset);
+  return sourceExtension ? replaceFileNameExtension(outputName, sourceExtension) : outputName;
+};
+
+const createWorkerApplyOptions = (options: PatchInput["options"], outputName?: string) => ({
   addHeader: !!options?.compatibility?.addHeader,
   appendOutputSuffix: !!options?.output?.suffix,
   fixChecksum: !!options?.compatibility?.fixChecksum,
   outputExtension: options?.output?.extension,
-  outputName: options?.output?.outputName,
+  outputName,
   removeHeader: !!options?.compatibility?.removeHeader,
   requireInputChecksumMatch:
     typeof options?.validation?.requireInputChecksumMatch === "boolean"
@@ -416,6 +429,7 @@ const runApplyWorkflow = async (
     for (const asset of inputAssets) {
       const assetPatches = patchesByTarget.get(asset.id);
       if (!assetPatches?.length) continue;
+      const workerOutputName = resolveWorkerApplyOutputName(options, asset);
       const patched = await traceWorkflowStageBlock(
         options,
         "apply",
@@ -444,7 +458,7 @@ const runApplyWorkflow = async (
                   stage: "apply",
                 }),
               options: {
-                ...createWorkerApplyOptions(options),
+                ...createWorkerApplyOptions(options, workerOutputName),
                 requireOutputChecksumMatch:
                   typeof options.validation?.requireOutputChecksumMatch === "boolean"
                     ? options.validation.requireOutputChecksumMatch
@@ -475,8 +489,11 @@ const runApplyWorkflow = async (
         () => ({
           patchCount: assetPatches.length,
           patchFormats: assetPatches.map((patch) => patch.constructor?.name || "patch"),
+          requestedOutputName: options.output?.outputName,
           sourceName: asset.fileName,
+          sourceExtension: getInputAssetExtension(asset),
           sourceSize: asset.size,
+          workerOutputName,
           workerReason: "worker apply required",
         }),
       );
