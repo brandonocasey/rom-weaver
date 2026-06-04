@@ -24,6 +24,11 @@ const MAX_IPS_RECORD_LEN: usize = u16::MAX as usize;
 const MAX_IPS_OFFSET: u64 = 0x00FF_FFFF;
 const MAX_IPS32_OFFSET: u64 = 0xFFFF_FFFF;
 const MIN_RLE_RECORD_LEN: usize = 4;
+const IPS_RESERVED_EOF_OFFSET: u64 = 0x45_4F_46;
+const IPS32_RESERVED_EOF_OFFSET: u64 = 0x45_45_4F_46;
+const UNCHANGED_GAP_COALESCE_LIMIT: usize = 5;
+const RLE_SPLIT_EDGE_THRESHOLD: usize = 8;
+const RLE_SPLIT_MIDDLE_THRESHOLD: usize = 13;
 const DEFAULT_EBP_METADATA_JSON: &str = r#"{"patcher":"EBPatcher","Author":"Unknown","Description":"No description","Title":"Untitled"}"#;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,6 +57,13 @@ impl IpsFlavor {
         match self {
             Self::Ips | Self::Ebp => 3,
             Self::Ips32 => 4,
+        }
+    }
+
+    const fn reserved_eof_offset(self) -> u64 {
+        match self {
+            Self::Ips | Self::Ebp => IPS_RESERVED_EOF_OFFSET,
+            Self::Ips32 => IPS32_RESERVED_EOF_OFFSET,
         }
     }
 }
@@ -295,6 +307,7 @@ struct IpsCreateResult {
 struct PendingDiff {
     start_offset: u64,
     bytes: Vec<u8>,
+    trailing_unchanged: usize,
 }
 
 #[derive(Debug)]
@@ -591,6 +604,7 @@ fn create_ips_patch_streaming(
     let mut pending = None;
     let mut created = IpsCreateResult::default();
     let mut offset = 0u64;
+    let mut previous_modified_byte = None;
 
     output.write_all(flavor.header())?;
 
@@ -621,21 +635,19 @@ fn create_ips_patch_streaming(
             let original_byte = original_buffer[index];
             let modified_byte = modified_buffer[index];
             if original_byte == modified_byte {
-                flush_pending_diff(&mut pending, output, &mut created, flavor)?;
+                push_unchanged_byte(&mut pending, modified_byte, output, &mut created, flavor)?;
             } else {
-                if pending
-                    .as_ref()
-                    .is_some_and(|diff| diff.bytes.len() == MAX_IPS_RECORD_LEN)
-                {
-                    flush_pending_diff(&mut pending, output, &mut created, flavor)?;
-                }
-
-                let diff = pending.get_or_insert_with(|| PendingDiff {
-                    start_offset: offset,
-                    bytes: Vec::with_capacity(MAX_IPS_RECORD_LEN),
-                });
-                diff.bytes.push(modified_byte);
+                push_changed_byte(
+                    &mut pending,
+                    offset,
+                    modified_byte,
+                    previous_modified_byte,
+                    output,
+                    &mut created,
+                    flavor,
+                )?;
             }
+            previous_modified_byte = Some(modified_byte);
             offset += 1;
         }
     }
@@ -716,6 +728,7 @@ fn create_ips_patch_parallel(
                 .collect::<Result<Vec<_>>>()
         })?;
         let runs = merge_ips_diff_runs(chunk_runs)?;
+        let runs = coalesce_ips_diff_runs(runs, modified_path, flavor)?;
         return write_ips_runs_to_output(runs, original_len, modified_len, output, flavor);
     }
 
@@ -736,6 +749,7 @@ fn create_ips_patch_parallel(
             .collect::<Result<Vec<_>>>()
     })?;
     let runs = merge_ips_diff_runs(chunk_runs)?;
+    let runs = coalesce_ips_diff_runs(runs, modified_path, flavor)?;
     write_ips_runs_to_output(runs, original_len, modified_len, output, flavor)
 }
 
@@ -906,6 +920,82 @@ fn merge_ips_diff_runs(chunk_runs: Vec<Vec<IpsDiffRun>>) -> Result<Vec<IpsDiffRu
     Ok(merged)
 }
 
+fn coalesce_ips_diff_runs(
+    runs: Vec<IpsDiffRun>,
+    modified_path: &Path,
+    flavor: IpsFlavor,
+) -> Result<Vec<IpsDiffRun>> {
+    let mut modified = File::open(modified_path)?;
+    let mut coalesced = Vec::<IpsDiffRun>::new();
+    let mut current: Option<IpsDiffRun> = None;
+
+    for run in runs {
+        let run = protect_reserved_run_start(run, &mut modified, flavor)?;
+        let Some(active) = current.as_mut() else {
+            current = Some(run);
+            continue;
+        };
+
+        let active_end = active.end()?;
+        if run.offset < active_end {
+            return Err(RomWeaverError::Validation(
+                "IPS create produced overlapping diff runs".into(),
+            ));
+        }
+
+        let gap_len = usize::try_from(run.offset - active_end).map_err(|_| {
+            RomWeaverError::Validation("IPS diff run gap exceeded addressable memory".into())
+        })?;
+        let merged_len = active
+            .bytes
+            .len()
+            .checked_add(gap_len)
+            .and_then(|len| len.checked_add(run.bytes.len()))
+            .ok_or_else(|| {
+                RomWeaverError::Validation("IPS coalesced diff run length overflowed".into())
+            })?;
+
+        if gap_len <= UNCHANGED_GAP_COALESCE_LIMIT && merged_len <= MAX_IPS_RECORD_LEN {
+            if gap_len > 0 {
+                let mut gap = vec![0u8; gap_len];
+                modified.seek(SeekFrom::Start(active_end))?;
+                modified.read_exact(&mut gap)?;
+                active.bytes.extend_from_slice(&gap);
+            }
+            active.bytes.extend_from_slice(&run.bytes);
+        } else {
+            coalesced.push(current.take().expect("active run exists"));
+            current = Some(run);
+        }
+    }
+
+    if let Some(run) = current {
+        coalesced.push(run);
+    }
+    Ok(coalesced)
+}
+
+fn protect_reserved_run_start(
+    mut run: IpsDiffRun,
+    modified: &mut File,
+    flavor: IpsFlavor,
+) -> Result<IpsDiffRun> {
+    let reserved = flavor.reserved_eof_offset();
+    if run.offset != reserved {
+        return Ok(run);
+    }
+
+    let previous_offset = reserved
+        .checked_sub(1)
+        .ok_or_else(|| RomWeaverError::Validation("IPS reserved EOF offset underflowed".into()))?;
+    modified.seek(SeekFrom::Start(previous_offset))?;
+    let mut previous_byte = [0u8; 1];
+    modified.read_exact(&mut previous_byte)?;
+    run.offset = previous_offset;
+    run.bytes.insert(0, previous_byte[0]);
+    Ok(run)
+}
+
 fn write_diff_run_records(
     output: &mut impl Write,
     run: &IpsDiffRun,
@@ -914,24 +1004,223 @@ fn write_diff_run_records(
 ) -> Result<()> {
     let mut cursor = 0usize;
     while cursor < run.bytes.len() {
-        let next = (cursor + MAX_IPS_RECORD_LEN).min(run.bytes.len());
-        let segment = &run.bytes[cursor..next];
         let segment_offset = checked_add(run.offset, cursor as u64, "IPS diff segment offset")?;
-        if segment.len() >= MIN_RLE_RECORD_LEN && segment.iter().all(|byte| *byte == segment[0]) {
-            write_rle_record(
-                output,
-                segment_offset,
-                segment.len(),
-                segment[0],
-                created,
-                flavor,
-            )?;
-        } else {
-            write_literal_record(output, segment_offset, segment, created, flavor)?;
-        }
-        cursor = next;
+        let remaining_len = run.bytes.len() - cursor;
+        let desired_len = remaining_len.min(MAX_IPS_RECORD_LEN);
+        let window_len = adjust_record_len_for_reserved_offset(
+            segment_offset,
+            desired_len,
+            remaining_len,
+            remaining_len > desired_len,
+            flavor,
+        )?;
+        write_optimized_record_window(
+            output,
+            segment_offset,
+            &run.bytes[cursor..cursor + window_len],
+            created,
+            flavor,
+        )?;
+        cursor += window_len;
     }
     Ok(())
+}
+
+fn write_optimized_record_window(
+    output: &mut impl Write,
+    offset: u64,
+    bytes: &[u8],
+    created: &mut IpsCreateResult,
+    flavor: IpsFlavor,
+) -> Result<()> {
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        let record_offset = checked_add(offset, cursor as u64, "IPS optimized record offset")?;
+        let remaining = &bytes[cursor..];
+        let repeat_len = repeated_prefix_len(remaining);
+
+        if repeat_len >= MIN_RLE_RECORD_LEN
+            && (repeat_len == remaining.len() || repeat_len > RLE_SPLIT_EDGE_THRESHOLD)
+        {
+            let len = adjust_record_len_for_reserved_offset(
+                record_offset,
+                repeat_len,
+                repeat_len,
+                repeat_len < remaining.len(),
+                flavor,
+            )?;
+            write_rle_record(output, record_offset, len, remaining[0], created, flavor)?;
+            cursor += len;
+            continue;
+        }
+
+        let literal_len = find_next_rle_split(remaining)
+            .map(|(index, _len)| index)
+            .unwrap_or(remaining.len());
+        let literal_len = if literal_len == 0 {
+            remaining.len().min(RLE_SPLIT_EDGE_THRESHOLD)
+        } else {
+            literal_len
+        };
+        let len = adjust_record_len_for_reserved_offset(
+            record_offset,
+            literal_len,
+            remaining.len(),
+            literal_len < remaining.len(),
+            flavor,
+        )?;
+        write_literal_record(output, record_offset, &remaining[..len], created, flavor)?;
+        cursor += len;
+    }
+    Ok(())
+}
+
+fn find_next_rle_split(bytes: &[u8]) -> Option<(usize, usize)> {
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let len = repeated_prefix_len(&bytes[index..]);
+        if len >= MIN_RLE_RECORD_LEN {
+            let at_start = index == 0;
+            let at_end = index + len == bytes.len();
+            let worthwhile = if at_start || at_end {
+                len > RLE_SPLIT_EDGE_THRESHOLD || len == bytes.len()
+            } else {
+                len > RLE_SPLIT_MIDDLE_THRESHOLD
+            };
+            if worthwhile {
+                return Some((index, len));
+            }
+        }
+        index += len.max(1);
+    }
+    None
+}
+
+fn repeated_prefix_len(bytes: &[u8]) -> usize {
+    let Some((&first, rest)) = bytes.split_first() else {
+        return 0;
+    };
+    1 + rest.iter().take_while(|byte| **byte == first).count()
+}
+
+fn adjust_record_len_for_reserved_offset(
+    offset: u64,
+    desired_len: usize,
+    available_len: usize,
+    more_after: bool,
+    flavor: IpsFlavor,
+) -> Result<usize> {
+    if desired_len == 0 {
+        return Ok(0);
+    }
+    if offset == flavor.reserved_eof_offset() {
+        return Err(RomWeaverError::Validation(format!(
+            "{} record offset matched its EOF marker",
+            flavor_name(flavor)
+        )));
+    }
+
+    let end = checked_add(offset, desired_len as u64, "IPS record end")?;
+    if more_after && end == flavor.reserved_eof_offset() {
+        if desired_len > 1 {
+            return Ok(desired_len - 1);
+        }
+        if available_len > desired_len && desired_len < MAX_IPS_RECORD_LEN {
+            return Ok(desired_len + 1);
+        }
+        return Err(RomWeaverError::Validation(format!(
+            "{} record split would create an EOF-marker offset",
+            flavor_name(flavor)
+        )));
+    }
+
+    Ok(desired_len)
+}
+
+const fn flavor_name(flavor: IpsFlavor) -> &'static str {
+    match flavor {
+        IpsFlavor::Ips => "IPS",
+        IpsFlavor::Ips32 => "IPS32",
+        IpsFlavor::Ebp => "EBP",
+    }
+}
+
+fn push_changed_byte(
+    pending: &mut Option<PendingDiff>,
+    offset: u64,
+    modified_byte: u8,
+    previous_modified_byte: Option<u8>,
+    output: &mut impl Write,
+    created: &mut IpsCreateResult,
+    flavor: IpsFlavor,
+) -> Result<()> {
+    if pending
+        .as_ref()
+        .is_some_and(|diff| diff.bytes.len() == MAX_IPS_RECORD_LEN)
+    {
+        flush_pending_diff(pending, output, created, flavor)?;
+    }
+
+    if pending.is_none() {
+        *pending = Some(start_pending_diff(offset, previous_modified_byte, flavor)?);
+    }
+
+    let diff = pending.as_mut().expect("pending diff exists");
+    diff.bytes.push(modified_byte);
+    diff.trailing_unchanged = 0;
+    Ok(())
+}
+
+fn push_unchanged_byte(
+    pending: &mut Option<PendingDiff>,
+    modified_byte: u8,
+    output: &mut impl Write,
+    created: &mut IpsCreateResult,
+    flavor: IpsFlavor,
+) -> Result<()> {
+    let Some(diff) = pending.as_mut() else {
+        return Ok(());
+    };
+
+    if diff.bytes.len() == MAX_IPS_RECORD_LEN {
+        flush_pending_diff(pending, output, created, flavor)?;
+        return Ok(());
+    }
+
+    diff.bytes.push(modified_byte);
+    diff.trailing_unchanged += 1;
+    if diff.trailing_unchanged > UNCHANGED_GAP_COALESCE_LIMIT {
+        flush_pending_diff(pending, output, created, flavor)?;
+    }
+    Ok(())
+}
+
+fn start_pending_diff(
+    offset: u64,
+    previous_modified_byte: Option<u8>,
+    flavor: IpsFlavor,
+) -> Result<PendingDiff> {
+    if offset == flavor.reserved_eof_offset() {
+        let previous_offset = offset.checked_sub(1).ok_or_else(|| {
+            RomWeaverError::Validation("IPS reserved EOF offset underflowed".into())
+        })?;
+        let previous_byte = previous_modified_byte.ok_or_else(|| {
+            RomWeaverError::Validation(
+                "IPS reserved EOF offset did not have a preceding target byte".into(),
+            )
+        })?;
+        return Ok(PendingDiff {
+            start_offset: previous_offset,
+            bytes: vec![previous_byte],
+            trailing_unchanged: 0,
+        });
+    }
+
+    Ok(PendingDiff {
+        start_offset: offset,
+        bytes: Vec::with_capacity(MAX_IPS_RECORD_LEN),
+        trailing_unchanged: 0,
+    })
 }
 
 fn flush_pending_diff(
@@ -940,15 +1229,26 @@ fn flush_pending_diff(
     created: &mut IpsCreateResult,
     flavor: IpsFlavor,
 ) -> Result<()> {
-    let Some(diff) = pending.take() else {
+    let Some(mut diff) = pending.take() else {
         return Ok(());
     };
-    write_pending_diff(output, &diff, created, flavor)
+    trim_pending_trailing_unchanged(&mut diff);
+    write_pending_diff(output, diff, created, flavor)
+}
+
+fn trim_pending_trailing_unchanged(diff: &mut PendingDiff) {
+    if diff.trailing_unchanged == 0 {
+        return;
+    }
+
+    let trimmed_len = diff.bytes.len().saturating_sub(diff.trailing_unchanged);
+    diff.bytes.truncate(trimmed_len);
+    diff.trailing_unchanged = 0;
 }
 
 fn write_pending_diff(
     output: &mut impl Write,
-    diff: &PendingDiff,
+    diff: PendingDiff,
     created: &mut IpsCreateResult,
     flavor: IpsFlavor,
 ) -> Result<()> {
@@ -956,20 +1256,15 @@ fn write_pending_diff(
         return Ok(());
     }
 
-    if diff.bytes.len() >= MIN_RLE_RECORD_LEN
-        && diff.bytes.iter().all(|byte| *byte == diff.bytes[0])
-    {
-        write_rle_record(
-            output,
-            diff.start_offset,
-            diff.bytes.len(),
-            diff.bytes[0],
-            created,
-            flavor,
-        )
-    } else {
-        write_literal_record(output, diff.start_offset, &diff.bytes, created, flavor)
-    }
+    write_diff_run_records(
+        output,
+        &IpsDiffRun {
+            offset: diff.start_offset,
+            bytes: diff.bytes,
+        },
+        created,
+        flavor,
+    )
 }
 
 fn write_literal_record(
@@ -1042,6 +1337,13 @@ fn truncate_size_required(original_len: u64, modified_len: u64, max_written_end:
 }
 
 fn write_offset(output: &mut impl Write, value: u64, flavor: IpsFlavor) -> Result<()> {
+    if value == flavor.reserved_eof_offset() {
+        return Err(RomWeaverError::Validation(format!(
+            "{} record offset matched its EOF marker",
+            flavor_name(flavor)
+        )));
+    }
+
     match flavor {
         IpsFlavor::Ips | IpsFlavor::Ebp => write_u24(output, value, "IPS record offset"),
         IpsFlavor::Ips32 => write_u32(output, value, "IPS32 record offset"),

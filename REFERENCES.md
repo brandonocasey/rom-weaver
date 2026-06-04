@@ -28,8 +28,9 @@ It is intentionally a living document. Some patch families do not have stable fo
   - PPF: <https://github.com/marcrobledo/RomPatcher.js/blob/master/rom-patcher-js/modules/RomPatcher.format.ppf.js>
   - PMSR/MOD: <https://github.com/marcrobledo/RomPatcher.js/blob/master/rom-patcher-js/modules/RomPatcher.format.pmsr.js>
   - BDF/BSDIFF40: <https://github.com/marcrobledo/RomPatcher.js/blob/master/rom-patcher-js/modules/RomPatcher.format.bdf.js>
-- Floating IPS / Flips (BPS creation quality reference):
+- Floating IPS / Flips (IPS/BPS creation quality reference):
   - <https://github.com/Alcaro/Flips>
+  - IPS delta creator: <https://github.com/Alcaro/Flips/blob/master/libips.cpp>
   - BPS suffix-array delta creator: <https://github.com/Alcaro/Flips/blob/master/libbps-suf.cpp>
 - xdelta3 (VCDIFF-compatible toolchain): <https://github.com/jmacd/xdelta>
 - open-vcdiff (RFC 3284 implementation): <https://github.com/google/open-vcdiff>
@@ -53,7 +54,7 @@ It is intentionally a living document. Some patch families do not have stable fo
 
 | `rom-weaver` format   | Primary reference(s)                                                      |
 | --------------------- | ------------------------------------------------------------------------- |
-| `IPS`, `IPS32`, `EBP` | IPS spec, RomPatcher.js IPS implementation                                |
+| `IPS`, `IPS32`, `EBP` | IPS spec, Flips IPS delta creator, RomPatcher.js IPS implementation       |
 | `BPS`                 | byuu BPS spec, Flips BPS delta creator, RomPatcher.js BPS implementation  |
 | `UPS`                 | RomPatcher.js UPS implementation                                          |
 | `VCDIFF`, `xdelta`    | RFC 3284, xdelta3, open-vcdiff, RomPatcher.js VCDIFF implementation       |

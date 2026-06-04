@@ -8,9 +8,9 @@ use std::{
 use rom_weaver_core::{OperationContext, PatchApplyRequest, PatchCreateRequest, PatchHandler};
 
 use super::{
-    CREATE_SCAN_CHUNK_BYTES, DEFAULT_EBP_METADATA_JSON, IPS_EOF, IPS_MAGIC, IPS32_EOF, IPS32_MAGIC,
-    IpsFlavor, IpsPatchHandler, IpsRecordData, JsonValue, MAX_IPS_RECORD_LEN, OUTPUT_CHUNK_SIZE,
-    parse_ips_bytes,
+    CREATE_SCAN_CHUNK_BYTES, DEFAULT_EBP_METADATA_JSON, IPS_EOF, IPS_MAGIC,
+    IPS_RESERVED_EOF_OFFSET, IPS32_EOF, IPS32_MAGIC, IpsFlavor, IpsPatchHandler, IpsRecordData,
+    JsonValue, MAX_IPS_RECORD_LEN, OUTPUT_CHUNK_SIZE, parse_ips_bytes,
 };
 use crate::{
     EBP, IPS, IPS32,
@@ -371,6 +371,123 @@ fn create_uses_rle_records_for_repeated_runs() {
         IpsRecordData::Rle { byte } => assert_eq!(*byte, b'Z'),
         other => panic!("expected RLE record, got {other:?}"),
     }
+}
+
+#[test]
+fn create_coalesces_short_unchanged_gaps_into_literal_record() {
+    let temp = TestDir::new();
+    let original_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ips");
+    let modified_path = temp.child("modified.bin");
+    fs::write(&original_path, b"abcdefghij").expect("fixture");
+    fs::write(&modified_path, b"ZbcdYfghij").expect("fixture");
+
+    let handler = IpsPatchHandler::new(&IPS);
+    handler
+        .create(
+            &PatchCreateRequest {
+                original: original_path,
+                modified: modified_path,
+                output: patch_path.clone(),
+                format: "IPS".into(),
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect("create");
+
+    let patch =
+        parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
+    assert_eq!(patch.records.len(), 1);
+    assert_eq!(patch.records[0].offset, 0);
+    assert_eq!(patch.records[0].len, 5);
+    match &patch.records[0].data {
+        IpsRecordData::Literal(data) => assert_eq!(data, b"ZbcdY"),
+        other => panic!("expected literal record, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_keeps_long_unchanged_gaps_as_separate_records() {
+    let temp = TestDir::new();
+    let original_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ips");
+    let modified_path = temp.child("modified.bin");
+    fs::write(&original_path, b"abcdefghij").expect("fixture");
+    fs::write(&modified_path, b"ZbcdefgYij").expect("fixture");
+
+    let handler = IpsPatchHandler::new(&IPS);
+    handler
+        .create(
+            &PatchCreateRequest {
+                original: original_path,
+                modified: modified_path,
+                output: patch_path.clone(),
+                format: "IPS".into(),
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect("create");
+
+    let patch =
+        parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
+    assert_eq!(patch.records.len(), 2);
+    assert_eq!(patch.records[0].offset, 0);
+    assert_eq!(patch.records[0].len, 1);
+    assert_eq!(patch.records[1].offset, 7);
+    assert_eq!(patch.records[1].len, 1);
+}
+
+#[test]
+fn create_splits_rle_worthy_suffix_from_mixed_literal() {
+    let temp = TestDir::new();
+    let original_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ips");
+    let modified_path = temp.child("modified.bin");
+    let original = vec![0u8; 32];
+    let mut modified = original.clone();
+    modified[0] = 1;
+    modified[6..26].fill(2);
+    fs::write(&original_path, original).expect("fixture");
+    fs::write(&modified_path, modified).expect("fixture");
+
+    let handler = IpsPatchHandler::new(&IPS);
+    handler
+        .create(
+            &PatchCreateRequest {
+                original: original_path,
+                modified: modified_path,
+                output: patch_path.clone(),
+                format: "IPS".into(),
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect("create");
+
+    let patch =
+        parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
+    assert_eq!(patch.records.len(), 2);
+    assert_eq!(patch.records[0].offset, 0);
+    assert_eq!(patch.records[0].len, 6);
+    match &patch.records[0].data {
+        IpsRecordData::Literal(data) => assert_eq!(data, &[1, 0, 0, 0, 0, 0]),
+        other => panic!("expected literal record, got {other:?}"),
+    }
+    assert_eq!(patch.records[1].offset, 6);
+    assert_eq!(patch.records[1].len, 20);
+    match &patch.records[1].data {
+        IpsRecordData::Rle { byte } => assert_eq!(*byte, 2),
+        other => panic!("expected RLE record, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_avoids_classic_ips_eof_marker_offset_in_streaming_path() {
+    assert_create_avoids_classic_ips_eof_marker_offset(1);
+}
+
+#[test]
+fn create_avoids_classic_ips_eof_marker_offset_in_parallel_path() {
+    assert_create_avoids_classic_ips_eof_marker_offset(8);
 }
 
 #[test]
@@ -827,6 +944,62 @@ fn write_u24(bytes: &mut Vec<u8>, value: u32) {
 
 fn write_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_be_bytes());
+}
+
+fn assert_create_avoids_classic_ips_eof_marker_offset(threads: usize) {
+    let temp = TestDir::new();
+    let original_name = format!("input-{threads}.bin");
+    let modified_name = format!("modified-{threads}.bin");
+    let patch_name = format!("update-{threads}.ips");
+    let output_name = format!("output-{threads}.bin");
+    let original_path = temp.child(&original_name);
+    let modified_path = temp.child(&modified_name);
+    let patch_path = temp.child(&patch_name);
+    let output_path = temp.child(&output_name);
+    let marker_offset = IPS_RESERVED_EOF_OFFSET;
+    write_sparse_bytes(&original_path, marker_offset + 1, marker_offset, &[0]);
+    write_sparse_bytes(&modified_path, marker_offset + 1, marker_offset, &[0x7E]);
+
+    let handler = IpsPatchHandler::new(&IPS);
+    handler
+        .create(
+            &PatchCreateRequest {
+                original: original_path.clone(),
+                modified: modified_path,
+                output: patch_path.clone(),
+                format: "IPS".into(),
+            },
+            &test_context_with_threads(&temp, threads),
+        )
+        .expect("create");
+
+    let patch =
+        parse_ips_bytes(&fs::read(&patch_path).expect("patch"), IpsFlavor::Ips).expect("parse");
+    assert_eq!(patch.records.len(), 1);
+    assert_eq!(patch.records[0].offset, marker_offset - 1);
+    assert_eq!(patch.records[0].len, 2);
+    match &patch.records[0].data {
+        IpsRecordData::Literal(data) => assert_eq!(data, &[0, 0x7E]),
+        other => panic!("expected literal record, got {other:?}"),
+    }
+
+    handler
+        .apply(
+            &PatchApplyRequest {
+                input: original_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, threads),
+        )
+        .expect("apply");
+    let mut output = fs::File::open(&output_path).expect("output");
+    output
+        .seek(SeekFrom::Start(marker_offset))
+        .expect("seek output");
+    let mut byte = [0u8; 1];
+    std::io::Read::read_exact(&mut output, &mut byte).expect("read output byte");
+    assert_eq!(byte[0], 0x7E);
 }
 
 fn write_sparse_bytes(path: &PathBuf, len: u64, offset: u64, bytes: &[u8]) {
