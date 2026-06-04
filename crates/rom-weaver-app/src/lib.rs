@@ -537,6 +537,36 @@ pub struct TrimCommand {
     #[serde(default = "default_true")]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub recursive: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(
+        long = "no-rom-filter",
+        action = ArgAction::SetFalse,
+        default_value_t = true,
+        help = "Disable the default ROM-only filter applied to archive payloads before trimming"
+    ))]
+    #[serde(default = "default_true")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable archive auto-extract; only trim direct file inputs"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_extract: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "revert-marker",
+            alias = "reversible",
+            help = "Embed a small footer in the trimmed output so it can later be reverted to a byte-identical original"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub revert_marker: bool,
     #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
@@ -1580,6 +1610,24 @@ struct NdsTrimOutcome {
 struct TrimSource {
     path: PathBuf,
     kind: TrimInputKind,
+    /// When the trim payload was extracted from an archive, the original archive path. Used to
+    /// place side-by-side output next to the archive and to drive `--in-place` repacking.
+    archive_origin: Option<PathBuf>,
+    /// For `--in-place` archive inputs, the temp directory holding the archive's full extracted
+    /// contents. The trimmed ROM is written back here and the directory is recompressed over the
+    /// original archive. `None` for direct files and side-by-side archive output.
+    repack_root: Option<PathBuf>,
+}
+
+/// Shared options threaded through trim input collection so archive payloads can be auto-extracted
+/// and filtered to trim-supported types.
+#[derive(Clone, Copy)]
+struct TrimCollectOptions<'a> {
+    recursive: bool,
+    rom_filter: bool,
+    no_extract: bool,
+    in_place: bool,
+    context: &'a OperationContext,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1662,8 +1710,10 @@ impl TrimInputKind {
 
     const fn default_padding_byte(self) -> u8 {
         match self {
-            Self::ThreeDs => 0xFF,
-            Self::NdsFamily | Self::Gba | Self::Xiso | Self::RvzScrub => 0x00,
+            // GBA and 3DS carts pad unused trailing space with 0xFF; trimming scans for that fill
+            // and revert restores it so round-tripped ROMs match the original dump.
+            Self::ThreeDs | Self::Gba => 0xFF,
+            Self::NdsFamily | Self::Xiso | Self::RvzScrub => 0x00,
         }
     }
 }

@@ -238,6 +238,9 @@ impl CliApp {
             dry_run = args.dry_run,
             revert = args.revert,
             recursive = args.recursive,
+            rom_filter = args.rom_filter,
+            no_extract = args.no_extract,
+            revert_marker = args.revert_marker,
             threads = %args.threads,
             "starting trim command"
         );
@@ -249,6 +252,9 @@ impl CliApp {
             dry_run,
             revert,
             recursive,
+            rom_filter,
+            no_extract,
+            revert_marker,
             threads,
         } = args;
         let operation = if revert {
@@ -276,11 +282,24 @@ impl CliApp {
             }
         };
 
-        let mut skipped_non_nds = 0usize;
-        let trim_sources =
-            match self.collect_trim_input_files(&source, recursive, &mut skipped_non_nds) {
+        let mut skipped_unsupported = 0usize;
+        let mut cleanup_paths: Vec<PathBuf> = Vec::new();
+        let collect_options = TrimCollectOptions {
+            recursive,
+            rom_filter,
+            no_extract,
+            in_place,
+            context: &context,
+        };
+        let trim_sources = match self.collect_trim_input_files(
+            &source,
+            collect_options,
+            &mut cleanup_paths,
+            &mut skipped_unsupported,
+        ) {
                 Ok(paths) => paths,
                 Err(error) => {
+                    Self::cleanup_temp_paths(cleanup_paths);
                     return self.finish(
                         "trim",
                         OperationReport::failed(
@@ -295,13 +314,14 @@ impl CliApp {
             };
 
         if trim_sources.is_empty() {
+            Self::cleanup_temp_paths(cleanup_paths);
             return self.finish(
                 "trim",
                 OperationReport::succeeded(
                     OperationFamily::Command,
                     Some("nds".to_string()),
                     "trim",
-                    format!("no trim-eligible inputs found; skipped_non_nds={skipped_non_nds}"),
+                    format!("no trim-eligible inputs found; skipped_unsupported={skipped_unsupported}"),
                     Some(100.0),
                     thread_execution,
                 ),
@@ -309,6 +329,7 @@ impl CliApp {
         }
 
         if output.is_some() && trim_sources.len() != 1 {
+            Self::cleanup_temp_paths(cleanup_paths);
             return self.finish(
                 "trim",
                 OperationReport::failed(
@@ -331,18 +352,78 @@ impl CliApp {
         let mut irreversible_rvz_scrub = false;
 
         for trim_source in &trim_sources {
-            let output_path = if in_place {
+            // For `--in-place` archive inputs, confirm before rewriting an archive that holds files
+            // beyond the ROM. Non-interactive runs fail; interactive runs prompt.
+            if let Some(repack_root) = trim_source.repack_root.as_ref() {
+                let archive = trim_source
+                    .archive_origin
+                    .as_ref()
+                    .expect("repack source carries its archive origin");
+                match self.confirm_archive_repack(
+                    archive,
+                    repack_root,
+                    &trim_source.path,
+                    dry_run,
+                ) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let message = format!(
+                            "--in-place repack declined for `{}`; archive left unchanged",
+                            archive.display()
+                        );
+                        failed_count = failed_count.saturating_add(1);
+                        if first_error.is_none() {
+                            first_error = Some(message);
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        failed_count = failed_count.saturating_add(1);
+                        if first_error.is_none() {
+                            first_error = Some(error.to_string());
+                        }
+                        self.emit_running(
+                            OperationLabel {
+                                command: "trim",
+                                family: OperationFamily::Command,
+                                format: Some("nds"),
+                            },
+                            operation.stage(),
+                            error.to_string(),
+                            None,
+                            thread_execution.clone(),
+                        );
+                        continue;
+                    }
+                }
+            }
+            let repack_root = trim_source.repack_root.as_ref();
+            let output_path = if repack_root.is_some() {
+                // Trim the extracted ROM in place inside the repack staging directory; the archive
+                // is rebuilt from that directory after the trim succeeds.
                 trim_source.path.clone()
             } else if let Some(explicit_output) = output.as_ref() {
                 explicit_output.clone()
+            } else if in_place {
+                trim_source.path.clone()
+            } else if let Some(archive) = trim_source.archive_origin.as_ref() {
+                Self::archive_sidecar_trim_output_path(archive, trim_source, &extension)
             } else {
                 Self::default_trim_output_path(trim_source, &extension)
             };
-            let output_label = if in_place {
+            let output_label = if let Some(archive) = trim_source
+                .archive_origin
+                .as_ref()
+                .filter(|_| repack_root.is_some())
+            {
+                format!("repack `{}`", archive.display())
+            } else if in_place {
                 "in-place".to_string()
             } else {
                 output_path.display().to_string()
             };
+            // Repack sources always trim the staged ROM in place regardless of the batch flag.
+            let trim_in_place = in_place || repack_root.is_some();
 
             self.emit_running(
                 OperationLabel {
@@ -360,17 +441,32 @@ impl CliApp {
                 thread_execution.clone(),
             );
 
-            match self.trim_file(
+            let trim_result = self.trim_file(
                 &trim_source.path,
                 &output_path,
                 TrimRequest {
-                    in_place,
+                    in_place: trim_in_place,
                     dry_run,
                     operation,
                     kind: trim_source.kind,
+                    revert_marker,
                 },
                 &context,
-            ) {
+            );
+            // Rebuild the archive over the original once the staged ROM is trimmed (skipped on a
+            // dry run, which only reports what would happen).
+            let trim_result = match (trim_result, repack_root) {
+                (Ok(outcome), Some(repack_root)) if !dry_run => {
+                    let archive = trim_source
+                        .archive_origin
+                        .as_ref()
+                        .expect("repack source carries its archive origin");
+                    self.repack_archive(archive, repack_root, &context)
+                        .map(|()| outcome)
+                }
+                (result, _) => result,
+            };
+            match trim_result {
                 Ok(outcome) => {
                     let mode_count = mode_counts.entry(outcome.mode).or_insert(0);
                     *mode_count = mode_count.saturating_add(1);
@@ -425,6 +521,7 @@ impl CliApp {
         }
 
         if failed_count > 0 {
+            Self::cleanup_temp_paths(cleanup_paths);
             return self.finish(
                 "trim",
                 OperationReport::failed(
@@ -432,7 +529,7 @@ impl CliApp {
                     Some("nds".to_string()),
                     "trim",
                     format!(
-                        "{} completed with failures; processed={} trimmed={} already_trimmed={} failed={} skipped_non_nds={}; first_error={}",
+                        "{} completed with failures; processed={} trimmed={} already_trimmed={} failed={} skipped_unsupported={}; first_error={}",
                         if dry_run {
                             if operation == TrimOperation::Trim {
                                 "trim simulation"
@@ -448,7 +545,7 @@ impl CliApp {
                         trimmed_count,
                         already_trimmed_count,
                         failed_count,
-                        skipped_non_nds,
+                        skipped_unsupported,
                         first_error.unwrap_or_else(|| "(none)".to_string()),
                     ),
                     thread_execution,
@@ -468,6 +565,7 @@ impl CliApp {
             ""
         };
 
+        Self::cleanup_temp_paths(cleanup_paths);
         self.finish(
             "trim",
             OperationReport::succeeded(
@@ -476,26 +574,26 @@ impl CliApp {
                 "trim",
                 match single_detail {
                     Some(single_detail) => format!(
-                        "{single_detail}; {}; processed={} trimmed={} already_trimmed={} changed={} already_target={} skipped_non_nds={} mode_counts={}{}",
+                        "{single_detail}; {}; processed={} trimmed={} already_trimmed={} changed={} already_target={} skipped_unsupported={} mode_counts={}{}",
                         operation.summary_label(dry_run),
                         trim_sources.len(),
                         trimmed_count,
                         already_trimmed_count,
                         trimmed_count,
                         already_trimmed_count,
-                        skipped_non_nds,
+                        skipped_unsupported,
                         Self::format_mode_counts(&mode_counts),
                         irreversible_warning,
                     ),
                     None => format!(
-                        "{}; processed={} trimmed={} already_trimmed={} changed={} already_target={} skipped_non_nds={} mode_counts={}{}",
+                        "{}; processed={} trimmed={} already_trimmed={} changed={} already_target={} skipped_unsupported={} mode_counts={}{}",
                         operation.summary_label(dry_run),
                         trim_sources.len(),
                         trimmed_count,
                         already_trimmed_count,
                         trimmed_count,
                         already_trimmed_count,
-                        skipped_non_nds,
+                        skipped_unsupported,
                         Self::format_mode_counts(&mode_counts),
                         irreversible_warning,
                     ),
@@ -504,6 +602,199 @@ impl CliApp {
                 thread_execution,
             ),
         )
+    }
+
+    /// Files staged for repack besides the ROM being trimmed, used to decide whether `--in-place`
+    /// needs confirmation before rewriting the archive.
+    fn repack_other_files(repack_root: &Path, rom_path: &Path) -> Result<Vec<PathBuf>> {
+        let mut others = Vec::new();
+        let mut directories = vec![repack_root.to_path_buf()];
+        while let Some(directory) = directories.pop() {
+            for entry in fs::read_dir(&directory)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    directories.push(path);
+                } else if path.is_file() && path != rom_path {
+                    others.push(path);
+                }
+            }
+        }
+        others.sort();
+        Ok(others)
+    }
+
+    /// Decide whether an `--in-place` archive repack may proceed. Archives that only contain the
+    /// ROM repack freely. When other files are present the rewrite is destructive, so a dry run
+    /// just reports it, non-interactive runs fail, and interactive runs prompt for confirmation.
+    fn confirm_archive_repack(
+        &self,
+        archive: &Path,
+        repack_root: &Path,
+        rom_path: &Path,
+        dry_run: bool,
+    ) -> Result<bool> {
+        let others = Self::repack_other_files(repack_root, rom_path)?;
+        trace!(
+            archive = %archive.display(),
+            other_file_count = others.len(),
+            dry_run,
+            interactive = self.interactive_selection_enabled,
+            "evaluating in-place archive repack confirmation"
+        );
+        if others.is_empty() {
+            return Ok(true);
+        }
+        if dry_run {
+            self.emit_running(
+                OperationLabel {
+                    command: "trim",
+                    family: OperationFamily::Command,
+                    format: Some("nds"),
+                },
+                "trim",
+                format!(
+                    "would repack `{}` in place, preserving {} other file(s)",
+                    archive.display(),
+                    others.len()
+                ),
+                None,
+                None,
+            );
+            return Ok(true);
+        }
+        if !self.interactive_selection_enabled {
+            return Err(RomWeaverError::Validation(format!(
+                "refusing to repack `{}` in place: it contains {} other file(s) that would be rewritten; rerun in an interactive terminal to confirm, or omit --in-place to write the trimmed ROM beside the archive",
+                archive.display(),
+                others.len()
+            )));
+        }
+
+        eprintln!(
+            "About to repack `{}` in place. This rewrites the archive and preserves {} other file(s):",
+            archive.display(),
+            others.len()
+        );
+        for other in others.iter().take(10) {
+            let name = other
+                .strip_prefix(repack_root)
+                .unwrap_or(other)
+                .display();
+            eprintln!("  - {name}");
+        }
+        if others.len() > 10 {
+            eprintln!("  ... and {} more", others.len() - 10);
+        }
+        loop {
+            eprint!("Continue? [y/N] ");
+            io::stderr().flush()?;
+            let mut input = String::new();
+            let bytes_read = io::stdin().read_line(&mut input)?;
+            if bytes_read == 0 {
+                return Ok(false);
+            }
+            match input.trim().to_ascii_lowercase().as_str() {
+                "y" | "yes" => return Ok(true),
+                "" | "n" | "no" => return Ok(false),
+                _ => eprintln!("Please answer `y` or `n`."),
+            }
+        }
+    }
+
+    /// Rebuild `archive` from the trimmed contents staged in `repack_root`, writing to a temporary
+    /// sibling file first and renaming over the original so a failed build never destroys it.
+    fn repack_archive(
+        &self,
+        archive: &Path,
+        repack_root: &Path,
+        context: &OperationContext,
+    ) -> Result<()> {
+        let Some(handler) = self.containers.probe(archive) else {
+            return Err(RomWeaverError::Validation(format!(
+                "cannot repack `{}`: no container handler matched the original archive",
+                archive.display()
+            )));
+        };
+        let format = handler.descriptor().name.to_string();
+        if !handler.capabilities().create {
+            return Err(RomWeaverError::Validation(format!(
+                "cannot repack `{}`: the `{format}` format cannot be recreated",
+                archive.display()
+            )));
+        }
+
+        let mut inputs = fs::read_dir(repack_root)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        inputs.sort();
+        if inputs.is_empty() {
+            return Err(RomWeaverError::Validation(format!(
+                "cannot repack `{}`: staged contents are empty",
+                archive.display()
+            )));
+        }
+
+        let parent = archive
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let file_name = archive
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("archive");
+        let mut temp_output = parent.join(format!("{file_name}.rwtrim-repack"));
+        for index in 1usize.. {
+            if !temp_output.exists() {
+                break;
+            }
+            temp_output = parent.join(format!("{file_name}.rwtrim-repack-{index}"));
+        }
+
+        self.emit_running(
+            OperationLabel {
+                command: "trim",
+                family: OperationFamily::Container,
+                format: Some(handler.descriptor().name),
+            },
+            "create",
+            format!("repacking `{}`", archive.display()),
+            None,
+            Some(context.plan_threads(handler.capabilities().create_threads.clone())),
+        );
+        trace!(
+            archive = %archive.display(),
+            format = %format,
+            input_count = inputs.len(),
+            temp_output = %temp_output.display(),
+            "rebuilding archive for in-place trim repack"
+        );
+
+        let request = ContainerCreateRequest {
+            inputs,
+            output: temp_output.clone(),
+            format: format.clone(),
+            codec: None,
+            level: None,
+            parent: None,
+        };
+        let report = handler.create(&request, context)?;
+        if report.status != OperationStatus::Succeeded {
+            let _ = fs::remove_file(&temp_output);
+            return Err(RomWeaverError::Validation(format!(
+                "repack of `{}` failed: {}",
+                archive.display(),
+                report.label
+            )));
+        }
+
+        if let Err(error) = fs::rename(&temp_output, archive) {
+            let _ = fs::remove_file(&temp_output);
+            return Err(RomWeaverError::Validation(format!(
+                "repack of `{}` could not replace the original archive: {error}",
+                archive.display()
+            )));
+        }
+        Ok(())
     }
 
     fn run_batch_header_fixer(&self, args: BatchHeaderFixerCommand) -> AppRunOutcome {

@@ -6,6 +6,25 @@ struct TrimRequest {
     dry_run: bool,
     operation: TrimOperation,
     kind: TrimInputKind,
+    /// When set on a trim, append a small revert footer recording the original size and padding
+    /// byte so the file can later be reverted to a byte-identical original.
+    revert_marker: bool,
+}
+
+// Revert footer format: see `docs/trim-revert-footer.md` for the full specification.
+/// 4-byte magic + version identifying a rom-weaver revert footer (`"RWT"` + version `0x01`).
+const REVERT_FOOTER_MAGIC: &[u8; 4] = b"RWT\x01";
+/// Total on-disk size of the revert footer: magic+version(4) + pad_byte(1) + pad_len(5, 40-bit LE)
+/// + crc32(4).
+const REVERT_FOOTER_LEN: u64 = 14;
+/// Maximum padding length the 40-bit `pad_len` field can encode (1 TiB, far beyond any cartridge).
+const REVERT_FOOTER_MAX_PAD_LEN: u64 = (1 << 40) - 1;
+
+/// Metadata recovered from a revert footer: enough to reconstruct the original file byte-for-byte.
+#[derive(Clone, Copy, Debug)]
+struct RevertFooter {
+    original_size: u64,
+    pad_byte: u8,
 }
 
 impl CliApp {
@@ -138,8 +157,9 @@ impl CliApp {
     fn collect_trim_input_files(
         &self,
         sources: &[PathBuf],
-        recursive: bool,
-        skipped_non_nds: &mut usize,
+        options: TrimCollectOptions<'_>,
+        cleanup_paths: &mut Vec<PathBuf>,
+        skipped_unsupported: &mut usize,
     ) -> Result<Vec<TrimSource>> {
         let mut files = Vec::new();
         for source in sources {
@@ -150,22 +170,21 @@ impl CliApp {
                 ))
             })?;
             if metadata.is_file() {
-                if let Some(kind) = self.trim_eligible_kind_for_path(source) {
-                    files.push(TrimSource {
-                        path: source.clone(),
-                        kind,
-                    });
-                } else {
-                    *skipped_non_nds = skipped_non_nds.saturating_add(1);
-                }
+                self.collect_trim_file(source, options, &mut files, cleanup_paths, skipped_unsupported)?;
                 continue;
             }
             if metadata.is_dir() {
-                self.collect_trim_directory_files(source, recursive, &mut files, skipped_non_nds)?;
+                self.collect_trim_directory_files(
+                    source,
+                    options,
+                    &mut files,
+                    cleanup_paths,
+                    skipped_unsupported,
+                )?;
                 continue;
             }
 
-            *skipped_non_nds = skipped_non_nds.saturating_add(1);
+            *skipped_unsupported = skipped_unsupported.saturating_add(1);
         }
 
         files.sort_by(|left, right| left.path.cmp(&right.path));
@@ -173,12 +192,52 @@ impl CliApp {
         Ok(files)
     }
 
+    /// Resolve a single file input into trim sources: a directly trim-eligible file becomes one
+    /// source, otherwise an extractable archive is unpacked and its trim-eligible payloads are
+    /// added. Anything else increments the unsupported counter.
+    fn collect_trim_file(
+        &self,
+        path: &Path,
+        options: TrimCollectOptions<'_>,
+        files: &mut Vec<TrimSource>,
+        cleanup_paths: &mut Vec<PathBuf>,
+        skipped_unsupported: &mut usize,
+    ) -> Result<()> {
+        if let Some(kind) = self.trim_eligible_kind_for_path(path) {
+            files.push(TrimSource {
+                path: path.to_path_buf(),
+                kind,
+                archive_origin: None,
+                repack_root: None,
+            });
+            return Ok(());
+        }
+
+        if options.no_extract {
+            *skipped_unsupported = skipped_unsupported.saturating_add(1);
+            return Ok(());
+        }
+
+        let extracted = if options.in_place {
+            self.extract_trim_repack_payload(path, options, cleanup_paths)?
+        } else {
+            self.extract_trim_payloads(path, options, cleanup_paths)?
+        };
+        if extracted.is_empty() {
+            *skipped_unsupported = skipped_unsupported.saturating_add(1);
+        } else {
+            files.extend(extracted);
+        }
+        Ok(())
+    }
+
     fn collect_trim_directory_files(
         &self,
         root: &Path,
-        recursive: bool,
+        options: TrimCollectOptions<'_>,
         files: &mut Vec<TrimSource>,
-        skipped_non_nds: &mut usize,
+        cleanup_paths: &mut Vec<PathBuf>,
+        skipped_unsupported: &mut usize,
     ) -> Result<()> {
         let mut directories = vec![root.to_path_buf()];
         while let Some(directory) = directories.pop() {
@@ -190,23 +249,222 @@ impl CliApp {
                 let path = entry.path();
                 let file_type = entry.file_type()?;
                 if file_type.is_dir() {
-                    if recursive {
+                    if options.recursive {
                         directories.push(path);
                     }
                     continue;
                 }
                 if !file_type.is_file() {
-                    *skipped_non_nds = skipped_non_nds.saturating_add(1);
+                    *skipped_unsupported = skipped_unsupported.saturating_add(1);
                     continue;
                 }
-                if let Some(kind) = self.trim_eligible_kind_for_path(&path) {
-                    files.push(TrimSource { path, kind });
-                } else {
-                    *skipped_non_nds = skipped_non_nds.saturating_add(1);
-                }
+                self.collect_trim_file(
+                    &path,
+                    options,
+                    files,
+                    cleanup_paths,
+                    skipped_unsupported,
+                )?;
             }
         }
         Ok(())
+    }
+
+    /// Extract an archive (recursively, bounded) into temporary directories and return only the
+    /// payloads whose type trim actually supports. Temp directories are recorded in
+    /// `cleanup_paths` so the caller can remove them after trimming completes.
+    fn extract_trim_payloads(
+        &self,
+        archive: &Path,
+        options: TrimCollectOptions<'_>,
+        cleanup_paths: &mut Vec<PathBuf>,
+    ) -> Result<Vec<TrimSource>> {
+        let kind_filter = ArchiveEntryKindFilter::new(options.rom_filter, false);
+        let mut found = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back((archive.to_path_buf(), 1usize));
+        let mut extracted_archives = 0usize;
+
+        while let Some((current, depth)) = queue.pop_front() {
+            if depth > MAX_NESTED_EXTRACT_DEPTH {
+                return Err(RomWeaverError::Validation(format!(
+                    "trim extract exceeded max depth of {MAX_NESTED_EXTRACT_DEPTH} at `{}`",
+                    current.display()
+                )));
+            }
+            if extracted_archives >= MAX_NESTED_EXTRACT_ARCHIVES {
+                return Err(RomWeaverError::Validation(format!(
+                    "trim extract exceeded max archive count of {MAX_NESTED_EXTRACT_ARCHIVES}"
+                )));
+            }
+
+            let Some(handler) = self.containers.probe(&current) else {
+                continue;
+            };
+            if handler.descriptor().matches_name("xiso") || !handler.capabilities().extract {
+                continue;
+            }
+            // Only extract sources that genuinely probe as a container, so extension-only matches
+            // on non-container payloads do not abort the batch.
+            let probe_request = ContainerProbeRequest {
+                source: current.clone(),
+            };
+            if handler.probe_details(&probe_request, options.context).is_err() {
+                continue;
+            }
+
+            let out_dir = options.context.temp_paths().next_path("trim-extract", None);
+            fs::create_dir_all(&out_dir)?;
+            cleanup_paths.push(out_dir.clone());
+            trace!(
+                archive = %archive.display(),
+                source = %current.display(),
+                format = handler.descriptor().name,
+                out_dir = %out_dir.display(),
+                depth,
+                rom_filter = options.rom_filter,
+                "extracting archive for trim"
+            );
+            self.extract_with_selection_fallback(
+                handler.as_ref(),
+                &current,
+                SelectionExtract {
+                    out_dir: &out_dir,
+                    selections: &[],
+                    kind_filter,
+                    split_bin: false,
+                    ignore_common_files: true,
+                    overwrite: true,
+                    source_label: "trim",
+                },
+                options.context,
+            )
+            .map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "trim payload extraction failed for `{}` ({}): {error}",
+                    current.display(),
+                    handler.descriptor().name
+                ))
+            })?;
+            extracted_archives = extracted_archives.saturating_add(1);
+
+            for candidate in self.collect_checksum_extract_candidates(&out_dir)? {
+                if candidate.ignored {
+                    continue;
+                }
+                if let Some(kind) = self.trim_eligible_kind_for_path(&candidate.source) {
+                    trace!(
+                        archive = %archive.display(),
+                        payload = %candidate.source.display(),
+                        kind = kind.mode_label(),
+                        "found trim-eligible payload in archive"
+                    );
+                    found.push(TrimSource {
+                        path: candidate.source,
+                        kind,
+                        archive_origin: Some(archive.to_path_buf()),
+                        repack_root: None,
+                    });
+                } else if self.containers.probe(&candidate.source).is_some() {
+                    queue.push_back((candidate.source, depth + 1));
+                }
+            }
+        }
+
+        Ok(found)
+    }
+
+    /// Extract an archive's full contents (all non-junk files preserved) into a temp directory so
+    /// `--in-place` can trim the ROM and recompress the directory back over the original archive.
+    /// Only a single top-level trim-eligible ROM is supported; deeper or multiple ROMs are
+    /// rejected so the repack stays unambiguous.
+    fn extract_trim_repack_payload(
+        &self,
+        archive: &Path,
+        options: TrimCollectOptions<'_>,
+        cleanup_paths: &mut Vec<PathBuf>,
+    ) -> Result<Vec<TrimSource>> {
+        let Some(handler) = self.containers.probe(archive) else {
+            return Ok(Vec::new());
+        };
+        if handler.descriptor().matches_name("xiso") || !handler.capabilities().extract {
+            return Ok(Vec::new());
+        }
+        let probe_request = ContainerProbeRequest {
+            source: archive.to_path_buf(),
+        };
+        if handler.probe_details(&probe_request, options.context).is_err() {
+            return Ok(Vec::new());
+        }
+        if !handler.capabilities().create {
+            return Err(RomWeaverError::Validation(format!(
+                "--in-place is not supported for `{}`: the `{}` format cannot be recreated; omit --in-place to write the trimmed ROM beside the archive",
+                archive.display(),
+                handler.descriptor().name
+            )));
+        }
+
+        let out_dir = options.context.temp_paths().next_path("trim-repack", None);
+        fs::create_dir_all(&out_dir)?;
+        cleanup_paths.push(out_dir.clone());
+        trace!(
+            archive = %archive.display(),
+            format = handler.descriptor().name,
+            out_dir = %out_dir.display(),
+            "extracting full archive contents for in-place trim repack"
+        );
+        // Preserve every file faithfully: disable both the ROM kind filter and common-file ignores
+        // so nothing is dropped from the rebuilt archive. The presence of non-ROM files is what
+        // gates an in-place repack behind confirmation.
+        self.extract_with_selection_fallback(
+            handler.as_ref(),
+            archive,
+            SelectionExtract {
+                out_dir: &out_dir,
+                selections: &[],
+                kind_filter: ArchiveEntryKindFilter::new(false, false),
+                split_bin: false,
+                ignore_common_files: false,
+                overwrite: true,
+                source_label: "trim",
+            },
+            options.context,
+        )
+        .map_err(|error| {
+            RomWeaverError::Validation(format!(
+                "trim repack extraction failed for `{}` ({}): {error}",
+                archive.display(),
+                handler.descriptor().name
+            ))
+        })?;
+
+        let mut roms = Vec::new();
+        for candidate in self.collect_checksum_extract_candidates(&out_dir)? {
+            if candidate.ignored {
+                continue;
+            }
+            if let Some(kind) = self.trim_eligible_kind_for_path(&candidate.source) {
+                roms.push((candidate.source, kind));
+            }
+        }
+
+        if roms.len() > 1 {
+            return Err(RomWeaverError::Validation(format!(
+                "--in-place repack found {} trim-eligible ROMs in `{}`; in-place repacking supports a single ROM per archive",
+                roms.len(),
+                archive.display()
+            )));
+        }
+
+        Ok(roms
+            .into_iter()
+            .map(|(path, kind)| TrimSource {
+                path,
+                kind,
+                archive_origin: Some(archive.to_path_buf()),
+                repack_root: Some(out_dir.clone()),
+            })
+            .collect())
     }
 
     fn collect_batch_header_fix_input_files(
@@ -342,6 +600,37 @@ impl CliApp {
         output
     }
 
+    /// Side-by-side output for an archive-extracted payload: places the trimmed ROM next to the
+    /// original archive using the payload's base name and resolved extension.
+    fn archive_sidecar_trim_output_path(
+        archive: &Path,
+        source: &TrimSource,
+        extension: &str,
+    ) -> PathBuf {
+        let source_extension = if source.kind == TrimInputKind::RvzScrub {
+            "rvz"
+        } else {
+            source
+                .path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("bin")
+        };
+        let extension = extension.replace("{ext}", source_extension);
+        let directory = archive
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let stem = source
+            .path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("trimmed");
+        let mut output = directory.join(stem);
+        output.set_extension(extension);
+        output
+    }
+
     fn trim_file(
         &self,
         source: &Path,
@@ -354,8 +643,18 @@ impl CliApp {
             dry_run,
             operation,
             kind,
+            revert_marker,
         } = request;
-        match kind {
+
+        // A revert footer, when present, fully describes the original file, so it takes precedence
+        // over the per-format revert heuristics and reconstructs the original byte-for-byte.
+        if operation == TrimOperation::Revert
+            && let Some(footer) = Self::read_revert_footer(source)?
+        {
+            return Self::revert_with_footer(source, destination, in_place, dry_run, kind, footer);
+        }
+
+        let outcome = match kind {
             TrimInputKind::NdsFamily => {
                 Self::trim_nds_file(source, destination, in_place, dry_run, operation)
             }
@@ -373,7 +672,91 @@ impl CliApp {
             TrimInputKind::RvzScrub => {
                 self.trim_rvz_scrub_file(source, destination, in_place, dry_run, operation, context)
             }
+        }?;
+
+        // Embed the revert footer only when an actual trim happened, so a clean ROM is never grown
+        // pointlessly and the footer always carries a real original size to restore.
+        if operation == TrimOperation::Trim
+            && revert_marker
+            && !dry_run
+            && !outcome.already_target_size
+        {
+            let pad_byte = Self::detect_trailing_pad_byte(source)?.unwrap_or(0xFF);
+            Self::write_revert_footer(&outcome.output_path, outcome.original_size, pad_byte)?;
         }
+
+        Ok(outcome)
+    }
+
+    /// Reconstruct the original file from a trimmed file that carries a revert footer: drop the
+    /// footer, then pad back to the recorded original size with the recorded padding byte.
+    fn revert_with_footer(
+        source: &Path,
+        destination: &Path,
+        in_place: bool,
+        dry_run: bool,
+        kind: TrimInputKind,
+        footer: RevertFooter,
+    ) -> Result<NdsTrimOutcome> {
+        let file_size = fs::metadata(source)?.len();
+        let data_size = file_size.saturating_sub(REVERT_FOOTER_LEN);
+        let RevertFooter {
+            original_size,
+            pad_byte,
+        } = footer;
+        if original_size < data_size {
+            return Err(RomWeaverError::Validation(format!(
+                "revert footer in `{}` records an original size smaller than the trimmed data",
+                source.display()
+            )));
+        }
+
+        let output_path = if in_place {
+            source.to_path_buf()
+        } else {
+            destination.to_path_buf()
+        };
+
+        if dry_run {
+            return Ok(NdsTrimOutcome {
+                original_size: file_size,
+                result_size: original_size,
+                output_path,
+                mode: kind.mode_label(),
+                preserved_download_play_cert: false,
+                already_target_size: false,
+                revert_supported: true,
+            });
+        }
+
+        if in_place || source == destination {
+            let mut file = File::options().read(true).write(true).open(source)?;
+            file.set_len(data_size)?; // drop the footer first
+            file.seek(SeekFrom::Start(data_size))?;
+            Self::write_padding_bytes(&mut file, original_size - data_size, pad_byte)?;
+            file.flush()?;
+        } else {
+            // apply_file_size_target copies min(data_size, original_size) = data_size bytes, which
+            // naturally excludes the trailing footer, then pads up to the original size.
+            Self::apply_file_size_target(
+                source,
+                destination,
+                false,
+                data_size,
+                original_size,
+                pad_byte,
+            )?;
+        }
+
+        Ok(NdsTrimOutcome {
+            original_size: file_size,
+            result_size: original_size,
+            output_path,
+            mode: kind.mode_label(),
+            preserved_download_play_cert: false,
+            already_target_size: false,
+            revert_supported: true,
+        })
     }
 
     fn trim_nds_file(
@@ -413,7 +796,9 @@ impl CliApp {
                 if revert_size < plan.trimmed_size {
                     revert_size = plan.trimmed_size;
                 }
-                (revert_size, original_size == revert_size, 0x00_u8)
+                // NDS carts pad unused trailing space with 0xFF, so revert must restore 0xFF to
+                // reproduce the original dump (and match No-Intro checksums).
+                (revert_size, original_size == revert_size, 0xFF_u8)
             }
         };
 
@@ -476,9 +861,17 @@ impl CliApp {
         let fill_byte = kind.default_padding_byte();
         let (target_size, already_target_size) = match operation {
             TrimOperation::Trim => {
-                let trimmed_size =
-                    Self::scan_trimmed_size_from_trailing_padding(source, fill_byte)?;
-                (trimmed_size, trimmed_size == original_size)
+                // Detect the actual trailing pad byte (0x00 or 0xFF) so both conventions trim,
+                // instead of assuming a single fixed fill. Files that do not end in recognizable
+                // padding are left untouched.
+                match Self::detect_trailing_pad_byte(source)? {
+                    Some(pad_byte) => {
+                        let trimmed_size =
+                            Self::scan_trimmed_size_from_trailing_padding(source, pad_byte)?;
+                        (trimmed_size, trimmed_size == original_size)
+                    }
+                    None => (original_size, true),
+                }
             }
             TrimOperation::Revert => {
                 let revert_size = Self::power_of_two_target_size_for_revert(original_size)?;
@@ -884,6 +1277,101 @@ impl CliApp {
 
     fn scan_trimmed_size_from_trailing_padding(path: &Path, fill_byte: u8) -> Result<u64> {
         Self::scan_trimmed_size_from_trailing_padding_from_offset(path, fill_byte, 0)
+    }
+
+    /// CRC32 (IEEE) over a small buffer, used to validate the revert footer without pulling in a
+    /// dependency. Bitwise form is fine for the 24-byte footer body.
+    fn revert_footer_crc32(bytes: &[u8]) -> u32 {
+        let mut crc: u32 = 0xFFFF_FFFF;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+        }
+        !crc
+    }
+
+    /// Append a revert footer recording the padding length and byte so a later `--revert` can
+    /// reconstruct the original file exactly. `path` must already hold the trimmed data only.
+    fn write_revert_footer(path: &Path, original_size: u64, pad_byte: u8) -> Result<()> {
+        let data_size = fs::metadata(path)?.len();
+        let pad_len = original_size.saturating_sub(data_size);
+        if pad_len > REVERT_FOOTER_MAX_PAD_LEN {
+            return Err(RomWeaverError::Validation(format!(
+                "padding length {pad_len} is too large for a revert footer in `{}`",
+                path.display()
+            )));
+        }
+
+        let mut footer = Vec::with_capacity(REVERT_FOOTER_LEN as usize);
+        footer.extend_from_slice(REVERT_FOOTER_MAGIC);
+        footer.push(pad_byte);
+        footer.extend_from_slice(&pad_len.to_le_bytes()[0..5]); // 40-bit little-endian
+        let crc = Self::revert_footer_crc32(&footer);
+        footer.extend_from_slice(&crc.to_le_bytes());
+        debug_assert_eq!(footer.len() as u64, REVERT_FOOTER_LEN);
+
+        let mut file = File::options().append(true).open(path)?;
+        file.write_all(&footer)?;
+        file.flush()?;
+        trace!(
+            path = %path.display(),
+            original_size,
+            pad_len,
+            pad_byte,
+            "appended revert footer"
+        );
+        Ok(())
+    }
+
+    /// Read and validate a revert footer from the end of a file. Returns `None` when the file is
+    /// too small or the trailing bytes are not a valid footer (magic + CRC must both match). The
+    /// reconstructed original size is derived from the data length plus the recorded padding.
+    fn read_revert_footer(path: &Path) -> Result<Option<RevertFooter>> {
+        let mut file = File::open(path)?;
+        let file_size = file.metadata()?.len();
+        if file_size < REVERT_FOOTER_LEN {
+            return Ok(None);
+        }
+        file.seek(SeekFrom::Start(file_size - REVERT_FOOTER_LEN))?;
+        let mut buffer = [0_u8; REVERT_FOOTER_LEN as usize];
+        file.read_exact(&mut buffer)?;
+        if &buffer[0..4] != REVERT_FOOTER_MAGIC {
+            return Ok(None);
+        }
+        let stored_crc = u32::from_le_bytes([buffer[10], buffer[11], buffer[12], buffer[13]]);
+        if Self::revert_footer_crc32(&buffer[0..10]) != stored_crc {
+            return Ok(None);
+        }
+        let pad_byte = buffer[4];
+        let pad_len = u64::from_le_bytes([
+            buffer[5], buffer[6], buffer[7], buffer[8], buffer[9], 0, 0, 0,
+        ]);
+        let data_size = file_size - REVERT_FOOTER_LEN;
+        Ok(Some(RevertFooter {
+            original_size: data_size + pad_len,
+            pad_byte,
+        }))
+    }
+
+    /// Inspect the final byte of a ROM to decide which padding convention it uses. Returns the pad
+    /// byte (`0x00` or `0xFF`) when the file ends in one, or `None` when the trailing byte is real
+    /// data and there is no padding to remove.
+    fn detect_trailing_pad_byte(path: &Path) -> Result<Option<u8>> {
+        let mut input = File::open(path)?;
+        let file_size = input.metadata()?.len();
+        if file_size == 0 {
+            return Ok(None);
+        }
+        input.seek(SeekFrom::Start(file_size - 1))?;
+        let mut last = [0_u8; 1];
+        input.read_exact(&mut last)?;
+        match last[0] {
+            0x00 | 0xFF => Ok(Some(last[0])),
+            _ => Ok(None),
+        }
     }
 
     fn scan_trimmed_size_from_trailing_padding_from_offset(
