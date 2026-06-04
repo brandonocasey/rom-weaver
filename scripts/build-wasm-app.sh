@@ -239,6 +239,8 @@ else
   echo "compressed artifacts: skipped (set SKIP_BROTLI=0 to enable)"
 fi
 echo "auto threads: runtime default (capped at 4)"
-if [[ "$SYNC_WASM_PACKAGE" != "1" ]]; then
+if [[ "$OUT_DIR" == "$WASM_PACKAGE_DIR" ]]; then
+  echo "package artifacts: written directly to packages/rom-weaver-wasm"
+elif [[ "$SYNC_WASM_PACKAGE" != "1" ]]; then
   echo "package sync: disabled (set SYNC_WASM_PACKAGE=1 to sync package artifacts)"
 fi
