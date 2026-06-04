@@ -55,6 +55,7 @@ use rom_weaver_libarchive::{
     probe_regular_archive_format, visit_selected_regular_archive_entries,
 };
 use serde_json::{Map, Value, json};
+use tracing::trace;
 use xdvdfs::{
     blockdev::OffsetWrapper as XdvdfsOffsetWrapper, write::fs::XDVDFSFilesystem as XdvdfsFilesystem,
 };
@@ -958,11 +959,11 @@ fn write_archive_with_libarchive(
         } else {
             None
         };
-    let compressed_progress_context = context.clone();
     let compressed_progress_bytes = Arc::clone(&compressed_bytes_written);
     let compressed_progress_bucket = Arc::clone(&emitted_compressed_progress_bucket);
     let compressed_progress_execution = execution.clone();
     let compressed_progress_format = config.format_name;
+    let compressed_progress_output = request.output.clone();
     let on_compressed_bytes_written = move |delta: u64| {
         let total = compressed_progress_bytes
             .fetch_add(delta, Ordering::Relaxed)
@@ -978,24 +979,21 @@ fn write_archive_with_libarchive(
         {
             return;
         }
-        compressed_progress_context.emit(ProgressEvent {
-            command: "compress".to_string(),
-            family: OperationFamily::Container,
-            format: Some(compressed_progress_format.to_string()),
-            stage: "write".to_string(),
-            label: format!("wrote {total} compressed bytes to `{compressed_progress_format}`"),
-            details: Some(json!({
-                "compressedBytesWritten": total,
-            })),
-            percent: None,
-            requested_threads: Some(compressed_progress_execution.requested_threads),
-            effective_threads: Some(compressed_progress_execution.effective_threads),
-            thread_mode: Some(compressed_progress_execution.thread_mode),
-            used_parallelism: Some(compressed_progress_execution.used_parallelism),
-            thread_fallback: Some(compressed_progress_execution.thread_fallback),
-            thread_fallback_reason: compressed_progress_execution.thread_fallback_reason.clone(),
-            status: OperationStatus::Running,
-        });
+        trace!(
+            command = "compress",
+            family = ?OperationFamily::Container,
+            format = compressed_progress_format,
+            stage = "write",
+            compressed_bytes_written = total,
+            output = %compressed_progress_output.display(),
+            requested_threads = compressed_progress_execution.requested_threads,
+            effective_threads = compressed_progress_execution.effective_threads,
+            thread_mode = ?compressed_progress_execution.thread_mode,
+            used_parallelism = compressed_progress_execution.used_parallelism,
+            thread_fallback = compressed_progress_execution.thread_fallback,
+            thread_fallback_reason = ?compressed_progress_execution.thread_fallback_reason,
+            "wrote compressed archive bytes"
+        );
     };
 
     let mut archive = libarchive_open_create_archive(

@@ -36,6 +36,19 @@ fn compress_routes_through_registered_container_format() {
     assert!(output_path.path().exists());
 }
 
+fn assert_no_compressed_write_progress(events: &[Value], format: &str) {
+    assert!(
+        !events.iter().any(|event| {
+            event["command"] == "compress"
+                && event["status"] == "running"
+                && event["format"] == format
+                && event["stage"] == "write"
+                && event["details"]["compressedBytesWritten"].as_u64().is_some()
+        }),
+        "expected {format} compression byte telemetry to stay out of progress events"
+    );
+}
+
 #[test]
 fn compress_gcz_warns_and_rejects_output() {
     let temp = setup_temp_dir();
@@ -1328,17 +1341,7 @@ fn zip_emits_incremental_running_progress_beyond_placeholders() {
         }),
         "expected zip compress to emit running create progress between 0 and 100"
     );
-    assert!(compress_events.iter().any(|event| {
-        event["command"] == "compress"
-            && event["status"] == "running"
-            && event["format"] == "zip"
-            && event["stage"] == "write"
-            && event["percent"].is_null()
-            && event["details"]["compressedBytesWritten"]
-                .as_u64()
-                .map(|bytes| bytes > 0)
-                .unwrap_or(false)
-    }));
+    assert_no_compressed_write_progress(&compress_events, "zip");
     assert!(!compress_events.iter().any(|event| {
         event["command"] == "compress"
             && event["status"] == "running"
@@ -1400,17 +1403,7 @@ fn seven_z_does_not_emit_synthetic_running_progress() {
         .stdout
         .clone();
     let compress_events = parse_json_lines(&compress_output);
-    assert!(compress_events.iter().any(|event| {
-        event["command"] == "compress"
-            && event["status"] == "running"
-            && event["format"] == "7z"
-            && event["stage"] == "write"
-            && event["percent"].is_null()
-            && event["details"]["compressedBytesWritten"]
-                .as_u64()
-                .map(|bytes| bytes > 0)
-                .unwrap_or(false)
-    }));
+    assert_no_compressed_write_progress(&compress_events, "7z");
     assert!(!compress_events.iter().any(|event| {
         event["command"] == "compress"
             && event["status"] == "running"
