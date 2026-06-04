@@ -187,6 +187,7 @@
 .rw-app .po-btn:hover:not(:disabled) { color: var(--rw-accent); }
 .rw-app .po-btn:disabled { cursor: default; }
 .rw-app .po-btn:disabled svg { opacity: .45; }
+.rw-app .preorder.po-right .rm { position: static; inset: auto; width: 0.85rem; transform: none; padding: 3px 0; }
 .rw-app .po-mid.po-x:hover { color: var(--rw-bad); cursor: pointer; }
 .rw-app .po-mid.po-x svg { width: 0.85rem; height: 0.85rem; }
 .rw-app .fidx:hover { color: var(--rw-accent); }
