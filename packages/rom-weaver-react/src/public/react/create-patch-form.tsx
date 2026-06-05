@@ -3,6 +3,7 @@ import GitCompare from "lucide-react/dist/esm/icons/git-compare.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appendFileNameExtension, hasFileNameExtension } from "../../lib/input/path-utils.ts";
 import { resolveAutomaticSelection } from "../../lib/input/selection.ts";
+import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
 import {
   type BrowserCreateResult,
   type BrowserSaveDestination,
@@ -111,7 +112,7 @@ const getDisplaySourceInfo = (source: CreateDisplaySourceState | null | undefine
   toStagedInputInfo(source, fallback);
 
 const formatElapsedMs = (elapsedMs: number | undefined) =>
-  typeof elapsedMs === "number" && Number.isFinite(elapsedMs) ? `${Math.round(elapsedMs)} ms` : "";
+  typeof elapsedMs === "number" && Number.isFinite(elapsedMs) ? formatTiming(createTiming(elapsedMs)) : "";
 
 const formatChecksumTiming = (elapsedMs: number | undefined) =>
   elapsedMs === 0 ? "from extract" : formatElapsedMs(elapsedMs);
