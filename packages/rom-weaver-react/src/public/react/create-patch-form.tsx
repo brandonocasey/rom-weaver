@@ -108,6 +108,7 @@ type CreatePatchFormatCandidateState = RuntimePatchCreateFormatCandidates & {
 };
 type CompletedCreateOutput = {
   compression: "7z" | "none" | "zip";
+  compressionTimeMs?: number;
   createTimeMs?: number;
   fileName: string;
   patchType: string;
@@ -578,9 +579,12 @@ function CreatePatchForm(props: CreatePatchFormProps) {
         typeof createStartedAt === "number"
           ? Math.max(0, (compressionStartedAt ?? completedAt) - createStartedAt)
           : undefined;
+      const compressionTimeMs =
+        typeof compressionStartedAt === "number" ? Math.max(0, completedAt - compressionStartedAt) : undefined;
       rememberOutputDispose(result.output.dispose);
       setCompletedOutput({
         compression: createCompression,
+        compressionTimeMs,
         createTimeMs,
         fileName: result.output.fileName,
         patchType,
@@ -661,6 +665,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     stagingRole === role && progress && isChecksumProgress(progress) ? progress : null;
   const createCompressPanel = buildCompressPanel(createCompression, settings as Record<string, unknown>);
   const createTimingText = completedOutput ? formatElapsedMs(completedOutput.createTimeMs) : "";
+  const compressTimingText = completedOutput ? formatElapsedMs(completedOutput.compressionTimeMs) : "";
 
   const renderSourceStep = ({
     num,
@@ -809,6 +814,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
               output: { ...settings.output, compression: value as "7z" | "none" | "zip" },
             }),
           summary: createCompression === "none" ? undefined : createCompressPanel?.summary,
+          timing: compressTimingText || undefined,
         })}
         disabled={outputDisabled}
         fileName={resolvedOutputName}
