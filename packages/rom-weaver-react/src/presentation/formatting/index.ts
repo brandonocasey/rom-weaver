@@ -1,17 +1,18 @@
 import type { LocaleCode } from "../localization/catalog.ts";
 
-const BYTE_UNITS = ["KiB", "MiB", "GiB", "TiB"] as const;
+const BYTE_UNIT_BASE = 1000;
+const BYTE_UNITS = ["KB", "MB", "GB", "TB"] as const;
 
 const getNumberFormatter = (locale: LocaleCode, options: Intl.NumberFormatOptions = {}) =>
   new Intl.NumberFormat(locale, options);
 
 const formatBytes = (bytes: number, locale: LocaleCode): string => {
   const normalizedBytes = Number.isFinite(bytes) && bytes >= 0 ? Math.floor(bytes) : 0;
-  if (normalizedBytes < 1024) return `${getNumberFormatter(locale).format(normalizedBytes)} B`;
-  let value = normalizedBytes / 1024;
+  if (normalizedBytes < BYTE_UNIT_BASE) return `${getNumberFormatter(locale).format(normalizedBytes)} B`;
+  let value = normalizedBytes / BYTE_UNIT_BASE;
   let unitIndex = 0;
-  while (value >= 1024 && unitIndex < BYTE_UNITS.length - 1) {
-    value /= 1024;
+  while (value >= BYTE_UNIT_BASE && unitIndex < BYTE_UNITS.length - 1) {
+    value /= BYTE_UNIT_BASE;
     unitIndex++;
   }
   return `${getNumberFormatter(locale, {

@@ -169,14 +169,14 @@ fn create_patch_format_size_error_message(
         && max_size >= CREATE_PATCH_IPS_SIZE_LIMIT_BYTES
     {
         return Some(format!(
-            "Create inputs at or above 16 MiB should use BPS, xdelta, or another large-capable patch type; selected patch type: {normalized_format}"
+            "Create inputs at or above 16.8 MB should use BPS, xdelta, or another large-capable patch type; selected patch type: {normalized_format}"
         ));
     }
     if max_size > CREATE_PATCH_LEGACY_SIZE_LIMIT_BYTES
         && !matches!(normalized_format.as_str(), "xdelta" | "ppf")
     {
         return Some(format!(
-            "Create inputs above 256 MiB require xdelta or PPF patches; selected patch type: {normalized_format}"
+            "Create inputs above 268.4 MB require xdelta or PPF patches; selected patch type: {normalized_format}"
         ));
     }
     None

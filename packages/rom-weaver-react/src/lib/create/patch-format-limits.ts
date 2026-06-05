@@ -1,3 +1,5 @@
+import { formatByteSize } from "../../presentation/workflow-presentation.ts";
+
 type CreatePatchFormatPreferenceInput = {
   automaticFormatSelection?: boolean;
   candidateDefaultFormat?: string | null;
@@ -96,7 +98,9 @@ const getPreferredCreatePatchFormat = ({
   requestedFormat,
 }: CreatePatchFormatPreferenceInput) => {
   const candidateFormatList = normalizeCandidateCreatePatchFormats(candidateFormats);
-  const formats = candidateFormatList.length ? candidateFormatList : getCreatePatchFormatsForSizes(originalSize, modifiedSize);
+  const formats = candidateFormatList.length
+    ? candidateFormatList
+    : getCreatePatchFormatsForSizes(originalSize, modifiedSize);
   const normalizedRequestedFormat = normalizeCreatePatchFormat(requestedFormat);
   const normalizedCandidateDefaultFormat = normalizeCreatePatchFormat(candidateDefaultFormat);
   const defaultFormat =
@@ -126,10 +130,10 @@ const getCreatePatchFormatSizeErrorMessage = (
   const normalizedFormat = normalizeCreatePatchFormat(format);
   const maxSize = getMaxCreateRomSize(...sizes);
   if ((normalizedFormat === "ips" || normalizedFormat === "ebp") && maxSize >= CREATE_IPS_SIZE_LIMIT_BYTES) {
-    return `Create inputs at or above 16 MiB should use BPS, XDelta, or another large-capable patch type; selected patch type: ${normalizedFormat}`;
+    return `Create inputs at or above ${formatByteSize(CREATE_IPS_SIZE_LIMIT_BYTES)} should use BPS, XDelta, or another large-capable patch type; selected patch type: ${normalizedFormat}`;
   }
   if (maxSize > CREATE_LEGACY_PATCH_SIZE_LIMIT_BYTES) {
-    return `Create inputs above 256 MiB require xdelta or PPF patches; selected patch type: ${normalizedFormat}`;
+    return `Create inputs above ${formatByteSize(CREATE_LEGACY_PATCH_SIZE_LIMIT_BYTES)} require xdelta or PPF patches; selected patch type: ${normalizedFormat}`;
   }
   return `Unsupported patch type for create input sizes: ${normalizedFormat}`;
 };

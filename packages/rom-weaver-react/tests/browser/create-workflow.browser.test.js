@@ -180,7 +180,7 @@ test("create workflow defaults output names to the modified source", async () =>
   }
 });
 
-test("create workflow steers IPS-family formats away from 16 MiB and larger inputs", async () => {
+test("create workflow steers IPS-family formats away from 16.8 MB and larger inputs", async () => {
   const workflow = createTraceWorkflow({
     compression: "none",
     outputName: "change.ips",
@@ -192,14 +192,14 @@ test("create workflow steers IPS-family formats away from 16 MiB and larger inpu
 
     await expect(workflow.run()).rejects.toMatchObject({
       code: "UNSUPPORTED_FORMAT",
-      message: expect.stringContaining("at or above 16 MiB"),
+      message: expect.stringContaining("at or above 16.8 MB"),
     });
   } finally {
     await workflow.dispose();
   }
 });
 
-test("create workflow limits over-256 MiB inputs to xdelta and ppf", async () => {
+test("create workflow limits over-268.4 MB inputs to xdelta and ppf", async () => {
   const workflow = createTraceWorkflow({
     compression: "none",
     outputName: "change.bps",

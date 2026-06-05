@@ -49,11 +49,12 @@ const getBrowserStorageEstimateState = async (
 
 const formatByteCount = (value: number | undefined): string => {
   if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const unitBase = 1000;
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let size = Math.max(0, value);
   let unitIndex = 0;
-  while (size >= 1024 && unitIndex + 1 < units.length) {
-    size /= 1024;
+  while (size >= unitBase && unitIndex + 1 < units.length) {
+    size /= unitBase;
     unitIndex++;
   }
   const digits = unitIndex === 0 ? 0 : size >= 10 ? 1 : 2;

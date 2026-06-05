@@ -414,12 +414,13 @@ const isCompressionWriteTelemetryProgress = (progress: WorkflowValue | object | 
 const formatByteSize = (value: string | number | null | undefined): string => {
   const bytes = normalizeByteCount(value);
   if (bytes === null) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB", "TiB"];
-  let normalizedValue = bytes / 1024;
+  const unitBase = 1000;
+  if (bytes < unitBase) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let normalizedValue = bytes / unitBase;
   let unitIndex = 0;
-  while (normalizedValue >= 1024 && unitIndex < units.length - 1) {
-    normalizedValue /= 1024;
+  while (normalizedValue >= unitBase && unitIndex < units.length - 1) {
+    normalizedValue /= unitBase;
     unitIndex++;
   }
   return `${normalizedValue.toFixed(1)} ${units[unitIndex]}`;

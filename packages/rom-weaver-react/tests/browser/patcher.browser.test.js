@@ -202,7 +202,7 @@ const createChecksumOverrideHarnessElement = (applyPatchesSpy, stagedPatchInfoOv
     validationLabel: "Expected",
     validationMessage: "Actual input",
     validationState: "invalid",
-    validationValues: ["size=4.00 KiB (4096 B)", "min_size=1.00 KiB (1024 B)", "crc32=deadbeef"],
+    validationValues: ["size=4.10 KB (4096 B)", "min_size=1.02 KB (1024 B)", "crc32=deadbeef"],
     ...stagedPatchInfoOverrides,
   };
   const Harness = () => {
@@ -307,7 +307,7 @@ const waitForInputStackFileName = async () => {
     if (hasStagingProgress()) return null;
     const fileName = getInputStackFileName();
     const trimmedName = fileName?.trim() || "";
-    if (trimmedName && !/^\(\d+(?:\.\d+)?\s*(?:B|KiB|MiB|GiB)\)$/i.test(trimmedName)) {
+    if (trimmedName && !/^\(\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB)\)$/i.test(trimmedName)) {
       return { fileName: trimmedName, kind: "ready" };
     }
     const errorText = getRuntimeErrorText();
@@ -1234,7 +1234,7 @@ test("download-ready apply button does not duplicate ratio percent signs", async
   outputState.downloadSummary = {
     format: "ZIP",
     ratio: "73.4%",
-    size: "11.7 MiB",
+    size: "12.3 MB",
   };
 
   mount(
@@ -1399,7 +1399,7 @@ test("patch row shows extraction progress and extracted patch naming", async () 
     document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-archive")?.textContent || "";
   expect(archiveLabel).toContain("one-patch.7z");
   expect(archiveLabel).toContain("change.ips");
-  expect(archiveLabel).toMatch(/\d+(?:\.\d)? (?:B|KiB|MiB|GiB)/);
+  expect(archiveLabel).toMatch(/\d+(?:\.\d)? (?:B|KB|MB|GB|TB)/);
   expect(
     document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-archive strong")?.textContent || "",
   ).toContain("change.ips");
@@ -1705,7 +1705,7 @@ test("expected validation sizes use byte tooltips and hide legacy actual input t
     return code instanceof HTMLElement ? code : null;
   }, 30000);
   expect(sizeValidationCode).toBeInstanceOf(HTMLElement);
-  expect(sizeValidationCode?.textContent?.trim()).toBe("size=4.00 KiB");
+  expect(sizeValidationCode?.textContent?.trim()).toBe("size=4.10 KB");
   expect(sizeValidationCode?.getAttribute("data-size-bytes")).toBe("4096 B");
   expect(sizeValidationCode?.className).toMatch(/underline/);
   expect(sizeValidationCode?.getAttribute("aria-expanded")).toBe("false");
