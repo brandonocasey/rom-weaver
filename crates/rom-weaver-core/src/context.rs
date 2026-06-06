@@ -59,6 +59,7 @@ pub struct OperationContext {
     cancel: CancellationToken,
     extract_checksum_algorithms: Vec<String>,
     patch_checksum_validation: PatchChecksumValidation,
+    ppf_undo_aware: bool,
     xdelta_secondary_mode: XdeltaSecondaryMode,
 }
 
@@ -81,6 +82,7 @@ impl OperationContext {
             cancel,
             extract_checksum_algorithms: Vec::new(),
             patch_checksum_validation: PatchChecksumValidation::Strict,
+            ppf_undo_aware: false,
             xdelta_secondary_mode: XdeltaSecondaryMode::default(),
         }
     }
@@ -119,6 +121,22 @@ impl OperationContext {
     pub fn with_patch_checksum_validation(self, validation: PatchChecksumValidation) -> Self {
         Self {
             patch_checksum_validation: validation,
+            ..self
+        }
+    }
+
+    /// When enabled, PPF apply uses the patch's stored undo data to reconstruct the
+    /// original bytes of any validation region that has already been overwritten by a
+    /// prior application of the same patch. This lets a PPF3 patch (with a blockcheck
+    /// validation block) be safely re-applied to an already-patched ROM. For a clean,
+    /// unpatched ROM it is a strict no-op.
+    pub fn ppf_undo_aware(&self) -> bool {
+        self.ppf_undo_aware
+    }
+
+    pub fn with_ppf_undo_aware(self, enabled: bool) -> Self {
+        Self {
+            ppf_undo_aware: enabled,
             ..self
         }
     }

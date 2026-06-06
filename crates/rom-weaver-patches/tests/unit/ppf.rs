@@ -267,6 +267,171 @@ fn apply_ignores_ppf3_undo_data_in_normal_apply_mode() {
     assert_eq!(fs::read(output_path).expect("output"), b"abXYZfg12j");
 }
 
+/// Builds an original ROM whose game-image blockcheck region is overwritten by a single
+/// PPF3 record that lives *inside* that region, returning (original, already_patched,
+/// block, record).
+fn ppf3_blockcheck_overlap_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>, V3Record) {
+    let block_offset = 0x80A0usize;
+    let mut original = vec![0u8; block_offset + PPF_VALIDATION_BLOCK_SIZE + 64];
+    for (index, byte) in original.iter_mut().enumerate() {
+        *byte = (index % 241) as u8;
+    }
+    let block = original[block_offset..block_offset + PPF_VALIDATION_BLOCK_SIZE].to_vec();
+
+    let record_offset = block_offset + 16;
+    let data = b"PATCHED!".to_vec();
+    let undo = original[record_offset..record_offset + data.len()].to_vec();
+
+    let mut already_patched = original.clone();
+    already_patched[record_offset..record_offset + data.len()].copy_from_slice(&data);
+
+    let record = V3Record {
+        offset: record_offset as u64,
+        data,
+        undo,
+    };
+    (original, already_patched, block, record)
+}
+
+#[test]
+fn apply_rejects_re_patch_when_not_undo_aware() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ppf");
+    let output_path = temp.child("output.bin");
+
+    let (_original, already_patched, block, record) = ppf3_blockcheck_overlap_fixture();
+    fs::write(&input_path, &already_patched).expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ppf3_patch("PPF3 overlap", 1, true, true, Some(&block), vec![record]),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let error = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path,
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect_err("re-apply over patched input should fail blockcheck");
+    assert!(
+        error
+            .to_string()
+            .contains("binblock/patchvalidation failed")
+    );
+}
+
+#[test]
+fn apply_undo_aware_re_patches_already_patched_input() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ppf");
+    let output_path = temp.child("output.bin");
+
+    let (_original, already_patched, block, record) = ppf3_blockcheck_overlap_fixture();
+    fs::write(&input_path, &already_patched).expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ppf3_patch("PPF3 overlap", 1, true, true, Some(&block), vec![record]),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let report = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 1).with_ppf_undo_aware(true),
+        )
+        .expect("undo-aware re-apply should succeed");
+
+    // Output is the fully patched ROM (idempotent for byte writes).
+    assert_eq!(fs::read(output_path).expect("output"), already_patched);
+    assert!(report.label.contains("undo-aware re-apply"));
+}
+
+#[test]
+fn apply_undo_aware_is_noop_for_clean_input() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ppf");
+    let output_path = temp.child("output.bin");
+
+    let (original, already_patched, block, record) = ppf3_blockcheck_overlap_fixture();
+    fs::write(&input_path, &original).expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ppf3_patch("PPF3 overlap", 1, true, true, Some(&block), vec![record]),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let report = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 1).with_ppf_undo_aware(true),
+        )
+        .expect("undo-aware apply on clean input should succeed");
+
+    // Clean input patches normally and nothing is reconstructed.
+    assert_eq!(fs::read(output_path).expect("output"), already_patched);
+    assert!(!report.label.contains("undo-aware re-apply"));
+}
+
+#[test]
+fn apply_undo_aware_notes_already_patched_without_blockcheck() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ppf");
+    let output_path = temp.child("output.bin");
+
+    // Already-patched input (offset 2 holds "XYZ", the patch data; undo is "cde").
+    fs::write(&input_path, b"abXYZfghij").expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ppf3_patch(
+            "PPF3 no blockcheck",
+            0,
+            false,
+            true,
+            None,
+            vec![V3Record {
+                offset: 2,
+                data: b"XYZ".to_vec(),
+                undo: b"cde".to_vec(),
+            }],
+        ),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let report = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 1).with_ppf_undo_aware(true),
+        )
+        .expect("apply");
+
+    assert_eq!(fs::read(output_path).expect("output"), b"abXYZfghij");
+    assert!(report.label.contains("input already patched"));
+}
+
 #[test]
 fn parse_rejects_truncated_ppf3_record() {
     let mut patch = build_ppf3_patch(

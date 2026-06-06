@@ -96,8 +96,23 @@ impl PatchHandler for PpfPatchHandler {
             )));
         }
 
-        if validate_checksums && let Some(blockcheck) = &parsed.blockcheck {
-            validate_blockcheck(&request.input, blockcheck)?;
+        let undo_aware = context.ppf_undo_aware() && parsed.has_undo_data();
+        let mut undo_note = String::new();
+        if validate_checksums {
+            if let Some(blockcheck) = &parsed.blockcheck {
+                if undo_aware {
+                    if validate_blockcheck_undo_aware(&request.input, blockcheck, &parsed.records)?
+                    {
+                        undo_note =
+                            "; undo-aware re-apply (reconstructed already-applied validation region)"
+                                .to_string();
+                    }
+                } else {
+                    validate_blockcheck(&request.input, blockcheck)?;
+                }
+            } else if undo_aware && detect_already_patched(&request.input, &parsed.records)? {
+                undo_note = "; undo-aware re-apply (input already patched)".to_string();
+            }
         }
 
         if let Some(parent) = request.output.parent() {
@@ -144,10 +159,11 @@ impl PatchHandler for PpfPatchHandler {
             Some(self.descriptor.name.to_string()),
             "apply",
             format!(
-                "applied {} patch ({}) with {} record(s){}",
+                "applied {} patch ({}) with {} record(s){}{}",
                 self.descriptor.name,
                 parsed.version.label(),
                 parsed.records.len(),
+                undo_note,
                 checksum_suffix
             ),
             Some(100.0),
@@ -1588,6 +1604,100 @@ fn validate_blockcheck(input_path: &Path, blockcheck: &PpfBlockcheck) -> Result<
     }
 
     Ok(())
+}
+
+/// Validate a PPF3 blockcheck region while tolerating an already-patched input.
+///
+/// When this patch has been applied before, the bytes inside the validation region may
+/// already hold this patch's data, which would make the plain blockcheck fail. Using the
+/// per-record undo (original) bytes, we reconstruct the original validation region for any
+/// slice that currently matches the patched data, then compare against the expected block.
+///
+/// Returns `Ok(true)` when at least one slice was reverted (i.e. the input looked already
+/// patched), `Ok(false)` when the region already matched the expected original bytes.
+fn validate_blockcheck_undo_aware(
+    input_path: &Path,
+    blockcheck: &PpfBlockcheck,
+    records: &[PpfRecord],
+) -> Result<bool> {
+    let mut input = File::open(input_path)?;
+    input.seek(SeekFrom::Start(blockcheck.input_offset))?;
+
+    let mut region = vec![0; blockcheck.expected.len()];
+    input.read_exact(&mut region).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            RomWeaverError::Validation(format!(
+                "PPF validation block read exceeded input length at offset {}",
+                blockcheck.input_offset
+            ))
+        } else {
+            error.into()
+        }
+    })?;
+
+    let region_start = blockcheck.input_offset;
+    let region_end = region_start.saturating_add(region.len() as u64);
+    let mut reverted = false;
+
+    for record in records {
+        let Some(undo) = record.undo_data.as_ref() else {
+            continue;
+        };
+        let record_start = record.offset;
+        let record_end = record_start.saturating_add(record.data.len() as u64);
+        if record_end <= region_start || record_start >= region_end {
+            continue;
+        }
+
+        let overlap_start = record_start.max(region_start);
+        let overlap_end = record_end.min(region_end);
+        let region_lo = (overlap_start - region_start) as usize;
+        let region_hi = (overlap_end - region_start) as usize;
+        let record_lo = (overlap_start - record_start) as usize;
+        let record_hi = (overlap_end - record_start) as usize;
+
+        let patched = &record.data[record_lo..record_hi];
+        let original = &undo[record_lo..record_hi];
+        // Only revert slices that currently hold this patch's data; leave clean or
+        // unknown bytes untouched so a genuinely wrong base ROM still fails validation.
+        if &region[region_lo..region_hi] == patched && patched != original {
+            region[region_lo..region_hi].copy_from_slice(original);
+            reverted = true;
+        }
+    }
+
+    if region.as_slice() != blockcheck.expected.as_slice() {
+        return Err(RomWeaverError::Validation(
+            "PPF binblock/patchvalidation failed".into(),
+        ));
+    }
+
+    Ok(reverted)
+}
+
+/// Cheap probe used only to annotate the apply report when the patch has no blockcheck:
+/// reads the first undo-capable record's region and reports whether it already holds the
+/// patched bytes (i.e. the input appears to have been patched before).
+fn detect_already_patched(input_path: &Path, records: &[PpfRecord]) -> Result<bool> {
+    let Some(record) = records
+        .iter()
+        .find(|record| record.undo_data.is_some() && !record.data.is_empty())
+    else {
+        return Ok(false);
+    };
+    let undo = record.undo_data.as_ref().expect("record has undo data");
+    if undo == &record.data {
+        return Ok(false);
+    }
+
+    let mut input = File::open(input_path)?;
+    input.seek(SeekFrom::Start(record.offset))?;
+    let mut actual = vec![0; record.data.len()];
+    match input.read_exact(&mut actual) {
+        Ok(()) => Ok(actual == record.data),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn ppf_required_output_len(input_len: u64, records: &[PpfRecord]) -> u64 {

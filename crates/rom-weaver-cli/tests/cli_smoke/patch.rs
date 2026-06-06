@@ -71,6 +71,90 @@ fn patch_apply_succeeds_for_valid_ips_patch() {
 }
 
 #[test]
+fn patch_apply_validates_output_checksum() {
+    let temp = setup_temp_dir();
+    fs::write(temp.child("input.bin").path(), b"abcdefgh").expect("fixture");
+    fs::write(
+        temp.child("update.ips").path(),
+        build_ips_patch(
+            vec![
+                TestIpsRecord::Literal {
+                    offset: 2,
+                    data: b"XYZ".to_vec(),
+                },
+                TestIpsRecord::Rle {
+                    offset: 7,
+                    len: 4,
+                    value: b'!',
+                },
+            ],
+            Some(11),
+        ),
+    )
+    .expect("fixture");
+
+    // Correct output checksums (crc32 + sha1) succeed and are reported in the label.
+    let ok_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.bin").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.ips").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.bin").path().to_str().expect("path"),
+            "--no-compress",
+            "--validate-output-checksum",
+            "crc32=3fc13708",
+            "--validate-output-checksum",
+            "sha1=10c54c25716315070c5c7336ae9fcd483991f6e7",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let ok_json = parse_single_json_line(&ok_output);
+    assert_eq!(ok_json["status"], "succeeded");
+    assert!(ok_json["label"]
+        .as_str()
+        .expect("label")
+        .contains("output checksum(s) verified"));
+
+    // A wrong output checksum fails the apply.
+    let bad_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.bin").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.ips").path().to_str().expect("path"),
+            "--output",
+            temp.child("bad-output.bin").path().to_str().expect("path"),
+            "--no-compress",
+            "--validate-output-checksum",
+            "crc32=deadbeef",
+            "--json",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let bad_json = parse_single_json_line(&bad_output);
+    assert_eq!(bad_json["status"], "failed");
+    assert!(bad_json["label"]
+        .as_str()
+        .expect("label")
+        .contains("output checksum mismatch for crc32"));
+}
+
+#[test]
 fn patch_apply_can_ignore_recoverable_ips_validation() {
     let temp = setup_temp_dir();
     fs::write(temp.child("input.bin").path(), b"abcdefgh").expect("fixture");

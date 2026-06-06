@@ -513,6 +513,8 @@ impl CliApp {
             add_header = args.add_header,
             repair_checksum = args.repair_checksum,
             ignore_checksum_validation = args.ignore_checksum_validation,
+            validate_with_output_checksums = args.validate_with_output_checksums.len(),
+            ppf_undo_aware = args.ppf_undo_aware,
             threads = %args.threads,
             "starting patch-apply command"
         );
@@ -535,18 +537,21 @@ impl CliApp {
             add_header,
             repair_checksum,
             ignore_checksum_validation,
+            validate_with_output_checksums,
+            ppf_undo_aware,
             threads,
         } = args;
         let discover_implicit_patches = patches.is_empty() && !no_extract;
         let input_kind_filter = Self::archive_entry_kind_filter(rom_filter || discover_implicit_patches, false);
         let patch_kind_filter = Self::archive_entry_kind_filter(false, patch_filter);
-        let context =
-            self.context(threads)
-                .with_patch_checksum_validation(if ignore_checksum_validation {
-                    PatchChecksumValidation::Ignore
-                } else {
-                    PatchChecksumValidation::Strict
-                });
+        let context = self
+            .context(threads)
+            .with_patch_checksum_validation(if ignore_checksum_validation {
+                PatchChecksumValidation::Ignore
+            } else {
+                PatchChecksumValidation::Strict
+            })
+            .with_ppf_undo_aware(ppf_undo_aware);
         let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
         let compression_options = match Self::parse_patch_apply_compression_options(
             no_compress,
@@ -587,6 +592,24 @@ impl CliApp {
         let expected_input_checksums = match Self::parse_patch_apply_checksum_values(
             &validate_with_checksums,
             "--validate-with-checksum",
+        ) {
+            Ok(values) => values,
+            Err(error) => {
+                return self.finish(
+                    "patch-apply",
+                    OperationReport::failed(
+                        OperationFamily::Patch,
+                        None,
+                        "validate",
+                        error.to_string(),
+                        probe_threads.clone(),
+                    ),
+                );
+            }
+        };
+        let expected_output_checksums = match Self::parse_patch_apply_checksum_values(
+            &validate_with_output_checksums,
+            "--validate-output-checksum",
         ) {
             Ok(values) => values,
             Err(error) => {
@@ -1164,6 +1187,40 @@ impl CliApp {
             if !extracted_patch_notes.is_empty() {
                 report.label = format!("{}; {}", report.label, extracted_patch_notes.join("; "));
             }
+            if report.status == OperationStatus::Succeeded && !expected_output_checksums.is_empty() {
+                self.emit_running(
+                    OperationLabel {
+                        command: "patch-apply",
+                        family: OperationFamily::Patch,
+                        format: report.format.as_deref(),
+                    },
+                    "validate",
+                    format!(
+                        "validating {} requested output checksum(s)",
+                        expected_output_checksums.len()
+                    ),
+                    None,
+                    Some(context.plan_threads(ThreadCapability::single_threaded())),
+                );
+                match Self::validate_patch_apply_expected_checksums(
+                    &raw_ready_output,
+                    &expected_output_checksums,
+                    "output",
+                    &context,
+                ) {
+                    Ok(label) => checksum_verification_labels.push(label),
+                    Err(error) => {
+                        return OperationReport::failed(
+                            OperationFamily::Patch,
+                            report.format.clone(),
+                            "validate",
+                            error.to_string(),
+                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                        );
+                    }
+                }
+            }
+
             if !checksum_verification_labels.is_empty() {
                 report.label = format!(
                     "{}; {}",

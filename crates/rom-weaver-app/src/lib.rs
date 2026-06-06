@@ -825,6 +825,27 @@ pub struct PatchApplyCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub ignore_checksum_validation: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "validate-output-checksum",
+            value_name = "ALGO=HEX",
+            help = "Validate the patched output checksum after apply; repeat for multiple algorithms (for example: --validate-output-checksum sha1=...)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub validate_with_output_checksums: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "ppf-undo-aware",
+            help = "For PPF patches that carry undo data, reconstruct the original validation region so an already-patched ROM can be safely re-applied (no-op for a clean ROM)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub ppf_undo_aware: bool,
     #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
