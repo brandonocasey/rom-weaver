@@ -1635,7 +1635,7 @@ dependencies = [
  "crc",
  "flacenc",
  "flate2",
- "lzma-rust2",
+ "liblzma-sys",
  "rayon",
  "rom-weaver-checksum",
  "rom-weaver-codecs",

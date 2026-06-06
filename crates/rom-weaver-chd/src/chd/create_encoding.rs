@@ -1188,31 +1188,70 @@
             level: u32,
             context: &str,
         ) -> Result<Vec<u8>> {
-            // Bring `Write` into scope anonymously so `write_all` resolves
-            // without clashing with the `std::io::Write` already imported in this module.
-            use std::io::Write as _;
+            const LZMA_FILTER_LZMA1EXT: liblzma_sys::lzma_vli = 0x4000000000000002;
 
             // Match MAME/chdman's CHD LZMA configuration: raw LZMA1 with no header and no
             // end-of-stream marker (the CHD map records the decompressed size), lc=3/lp=0/pb=2,
-            // and a hunk-bounded dictionary. The 7-zip LZMA SDK (which lzma-rust2 ports) packs
-            // these small per-hunk streams a few bytes tighter than liblzma.
+            // and a hunk-bounded dictionary.
             let reduce_size = u32::try_from(input.len()).unwrap_or(u32::MAX);
-            let mut options = lzma_rust2::LzmaOptions::with_preset(level.min(9));
+            let mut options =
+                unsafe { std::mem::zeroed::<liblzma_sys::lzma_options_lzma>() };
+            let preset_status =
+                unsafe { liblzma_sys::lzma_lzma_preset(&mut options, level.min(9)) };
+            if preset_status != 0 {
+                return Err(RomWeaverError::Validation(format!(
+                    "{context} compression init failed: invalid liblzma preset {level}"
+                )));
+            }
             options.lc = 3;
             options.lp = 0;
             options.pb = 2;
             options.dict_size = Self::chd_lzma_dict_size(level, reduce_size);
+            options.ext_flags = 0;
+            options.ext_size_low = input.len() as u32;
+            options.ext_size_high = ((input.len() as u64) >> 32) as u32;
 
-            let mut writer = lzma_rust2::LzmaWriter::new_no_header(Vec::new(), &options, false)
-                .map_err(|error| {
-                    RomWeaverError::Validation(format!("{context} compression failed: {error}"))
-                })?;
-            writer.write_all(input).map_err(|error| {
-                RomWeaverError::Validation(format!("{context} compression failed: {error}"))
-            })?;
-            writer.finish().map_err(|error| {
-                RomWeaverError::Validation(format!("{context} compression failed: {error}"))
-            })
+            let filters = [
+                liblzma_sys::lzma_filter {
+                    id: LZMA_FILTER_LZMA1EXT,
+                    options: (&mut options as *mut liblzma_sys::lzma_options_lzma)
+                        .cast::<std::ffi::c_void>(),
+                },
+                liblzma_sys::lzma_filter {
+                    id: liblzma_sys::LZMA_VLI_UNKNOWN,
+                    options: std::ptr::null_mut(),
+                },
+            ];
+
+            let output_bound = unsafe { liblzma_sys::lzma_stream_buffer_bound(input.len()) };
+            if output_bound == 0 {
+                return Err(RomWeaverError::Validation(format!(
+                    "{context} compression failed: input too large for liblzma"
+                )));
+            }
+
+            let mut output = vec![0u8; output_bound];
+            let mut output_pos = 0usize;
+            let status = unsafe {
+                liblzma_sys::lzma_raw_buffer_encode(
+                    filters.as_ptr(),
+                    std::ptr::null(),
+                    input.as_ptr(),
+                    input.len(),
+                    output.as_mut_ptr(),
+                    &mut output_pos,
+                    output.len(),
+                )
+            };
+            if status != liblzma_sys::LZMA_OK {
+                return Err(RomWeaverError::Validation(format!(
+                    "{context} compression failed: {}",
+                    Self::lzma_status_name(status)
+                )));
+            }
+
+            output.truncate(output_pos);
+            Ok(output)
         }
 
         fn chd_lzma_dict_size(level: u32, reduce_size: u32) -> u32 {
@@ -1237,6 +1276,21 @@
                 }
             }
             dict_size
+        }
+
+        fn lzma_status_name(status: liblzma_sys::lzma_ret) -> &'static str {
+            match status {
+                value if value == liblzma_sys::LZMA_OK => "ok",
+                value if value == liblzma_sys::LZMA_STREAM_END => "stream end",
+                value if value == liblzma_sys::LZMA_MEM_ERROR => "memory allocation failed",
+                value if value == liblzma_sys::LZMA_MEMLIMIT_ERROR => "memory limit reached",
+                value if value == liblzma_sys::LZMA_FORMAT_ERROR => "format error",
+                value if value == liblzma_sys::LZMA_OPTIONS_ERROR => "unsupported options",
+                value if value == liblzma_sys::LZMA_DATA_ERROR => "input data error",
+                value if value == liblzma_sys::LZMA_BUF_ERROR => "output buffer too small",
+                value if value == liblzma_sys::LZMA_PROG_ERROR => "programming error",
+                _ => "unknown error",
+            }
         }
 
         fn encode_v5_compressed_map(

@@ -14,7 +14,7 @@ chd.workspace = true
 crc.workspace = true
 flacenc.workspace = true
 flate2.workspace = true
-lzma-rust2.workspace = true
+liblzma-sys.workspace = true
 rayon.workspace = true
 rom-weaver-libarchive-sys = { workspace = true, default-features = false }
 serde_json.workspace = true
