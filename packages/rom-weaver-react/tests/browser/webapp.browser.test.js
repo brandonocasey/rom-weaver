@@ -38,15 +38,22 @@ const waitForState = async (resolveState, timeout = 60000, intervalMs = 50) => {
 
 const selectCandidateIfPrompted = async (label) => {
   const selectionState = await waitForState(() => {
-    const selectedLabel =
-      document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file")?.textContent || "";
+    const selectedLabel = document.querySelector("#rom-weaver-list-input-stack")?.textContent || "";
     if (selectedLabel.includes(label)) return "selected";
-    if (document.querySelector("#rom-weaver-candidate-selection-list")) return "dialog";
+    if (document.querySelector(".rw-modal.select-modal .seltree")) return "dialog";
     return null;
   });
   expect(selectionState).not.toBeNull();
   if (selectionState === "selected") return;
   await page.getByRole("button", { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") }).click();
+};
+
+const waitForInputStackFile = async (fileName) => {
+  const selected = await waitForState(() => {
+    const stackText = document.querySelector("#rom-weaver-list-input-stack")?.textContent || "";
+    return stackText.includes(fileName) ? true : null;
+  });
+  expect(selected).toBe(true);
 };
 
 const createNoopActions = () => ({
@@ -131,7 +138,7 @@ test("WebappRoot mounts the full workflow shell and stages archive inputs", asyn
 
   await expect.element(romInput).toBeInTheDocument();
   await expect.element(page.getByLabelText(/Select patch/i)).toBeInTheDocument();
-  await expect.element(page.getByRole("button", { name: /apply patch/i })).toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: /apply & download/i })).toBeInTheDocument();
 
   await expect.element(page.getByRole("tablist", { name: "Workflow" })).toBeInTheDocument();
   await expect.element(page.getByRole("tab", { name: /apply/i })).toBeInTheDocument();
@@ -141,16 +148,18 @@ test("WebappRoot mounts the full workflow shell and stages archive inputs", asyn
   await romInput.upload(await loadFixtureFile(ONE_ROM_ZIP, "application/zip"));
   await selectCandidateIfPrompted("game.bin");
 
-  await expect.element(page.getByText(/game\.bin/i)).toBeInTheDocument();
+  await waitForInputStackFile("game.bin");
   await expect.element(page.getByText(CRC32_TEXT_REGEX)).toBeInTheDocument();
 
   await page.getByRole("button", { name: "Clear ROM input" }).click();
-  await expect.element(page.getByText("game.bin", { exact: true })).not.toBeInTheDocument();
+  await expect
+    .poll(() => document.querySelector("#rom-weaver-list-input-stack")?.textContent || "")
+    .not.toContain("game.bin");
 
   await page.getByLabelText(/Select ROM/i).upload(await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"));
 
   await selectCandidateIfPrompted("game.bin");
 
-  await expect.element(page.getByText(/game\.bin/i)).toBeInTheDocument();
+  await waitForInputStackFile("game.bin");
   await expect.element(page.getByText(CRC32_TEXT_REGEX)).toBeInTheDocument();
 });

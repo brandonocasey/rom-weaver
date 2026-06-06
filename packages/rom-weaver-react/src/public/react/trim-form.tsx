@@ -32,8 +32,10 @@ import { createCompressionTypeOptions, createTrimOutputOptions } from "./output-
 import type { BinarySource } from "./patcher-form.ts";
 import type { CandidateSelectionPrompt, TrimPatchFormProps, TrimPatchFormSettings } from "./public-types.ts";
 import {
+  allowsDefaultCompressionSpecial,
   getCreateSettingsOutputName,
-  normalizeDefaultArchive,
+  getDefaultCompressionArchive,
+  getDefaultCompressionMode,
   toCreateWorkflowSettings,
   useCreateSettings,
   useRomWeaverAssetBaseUrl,
@@ -173,7 +175,13 @@ const isSourceInvalid = (source: TrimWorkflowSourceState | null | undefined) =>
 
 const isDismissibleWorkflowError = (code: string) => code !== "AMBIGUOUS_SELECTION";
 
+type InternalTrimPatchFormProps = TrimPatchFormProps & {
+  trimWorkflow?: typeof TrimWorkflow;
+};
+
 function TrimPatchForm(props: TrimPatchFormProps) {
+  const internalProps = props as InternalTrimPatchFormProps;
+  const TrimWorkflowConstructor = internalProps.trimWorkflow || TrimWorkflow;
   const providerSettings = useCreateSettings();
   const providerAssetBaseUrl = useRomWeaverAssetBaseUrl();
   const resolvedAssetBaseUrl = props.assetBaseUrl || providerAssetBaseUrl;
@@ -264,23 +272,27 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   const sourceFileName = getReactBinarySourceFileName(source, "ROM");
   const resolvedSourceFileName = sourceState?.fileName || sourceFileName;
   const rawOutputFormat = getSourceExtension(resolvedSourceFileName);
-  const defaultArchiveFormat = normalizeDefaultArchive(settings.defaultArchive);
+  const defaultCompressionMode = getDefaultCompressionMode(settings);
+  const defaultArchiveFormat = getDefaultCompressionArchive(defaultCompressionMode);
   const configuredOutputFormat = props.outputFormat ?? (outputFormatEdited ? internalOutputFormat : "");
-  const automaticArchiveFormat = defaultArchiveFormat === "none" ? "none" : defaultArchiveFormat;
   const automaticCompressionFormat = resolveAutomaticCompressionFormat({
-    fallback: automaticArchiveFormat,
+    fallback: defaultArchiveFormat,
     parentCompressions: sourceState?.parentCompressions,
     sourceFileName: resolvedSourceFileName,
   });
   const automaticSpecialOutputFormat =
-    settings.specialCompression !== false &&
+    allowsDefaultCompressionSpecial(defaultCompressionMode) &&
     (automaticCompressionFormat === "chd" ||
       automaticCompressionFormat === "rvz" ||
       automaticCompressionFormat === "z3ds")
       ? automaticCompressionFormat
       : "";
+  const automaticDefaultFormat =
+    defaultCompressionMode === "auto"
+      ? automaticCompressionFormat
+      : automaticSpecialOutputFormat || defaultArchiveFormat;
   const automaticOutputFormat =
-    automaticSpecialOutputFormat || (defaultArchiveFormat === "none" ? rawOutputFormat : defaultArchiveFormat);
+    automaticSpecialOutputFormat || (automaticDefaultFormat === "none" ? rawOutputFormat : automaticDefaultFormat);
   const resolvedOutputFormat = configuredOutputFormat || automaticOutputFormat;
   const configuredOutputName = getCreateSettingsOutputName(props.settings || props.defaultSettings || providerSettings);
   const generatedOutputName =
@@ -387,7 +399,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       setSourceStaging(false);
       return;
     }
-    const workflow = new TrimWorkflow({
+    const workflow = new TrimWorkflowConstructor({
       ...(resolvedAssetBaseUrl ? { assetBaseUrl: resolvedAssetBaseUrl } : {}),
       id: `${workflowIdRef.current}:stage:${generation}`,
       selectFile,
@@ -481,6 +493,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     sourceFileName,
     stagingSettingsKey,
     setWorkflowMessage,
+    TrimWorkflowConstructor,
   ]);
 
   const runTrim = async () => {
@@ -511,7 +524,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     await stagedTrimWorkflowReadyRef.current?.catch(() => undefined);
     const trimWorkflow =
       stagedTrimWorkflowRef.current ||
-      new TrimWorkflow({
+      new TrimWorkflowConstructor({
         ...(resolvedAssetBaseUrl ? { assetBaseUrl: resolvedAssetBaseUrl } : {}),
         id: workflowIdRef.current,
         selectFile,

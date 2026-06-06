@@ -27,13 +27,39 @@ const createLocalPatcherSessionState = (): LocalPatcherSessionState => ({
   romInputs: [],
 });
 
+const hasShallowEqualValue = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true;
+  if (
+    !(left && right) ||
+    typeof left !== "object" ||
+    typeof right !== "object" ||
+    Array.isArray(left) !== Array.isArray(right)
+  ) {
+    return false;
+  }
+  const leftEntries = Object.entries(left);
+  const rightEntries = Object.entries(right);
+  if (leftEntries.length !== rightEntries.length) return false;
+  return leftEntries.every(([key, value]) => Object.is(value, (right as Record<string, unknown>)[key]));
+};
+
 const localPatcherSessionStateReducer = (
   state: LocalPatcherSessionState,
   patch: LocalPatcherSessionStatePatch,
-): LocalPatcherSessionState => ({
-  ...state,
-  ...(typeof patch === "function" ? patch(state) : patch),
-});
+): LocalPatcherSessionState => {
+  const resolvedPatch = typeof patch === "function" ? patch(state) : patch;
+  if (
+    Object.entries(resolvedPatch).every(([key, value]) =>
+      hasShallowEqualValue(state[key as keyof LocalPatcherSessionState], value),
+    )
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    ...resolvedPatch,
+  };
+};
 
 const useLocalPatcherSessionState = () => {
   const [localState, setLocalState] = useReducer(

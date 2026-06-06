@@ -1,11 +1,12 @@
 import "../../assets/fonts/inter-tight.css";
 
-export { ApplyPatchForm } from "./apply-patch-form.tsx";
-export { CreatePatchForm } from "./create-patch-form.tsx";
 export type {
   BrowserCreatePatchFormatCandidatesInput,
   RuntimePatchCreateFormatCandidates,
 } from "../../platform/browser/browser-api.ts";
+export { getCreatePatchFormatCandidates } from "../../platform/browser/browser-api.ts";
+export { ApplyPatchForm } from "./apply-patch-form.tsx";
+export { CreatePatchForm } from "./create-patch-form.tsx";
 export type {
   ApplyPatchFormProps,
   ApplyPatchFormSettings,
@@ -17,7 +18,6 @@ export type {
   TrimPatchFormProps,
   TrimPatchFormSettings,
 } from "./public-types.ts";
-export { getCreatePatchFormatCandidates } from "../../platform/browser/browser-api.ts";
 export {
   RomWeaverSettingsProvider,
   useApplySettings,

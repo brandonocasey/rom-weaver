@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
+import { TrimPatchForm } from "../../src/public/react/trim-form.tsx";
 
 const workflowMockState = {
   inputDeferred: null,
@@ -47,97 +48,88 @@ const setFormControlValue = (element, value) => {
   element.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
-const importMockedTrimPatchForm = async () => {
-  vi.resetModules();
-  vi.doMock("../../src/platform/browser/browser-api.ts", async (importOriginal) => {
-    const actual = await importOriginal();
+class MockTrimWorkflow {
+  constructor(options = {}) {
+    this.id = options.id || "mock-trim";
+    this.input = null;
+    this.listeners = new Map();
+    this.settings = options.settings || {};
+    workflowMockState.instances.push(this);
+  }
 
-    class MockTrimWorkflow {
-      constructor(options = {}) {
-        this.id = options.id || "mock-trim";
-        this.input = null;
-        this.listeners = new Map();
-        this.settings = options.settings || {};
-        workflowMockState.instances.push(this);
-      }
+  abort() {
+    this.aborted = true;
+  }
 
-      abort() {
-        this.aborted = true;
-      }
+  dispose() {
+    return Promise.resolve();
+  }
 
-      dispose() {
-        return Promise.resolve();
-      }
-
-      emitProgress(label) {
-        for (const handler of this.listeners.get("progress") || []) {
-          handler({
-            details: {
-              role: "input",
-              stage: "input",
-            },
-            hasProgress: true,
-            label,
-            message: label,
-            percent: null,
-            role: "input",
-            stage: "input",
-          });
-        }
-      }
-
-      getInput() {
-        return this.input;
-      }
-
-      off(event, handler) {
-        this.listeners.get(event)?.delete(handler);
-      }
-
-      on(event, handler) {
-        const handlers = this.listeners.get(event) || new Set();
-        handlers.add(handler);
-        this.listeners.set(event, handlers);
-      }
-
-      run() {
-        workflowMockState.runCalls += 1;
-        return new Promise(() => undefined);
-      }
-
-      setInput(source) {
-        this.emitProgress("Preparing ROM...");
-        return workflowMockState.inputDeferred.promise.then(() => {
-          this.input = {
-            fileName: source?.name || "game.bin",
-            selectedCandidateId: "input",
-            size: source?.size || 4,
-            status: "ready",
-            warnings: [],
-            ...workflowMockState.inputStateOverrides,
-          };
-        });
-      }
-
-      setOutputFormat(outputFormat) {
-        this.outputFormat = outputFormat;
-        return Promise.resolve();
-      }
-
-      setOutputName(outputName) {
-        this.outputName = outputName;
-        return Promise.resolve();
-      }
+  emitProgress(label) {
+    for (const handler of this.listeners.get("progress") || []) {
+      handler({
+        details: {
+          role: "input",
+          stage: "input",
+        },
+        hasProgress: true,
+        label,
+        message: label,
+        percent: null,
+        role: "input",
+        stage: "input",
+      });
     }
+  }
 
-    return {
-      ...actual,
-      TrimWorkflow: MockTrimWorkflow,
-    };
-  });
+  getInput() {
+    return this.input;
+  }
 
-  return import("../../src/public/react/trim-form.tsx");
-};
+  off(event, handler) {
+    this.listeners.get(event)?.delete(handler);
+  }
+
+  on(event, handler) {
+    const handlers = this.listeners.get(event) || new Set();
+    handlers.add(handler);
+    this.listeners.set(event, handlers);
+  }
+
+  run() {
+    workflowMockState.runCalls += 1;
+    return new Promise(() => undefined);
+  }
+
+  setInput(source) {
+    this.emitProgress("Preparing ROM...");
+    return workflowMockState.inputDeferred.promise.then(() => {
+      this.input = {
+        fileName: source?.name || "game.bin",
+        selectedCandidateId: "input",
+        size: source?.size || 4,
+        status: "ready",
+        warnings: [],
+        ...workflowMockState.inputStateOverrides,
+      };
+    });
+  }
+
+  setOutputFormat(outputFormat) {
+    this.outputFormat = outputFormat;
+    return Promise.resolve();
+  }
+
+  setOutputName(outputName) {
+    this.outputName = outputName;
+    return Promise.resolve();
+  }
+}
+
+const withTrimWorkflowMock = (props = {}) => ({
+  trimWorkflow: MockTrimWorkflow,
+  ...props,
+});
 
 const getOutputWaitingText = () => document.querySelector(".outcard > .fileprog")?.textContent || "";
 
@@ -172,12 +164,15 @@ beforeEach(() => {
 afterEach(() => {
   mountedRoot?.unmount?.();
   mountedRoot = null;
-  vi.doUnmock("../../src/platform/browser/browser-api.ts");
 });
 
 test("trim output edits stay enabled while queued and cancel the queued run", async () => {
-  const { TrimPatchForm } = await importMockedTrimPatchForm();
-  mount(createElement(TrimPatchForm, { defaultSource: new File([new Uint8Array([0, 1, 2, 3])], "game.bin") }));
+  mount(
+    createElement(
+      TrimPatchForm,
+      withTrimWorkflowMock({ defaultSource: new File([new Uint8Array([0, 1, 2, 3])], "game.bin") }),
+    ),
+  );
 
   await expect.poll(() => document.querySelectorAll(".fileprog").length).toBeGreaterThan(0);
 
@@ -209,8 +204,12 @@ test("trim output edits stay enabled while queued and cancel the queued run", as
 });
 
 test("trim queued run cancels when source preparation warns", async () => {
-  const { TrimPatchForm } = await importMockedTrimPatchForm();
-  mount(createElement(TrimPatchForm, { defaultSource: new File([new Uint8Array([0, 1, 2, 3])], "game.bin") }));
+  mount(
+    createElement(
+      TrimPatchForm,
+      withTrimWorkflowMock({ defaultSource: new File([new Uint8Array([0, 1, 2, 3])], "game.bin") }),
+    ),
+  );
 
   await expect.poll(() => document.querySelectorAll(".fileprog").length).toBeGreaterThan(0);
   await queueTrim();
@@ -229,14 +228,16 @@ test("trim queued run cancels when source preparation warns", async () => {
 });
 
 test("trim queued default format follows unambiguous special compression input", async () => {
-  const { TrimPatchForm } = await importMockedTrimPatchForm();
   mount(
-    createElement(TrimPatchForm, {
-      defaultSettings: {
-        defaultArchive: "zip",
-      },
-      defaultSource: new File([new Uint8Array([0, 1, 2, 3])], "game.gcm"),
-    }),
+    createElement(
+      TrimPatchForm,
+      withTrimWorkflowMock({
+        defaultSettings: {
+          defaultCompression: "zip/special",
+        },
+        defaultSource: new File([new Uint8Array([0, 1, 2, 3])], "game.gcm"),
+      }),
+    ),
   );
 
   await expect
@@ -254,14 +255,16 @@ test("trim queued default format follows unambiguous special compression input",
 });
 
 test("trim queued default format does not guess for iso input", async () => {
-  const { TrimPatchForm } = await importMockedTrimPatchForm();
   mount(
-    createElement(TrimPatchForm, {
-      defaultSettings: {
-        defaultArchive: "zip",
-      },
-      defaultSource: new File([new Uint8Array([0, 1, 2, 3])], "game.iso"),
-    }),
+    createElement(
+      TrimPatchForm,
+      withTrimWorkflowMock({
+        defaultSettings: {
+          defaultCompression: "zip/special",
+        },
+        defaultSource: new File([new Uint8Array([0, 1, 2, 3])], "game.iso"),
+      }),
+    ),
   );
 
   await expect

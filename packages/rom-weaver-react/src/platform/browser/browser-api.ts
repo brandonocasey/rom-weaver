@@ -9,8 +9,8 @@ import type { ApplyResult, CreateResult, TrimResult } from "../../types/public.t
 import type { ApplySettings, CompressionFormat, CreateSettings, WorkerSettings } from "../../types/settings.ts";
 import type { BrowserSourceRef } from "../../types/source.ts";
 import type { TrimWorkflowSourceState } from "../../types/trim-workflow.ts";
-import type { RuntimePatchCreateFormatCandidates } from "../../types/workflow-runtime-adapter.ts";
 import type { WorkflowOptions } from "../../types/workflow-public.ts";
+import type { RuntimePatchCreateFormatCandidates } from "../../types/workflow-runtime-adapter.ts";
 import { createPublicSourcesValidator, createPublicSourceValidator } from "../shared/public-source-validation.ts";
 import { configureBrowserAssetBaseUrl } from "./browser-asset-base.ts";
 import { scheduleBrowserRuntimeWarmupExtraction } from "./browser-runtime-warmup.ts";
@@ -158,7 +158,6 @@ class CreateWorkflow extends BrowserWorkflowBase<
 }
 
 export type { BrowserSaveDestination, PublicOutput } from "../../types/output.ts";
-export type { BrowserCreatePatchFormatCandidatesInput, RuntimePatchCreateFormatCandidates };
 export type { ProgressSink, WorkflowProgress } from "../../types/progress.ts";
 export type {
   ApplyResult,
@@ -182,6 +181,7 @@ export type {
   SourceObject,
   SourceRef,
 } from "../../types/source.ts";
+export type { BrowserCreatePatchFormatCandidatesInput, RuntimePatchCreateFormatCandidates };
 
 class ApplyWorkflow extends BrowserWorkflowBase<
   ApplyResult<BrowserSaveDestination>,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resolveAutomaticCompressionFormat } from "../../lib/compression/container-format-registry.ts";
 import OutputCompressionManager from "../../lib/compression/output-compression-manager.ts";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
-import { formatCodedErrorForDisplay } from "../../presentation/errors.ts";
+import { formatCodedErrorForDisplay, getErrorCode } from "../../presentation/errors.ts";
 import { createBrowserLocalizer } from "../../presentation/localization/index.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
 import type { ApplyWorkflowResult } from "../../types/workflow-runtime.ts";
@@ -66,11 +66,31 @@ import {
 import { createOutputSizeSummary } from "./patcher-presentation.ts";
 import type { InputProgress, NoticeState, PatcherSectionNoticeKey, RomInputRowState } from "./patcher-ui-state.ts";
 import {
+  allowsDefaultCompressionSpecial,
+  getDefaultCompressionArchive,
+  getDefaultCompressionMode,
+} from "./settings-context.tsx";
+import {
   createIndeterminateWorkflowProgress,
   createWaitingWorkflowProgress,
   useActiveAbortController,
   useDisposableCleanup,
 } from "./workflow-run-hooks.ts";
+
+const createSettingsIdentityKey = (settings: ApplyPatchFormSettings) =>
+  JSON.stringify(settings, (_key, value) => (typeof value === "function" ? "[function]" : value));
+
+const isSpecialOutputCompression = (compression: CompressionFormat | string | null | undefined) =>
+  compression === "chd" || compression === "rvz" || compression === "z3ds";
+
+const hasSameRecordValues = <T>(left: Record<string, T>, right: Record<string, T>) => {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => left[key] === right[key]);
+};
+
+const isWorkflowDisposedError = (error: unknown) => getErrorCode(error) === "WORKFLOW_DISPOSED";
 
 const useLocalApplyPatchFormSession = ({
   inputs,
@@ -102,6 +122,8 @@ const useLocalApplyPatchFormSession = ({
   const [internalInputs, setInternalInputs] = useState(defaultInputs);
   const [internalPatches, setInternalPatches] = useState(defaultPatches);
   const [internalSettings, setInternalSettings] = useState<ApplyPatchFormSettings>(defaultSettings);
+  const defaultSettingsKey = useMemo(() => createSettingsIdentityKey(defaultSettings), [defaultSettings]);
+  const appliedDefaultSettingsKeyRef = useRef(defaultSettingsKey);
   const [checksumOverrideChecked, setChecksumOverrideChecked] = useState(false);
   const {
     localState,
@@ -192,11 +214,14 @@ const useLocalApplyPatchFormSession = ({
     },
     [activeSettings],
   );
-  const defaultArchiveCompression =
-    activeSettings.defaultArchive === "7z" || activeSettings.defaultArchive === "none"
-      ? activeSettings.defaultArchive
-      : "zip";
-  const activeCompression = activeSettings.output?.compression || defaultArchiveCompression;
+  const defaultCompressionMode = getDefaultCompressionMode(activeSettings);
+  const defaultArchiveCompression = getDefaultCompressionArchive(defaultCompressionMode);
+  const configuredOutputCompression = activeSettings.output?.compression;
+  const hasConfiguredOutputCompression =
+    configuredOutputCompression !== undefined &&
+    configuredOutputCompression !== null &&
+    String(configuredOutputCompression).trim() !== "";
+  const activeCompression = configuredOutputCompression || defaultArchiveCompression;
   const z3dsLabelSource = useMemo<BinarySource | undefined>(() => {
     const selectedInputFileName = String(romInputs[0]?.info?.fileName || "").trim();
     const baseSource = effectiveInputs[0];
@@ -228,17 +253,30 @@ const useLocalApplyPatchFormSession = ({
     parentCompressions: romInputs[0]?.archivePathEntries,
     sourceFileName: String(romInputs[0]?.info?.fileName || getBinarySourceFileName(effectiveInputs[0], "")),
   });
-  const specialCompressionFormat =
-    autoResolvedCompression === "chd" || autoResolvedCompression === "rvz" || autoResolvedCompression === "z3ds"
-      ? autoResolvedCompression
+  const defaultResolvedCompression = resolveAutomaticCompressionFormat({
+    fallback: defaultArchiveCompression,
+    parentCompressions: romInputs[0]?.archivePathEntries,
+    sourceFileName: String(romInputs[0]?.info?.fileName || getBinarySourceFileName(effectiveInputs[0], "")),
+  });
+  const automaticSpecialCompression = OutputCompressionManager.resolveOutputCompression(z3dsLabelSource, {
+    compressionFormat: "auto",
+  });
+  const specialCompressionFormat = isSpecialOutputCompression(defaultResolvedCompression)
+    ? defaultResolvedCompression
+    : isSpecialOutputCompression(automaticSpecialCompression)
+      ? automaticSpecialCompression
       : null;
   const requestedCompression = outputCompressionEdited
     ? effectiveActiveCompression
-    : activeSettings.specialCompression !== false && specialCompressionFormat
-      ? specialCompressionFormat
-      : effectiveActiveCompression === "auto"
-        ? defaultArchiveCompression
-        : effectiveActiveCompression;
+    : hasConfiguredOutputCompression && activeCompression !== "auto"
+      ? effectiveActiveCompression
+      : allowsDefaultCompressionSpecial(defaultCompressionMode) && specialCompressionFormat
+        ? specialCompressionFormat
+        : defaultCompressionMode === "auto"
+          ? defaultResolvedCompression
+          : effectiveActiveCompression === "auto"
+            ? defaultArchiveCompression
+            : effectiveActiveCompression;
   const displayedCompression =
     requestedCompression === "auto"
       ? effectiveInputs.length
@@ -290,8 +328,10 @@ const useLocalApplyPatchFormSession = ({
 
   useEffect(() => {
     if (settings !== undefined) return;
+    if (appliedDefaultSettingsKeyRef.current === defaultSettingsKey) return;
+    appliedDefaultSettingsKeyRef.current = defaultSettingsKey;
     setInternalSettings(defaultSettings);
-  }, [defaultSettings, settings]);
+  }, [defaultSettings, defaultSettingsKey, settings]);
 
   const clearPendingDownload = useCallback(() => {
     pendingDownloadFileNameRef.current = null;
@@ -477,7 +517,7 @@ const useLocalApplyPatchFormSession = ({
     Object.keys(patchProgressByKey).length > 0 ||
     romInputs.some((entry) => entry.loading || !!entry.progress);
   const patchValidationBlocked = stagedPatchInfos.some(
-    (info) => info.checksumPreflightMismatch === true || info.validationState === "invalid",
+    (info) => info.validationState === "invalid" && info.checksumPreflightMismatch !== true,
   );
   const applyQueueBlocked =
     !!failureMessage || !!outputErrorMessage || strictInputChecksumBlocked || patchValidationBlocked;
@@ -530,7 +570,7 @@ const useLocalApplyPatchFormSession = ({
         const key = getPatchKey(patch, activePatches);
         if (current[key]) nextInfoByKey[key] = current[key];
       }
-      return nextInfoByKey;
+      return hasSameRecordValues(current, nextInfoByKey) ? current : nextInfoByKey;
     });
     setPatchProgressByKey((current) => {
       const nextProgressByKey: Record<string, InputProgress> = {};
@@ -538,7 +578,7 @@ const useLocalApplyPatchFormSession = ({
         const key = getPatchKey(patch, activePatches);
         if (current[key]) nextProgressByKey[key] = current[key];
       }
-      return nextProgressByKey;
+      return hasSameRecordValues(current, nextProgressByKey) ? current : nextProgressByKey;
     });
   }, [activePatches, getPatchKey]);
 
@@ -996,6 +1036,7 @@ const useLocalApplyPatchFormSession = ({
         .catch((error) => {
           if (patchStageGenerationRef.current !== generation) return;
           const normalizedError = toError(error);
+          if (isWorkflowDisposedError(normalizedError)) return;
           logUiError("Patch staging failed", normalizedError);
           setSectionErrorMessage("patch", normalizedError);
           onError?.(normalizedError);
@@ -1244,6 +1285,7 @@ const useLocalApplyPatchFormSession = ({
         })
         .catch((error) => {
           const normalizedError = toError(error);
+          if (isWorkflowDisposedError(normalizedError)) return;
           if (inputStageGenerationRef.current !== generation) {
             emitSessionTrace("stageInput failure ignored", {
               currentGeneration: inputStageGenerationRef.current,
@@ -1315,6 +1357,7 @@ const useLocalApplyPatchFormSession = ({
         onState: () => undefined,
       }).catch((error) => {
         const normalizedError = toError(error);
+        if (isWorkflowDisposedError(normalizedError)) return;
         emitSessionTrace("input staging clear failed", {
           message: normalizedError.message,
           name: normalizedError.name,

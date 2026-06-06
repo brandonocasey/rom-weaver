@@ -140,10 +140,9 @@ test("create output options expose patch format and archive choices", () => {
       (option) => option.value,
     ),
   ).toEqual(["xdelta", "ppf"]);
-  expect(createCreatePatchFormatOptions({ candidateFormats: ["xdelta", "bps"] }).map((option) => option.value)).toEqual([
-    "xdelta",
-    "bps",
-  ]);
+  expect(createCreatePatchFormatOptions({ candidateFormats: ["xdelta", "bps"] }).map((option) => option.value)).toEqual(
+    ["xdelta", "bps"],
+  );
 });
 
 test("create format policy steers defaults by size", () => {

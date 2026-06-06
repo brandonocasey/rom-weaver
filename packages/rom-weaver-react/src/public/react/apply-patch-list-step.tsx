@@ -75,7 +75,9 @@ const PatchInfo = ({ item }: { item: PatchStackItemState }) => {
         <ChecksumList
           defaultOpen={hasInputVerificationInfo}
           label="Input Check"
-          lead={bad && item.validationMessage ? <p className="pdesc bad">{item.validationMessage}</p> : undefined}
+          lead={
+            item.validationMessage ? <p className={bad ? "pdesc bad" : "pdesc"}>{item.validationMessage}</p> : undefined
+          }
           match={
             item.validationState === "invalid"
               ? { label: null, ok: false }

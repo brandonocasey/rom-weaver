@@ -39,6 +39,9 @@ type ExtractPanelProps = {
 const formatExtractionElapsedMs = (ms?: number) =>
   typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : undefined;
 
+const formatRawByteLabel = (value?: number) =>
+  typeof value === "number" && Number.isFinite(value) ? `${Math.floor(value)} B` : undefined;
+
 const buildExtractionLevels = (
   fileName: string,
   fileSize: number | undefined,
@@ -151,16 +154,18 @@ const LegacyExtractionLabel = ({
   size?: number;
 }) => {
   const sizeLabel = typeof size === "number" ? formatByteSize(size) : "";
+  const rawSizeLabel = formatRawByteLabel(size);
   const archiveSize = archiveEntries?.[0]?.sourceSize ?? archiveEntries?.[0]?.outputSize;
   const archiveSizeLabel = typeof archiveSize === "number" ? formatByteSize(archiveSize) : "";
+  const archiveRawSizeLabel = formatRawByteLabel(archiveSize);
   return (
     <span className={`${className} sr-only`}>
       <strong>{fileName}</strong>
-      {sizeLabel ? <span data-size-bytes={sizeLabel}>{sizeLabel}</span> : null}
+      {sizeLabel ? <span data-size-bytes={rawSizeLabel}>{sizeLabel}</span> : null}
       {archiveEntries?.length ? (
         <span className={archiveClassName}>
           <strong>{fileName}</strong>
-          {archiveSizeLabel ? ` ${archiveSizeLabel}` : ""}
+          {archiveSizeLabel ? <span data-size-bytes={archiveRawSizeLabel}> {archiveSizeLabel}</span> : null}
           {archiveEntries.map((entry) => ` ${entry.fileName}`).join("")}
         </span>
       ) : null}

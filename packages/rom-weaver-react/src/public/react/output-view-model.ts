@@ -202,7 +202,13 @@ const createCreateOutputCompressionOptions = (): OutputOption[] => [
 
 const createCreatePatchFormatOptions = (options: CreatePatchFormatOptions = {}): OutputOption[] => {
   const candidateFormats = Array.isArray(options.candidateFormats)
-    ? options.candidateFormats.map((value) => String(value || "").trim().toLowerCase()).filter((value) => !!value)
+    ? options.candidateFormats
+        .map((value) =>
+          String(value || "")
+            .trim()
+            .toLowerCase(),
+        )
+        .filter((value) => !!value)
     : [];
   const formats = candidateFormats.length
     ? Array.from(new Set(candidateFormats))

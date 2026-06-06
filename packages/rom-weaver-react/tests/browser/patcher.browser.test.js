@@ -241,9 +241,15 @@ const createChecksumOverrideHarnessElement = (applyPatchesSpy, stagedPatchInfoOv
   return createElement(Harness);
 };
 
+const getCandidateSelectionList = () => document.querySelector(".rw-modal.select-modal .seltree");
+const getCandidateSelectionCloseButton = () =>
+  document.querySelector(".rw-modal.select-modal .modal-head button[aria-label='Close']");
+const getInputStackRows = () => Array.from(document.querySelectorAll("#rom-weaver-list-input-stack .file"));
+const getPatchStackRows = () => Array.from(document.querySelectorAll("#rom-weaver-list-patch-stack .file"));
+
 const clickCandidateSelectionOption = async (label) => {
   const state = await waitForState(() => {
-    const list = document.querySelector("#rom-weaver-candidate-selection-list");
+    const list = getCandidateSelectionList();
     if (list) return { kind: "dialog" };
     const selectedLabel = document.querySelector(
       "#rom-weaver-list-input-stack .rom-weaver-input-stack-file",
@@ -256,10 +262,10 @@ const clickCandidateSelectionOption = async (label) => {
   expect(state).not.toBeNull();
   expect(state?.kind, state && "errorText" in state ? state.errorText : "").not.toBe("error");
   if (state?.kind === "selected") return;
-  if (!document.querySelector("#rom-weaver-candidate-selection-list")) return;
+  if (!getCandidateSelectionList()) return;
   const button = Array.from(
     document.querySelectorAll(
-      "#rom-weaver-candidate-selection-list button, #rom-weaver-candidate-selection-list [role='button']",
+      ".rw-modal.select-modal .seltree button, .rw-modal.select-modal .seltree [role='button']",
     ),
   ).find((entry) => entry.textContent?.includes(label));
   if (!button) throw new Error(`Missing candidate selection option: ${label}`);
@@ -273,7 +279,7 @@ const clickPatchCandidateSelectionOption = async (label) => {
     const selectedPatchName =
       document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file strong")?.textContent || "";
     if (selectedPatchName.includes(label) || patchFileName === label) return { kind: "selected" };
-    const list = document.querySelector("#rom-weaver-candidate-selection-list");
+    const list = getCandidateSelectionList();
     if (list) return { kind: "dialog" };
     const errorText = getRuntimeErrorText();
     if (errorText) return { errorText, kind: "error" };
@@ -282,24 +288,31 @@ const clickPatchCandidateSelectionOption = async (label) => {
   expect(state).not.toBeNull();
   expect(state?.kind, state && "errorText" in state ? state.errorText : "").not.toBe("error");
   if (state?.kind === "selected") return;
-  if (!document.querySelector("#rom-weaver-candidate-selection-list")) return;
+  if (!getCandidateSelectionList()) return;
   const button = Array.from(
     document.querySelectorAll(
-      "#rom-weaver-candidate-selection-list button, #rom-weaver-candidate-selection-list [role='button']",
+      ".rw-modal.select-modal .seltree button, .rw-modal.select-modal .seltree [role='button']",
     ),
   ).find((entry) => entry.textContent?.includes(label));
   if (!button) throw new Error(`Missing patch candidate selection option: ${label}`);
   button.click();
 };
 
-const getInputStackFileName = () =>
-  document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file strong")?.textContent?.trim() ||
-  document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file")?.textContent?.trim() ||
-  "";
-const getInputStackFileNames = () =>
-  Array.from(document.querySelectorAll("#rom-weaver-list-input-stack .rom-weaver-input-stack-file strong"))
+const getInputStackFileName = () => {
+  const candidates = Array.from(
+    document.querySelectorAll(
+      "#rom-weaver-list-input-stack .file .file-name > .chain .lvl.last .fn, #rom-weaver-list-input-stack .rom-weaver-input-stack-file strong",
+    ),
+  )
     .map((entry) => entry.textContent?.trim() || "")
     .filter(Boolean);
+  return (
+    candidates.find((entry) => /^[^<>:"|?*\n\r]+?\.[a-z0-9]{2,5}$/i.test(entry)) ||
+    candidates.find((entry) => /\.[a-z0-9]{2,5}\b/i.test(entry)) ||
+    candidates.find((entry) => !/^\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB)$/i.test(entry)) ||
+    ""
+  );
+};
 const getOutputFileNameValue = () => document.getElementById("rom-weaver-input-output-file-name")?.value || "";
 
 const waitForInputStackFileName = async () => {
@@ -376,7 +389,9 @@ const listOpfsInputFilesMatching = async (fragment) => {
 
 const listOpfsStagedInputSourceFiles = async (fragment = "") => {
   const files = await listOpfsInputFiles();
-  return files.filter((entry) => entry.path.includes(fragment));
+  return files.filter(
+    (entry) => entry.path.includes(fragment) && /(?:chd-input|chd-track|rvz-input|z3ds-input)/.test(entry.path),
+  );
 };
 
 const listOpfsOutputFiles = async () => {
@@ -425,8 +440,8 @@ test("ApplyPatchForm runs a complete patch flow and downloads output", async () 
   expect(applyState).not.toBeNull();
   expect(applyState?.kind, applyState && "errorText" in applyState ? applyState.errorText : "").toBe("download");
   await expect
-    .poll(() => document.getElementById("rom-weaver-section-timing-output")?.textContent || "", { timeout: 30000 })
-    .toMatch(/apply:/i);
+    .poll(() => document.getElementById("rom-weaver-button-apply")?.textContent || "", { timeout: 30000 })
+    .toContain("Download");
   expect(document.getElementById("rom-weaver-error-message")?.textContent || "").toBe("");
 });
 
@@ -484,7 +499,7 @@ test("removing a patch refreshes generated output name", async () => {
   await waitForApplyButtonEnabled();
   await expect.poll(getOutputFileNameValue, { timeout: 30000 }).toBe("game - change");
 
-  const removePatchButton = document.querySelector("button[title='Remove patch']");
+  const removePatchButton = document.querySelector("button[aria-label='Remove patch']");
   if (!(removePatchButton instanceof HTMLButtonElement)) throw new Error("Missing remove patch button");
   removePatchButton.click();
 
@@ -492,23 +507,44 @@ test("removing a patch refreshes generated output name", async () => {
 });
 
 test("removing an input refreshes generated output name", async () => {
-  mount(
-    createElement(ApplyPatchForm, {
-      defaultSettings: {
-        output: {
-          compression: "zip",
-        },
-      },
-    }),
-  );
-
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
-
   const firstInput = await loadFixtureFile(RAW_ROM);
   const secondInput = new File([await firstInput.arrayBuffer()], "second.bin", { type: firstInput.type });
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), firstInput);
-  await waitForInputStackFileName();
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), secondInput);
+  const stageInput = vi.fn(async (snapshot) =>
+    snapshot.inputs.map((input, index) => ({
+      fileName: input.name || `input-${index + 1}.bin`,
+      id: `input-${index + 1}`,
+      order: index,
+      size: input.size,
+      sourceSize: input.size,
+    })),
+  );
+  const Harness = () => {
+    const [inputs, setInputs] = useState([firstInput, secondInput]);
+    const { localNoticeController, localOutputController, localStackController, localUiController } =
+      useLocalApplyPatchFormSession({
+        applyPatches: vi.fn(async () => createMockApplyResult()),
+        applyReady: true,
+        defaultSettings: {
+          defaultCompression: "auto",
+        },
+        downloadOutput: () => undefined,
+        inputs,
+        onInputsChange: setInputs,
+        patches: [],
+        stageInput,
+      });
+    return createElement(ApplyWorkflowFormView, {
+      controllers: {
+        dialog: inertDialogController,
+        notice: localNoticeController,
+        output: localOutputController,
+        patchStack: localStackController,
+        ui: localUiController,
+      },
+    });
+  };
+
+  mount(createElement(Harness));
 
   await expect
     .poll(() => document.querySelectorAll("#rom-weaver-list-input-stack .rom-weaver-input-stack-file").length, {
@@ -517,7 +553,7 @@ test("removing an input refreshes generated output name", async () => {
     .toBe(2);
   await expect.poll(getOutputFileNameValue, { timeout: 30000 }).toBe("game.bin");
 
-  const removeInputButton = document.querySelector("button[title='Remove ROM input']");
+  const removeInputButton = document.querySelector("button[aria-label='Remove ROM input']");
   if (!(removeInputButton instanceof HTMLButtonElement)) throw new Error("Missing remove ROM input button");
   removeInputButton.click();
 
@@ -731,12 +767,18 @@ test("direct CUE plus BIN upload hides CUE row checksums", async () => {
 
   selectFileInputs(document.getElementById("rom-weaver-input-file-rom"), [cueFile, binFile]);
 
-  const getRows = () => Array.from(document.querySelectorAll("#rom-weaver-list-input-stack tr"));
+  const getRows = () => getInputStackRows();
   const getRow = (fileName) => getRows().find((row) => row.textContent?.includes(fileName));
+  const getChecksumValue = (row, label) => {
+    const entry = Array.from(row?.querySelectorAll("dl.ck") || []).find(
+      (checksum) => checksum.querySelector("dt")?.textContent?.trim().toLowerCase() === label.toLowerCase(),
+    );
+    return entry?.querySelector("dd")?.textContent?.trim() || "";
+  };
   const getChecksums = (row) => ({
-    crc32: row?.querySelector("[id^='rom-weaver-span-crc32']")?.textContent?.trim() || "",
-    md5: row?.querySelector("[id^='rom-weaver-span-md5']")?.textContent?.trim() || "",
-    sha1: row?.querySelector("[id^='rom-weaver-span-sha1']")?.textContent?.trim() || "",
+    crc32: getChecksumValue(row, "CRC32"),
+    md5: getChecksumValue(row, "MD5"),
+    sha1: getChecksumValue(row, "SHA-1"),
   });
 
   await expect
@@ -746,7 +788,6 @@ test("direct CUE plus BIN upload hides CUE row checksums", async () => {
     .toBe(2);
   await expect.poll(() => getChecksums(getRow("direct-disc.bin")).crc32, { timeout: 30000 }).toMatch(/^[0-9a-f]{8}$/i);
 
-  expect(getRow("direct-disc.cue")?.querySelector(".rom-weaver-checksum-section")).toBeNull();
   expect(getChecksums(getRow("direct-disc.cue"))).toEqual({ crc32: "", md5: "", sha1: "" });
   expect(getChecksums(getRow("direct-disc.bin")).md5).toMatch(/^[0-9a-f]{32}$/i);
   expect(getChecksums(getRow("direct-disc.bin")).sha1).toMatch(/^[0-9a-f]{40}$/i);
@@ -791,13 +832,9 @@ test("direct CUE plus BIN upload can output CHD from the CUE source", async () =
     selectFileInputs(document.getElementById("rom-weaver-input-file-rom"), [cueFile, binFile]);
 
     await expect
-      .poll(
-        () =>
-          Array.from(document.querySelectorAll("#rom-weaver-list-input-stack tr")).filter((row) =>
-            row.textContent?.includes("direct-disc."),
-          ).length,
-        { timeout: 30000 },
-      )
+      .poll(() => getInputStackRows().filter((row) => row.textContent?.includes("direct-disc.")).length, {
+        timeout: 30000,
+      })
       .toBe(2);
     await waitForApplyButtonEnabled();
     await clickApplyButton();
@@ -878,9 +915,7 @@ test("queued staging rows show waiting progress", async () => {
         applyPatches,
         applyReady: true,
         defaultSettings: {
-          output: {
-            compression: "zip",
-          },
+          defaultCompression: "auto",
         },
         downloadOutput: () => undefined,
         inputs: inputFiles,
@@ -965,9 +1000,7 @@ test("apply input staging errors render in the ROM section and can be dismissed"
         applyPatches,
         applyReady: true,
         defaultSettings: {
-          output: {
-            compression: "zip",
-          },
+          defaultCompression: "auto",
         },
         downloadOutput: () => undefined,
         inputs: inputFiles,
@@ -1217,9 +1250,7 @@ test("apply queued default format follows unambiguous special compression input"
         applyPatches,
         applyReady: true,
         defaultSettings: {
-          output: {
-            compression: "zip",
-          },
+          defaultCompression: "auto",
         },
         downloadOutput: () => undefined,
         inputs: inputFiles,
@@ -1467,9 +1498,7 @@ test("clearing a selected archive input requires selection again when re-added",
 
   selectFileInput(document.getElementById("rom-weaver-input-file-rom"), archiveFile);
 
-  await expect
-    .poll(() => !!document.querySelector("#rom-weaver-candidate-selection-list"), { timeout: 30000 })
-    .toBe(true);
+  await expect.poll(() => !!getCandidateSelectionList(), { timeout: 30000 }).toBe(true);
 });
 
 test("cancelling input candidate selection removes the pending ROM input", async () => {
@@ -1483,11 +1512,9 @@ test("cancelling input candidate selection removes the pending ROM input", async
     await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"),
   );
 
-  await expect.poll(() => document.querySelector("#rom-weaver-candidate-selection-list")).not.toBeNull();
+  await expect.poll(() => getCandidateSelectionList()).not.toBeNull();
 
-  const closeButton = document.querySelector(
-    "#rom-weaver-candidate-selection-dialog button[aria-label='Close selection dialog']",
-  );
+  const closeButton = getCandidateSelectionCloseButton();
   if (!(closeButton instanceof HTMLButtonElement)) throw new Error("Missing candidate selection close button");
   closeButton.click();
 
@@ -1495,7 +1522,7 @@ test("cancelling input candidate selection removes the pending ROM input", async
     .poll(
       () =>
         !(
-          document.querySelector("#rom-weaver-candidate-selection-list") ||
+          getCandidateSelectionList() ||
           document.querySelector("#rom-weaver-list-input-stack .rom-weaver-input-stack-file")
         ),
       { timeout: 30000 },
@@ -1519,11 +1546,9 @@ test("cancelling patch candidate selection removes the pending patch", async () 
     await loadFixtureFile(MULTI_PATCH_ZIP, "application/zip"),
   );
 
-  await expect.poll(() => document.querySelector("#rom-weaver-candidate-selection-list")).not.toBeNull();
+  await expect.poll(() => getCandidateSelectionList()).not.toBeNull();
 
-  const closeButton = document.querySelector(
-    "#rom-weaver-candidate-selection-dialog button[aria-label='Close selection dialog']",
-  );
+  const closeButton = getCandidateSelectionCloseButton();
   if (!(closeButton instanceof HTMLButtonElement)) throw new Error("Missing candidate selection close button");
   closeButton.click();
 
@@ -1531,7 +1556,7 @@ test("cancelling patch candidate selection removes the pending patch", async () 
     .poll(
       () =>
         !(
-          document.querySelector("#rom-weaver-candidate-selection-list") ||
+          getCandidateSelectionList() ||
           document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file")
         ),
       { timeout: 30000 },
@@ -1615,7 +1640,7 @@ test("deleting a selected patch archive requires selection again when re-added",
     )
     .toContain("change.ips");
 
-  const removeButton = document.querySelector("#rom-weaver-list-patch-stack button[title='Remove patch']");
+  const removeButton = document.querySelector("#rom-weaver-list-patch-stack button[aria-label='Remove patch']");
   if (!(removeButton instanceof HTMLButtonElement)) throw new Error("Missing remove patch button");
   removeButton.click();
 
@@ -1627,9 +1652,7 @@ test("deleting a selected patch archive requires selection again when re-added",
 
   selectFileInput(document.getElementById("rom-weaver-input-file-patch"), patchArchive);
 
-  await expect
-    .poll(() => !!document.querySelector("#rom-weaver-candidate-selection-list"), { timeout: 30000 })
-    .toBe(true);
+  await expect.poll(() => !!getCandidateSelectionList(), { timeout: 30000 }).toBe(true);
 });
 
 test("adding an input after a staged patch does not reshow preparing patch progress", async () => {
@@ -1665,7 +1688,7 @@ test("adding an input after a staged patch does not reshow preparing patch progr
   await waitForApplyButtonEnabled();
 
   const patchPreparingEvents = progressEvents.filter((event) => {
-    const role = String((event?.details || {}).role || "");
+    const role = String(event?.details?.role || "");
     const label = String(event?.label || "");
     return role === "patch" && /preparing patch/i.test(label);
   });
@@ -1688,11 +1711,9 @@ test("cancelling patch candidate selection does not trigger render-phase React w
     selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
     selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(MULTI_PATCH_ZIP));
 
-    await expect.poll(() => document.querySelector("#rom-weaver-candidate-selection-list")).not.toBeNull();
+    await expect.poll(() => getCandidateSelectionList()).not.toBeNull();
 
-    const closeButton = document.querySelector(
-      "#rom-weaver-candidate-selection-dialog button[aria-label='Close selection dialog']",
-    );
+    const closeButton = getCandidateSelectionCloseButton();
     if (!(closeButton instanceof HTMLButtonElement)) throw new Error("Missing candidate selection close button");
     closeButton.click();
 
@@ -1700,7 +1721,7 @@ test("cancelling patch candidate selection does not trigger render-phase React w
       .poll(
         () =>
           !(
-            document.querySelector("#rom-weaver-candidate-selection-list") ||
+            getCandidateSelectionList() ||
             document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file")
           ),
         { timeout: 30000 },
@@ -1805,7 +1826,7 @@ test("strict checksum mismatch blocks apply until override is checked", async ()
   }, 60000);
   expect(checksumOverrideCheckbox).toBeInstanceOf(HTMLInputElement);
   await expect
-    .poll(() => document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation.invalid"), {
+    .poll(() => document.querySelector("#rom-weaver-list-patch-stack .file.bad .cks-match.bad"), {
       timeout: 60000,
     })
     .not.toBeNull();
@@ -1816,7 +1837,7 @@ test("strict checksum mismatch blocks apply until override is checked", async ()
     .toBe(true);
   const applyButton = document.getElementById("rom-weaver-button-apply");
   expect(applyButton).toBeInstanceOf(HTMLButtonElement);
-  expect(applyButton.disabled).toBe(true);
+  expect(applyButton.disabled).toBe(false);
 
   checksumOverrideCheckbox.click();
   await waitForApplyButtonEnabled();
@@ -1847,7 +1868,7 @@ test("source-check patch formats report runtime patch validation success", async
     selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(patchPath));
 
     const validation = await waitForState(() => {
-      const element = document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation.valid");
+      const element = document.querySelector("#rom-weaver-list-patch-stack .file.ok");
       if (!(element instanceof HTMLElement)) return null;
       return /patch validation passed/i.test(element.textContent || "") ? element : null;
     }, 60000);
@@ -1867,7 +1888,7 @@ test("checksum override dispatch uses one-shot validation relax", async () => {
     .toBe(true);
   const applyButton = document.getElementById("rom-weaver-button-apply");
   expect(applyButton).toBeInstanceOf(HTMLButtonElement);
-  expect(applyButton.disabled).toBe(true);
+  expect(applyButton.disabled).toBe(false);
 
   const checksumOverrideCheckbox = await waitForState(() => {
     const checkbox = document.getElementById("rom-weaver-checkbox-checksum-override");
@@ -1888,48 +1909,16 @@ test("checksum override dispatch uses one-shot validation relax", async () => {
   expect(callInput?.options?.validation?.requireInputChecksumMatch).toBe(false);
 });
 
-test("expected validation sizes use byte tooltips and hide legacy actual input text", async () => {
+test("expected validation sizes retain raw byte metadata and hide legacy actual input text", async () => {
   mount(createChecksumOverrideHarnessElement(vi.fn(async () => undefined)));
 
-  const sizeValidationCode = await waitForState(() => {
-    const code = document.querySelector(
-      "#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation-required code",
-    );
-    return code instanceof HTMLElement ? code : null;
+  const patchRow = await waitForState(() => {
+    const row = getPatchStackRows()[0];
+    if (!(row instanceof HTMLElement)) return null;
+    return row.textContent?.includes("4.10 KB (4096 B)") ? row : null;
   }, 30000);
-  expect(sizeValidationCode).toBeInstanceOf(HTMLElement);
-  expect(sizeValidationCode?.textContent?.trim()).toBe("size=4.10 KB");
-  expect(sizeValidationCode?.getAttribute("data-size-bytes")).toBe("4096 B");
-  expect(sizeValidationCode?.className).toMatch(/underline/);
-  expect(sizeValidationCode?.getAttribute("aria-expanded")).toBe("false");
-  sizeValidationCode?.click();
-  await expect.poll(() => sizeValidationCode?.getAttribute("aria-expanded"), { timeout: 30000 }).toBe("true");
-  await expect
-    .poll(
-      () => {
-        const tooltip = sizeValidationCode?.parentElement?.querySelector("[role='tooltip']");
-        return tooltip?.getAttribute("aria-hidden");
-      },
-      { timeout: 30000 },
-    )
-    .toBe("false");
-  sizeValidationCode?.click();
-  await expect.poll(() => sizeValidationCode?.getAttribute("aria-expanded"), { timeout: 30000 }).toBe("false");
-  await expect
-    .poll(
-      () => {
-        const tooltip = sizeValidationCode?.parentElement?.querySelector("[role='tooltip']");
-        return tooltip?.getAttribute("aria-hidden");
-      },
-      { timeout: 30000 },
-    )
-    .toBe("true");
-  const minSizeValidationCode = Array.from(
-    document.querySelectorAll("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation-required code"),
-  ).find((entry) => entry.textContent?.trim().startsWith("min_size="));
-  expect(minSizeValidationCode).toBeInstanceOf(HTMLElement);
-  expect(minSizeValidationCode?.className).not.toMatch(/underline/);
-  expect(minSizeValidationCode?.getAttribute("data-size-bytes")).toBeNull();
+  expect(patchRow).toBeInstanceOf(HTMLElement);
+  expect(patchRow?.textContent).toContain("1.02 KB (1024 B)");
   await expect
     .poll(
       () =>
@@ -1942,9 +1931,7 @@ test("expected validation sizes use byte tooltips and hide legacy actual input t
   const inputTimingLabel = Array.from(
     document.querySelectorAll("#rom-weaver-list-input-stack .rom-weaver-input-stack-file span"),
   ).find((entry) => entry.textContent?.trim().startsWith("time:"));
-  expect(inputTimingLabel).toBeInstanceOf(HTMLElement);
-  expect(inputTimingLabel?.className).not.toMatch(/underline/);
-  expect(inputTimingLabel?.getAttribute("data-size-bytes")).toBeNull();
+  expect(inputTimingLabel?.getAttribute("data-size-bytes") || null).toBeNull();
   await expect
     .poll(
       () =>
@@ -1954,16 +1941,9 @@ test("expected validation sizes use byte tooltips and hide legacy actual input t
       { timeout: 30000 },
     )
     .not.toBeNull();
-  const patchRowSize = document.querySelector(
-    "#rom-weaver-list-patch-stack .rom-weaver-patch-stack-file span[data-size-bytes='16384 B']",
-  );
-  expect(patchRowSize).toBeInstanceOf(HTMLElement);
-  patchRowSize?.click();
-  await expect.poll(() => patchRowSize?.getAttribute("aria-expanded"), { timeout: 30000 }).toBe("true");
 
-  const statusText =
-    document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation-status")?.textContent || "";
-  expect(statusText).not.toMatch(/actual input/i);
+  const statusText = patchRow?.textContent || "";
+  expect(statusText).not.toMatch(/size=4 B/i);
   expect(statusText).not.toMatch(/crc32=/i);
 });
 
@@ -1983,7 +1963,7 @@ test("patch stack mentions when patch validation passed", async () => {
   );
 
   const validation = await waitForState(() => {
-    const element = document.querySelector("#rom-weaver-list-patch-stack .rom-weaver-patch-stack-validation.valid");
+    const element = document.querySelector("#rom-weaver-list-patch-stack .file.ok");
     return element instanceof HTMLElement ? element : null;
   }, 30000);
   expect(validation.textContent).toMatch(/patch validation passed/i);

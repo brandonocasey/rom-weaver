@@ -30,7 +30,8 @@ import type { BinarySource } from "./patcher-form.ts";
 import type { CandidateSelectionPrompt, CreatePatchFormProps, CreatePatchFormSettings } from "./public-types.ts";
 import {
   getCreateSettingsOutputName,
-  normalizeDefaultArchive,
+  getDefaultCompressionArchive,
+  getDefaultCompressionMode,
   toCreateWorkflowSettings,
   useCreateSettings,
   useRomWeaverAssetBaseUrl,
@@ -161,7 +162,16 @@ const getChecksumTimingLabel = (timing: string) => (timing ? `Checksum ${timing}
 const isChecksumProgress = (progress: WorkflowFormProgressState | null) =>
   !!progress && /checksum/i.test(`${progress.label} ${progress.message}`);
 
+type InternalCreatePatchFormProps = CreatePatchFormProps & {
+  createWorkflow?: typeof CreateWorkflow;
+  getCreatePatchFormatCandidates?: typeof getCreatePatchFormatCandidates;
+};
+
 function CreatePatchForm(props: CreatePatchFormProps) {
+  const internalProps = props as InternalCreatePatchFormProps;
+  const CreateWorkflowConstructor = internalProps.createWorkflow || CreateWorkflow;
+  const resolveCreatePatchFormatCandidates =
+    internalProps.getCreatePatchFormatCandidates || getCreatePatchFormatCandidates;
   const providerSettings = useCreateSettings();
   const providerAssetBaseUrl = useRomWeaverAssetBaseUrl();
   const resolvedAssetBaseUrl = props.assetBaseUrl || providerAssetBaseUrl;
@@ -259,7 +269,9 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   const resolvedOutputName = outputName.trim() || generatedOutputName;
   const executionOutputName = resolveCreateExecutionOutputName(resolvedOutputName, patchType);
   const createCompression = (() => {
-    const normalized = String(settings.output?.compression || normalizeDefaultArchive(settings.defaultArchive))
+    const normalized = String(
+      settings.output?.compression || getDefaultCompressionArchive(getDefaultCompressionMode(settings)),
+    )
       .trim()
       .toLowerCase();
     return normalized === "7z" ? "7z" : normalized === "none" ? "none" : "zip";
@@ -330,7 +342,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     if (!(original && modified && originalSourceKey && modifiedSourceKey)) return;
     const key = patchFormatCandidateKey;
     let cancelled = false;
-    void getCreatePatchFormatCandidates({
+    void resolveCreatePatchFormatCandidates({
       ...(resolvedAssetBaseUrl ? { assetBaseUrl: resolvedAssetBaseUrl } : {}),
       modified: toBrowserPublicBinarySource(modified),
       original: toBrowserPublicBinarySource(original),
@@ -358,6 +370,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     patchFormatCandidateKey,
     props.workerThreads,
     resolvedAssetBaseUrl,
+    resolveCreatePatchFormatCandidates,
     settings.logging,
     settings.workers,
   ]);
@@ -462,7 +475,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
       return;
     }
     if (!workflow) {
-      workflow = new CreateWorkflow({
+      workflow = new CreateWorkflowConstructor({
         ...(resolvedAssetBaseUrl ? { assetBaseUrl: resolvedAssetBaseUrl } : {}),
         id: `${workflowIdRef.current}:stage:${generation}`,
         selectFile: async (request) =>
@@ -547,6 +560,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     };
   }, [
     clearProgressForStage,
+    CreateWorkflowConstructor,
     createProgressHandler,
     createSelectFileHandler,
     modified,
@@ -605,7 +619,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     setProgress(createIndeterminateWorkflowProgress({ label: "Creating patch...", role: "worker", stage: "create" }));
     const createWorkflow =
       stagedCreateWorkflowRef.current ||
-      new CreateWorkflow({
+      new CreateWorkflowConstructor({
         ...(resolvedAssetBaseUrl ? { assetBaseUrl: resolvedAssetBaseUrl } : {}),
         id: workflowIdRef.current,
         selectFile: async (request) =>

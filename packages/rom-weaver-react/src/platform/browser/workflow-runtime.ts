@@ -1469,12 +1469,12 @@ const createBrowserPatchRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["
           [input.romFilePath, ...input.patchFiles.map((patch) => patch.patchFilePath)],
         ),
       ),
+    invokeCreatePatchCandidatesWorker: (input, onProgress, onLog) =>
+      invokeRomWeaverCreatePatchCandidatesWorker(input, onProgress, onLog),
     invokeCreatePatchWorker: (input, onProgress, onLog) =>
       invokeRomWeaverCreatePatchWorker(input, onProgress, onLog, (outputPath) =>
         removeBrowserVfsOutputPaths([outputPath], [input.originalFilePath, input.modifiedFilePath]),
       ),
-    invokeCreatePatchCandidatesWorker: (input, onProgress, onLog) =>
-      invokeRomWeaverCreatePatchCandidatesWorker(input, onProgress, onLog),
     invokeValidatePatchWorker: (input, onProgress, onLog) =>
       invokeRomWeaverPatchValidateWorker(input, onProgress, onLog),
     workerIo,

@@ -36,12 +36,8 @@ const ZIP_CODECS: CompressFieldOption[] = [
   { label: "Store", value: "store" },
   { label: "Zstandard", value: "zstd" },
 ];
-const SEVEN_ZIP_CODECS: CompressFieldOption[] = [
-  { label: "LZMA2", value: "lzma2" },
-];
-const RVZ_CODECS: CompressFieldOption[] = [
-  { label: "zstd", value: "zstd" },
-];
+const SEVEN_ZIP_CODECS: CompressFieldOption[] = [{ label: "LZMA2", value: "lzma2" }];
+const RVZ_CODECS: CompressFieldOption[] = [{ label: "zstd", value: "zstd" }];
 
 const str = (settings: SettingsLike, key: string, fallback = ""): string => {
   const value = settings[key];

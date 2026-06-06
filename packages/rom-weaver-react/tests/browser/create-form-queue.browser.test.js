@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
+import { CreatePatchForm } from "../../src/public/react/create-patch-form.tsx";
 
 const workflowMockState = {
   instances: [],
@@ -63,127 +64,120 @@ const selectFileInput = (input, file) => {
 
 const getOutputWaitingText = () => document.querySelector(".outcard > .fileprog")?.textContent || "";
 
-const importMockedCreatePatchForm = async () => {
-  vi.resetModules();
-  vi.doMock("../../src/platform/browser/browser-api.ts", async (importOriginal) => {
-    const actual = await importOriginal();
+class MockCreateWorkflow {
+  constructor(options = {}) {
+    this.id = options.id || "mock-create";
+    this.listeners = new Map();
+    this.modified = null;
+    this.original = null;
+    this.settings = options.settings || {};
+    workflowMockState.instances.push(this);
+  }
 
-    class MockCreateWorkflow {
-      constructor(options = {}) {
-        this.id = options.id || "mock-create";
-        this.listeners = new Map();
-        this.modified = null;
-        this.original = null;
-        this.settings = options.settings || {};
-        workflowMockState.instances.push(this);
-      }
+  abort() {
+    this.aborted = true;
+  }
 
-      abort() {
-        this.aborted = true;
-      }
+  dispose() {
+    return Promise.resolve();
+  }
 
-      dispose() {
-        return Promise.resolve();
-      }
-
-      emitProgress(label) {
-        for (const handler of this.listeners.get("progress") || []) {
-          handler({
-            details: {
-              role: "input",
-              stage: "input",
-            },
-            hasProgress: true,
-            label,
-            message: label,
-            percent: null,
-            role: "input",
-            stage: "input",
-          });
-        }
-      }
-
-      getModified() {
-        return this.modified;
-      }
-
-      getOriginal() {
-        return this.original;
-      }
-
-      off(event, handler) {
-        this.listeners.get(event)?.delete(handler);
-      }
-
-      on(event, handler) {
-        const handlers = this.listeners.get(event) || new Set();
-        handlers.add(handler);
-        this.listeners.set(event, handlers);
-      }
-
-      run() {
-        workflowMockState.runCalls += 1;
-        return new Promise(() => undefined);
-      }
-
-      setModified(source) {
-        workflowMockState.modifiedSetCalls += 1;
-        this.emitProgress("Preparing modified ROM...");
-        return workflowMockState.modifiedDeferred.promise.then(() => {
-          this.modified = {
-            fileName: source?.name || "modified.bin",
-            selectedCandidateId: "modified",
-            size: source?.size || 4,
-            status: "ready",
-            warnings: [],
-            ...workflowMockState.modifiedStateOverrides,
-          };
-        });
-      }
-
-      setOriginal(source) {
-        workflowMockState.originalSetCalls += 1;
-        this.emitProgress("Preparing original ROM...");
-        return workflowMockState.originalDeferred.promise.then(() => {
-          this.original = {
-            fileName: source?.name || "original.bin",
-            selectedCandidateId: "original",
-            size: source?.size || 4,
-            status: "ready",
-            warnings: [],
-            ...workflowMockState.originalStateOverrides,
-          };
-        });
-      }
-
-      setOutputName(outputName) {
-        this.outputName = outputName;
-        return Promise.resolve();
-      }
-
-      setPatchType(patchType) {
-        this.patchType = patchType;
-        return Promise.resolve();
-      }
-
-      setSettings(settings) {
-        this.settings = settings;
-        return Promise.resolve();
-      }
+  emitProgress(label) {
+    for (const handler of this.listeners.get("progress") || []) {
+      handler({
+        details: {
+          role: "input",
+          stage: "input",
+        },
+        hasProgress: true,
+        label,
+        message: label,
+        percent: null,
+        role: "input",
+        stage: "input",
+      });
     }
+  }
 
-    return {
-      ...actual,
-      CreateWorkflow: MockCreateWorkflow,
-      getCreatePatchFormatCandidates: vi.fn().mockResolvedValue({
-        defaultFormat: "bps",
-        formats: ["bps", "xdelta"],
-      }),
-    };
-  });
+  getModified() {
+    return this.modified;
+  }
 
-  return import("../../src/public/react/create-patch-form.tsx");
-};
+  getOriginal() {
+    return this.original;
+  }
+
+  off(event, handler) {
+    this.listeners.get(event)?.delete(handler);
+  }
+
+  on(event, handler) {
+    const handlers = this.listeners.get(event) || new Set();
+    handlers.add(handler);
+    this.listeners.set(event, handlers);
+  }
+
+  run() {
+    workflowMockState.runCalls += 1;
+    return new Promise(() => undefined);
+  }
+
+  setModified(source) {
+    workflowMockState.modifiedSetCalls += 1;
+    this.emitProgress("Preparing modified ROM...");
+    return workflowMockState.modifiedDeferred.promise.then(() => {
+      this.modified = {
+        fileName: source?.name || "modified.bin",
+        selectedCandidateId: "modified",
+        size: source?.size || 4,
+        status: "ready",
+        warnings: [],
+        ...workflowMockState.modifiedStateOverrides,
+      };
+    });
+  }
+
+  setOriginal(source) {
+    workflowMockState.originalSetCalls += 1;
+    this.emitProgress("Preparing original ROM...");
+    return workflowMockState.originalDeferred.promise.then(() => {
+      this.original = {
+        fileName: source?.name || "original.bin",
+        selectedCandidateId: "original",
+        size: source?.size || 4,
+        status: "ready",
+        warnings: [],
+        ...workflowMockState.originalStateOverrides,
+      };
+    });
+  }
+
+  setOutputName(outputName) {
+    this.outputName = outputName;
+    return Promise.resolve();
+  }
+
+  setPatchType(patchType) {
+    this.patchType = patchType;
+    return Promise.resolve();
+  }
+
+  setSettings(settings) {
+    this.settings = settings;
+    return Promise.resolve();
+  }
+}
+
+const getMockCreatePatchFormatCandidates = async () => ({
+  defaultFormat: "bps",
+  formats: ["bps", "xdelta"],
+});
+
+const withCreateWorkflowMock = (props = {}) => ({
+  createWorkflow: MockCreateWorkflow,
+  getCreatePatchFormatCandidates: getMockCreatePatchFormatCandidates,
+  ...props,
+});
 
 const queueCreate = async () => {
   const createButton = document.getElementById("patch-builder-button-create");
@@ -210,16 +204,17 @@ beforeEach(() => {
 afterEach(() => {
   mountedRoot?.unmount?.();
   mountedRoot = null;
-  vi.doUnmock("../../src/platform/browser/browser-api.ts");
 });
 
 test("create output edits stay enabled while queued and cancel the queued run", async () => {
-  const { CreatePatchForm } = await importMockedCreatePatchForm();
   mount(
-    createElement(CreatePatchForm, {
-      defaultModified: new File([new Uint8Array([0, 1, 2, 4])], "modified.bin"),
-      defaultOriginal: new File([new Uint8Array([0, 1, 2, 3])], "original.bin"),
-    }),
+    createElement(
+      CreatePatchForm,
+      withCreateWorkflowMock({
+        defaultModified: new File([new Uint8Array([0, 1, 2, 4])], "modified.bin"),
+        defaultOriginal: new File([new Uint8Array([0, 1, 2, 3])], "original.bin"),
+      }),
+    ),
   );
 
   await expect.poll(() => document.querySelectorAll(".fileprog").length).toBeGreaterThan(0);
@@ -253,12 +248,14 @@ test("create output edits stay enabled while queued and cancel the queued run", 
 });
 
 test("replacing the modified ROM keeps the prepared original ROM", async () => {
-  const { CreatePatchForm } = await importMockedCreatePatchForm();
   mount(
-    createElement(CreatePatchForm, {
-      defaultModified: new File([new Uint8Array([0, 1, 2, 4])], "modified.bin"),
-      defaultOriginal: new File([new Uint8Array([0, 1, 2, 3])], "original.bin"),
-    }),
+    createElement(
+      CreatePatchForm,
+      withCreateWorkflowMock({
+        defaultModified: new File([new Uint8Array([0, 1, 2, 4])], "modified.bin"),
+        defaultOriginal: new File([new Uint8Array([0, 1, 2, 3])], "original.bin"),
+      }),
+    ),
   );
 
   await expect.poll(() => document.querySelectorAll(".fileprog").length).toBeGreaterThan(0);
@@ -285,12 +282,14 @@ test("replacing the modified ROM keeps the prepared original ROM", async () => {
 });
 
 test("create queued run cancels when source preparation warns", async () => {
-  const { CreatePatchForm } = await importMockedCreatePatchForm();
   mount(
-    createElement(CreatePatchForm, {
-      defaultModified: new File([new Uint8Array([0, 1, 2, 4])], "modified.bin"),
-      defaultOriginal: new File([new Uint8Array([0, 1, 2, 3])], "original.bin"),
-    }),
+    createElement(
+      CreatePatchForm,
+      withCreateWorkflowMock({
+        defaultModified: new File([new Uint8Array([0, 1, 2, 4])], "modified.bin"),
+        defaultOriginal: new File([new Uint8Array([0, 1, 2, 3])], "original.bin"),
+      }),
+    ),
   );
 
   await expect.poll(() => document.querySelectorAll(".fileprog").length).toBeGreaterThan(0);
