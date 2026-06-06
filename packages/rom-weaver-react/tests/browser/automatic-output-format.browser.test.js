@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
-  getDiscExtractedFileName,
-  normalizeDiscExtractedFileName,
+  getRomSpecificExtractedFileName,
+  normalizeRomSpecificExtractedFileName,
   resolveAutomaticCompressionFormat,
 } from "../../src/lib/compression/container-format-registry.ts";
 import OutputCompressionManager from "../../src/lib/compression/output-compression-manager.ts";
@@ -33,26 +33,32 @@ test("automatic output format uses unambiguous special compression input extensi
 });
 
 test("z3ds browser extraction names preserve subtype extensions", () => {
-  expect(getDiscExtractedFileName("z3ds", { fileName: "game.zcci" })).toBe("game.cci");
-  expect(getDiscExtractedFileName("z3ds", { fileName: "game.zcia" })).toBe("game.cia");
-  expect(getDiscExtractedFileName("z3ds", { fileName: "game.zcxi" })).toBe("game.cxi");
-  expect(getDiscExtractedFileName("z3ds", { fileName: "game.z3dsx" })).toBe("game.3dsx");
-  expect(getDiscExtractedFileName("z3ds", { _z3dsUnderlyingMagic: "NCSD", fileName: "game.z3ds" })).toBe("game.cci");
-  expect(getDiscExtractedFileName("z3ds", { _z3dsUnderlyingMagic: "NCCH", fileName: "game.z3ds" })).toBe("game.cxi");
-  expect(getDiscExtractedFileName("z3ds", { _z3dsUnderlyingMagic: "CIA\u0000", fileName: "game.z3ds" })).toBe(
+  expect(getRomSpecificExtractedFileName("z3ds", { fileName: "game.zcci" })).toBe("game.cci");
+  expect(getRomSpecificExtractedFileName("z3ds", { fileName: "game.zcia" })).toBe("game.cia");
+  expect(getRomSpecificExtractedFileName("z3ds", { fileName: "game.zcxi" })).toBe("game.cxi");
+  expect(getRomSpecificExtractedFileName("z3ds", { fileName: "game.z3dsx" })).toBe("game.3dsx");
+  expect(getRomSpecificExtractedFileName("z3ds", { _z3dsUnderlyingMagic: "NCSD", fileName: "game.z3ds" })).toBe(
+    "game.cci",
+  );
+  expect(getRomSpecificExtractedFileName("z3ds", { _z3dsUnderlyingMagic: "NCCH", fileName: "game.z3ds" })).toBe(
+    "game.cxi",
+  );
+  expect(getRomSpecificExtractedFileName("z3ds", { _z3dsUnderlyingMagic: "CIA\u0000", fileName: "game.z3ds" })).toBe(
     "game.cia",
   );
-  expect(getDiscExtractedFileName("z3ds", { _z3dsUnderlyingMagic: "3DSX", fileName: "game.z3ds" })).toBe("game.3dsx");
-  expect(getDiscExtractedFileName("z3ds", { fileName: "game.z3ds" })).toBe("game.3ds");
+  expect(getRomSpecificExtractedFileName("z3ds", { _z3dsUnderlyingMagic: "3DSX", fileName: "game.z3ds" })).toBe(
+    "game.3dsx",
+  );
+  expect(getRomSpecificExtractedFileName("z3ds", { fileName: "game.z3ds" })).toBe("game.3ds");
 });
 
 test("z3ds browser extraction normalizes generic worker names using source subtype", () => {
-  expect(normalizeDiscExtractedFileName("z3ds", "game.3ds", { fileName: "game.zcci" })).toBe("game.cci");
-  expect(normalizeDiscExtractedFileName("z3ds", "game.3ds", { fileName: "game.zcia" })).toBe("game.cia");
-  expect(normalizeDiscExtractedFileName("z3ds", "game.3ds", { fileName: "game.zcxi" })).toBe("game.cxi");
-  expect(normalizeDiscExtractedFileName("z3ds", "game.3ds", { fileName: "game.z3dsx" })).toBe("game.3dsx");
+  expect(normalizeRomSpecificExtractedFileName("z3ds", "game.3ds", { fileName: "game.zcci" })).toBe("game.cci");
+  expect(normalizeRomSpecificExtractedFileName("z3ds", "game.3ds", { fileName: "game.zcia" })).toBe("game.cia");
+  expect(normalizeRomSpecificExtractedFileName("z3ds", "game.3ds", { fileName: "game.zcxi" })).toBe("game.cxi");
+  expect(normalizeRomSpecificExtractedFileName("z3ds", "game.3ds", { fileName: "game.z3dsx" })).toBe("game.3dsx");
   expect(
-    normalizeDiscExtractedFileName("z3ds", "game.3ds", { _z3dsUnderlyingMagic: "NCSD", fileName: "game.z3ds" }),
+    normalizeRomSpecificExtractedFileName("z3ds", "game.3ds", { _z3dsUnderlyingMagic: "NCSD", fileName: "game.z3ds" }),
   ).toBe("game.cci");
 });
 

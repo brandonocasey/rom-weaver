@@ -8,7 +8,7 @@
  * editing here simply overrides Settings for this one job.
  */
 
-import { getChdAutoCreateMode } from "../../lib/input/disc-file-utils.ts";
+import { getChdAutoCreateMode } from "../../lib/input/rom-specific-file-utils.ts";
 import { getSettingsLabel } from "../../presentation/settings.ts";
 
 type SettingsLike = Record<string, unknown>;

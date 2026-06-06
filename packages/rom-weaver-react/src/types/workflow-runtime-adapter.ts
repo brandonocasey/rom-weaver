@@ -111,69 +111,69 @@ type RuntimePublicOutputAdapter = {
 type RuntimeArchiveCreateInput = Extract<CompressionCreateInput, { entries: unknown }>;
 type RuntimeCompressionExtractInput = CompressionExtractInput;
 type RuntimeCompressionListInput = CompressionListInput;
-type RuntimeDiscCreateInputBase = Extract<CompressionCreateInput, { source: unknown }>;
+type RuntimeRomSpecificCreateInputBase = Extract<CompressionCreateInput, { source: unknown }>;
 
-type RuntimeDiscProgress = {
+type RuntimeRomSpecificProgress = {
   label?: string;
   message?: string;
   percent?: number | null;
 };
 
-type RuntimeDiscHooks = {
+type RuntimeRomSpecificHooks = {
   logLevel?: LogLevel;
   onLog?: (log: WorkflowRuntimeLog) => void;
-  onProgress?: (progress: RuntimeDiscProgress) => void;
+  onProgress?: (progress: RuntimeRomSpecificProgress) => void;
   threads?: number | string | null;
 };
 
-type RuntimeDiscCreateChdInput = RuntimeDiscHooks & {
-  chdSourceMode?: RuntimeDiscCreateInputBase["chdSourceMode"];
-  compressionCodecs?: RuntimeDiscCreateInputBase["compressionCodecs"];
-  cueFilePath?: RuntimeDiscCreateInputBase["cueFilePath"];
-  fileName?: RuntimeDiscCreateInputBase["fileName"];
-  imageFiles?: RuntimeDiscCreateInputBase["imageFiles"];
-  mode?: RuntimeDiscCreateInputBase["mode"];
-  outputName: RuntimeDiscCreateInputBase["outputName"];
-  source: RuntimeDiscCreateInputBase["source"];
+type RuntimeRomSpecificCreateChdInput = RuntimeRomSpecificHooks & {
+  chdSourceMode?: RuntimeRomSpecificCreateInputBase["chdSourceMode"];
+  compressionCodecs?: RuntimeRomSpecificCreateInputBase["compressionCodecs"];
+  cueFilePath?: RuntimeRomSpecificCreateInputBase["cueFilePath"];
+  fileName?: RuntimeRomSpecificCreateInputBase["fileName"];
+  imageFiles?: RuntimeRomSpecificCreateInputBase["imageFiles"];
+  mode?: RuntimeRomSpecificCreateInputBase["mode"];
+  outputName: RuntimeRomSpecificCreateInputBase["outputName"];
+  source: RuntimeRomSpecificCreateInputBase["source"];
 };
 
-type RuntimeDiscCreateRvzInput = RuntimeDiscHooks & {
-  fileName?: RuntimeDiscCreateInputBase["fileName"];
-  outputName: RuntimeDiscCreateInputBase["outputName"];
-  rvzBlockSize?: RuntimeDiscCreateInputBase["rvzBlockSize"];
-  rvzCompression?: RuntimeDiscCreateInputBase["rvzCompression"];
-  rvzCompressionLevel?: RuntimeDiscCreateInputBase["rvzCompressionLevel"];
-  rvzMode?: RuntimeDiscCreateInputBase["rvzMode"];
-  rvzScrub?: RuntimeDiscCreateInputBase["rvzScrub"];
-  rvzSourceFileName?: RuntimeDiscCreateInputBase["rvzSourceFileName"];
-  source: RuntimeDiscCreateInputBase["source"];
+type RuntimeRomSpecificCreateRvzInput = RuntimeRomSpecificHooks & {
+  fileName?: RuntimeRomSpecificCreateInputBase["fileName"];
+  outputName: RuntimeRomSpecificCreateInputBase["outputName"];
+  rvzBlockSize?: RuntimeRomSpecificCreateInputBase["rvzBlockSize"];
+  rvzCompression?: RuntimeRomSpecificCreateInputBase["rvzCompression"];
+  rvzCompressionLevel?: RuntimeRomSpecificCreateInputBase["rvzCompressionLevel"];
+  rvzMode?: RuntimeRomSpecificCreateInputBase["rvzMode"];
+  rvzScrub?: RuntimeRomSpecificCreateInputBase["rvzScrub"];
+  rvzSourceFileName?: RuntimeRomSpecificCreateInputBase["rvzSourceFileName"];
+  source: RuntimeRomSpecificCreateInputBase["source"];
 };
 
-type RuntimeDiscCreateZ3dsInput = RuntimeDiscHooks & {
-  fileName?: RuntimeDiscCreateInputBase["fileName"];
-  outputName: RuntimeDiscCreateInputBase["outputName"];
-  source: RuntimeDiscCreateInputBase["source"];
-  z3dsCompressionLevel?: RuntimeDiscCreateInputBase["z3dsCompressionLevel"];
-  z3dsMetadata?: RuntimeDiscCreateInputBase["z3dsMetadata"];
-  z3dsSourceFileName?: RuntimeDiscCreateInputBase["z3dsSourceFileName"];
-  z3dsUnderlyingMagic?: RuntimeDiscCreateInputBase["z3dsUnderlyingMagic"];
+type RuntimeRomSpecificCreateZ3dsInput = RuntimeRomSpecificHooks & {
+  fileName?: RuntimeRomSpecificCreateInputBase["fileName"];
+  outputName: RuntimeRomSpecificCreateInputBase["outputName"];
+  source: RuntimeRomSpecificCreateInputBase["source"];
+  z3dsCompressionLevel?: RuntimeRomSpecificCreateInputBase["z3dsCompressionLevel"];
+  z3dsMetadata?: RuntimeRomSpecificCreateInputBase["z3dsMetadata"];
+  z3dsSourceFileName?: RuntimeRomSpecificCreateInputBase["z3dsSourceFileName"];
+  z3dsUnderlyingMagic?: RuntimeRomSpecificCreateInputBase["z3dsUnderlyingMagic"];
 };
 
-type RuntimeDiscExtractChdInput = RuntimeDiscHooks & {
+type RuntimeRomSpecificExtractChdInput = RuntimeRomSpecificHooks & {
   fileName: string;
-  mode?: RuntimeDiscCreateInputBase["mode"];
+  mode?: RuntimeRomSpecificCreateInputBase["mode"];
   outputName?: CompressionExtractInput["outputName"];
   source: CompressionExtractInput["source"];
   splitBin?: boolean;
 };
 
-type RuntimeDiscExtractRvzInput = RuntimeDiscHooks & {
+type RuntimeRomSpecificExtractRvzInput = RuntimeRomSpecificHooks & {
   fileName: string;
   outputName?: CompressionExtractInput["outputName"];
   source: CompressionExtractInput["source"];
 };
 
-type RuntimeDiscExtractZ3dsInput = RuntimeDiscHooks & {
+type RuntimeRomSpecificExtractZ3dsInput = RuntimeRomSpecificHooks & {
   fileName: string;
   outputName?: CompressionExtractInput["outputName"];
   source: CompressionExtractInput["source"];
@@ -420,14 +420,6 @@ export type {
   RuntimeArchiveCreateInput,
   RuntimeCompressionExtractInput,
   RuntimeCompressionListInput,
-  RuntimeDiscCreateChdInput,
-  RuntimeDiscCreateRvzInput,
-  RuntimeDiscCreateZ3dsInput,
-  RuntimeDiscExtractChdInput,
-  RuntimeDiscExtractRvzInput,
-  RuntimeDiscExtractZ3dsInput,
-  RuntimeDiscHooks,
-  RuntimeDiscProgress,
   RuntimePatchApplyWorkerInput,
   RuntimePatchCreateCandidatesWorkerInput,
   RuntimePatchCreateFormatCandidates,
@@ -435,6 +427,14 @@ export type {
   RuntimePatchValidateWorkerInput,
   RuntimePatchWorkerProgress,
   RuntimePublicOutputAdapter,
+  RuntimeRomSpecificCreateChdInput,
+  RuntimeRomSpecificCreateRvzInput,
+  RuntimeRomSpecificCreateZ3dsInput,
+  RuntimeRomSpecificExtractChdInput,
+  RuntimeRomSpecificExtractRvzInput,
+  RuntimeRomSpecificExtractZ3dsInput,
+  RuntimeRomSpecificHooks,
+  RuntimeRomSpecificProgress,
   RuntimeTrimWorkerInput,
   RuntimeWorkerIo,
   RuntimeWorkerOutput,

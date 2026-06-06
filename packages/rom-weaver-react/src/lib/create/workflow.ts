@@ -1,7 +1,7 @@
 import {
-  createDiscExtensionRegex,
-  DISC_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "../../lib/compression/disc-format-support.ts";
+  createRomSpecificExtensionRegex,
+  ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS,
+} from "../../lib/compression/rom-specific-format-support.ts";
 import { isArchiveFile } from "../../lib/input/archive-type-utils.ts";
 import {
   createPatchFile,
@@ -25,7 +25,7 @@ import { requireOutputName } from "../output/output-name-validation.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
 import { createWorkflowTracer } from "../workflow/workflow-tracing.ts";
 
-const DISC_INPUT_EXTENSION_REGEX = createDiscExtensionRegex(DISC_DECOMPRESSION_INPUT_EXTENSIONS);
+const ROM_SPECIFIC_INPUT_EXTENSION_REGEX = createRomSpecificExtensionRegex(ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS);
 const FILE_QUERY_OR_HASH_REGEX = /[?#].*$/;
 type JsonObject = { [key: string]: JsonValue };
 type CreateSourceInput = PatchFileInstance | SourceRef;
@@ -68,7 +68,7 @@ const shouldPrepareCreateSource = (
   const directSource = deps.getNamedSource(source) as DirectSource;
   if (typeof directSource === "string") {
     if (isArchiveFile(directSource)) return options?.input?.containerInputsEnabled !== false;
-    if (DISC_INPUT_EXTENSION_REGEX.test(directSource)) return options?.input?.containerInputsEnabled !== false;
+    if (ROM_SPECIFIC_INPUT_EXTENSION_REGEX.test(directSource)) return options?.input?.containerInputsEnabled !== false;
     return false;
   }
   const classification = classifyPatcherInput(createClassificationSource(source, deps));

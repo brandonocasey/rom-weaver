@@ -3,8 +3,8 @@ import type { ByteSourceRecordLike } from "../../storage/shared/binary/source-sh
 import type { ArchiveEntry, JsonObject } from "../../types/runtime.ts";
 import type { WorkflowRomFileLike as InputSource } from "../../types/workflow-source.ts";
 import {
-  DISC_COMPRESSION_FORMAT_REGISTRATIONS,
-  getDiscExtractedFileName,
+  getRomSpecificExtractedFileName,
+  ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS,
 } from "../compression/container-format-registry.ts";
 import { getArchiveType } from "../input/archive-type-utils.ts";
 
@@ -31,15 +31,15 @@ type InputSourceMetadata = {
   fileName?: string;
   name?: string;
 };
-type DiscMagicProbeableSource = ByteSourceRecordLike & {
+type RomSpecificMagicProbeableSource = ByteSourceRecordLike & {
   _browserFileBacked?: boolean;
-  _discDecompressionOutput?: boolean;
+  _romSpecificDecompressionOutput?: boolean;
 };
 
 type InputSourceValue =
   | ArchiveSourceValue
   | InputSource
-  | (DiscMagicProbeableSource &
+  | (RomSpecificMagicProbeableSource &
       InputSourceMetadata & {
         _file?: Blob & { name?: string };
         getExtension?: () => string;
@@ -81,10 +81,10 @@ const getInputSourceForExtraction = (
   return includeMetadata ? Object.assign({}, sourceMetadata, sourceWithFileName) : sourceWithFileName;
 };
 
-const canProbeDiscMagicSynchronously = (source: InputSourceValue) => {
+const canProbeRomSpecificMagicSynchronously = (source: InputSourceValue) => {
   if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) return true;
   if (!isInputSourceObject(source)) return false;
-  const probeableSource = source as InputSourceObject & DiscMagicProbeableSource;
+  const probeableSource = source as InputSourceObject & RomSpecificMagicProbeableSource;
   if (probeableSource._u8array instanceof Uint8Array) return true;
   if (probeableSource._browserFileBacked) return false;
   return typeof probeableSource.readIntoAt === "function";
@@ -96,7 +96,7 @@ const getMagicBytes = (source: InputSourceValue, length: number): Uint8Array | n
     return new Uint8Array(source.buffer, source.byteOffset, Math.min(length, source.byteLength));
   }
   if (!isInputSourceObject(source)) return null;
-  const probeableSource = source as InputSourceObject & DiscMagicProbeableSource;
+  const probeableSource = source as InputSourceObject & RomSpecificMagicProbeableSource;
   if (probeableSource._u8array instanceof Uint8Array) return probeableSource._u8array.subarray(0, length);
   if (probeableSource._browserFileBacked) return null;
   if (typeof probeableSource.readIntoAt !== "function") return null;
@@ -118,18 +118,19 @@ const classifyPatcherInput = (source: InputSourceValue): PatcherInputClassificat
       kind: "empty",
     };
   }
-  const isDiscDecompressionOutput =
-    isInputSourceObject(source) && !!(source as InputSourceObject & DiscMagicProbeableSource)._discDecompressionOutput;
-  const canProbeDiscMagic = canProbeDiscMagicSynchronously(source);
-  for (const registration of DISC_COMPRESSION_FORMAT_REGISTRATIONS) {
+  const isRomSpecificDecompressionOutput =
+    isInputSourceObject(source) &&
+    !!(source as InputSourceObject & RomSpecificMagicProbeableSource)._romSpecificDecompressionOutput;
+  const canProbeRomSpecificMagic = canProbeRomSpecificMagicSynchronously(source);
+  for (const registration of ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS) {
     const matchedByExtension = registration.extensionRegex.test(fileName);
-    const matchedByMagic = canProbeDiscMagic && hasMagicPrefix(source, registration.magicBytes);
+    const matchedByMagic = canProbeRomSpecificMagic && hasMagicPrefix(source, registration.magicBytes);
     if (!(matchedByExtension || matchedByMagic)) continue;
-    if (matchedByExtension && isDiscDecompressionOutput && !matchedByMagic) continue;
+    if (matchedByExtension && isRomSpecificDecompressionOutput && !matchedByMagic) continue;
     if (matchedByExtension || matchedByMagic) {
       return {
         compressionFormat: registration.format,
-        defaultExtractedEntryName: getDiscExtractedFileName(
+        defaultExtractedEntryName: getRomSpecificExtractedFileName(
           registration.format,
           getInputSourceForExtraction(source, fileName, registration.fallbackFileName, true),
         ),

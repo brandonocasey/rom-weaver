@@ -1,5 +1,5 @@
-import { getSingleTrackCdExtractionPlan, parseCueFile } from "./disc-file-utils.ts";
 import { getBaseFileName, getDirectoryPath, normalizeArchiveEntryPath, stripFileNameQuery } from "./path-utils.ts";
+import { getSingleTrackCdExtractionPlan, parseCueFile } from "./rom-specific-file-utils.ts";
 
 const TAR_BZ2_EXTENSION_REGEX = /(\.tar\.bz2|\.tbz|\.tbz2)$/i;
 const RAR_EXTENSION_REGEX = /\.rar$/i;

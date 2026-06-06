@@ -18,9 +18,9 @@ import {
   getPatchFileExternalSource,
   isLazyExternalPatchFile,
 } from "../input/binary-service.ts";
-import { getChdAutoCreateMode, replaceCuePatchFileName } from "../input/disc-file-utils.ts";
 import type { InputAsset } from "../input/input-assets.ts";
 import { getFileNameWithoutExtension, hasFileNameExtension, replaceFileNameExtension } from "../input/path-utils.ts";
+import { getChdAutoCreateMode, replaceCuePatchFileName } from "../input/rom-specific-file-utils.ts";
 import { reportProgress } from "../progress/progress-reporting.ts";
 import {
   type ArchiveCompressionOverrides,
@@ -40,7 +40,7 @@ type RuntimeTimedPatchFile = PatchFileInstance & {
   } | null;
 };
 
-const hasDiscCompressionMetadata = (source: PatchFileInstance | null | undefined) =>
+const hasRomSpecificCompressionMetadata = (source: PatchFileInstance | null | undefined) =>
   !!(
     source?._chdSourceFileName ||
     source?._chdCuePath ||
@@ -54,7 +54,7 @@ const hasDiscCompressionMetadata = (source: PatchFileInstance | null | undefined
 const getOutputCompression = (options: OutputWorkflowOptions | undefined, source?: PatchFileInstance | null) => {
   if (options?.output?.compression !== undefined && options.output.compression !== null)
     return options.output.compression;
-  return hasDiscCompressionMetadata(source) ? "auto" : "7z";
+  return hasRomSpecificCompressionMetadata(source) ? "auto" : "7z";
 };
 const getCompressionProfile = (options: OutputWorkflowOptions | undefined) =>
   options?.output?.container?.profile || "max";
@@ -126,7 +126,7 @@ const createRuntimeSourceFromPatchFile = (file: PatchFileInstance, fallbackFileN
   return new Blob([toBlobPart(bytes)], { type: "application/octet-stream" });
 };
 
-const createRuntimeDiscOutputFiles = async (
+const createRuntimeRomSpecificOutputFiles = async (
   compression: string,
   patchedRom: PatchFileInstance,
   outputPlan: PatchedOutputPlan,
@@ -191,7 +191,7 @@ const createRuntimeDiscOutputFiles = async (
   return [await createPatchFileFromRuntimeOutput(output, outputPlan.finalOutputFileName)];
 };
 
-const createSingleFileDiscOutput = async ({
+const createSingleFileRomSpecificOutput = async ({
   compression,
   outputFile,
   options,
@@ -227,7 +227,7 @@ const createSingleFileDiscOutput = async ({
       compressionLevel: levels.z3dsCompressionLevel,
     },
   });
-  const outputs = await createRuntimeDiscOutputFiles(compression, outputFile, outputPlan, options, runtime);
+  const outputs = await createRuntimeRomSpecificOutputFiles(compression, outputFile, outputPlan, options, runtime);
   if (!outputs?.[0]) return null;
   await Promise.resolve(getPatchFileCleanup(outputFile)?.()).catch(() => undefined);
   return outputs[0];
@@ -305,10 +305,16 @@ const buildOutputFiles = async (
     await Promise.resolve(patchedCleanup?.()).catch(() => undefined);
     return [compressed];
   }
-  const runtimeDiscOutputs = await createRuntimeDiscOutputFiles(compression, patchedRom, outputPlan, options, runtime);
-  if (runtimeDiscOutputs) {
+  const runtimeRomSpecificOutputs = await createRuntimeRomSpecificOutputFiles(
+    compression,
+    patchedRom,
+    outputPlan,
+    options,
+    runtime,
+  );
+  if (runtimeRomSpecificOutputs) {
     await Promise.resolve(patchedCleanup?.()).catch(() => undefined);
-    return runtimeDiscOutputs;
+    return runtimeRomSpecificOutputs;
   }
   throw new Error("Runtime disc compression create capability is unavailable");
 };
@@ -565,4 +571,4 @@ const buildSessionOutputFiles = async (
   };
 };
 
-export { buildSessionOutputFiles, createRuntimeDiscOutputFiles, createSingleFileDiscOutput };
+export { buildSessionOutputFiles, createRuntimeRomSpecificOutputFiles, createSingleFileRomSpecificOutput };

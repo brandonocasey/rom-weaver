@@ -8,7 +8,7 @@ import type { SourceRef } from "../../types/source.ts";
 import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
-import { DISC_DECOMPRESSION_INPUT_EXTENSIONS } from "../compression/disc-format-support.ts";
+import { ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS } from "../compression/rom-specific-format-support.ts";
 import { emitTraceLog } from "../logging.ts";
 import { getFileNameExtension, replaceFileNameExtension } from "../path-utils.ts";
 import { isCueEntryFileName, parseCueFileReferences } from "./archive.ts";
@@ -52,17 +52,19 @@ type InputPreparationRuntime = Pick<WorkflowRuntime, "name"> & {
   workerIo?: WorkflowRuntime["workerIo"];
 };
 
-const DISC_DECOMPRESSION_EXTENSIONS = new Set(DISC_DECOMPRESSION_INPUT_EXTENSIONS);
-const DISC_MAGIC_PREFIXES = [
+const ROM_SPECIFIC_DECOMPRESSION_EXTENSIONS = new Set(ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS);
+const ROM_SPECIFIC_MAGIC_PREFIXES = [
   { extension: "chd", magic: [0x4d, 0x43, 0x6f, 0x6d, 0x70, 0x72, 0x48, 0x44] },
   { extension: "rvz", magic: [0x52, 0x56, 0x5a, 0x00] },
   { extension: "z3ds", magic: [0x5a, 0x33, 0x44, 0x53] },
 ];
-const MAX_DISC_MAGIC_PREFIX_LENGTH = Math.max(...DISC_MAGIC_PREFIXES.map((entry) => entry.magic.length));
+const MAX_ROM_SPECIFIC_MAGIC_PREFIX_LENGTH = Math.max(
+  ...ROM_SPECIFIC_MAGIC_PREFIXES.map((entry) => entry.magic.length),
+);
 const MAX_ARCHIVE_MAGIC_PREFIX_LENGTH = Math.max(
   ...MAGIC_SIGNATURES.map((entry) => (entry.offset || 0) + entry.bytes.length),
 );
-const MAX_LAZY_BROWSER_PREFIX_LENGTH = Math.max(MAX_DISC_MAGIC_PREFIX_LENGTH, MAX_ARCHIVE_MAGIC_PREFIX_LENGTH);
+const MAX_LAZY_BROWSER_PREFIX_LENGTH = Math.max(MAX_ROM_SPECIFIC_MAGIC_PREFIX_LENGTH, MAX_ARCHIVE_MAGIC_PREFIX_LENGTH);
 
 type LazyBrowserSource = {
   blob: Blob;
@@ -112,8 +114,8 @@ const emitInputPreparationTrace = (
 
 const getFileExtension = (fileName: string | undefined) => getFileNameExtension(fileName);
 
-const getDiscMagicExtension = (bytes: Uint8Array) => {
-  for (const entry of DISC_MAGIC_PREFIXES) {
+const getRomSpecificMagicExtension = (bytes: Uint8Array) => {
+  for (const entry of ROM_SPECIFIC_MAGIC_PREFIXES) {
     if (bytes.length >= entry.magic.length && entry.magic.every((value, index) => bytes[index] === value))
       return entry.extension;
   }
@@ -158,21 +160,21 @@ const getLazyBrowserSource = async (
   }
   emitInputPreparationTrace(options, "lazy browser source read disc header start", {
     fileName,
-    prefixLength: MAX_DISC_MAGIC_PREFIX_LENGTH,
+    prefixLength: MAX_ROM_SPECIFIC_MAGIC_PREFIX_LENGTH,
     size: blob.size,
   });
-  const discHeader = await readBlobPrefix(blob, MAX_DISC_MAGIC_PREFIX_LENGTH);
+  const romSpecificHeader = await readBlobPrefix(blob, MAX_ROM_SPECIFIC_MAGIC_PREFIX_LENGTH);
   emitInputPreparationTrace(options, "lazy browser source read disc header finish", {
     fileName,
-    readBytes: discHeader.byteLength,
+    readBytes: romSpecificHeader.byteLength,
   });
-  if (DISC_DECOMPRESSION_EXTENSIONS.has(getFileExtension(fileName))) {
+  if (ROM_SPECIFIC_DECOMPRESSION_EXTENSIONS.has(getFileExtension(fileName))) {
     emitInputPreparationTrace(options, "lazy browser source accepted by extension", {
       fileName,
     });
     return { blob, fileHandle, fileName };
   }
-  const magicExtension = getDiscMagicExtension(discHeader);
+  const magicExtension = getRomSpecificMagicExtension(romSpecificHeader);
   if (magicExtension) {
     const magicFileName = replaceFileExtension(fileName, magicExtension);
     emitInputPreparationTrace(options, "lazy browser source accepted by magic", {
@@ -201,9 +203,9 @@ const getLazyBrowserSource = async (
     prefixLength: MAX_LAZY_BROWSER_PREFIX_LENGTH,
   });
   const archiveHeader =
-    MAX_LAZY_BROWSER_PREFIX_LENGTH > discHeader.byteLength
+    MAX_LAZY_BROWSER_PREFIX_LENGTH > romSpecificHeader.byteLength
       ? await readBlobPrefix(blob, MAX_LAZY_BROWSER_PREFIX_LENGTH)
-      : discHeader;
+      : romSpecificHeader;
   const archiveMagicType = getArchiveMagicType(archiveHeader);
   emitInputPreparationTrace(options, "lazy browser source read archive header finish", {
     archiveMagicType: archiveMagicType || "",

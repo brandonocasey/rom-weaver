@@ -1,7 +1,7 @@
 import {
-  createDiscExtensionRegex,
-  DISC_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "../../lib/compression/disc-format-support.ts";
+  createRomSpecificExtensionRegex,
+  ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS,
+} from "../../lib/compression/rom-specific-format-support.ts";
 import { isArchiveFile } from "../../lib/input/archive-type-utils.ts";
 import { getPatchFileBytes } from "../../lib/input/binary-service.ts";
 import { classifyPatcherInput, getInputSourceFileName } from "../../lib/input/input-classification.ts";
@@ -16,17 +16,17 @@ import type { DirectSource, SourceRef } from "../../types/source.ts";
 import type { CreateWorkflowDeps, PatchFileInstance } from "../../types/workflow-internal.ts";
 import type { TrimInput, TrimResult, TrimWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
-import { isDiscCompressionFormat } from "../compression/container-format-registry.ts";
+import { isRomSpecificCompressionFormat } from "../compression/container-format-registry.ts";
 import OutputCompressionManager from "../compression/output-compression-manager.ts";
 import { createWorkflowDeps } from "../create/workflow.ts";
 import { createSingleFileArchiveOutput, hasArchiveFileName } from "../output/archive-output-service.ts";
-import { createSingleFileDiscOutput } from "../output/output-build-service.ts";
+import { createSingleFileRomSpecificOutput } from "../output/output-build-service.ts";
 import { getCompressionIntermediateFileName } from "../output/output-files.ts";
 import { requireOutputName } from "../output/output-name-validation.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
 import { createWorkflowTracer } from "../workflow/workflow-tracing.ts";
 
-const DISC_INPUT_EXTENSION_REGEX = createDiscExtensionRegex(DISC_DECOMPRESSION_INPUT_EXTENSIONS);
+const ROM_SPECIFIC_INPUT_EXTENSION_REGEX = createRomSpecificExtensionRegex(ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS);
 const FILE_QUERY_OR_HASH_REGEX = /[?#].*$/;
 const FILE_EXTENSION_REGEX = /\.([^./\\?#]+)(?:[?#].*)?$/;
 type TrimSourceInput = PatchFileInstance | SourceRef;
@@ -108,7 +108,7 @@ const shouldPrepareTrimSource = (
   const directSource = deps.getNamedSource(source) as DirectSource;
   if (typeof directSource === "string") {
     if (isArchiveFile(directSource)) return options?.input?.containerInputsEnabled !== false;
-    if (DISC_INPUT_EXTENSION_REGEX.test(directSource)) return options?.input?.containerInputsEnabled !== false;
+    if (ROM_SPECIFIC_INPUT_EXTENSION_REGEX.test(directSource)) return options?.input?.containerInputsEnabled !== false;
     return false;
   }
   const classification = classifyPatcherInput(createClassificationSource(source, deps));
@@ -191,13 +191,13 @@ const runTrimWorkflow = async (
         unsupportedRuntimeMessage: "Trim output compression requires the rom-weaver wasm runtime",
       });
     }
-    if (isDiscCompressionFormat(compression)) {
+    if (isRomSpecificCompressionFormat(compression)) {
       const compressedFile = await traceWorkflowStageBlock(
         options,
         "compress",
         "output",
         () =>
-          createSingleFileDiscOutput({
+          createSingleFileRomSpecificOutput({
             compression,
             options,
             outputFile: trimmedFile,

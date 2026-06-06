@@ -6,18 +6,18 @@ import {
   replaceFileNameExtension,
   stripLeadingExtensionDot,
 } from "../path-utils.ts";
+import OutputCompressionManager from "./output-compression-manager.ts";
 import {
   CHD_COMPRESSION_INPUT_EXTENSIONS,
   CHD_DECOMPRESSION_INPUT_EXTENSIONS,
-  createDiscExtensionRegex,
-  getUnambiguousDiscCompressionInputExtensions,
-  hasDiscExtension,
+  createRomSpecificExtensionRegex,
+  getUnambiguousRomSpecificCompressionInputExtensions,
+  hasRomSpecificExtension,
   RVZ_COMPRESSION_INPUT_EXTENSIONS,
   RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
   Z3DS_COMPRESSION_INPUT_EXTENSIONS,
   Z3DS_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "./disc-format-support.ts";
-import OutputCompressionManager from "./output-compression-manager.ts";
+} from "./rom-specific-format-support.ts";
 
 type ByteProbeableSource = {
   _chdMode?: string;
@@ -37,11 +37,11 @@ type CompressionParentKindEntry = {
 };
 
 type ArchiveCompressionFormat = Extract<CompressionFormat, "7z" | "zip">;
-type DiscCompressionFormat = Extract<CompressionFormat, "chd" | "rvz" | "z3ds">;
-type DiscRuntimeCreateMethod = "createChd" | "createRvz" | "createZ3ds";
-type DiscRuntimeExtractMethod = "extractChd" | "extractRvz" | "extractZ3ds";
-type DiscRuntimeListMethod = "listChd" | "listRvz" | "listZ3ds";
-type DiscRuntimeScope = Extract<RuntimeWorkerSourceScope, "chd" | "rvz" | "z3ds">;
+type RomSpecificCompressionFormat = Extract<CompressionFormat, "chd" | "rvz" | "z3ds">;
+type RomSpecificRuntimeCreateMethod = "createChd" | "createRvz" | "createZ3ds";
+type RomSpecificRuntimeExtractMethod = "extractChd" | "extractRvz" | "extractZ3ds";
+type RomSpecificRuntimeListMethod = "listChd" | "listRvz" | "listZ3ds";
+type RomSpecificRuntimeScope = Extract<RuntimeWorkerSourceScope, "chd" | "rvz" | "z3ds">;
 
 type CompressionFormatRegistrationBase<TFormat extends CompressionFormat> = {
   automaticParentKinds?: readonly string[];
@@ -55,14 +55,14 @@ type ArchiveCompressionFormatRegistration = CompressionFormatRegistrationBase<Ar
 
 type NoneCompressionFormatRegistration = CompressionFormatRegistrationBase<"none">;
 
-type DiscCompressionFormatRegistration = CompressionFormatRegistrationBase<DiscCompressionFormat> & {
-  create: DiscRuntimeCreateMethod;
+type RomSpecificCompressionFormatRegistration = CompressionFormatRegistrationBase<RomSpecificCompressionFormat> & {
+  create: RomSpecificRuntimeCreateMethod;
   decompressionInputExtensions: readonly string[];
-  extract: DiscRuntimeExtractMethod;
+  extract: RomSpecificRuntimeExtractMethod;
   extractedFileName: (source: ByteProbeableSource) => string;
   extensionRegex: RegExp;
   fallbackFileName: string;
-  list: DiscRuntimeListMethod;
+  list: RomSpecificRuntimeListMethod;
   magic: string;
   magicBytes: readonly number[];
   pathPrefix: {
@@ -70,12 +70,12 @@ type DiscCompressionFormatRegistration = CompressionFormatRegistrationBase<DiscC
     extract: string;
     sidecar?: string;
   };
-  scope: DiscRuntimeScope;
+  scope: RomSpecificRuntimeScope;
 };
 
 type CompressionFormatRegistration =
   | ArchiveCompressionFormatRegistration
-  | DiscCompressionFormatRegistration
+  | RomSpecificCompressionFormatRegistration
   | NoneCompressionFormatRegistration;
 
 const getFileExtension = (source: ByteProbeableSource | null | undefined): string => {
@@ -150,33 +150,33 @@ const normalizeZ3dsExtractedFileName = (
   return replaceFileNameExtension(normalizedFileName, extractedExtension);
 };
 
-const normalizeDiscExtractedFileName = (
-  format: DiscCompressionFormat,
+const normalizeRomSpecificExtractedFileName = (
+  format: RomSpecificCompressionFormat,
   fileName: string | number | boolean | null | undefined,
   source: ByteProbeableSource,
 ): string => {
   if (format === "z3ds") return normalizeZ3dsExtractedFileName(fileName, source);
-  return String(fileName || "").trim() || getDiscExtractedFileName(format, source);
+  return String(fileName || "").trim() || getRomSpecificExtractedFileName(format, source);
 };
 
-const createAutomaticDiscSourceExtensions = (
+const createAutomaticRomSpecificSourceExtensions = (
   compressionInputExtensions: readonly string[],
   decompressionInputExtensions: readonly string[],
 ): readonly string[] => [
-  ...getUnambiguousDiscCompressionInputExtensions(compressionInputExtensions),
+  ...getUnambiguousRomSpecificCompressionInputExtensions(compressionInputExtensions),
   ...decompressionInputExtensions,
 ];
 
-const DISC_COMPRESSION_FORMAT_REGISTRY = {
+const ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY = {
   chd: {
     automaticParentKinds: ["chd"],
-    automaticSourceExtensions: createAutomaticDiscSourceExtensions(
+    automaticSourceExtensions: createAutomaticRomSpecificSourceExtensions(
       CHD_COMPRESSION_INPUT_EXTENSIONS,
       CHD_DECOMPRESSION_INPUT_EXTENSIONS,
     ),
     create: "createChd",
     decompressionInputExtensions: CHD_DECOMPRESSION_INPUT_EXTENSIONS,
-    extensionRegex: createDiscExtensionRegex(CHD_DECOMPRESSION_INPUT_EXTENSIONS),
+    extensionRegex: createRomSpecificExtensionRegex(CHD_DECOMPRESSION_INPUT_EXTENSIONS),
     extract: "extractChd",
     extractedFileName: getChdExtractedFileName,
     fallbackFileName: "input.chd",
@@ -195,13 +195,13 @@ const DISC_COMPRESSION_FORMAT_REGISTRY = {
   },
   rvz: {
     automaticParentKinds: ["rvz"],
-    automaticSourceExtensions: createAutomaticDiscSourceExtensions(
+    automaticSourceExtensions: createAutomaticRomSpecificSourceExtensions(
       RVZ_COMPRESSION_INPUT_EXTENSIONS,
       RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
     ),
     create: "createRvz",
     decompressionInputExtensions: RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
-    extensionRegex: createDiscExtensionRegex(RVZ_DECOMPRESSION_INPUT_EXTENSIONS),
+    extensionRegex: createRomSpecificExtensionRegex(RVZ_DECOMPRESSION_INPUT_EXTENSIONS),
     extract: "extractRvz",
     extractedFileName: getRvzExtractedFileName,
     fallbackFileName: "input.rvz",
@@ -219,13 +219,13 @@ const DISC_COMPRESSION_FORMAT_REGISTRY = {
   },
   z3ds: {
     automaticParentKinds: ["z3ds"],
-    automaticSourceExtensions: createAutomaticDiscSourceExtensions(
+    automaticSourceExtensions: createAutomaticRomSpecificSourceExtensions(
       Z3DS_COMPRESSION_INPUT_EXTENSIONS,
       Z3DS_DECOMPRESSION_INPUT_EXTENSIONS,
     ),
     create: "createZ3ds",
     decompressionInputExtensions: Z3DS_DECOMPRESSION_INPUT_EXTENSIONS,
-    extensionRegex: createDiscExtensionRegex(Z3DS_DECOMPRESSION_INPUT_EXTENSIONS),
+    extensionRegex: createRomSpecificExtensionRegex(Z3DS_DECOMPRESSION_INPUT_EXTENSIONS),
     extract: "extractZ3ds",
     extractedFileName: getZ3dsExtractedFileName,
     fallbackFileName: "input.z3ds",
@@ -241,7 +241,7 @@ const DISC_COMPRESSION_FORMAT_REGISTRY = {
     },
     scope: "z3ds",
   },
-} satisfies Record<DiscCompressionFormat, DiscCompressionFormatRegistration>;
+} satisfies Record<RomSpecificCompressionFormat, RomSpecificCompressionFormatRegistration>;
 
 const COMPRESSION_FORMAT_REGISTRY = {
   "7z": {
@@ -251,14 +251,14 @@ const COMPRESSION_FORMAT_REGISTRY = {
     label: "7z",
     outputExtension: () => "7z",
   },
-  chd: DISC_COMPRESSION_FORMAT_REGISTRY.chd,
+  chd: ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY.chd,
   none: {
     format: "none",
     label: "None",
     outputExtension: getOriginalOutputExtension,
   },
-  rvz: DISC_COMPRESSION_FORMAT_REGISTRY.rvz,
-  z3ds: DISC_COMPRESSION_FORMAT_REGISTRY.z3ds,
+  rvz: ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY.rvz,
+  z3ds: ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY.z3ds,
   zip: {
     automaticParentKinds: ["zip"],
     automaticSourceExtensions: ["zip", "zipx"],
@@ -272,39 +272,40 @@ const COMPRESSION_FORMAT_REGISTRY = {
 } satisfies Record<CompressionFormat, CompressionFormatRegistration>;
 
 const COMPRESSION_FORMAT_REGISTRATIONS = Object.values(COMPRESSION_FORMAT_REGISTRY) as CompressionFormatRegistration[];
-const DISC_COMPRESSION_FORMAT_REGISTRATIONS = Object.values(
-  DISC_COMPRESSION_FORMAT_REGISTRY,
-) as DiscCompressionFormatRegistration[];
+const ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS = Object.values(
+  ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY,
+) as RomSpecificCompressionFormatRegistration[];
 const COMPRESSION_FORMATS = Object.keys(COMPRESSION_FORMAT_REGISTRY) as CompressionFormat[];
 
 const isCompressionFormat = (value: unknown): value is CompressionFormat =>
   typeof value === "string" && Object.hasOwn(COMPRESSION_FORMAT_REGISTRY, value);
 
-const isDiscCompressionFormat = (value: unknown): value is DiscCompressionFormat =>
-  typeof value === "string" && Object.hasOwn(DISC_COMPRESSION_FORMAT_REGISTRY, value);
+const isRomSpecificCompressionFormat = (value: unknown): value is RomSpecificCompressionFormat =>
+  typeof value === "string" && Object.hasOwn(ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY, value);
 
 const getCompressionFormatRegistration = (
   format: string | null | undefined,
 ): CompressionFormatRegistration | undefined =>
   isCompressionFormat(format) ? COMPRESSION_FORMAT_REGISTRY[format] : undefined;
 
-const getDiscCompressionFormatRegistration = (
+const getRomSpecificCompressionFormatRegistration = (
   format: string | null | undefined,
-): DiscCompressionFormatRegistration | undefined =>
-  isDiscCompressionFormat(format) ? DISC_COMPRESSION_FORMAT_REGISTRY[format] : undefined;
+): RomSpecificCompressionFormatRegistration | undefined =>
+  isRomSpecificCompressionFormat(format) ? ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY[format] : undefined;
 
 const getCompressionOutputExtension = (
   format: CompressionFormat,
   context: CompressionOutputExtensionContext = {},
 ): string => COMPRESSION_FORMAT_REGISTRY[format].outputExtension(context);
 
-const getDiscExtractedFileName = (format: DiscCompressionFormat, source: ByteProbeableSource): string =>
-  DISC_COMPRESSION_FORMAT_REGISTRY[format].extractedFileName(source);
+const getRomSpecificExtractedFileName = (format: RomSpecificCompressionFormat, source: ByteProbeableSource): string =>
+  ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY[format].extractedFileName(source);
 
-const hasDiscCompressionFormatExtension = (
-  format: DiscCompressionFormat,
+const hasRomSpecificCompressionFormatExtension = (
+  format: RomSpecificCompressionFormat,
   extension: string | number | boolean | null | undefined,
-): boolean => hasDiscExtension(DISC_COMPRESSION_FORMAT_REGISTRY[format].decompressionInputExtensions, extension);
+): boolean =>
+  hasRomSpecificExtension(ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY[format].decompressionInputExtensions, extension);
 
 const getCompressionFormatForParentKind = (parentKind: string | null | undefined): CompressionFormat | undefined => {
   const normalizedParentKind = String(parentKind || "").toLowerCase();
@@ -354,26 +355,26 @@ const resolveAutomaticCompressionFormat = ({
 export type {
   ByteProbeableSource,
   CompressionFormatRegistration,
-  DiscCompressionFormat,
-  DiscCompressionFormatRegistration,
+  RomSpecificCompressionFormat,
+  RomSpecificCompressionFormatRegistration,
 };
 export {
   COMPRESSION_FORMAT_REGISTRATIONS,
   COMPRESSION_FORMAT_REGISTRY,
   COMPRESSION_FORMATS,
-  DISC_COMPRESSION_FORMAT_REGISTRATIONS,
-  DISC_COMPRESSION_FORMAT_REGISTRY,
   getCompressionFormatForFileExtension,
   getCompressionFormatForParentCompressions,
   getCompressionFormatForParentKind,
   getCompressionFormatRegistration,
   getCompressionOutputExtension,
-  getDiscCompressionFormatRegistration,
-  getDiscExtractedFileName,
   getFileExtension,
-  hasDiscCompressionFormatExtension,
+  getRomSpecificCompressionFormatRegistration,
+  getRomSpecificExtractedFileName,
+  hasRomSpecificCompressionFormatExtension,
   isCompressionFormat,
-  isDiscCompressionFormat,
-  normalizeDiscExtractedFileName,
+  isRomSpecificCompressionFormat,
+  normalizeRomSpecificExtractedFileName,
+  ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS,
+  ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY,
   resolveAutomaticCompressionFormat,
 };

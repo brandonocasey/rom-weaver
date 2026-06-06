@@ -21,15 +21,15 @@ import {
 import {
   CHD_COMPRESSION_INPUT_EXTENSIONS,
   CHD_DECOMPRESSION_INPUT_EXTENSIONS,
-  DISC_COMPRESSION_INPUT_EXTENSIONS,
-  DISC_INPUT_EXTENSIONS,
-  hasDiscExtension,
-  hasUnambiguousDiscCompressionInputExtension,
+  hasRomSpecificExtension,
+  hasUnambiguousRomSpecificCompressionInputExtension,
+  ROM_SPECIFIC_COMPRESSION_INPUT_EXTENSIONS,
+  ROM_SPECIFIC_INPUT_EXTENSIONS,
   RVZ_COMPRESSION_INPUT_EXTENSIONS,
   RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
   Z3DS_COMPRESSION_INPUT_EXTENSIONS,
   Z3DS_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "./disc-format-support.ts";
+} from "./rom-specific-format-support.ts";
 
 type OutputCompressionValue = "auto" | "chd" | "rvz" | "z3ds" | "7z" | "zip" | "none";
 type CompressionProfile = "min" | "very-low" | "low" | "medium" | "high" | "very-high" | "max";
@@ -79,7 +79,7 @@ type OutputCompressionOptions = {
 
 type OutputCompressionManagerApi = {
   OUTPUT_COMPRESSION: Record<string, OutputCompressionValue>;
-  DISC_INPUT_EXTENSIONS: string[];
+  ROM_SPECIFIC_INPUT_EXTENSIONS: string[];
   getFileName: (source: CompressionSourceInput) => string;
   getExtension: (source: CompressionSourceInput) => string;
   replaceExtension: (fileName: string, extension: string | number | boolean | null | undefined) => string;
@@ -89,7 +89,7 @@ type OutputCompressionManagerApi = {
     options?: OutputCompressionOptions,
   ) => OutputCompressionValue;
   supportsOutputCompression: (source: CompressionSourceInput, compression: CompressionChoiceInput) => boolean;
-  isDiscInput: (source: CompressionSourceInput) => boolean;
+  isRomSpecificInput: (source: CompressionSourceInput) => boolean;
   isRawDiscInput: (source: CompressionSourceInput) => boolean;
   isChdSource: (source: CompressionSourceInput) => boolean;
   isRvzSource: (source: CompressionSourceInput) => boolean;
@@ -151,7 +151,7 @@ const OutputCompressionManager = (() => {
     Z3DS: "z3ds",
     ZIP: "zip",
   };
-  const RAW_DISC_INPUT_EXTENSIONS = DISC_COMPRESSION_INPUT_EXTENSIONS;
+  const RAW_DISC_INPUT_EXTENSIONS = ROM_SPECIFIC_COMPRESSION_INPUT_EXTENSIONS;
   const ARCHIVE_FORMATS: Partial<Record<OutputCompressionValue, string>> = {
     "7z": "7zip",
     zip: "zip",
@@ -214,7 +214,7 @@ const OutputCompressionManager = (() => {
     throw new Error(`Unsupported output compression: ${value}`);
   };
 
-  const _isDiscInput = (source: CompressionSource | null | undefined) => {
+  const _isRomSpecificInput = (source: CompressionSource | null | undefined) => {
     if (
       source &&
       (source._chdSourceFileName ||
@@ -226,10 +226,10 @@ const OutputCompressionManager = (() => {
         source._z3dsSourceFileName)
     )
       return true;
-    return hasDiscExtension(DISC_INPUT_EXTENSIONS, _getExtension(source));
+    return hasRomSpecificExtension(ROM_SPECIFIC_INPUT_EXTENSIONS, _getExtension(source));
   };
   const _isRawDiscInput = (source: CompressionSourceInput) =>
-    hasDiscExtension(RAW_DISC_INPUT_EXTENSIONS, _getExtension(source));
+    hasRomSpecificExtension(RAW_DISC_INPUT_EXTENSIONS, _getExtension(source));
   const _hasChdSourceMetadata = (source: CompressionSource | null | undefined) =>
     !!(
       source &&
@@ -242,23 +242,24 @@ const OutputCompressionManager = (() => {
   const _hasRvzSourceMetadata = (source: CompressionSource | null | undefined) => !!source?._rvzSourceFileName;
   const _hasZ3dsSourceMetadata = (source: CompressionSource | null | undefined) => !!source?._z3dsSourceFileName;
   const _isChdSource = (source: CompressionSource | null | undefined) =>
-    hasDiscExtension(CHD_DECOMPRESSION_INPUT_EXTENSIONS, _getExtension(source)) || _hasChdSourceMetadata(source);
+    hasRomSpecificExtension(CHD_DECOMPRESSION_INPUT_EXTENSIONS, _getExtension(source)) || _hasChdSourceMetadata(source);
   const _isRvzSource = (source: CompressionSource | null | undefined) =>
-    hasDiscExtension(RVZ_DECOMPRESSION_INPUT_EXTENSIONS, _getExtension(source)) || _hasRvzSourceMetadata(source);
+    hasRomSpecificExtension(RVZ_DECOMPRESSION_INPUT_EXTENSIONS, _getExtension(source)) || _hasRvzSourceMetadata(source);
   const _isZ3dsSource = (source: CompressionSource | null | undefined) =>
-    hasDiscExtension(Z3DS_DECOMPRESSION_INPUT_EXTENSIONS, _getExtension(source)) || _hasZ3dsSourceMetadata(source);
+    hasRomSpecificExtension(Z3DS_DECOMPRESSION_INPUT_EXTENSIONS, _getExtension(source)) ||
+    _hasZ3dsSourceMetadata(source);
   const _isChdCompressionInput = (source: CompressionSource | null | undefined) =>
-    hasDiscExtension(CHD_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
+    hasRomSpecificExtension(CHD_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
   const _isRvzCompressionInput = (source: CompressionSource | null | undefined) =>
-    hasDiscExtension(RVZ_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
+    hasRomSpecificExtension(RVZ_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
   const _isZ3dsCompressionInput = (source: CompressionSource | null | undefined) =>
-    hasDiscExtension(Z3DS_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
+    hasRomSpecificExtension(Z3DS_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
   const _isUnambiguousChdCompressionInput = (source: CompressionSource | null | undefined) =>
-    hasUnambiguousDiscCompressionInputExtension(CHD_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
+    hasUnambiguousRomSpecificCompressionInputExtension(CHD_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
   const _isUnambiguousRvzCompressionInput = (source: CompressionSource | null | undefined) =>
-    hasUnambiguousDiscCompressionInputExtension(RVZ_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
+    hasUnambiguousRomSpecificCompressionInputExtension(RVZ_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
   const _isUnambiguousZ3dsCompressionInput = (source: CompressionSource | null | undefined) =>
-    hasUnambiguousDiscCompressionInputExtension(Z3DS_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
+    hasUnambiguousRomSpecificCompressionInputExtension(Z3DS_COMPRESSION_INPUT_EXTENSIONS, _getExtension(source));
   const _resolveOutputCompression = (
     source: CompressionSource | null | undefined,
     options?: OutputCompressionOptions,
@@ -529,7 +530,6 @@ const OutputCompressionManager = (() => {
   return {
     COMPRESSION_PROFILE_LEVELS: COMPRESSION_PROFILE_LEVELS,
     COMPRESSION_PROFILES: COMPRESSION_PROFILES,
-    DISC_INPUT_EXTENSIONS: DISC_INPUT_EXTENSIONS,
     getArchiveCodec: _getArchiveCodec,
     getArchiveFormat: _getArchiveFormat,
     getArchiveOutputExtension: _getArchiveOutputExtension,
@@ -554,8 +554,8 @@ const OutputCompressionManager = (() => {
     getExtension: _getExtension,
     getFileName: _getFileName,
     isChdSource: _isChdSource,
-    isDiscInput: _isDiscInput,
     isRawDiscInput: _isRawDiscInput,
+    isRomSpecificInput: _isRomSpecificInput,
     isRvzSource: _isRvzSource,
     isZ3dsSource: _isZ3dsSource,
     normalizeArchiveCompressionLevel: _normalizeArchiveCompressionLevel,
@@ -574,6 +574,7 @@ const OutputCompressionManager = (() => {
       _normalizeArchiveCodec(value, ZIP_COMPRESSION_METHODS, fallback || "deflate", "ZIP"),
     normalizeZstdCompressionLevel: _normalizeZstdCompressionLevel,
     OUTPUT_COMPRESSION: OUTPUT_COMPRESSION,
+    ROM_SPECIFIC_INPUT_EXTENSIONS: ROM_SPECIFIC_INPUT_EXTENSIONS,
     RVZ_COMPRESSION_METHODS: RVZ_COMPRESSION_METHODS,
     replaceExtension: _replaceExtension,
     resolveOutputCompression: _resolveOutputCompression,

@@ -3,12 +3,12 @@ import type { JsonValue, ProgressEvent as SharedProgressEvent } from "../../type
 import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import {
-  DISC_COMPRESSION_FORMAT_REGISTRATIONS,
-  type DiscCompressionFormat,
-  getDiscCompressionFormatRegistration,
-  getDiscExtractedFileName,
   getFileExtension,
-  hasDiscCompressionFormatExtension,
+  getRomSpecificCompressionFormatRegistration,
+  getRomSpecificExtractedFileName,
+  hasRomSpecificCompressionFormatExtension,
+  ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS,
+  type RomSpecificCompressionFormat,
 } from "../compression/container-format-registry.ts";
 import { RomWeaverError } from "../errors.ts";
 import { reportProgress } from "../progress/progress-reporting.ts";
@@ -25,12 +25,12 @@ const MAX_RECURSIVE_DECOMPRESSION_PASSES = 8;
 
 type InputPreparationOptions = ApplyWorkflowOptions | CreateWorkflowOptions | undefined;
 type InputPreparationRuntime = Pick<WorkflowRuntime, "compression" | "name" | "workerIo">;
-type CompressionInputKind = DiscCompressionFormat;
+type CompressionInputKind = RomSpecificCompressionFormat;
 const DEFAULT_INPUT_PREPARATION_RUNTIME: Pick<WorkflowRuntime, "name"> = {
   name: "browser",
 };
-const MAX_DISC_MAGIC_LENGTH = Math.max(
-  ...DISC_COMPRESSION_FORMAT_REGISTRATIONS.map((registration) => registration.magicBytes.length),
+const MAX_ROM_SPECIFIC_MAGIC_LENGTH = Math.max(
+  ...ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS.map((registration) => registration.magicBytes.length),
 );
 
 let defaultBrowserRuntimePromise: Promise<WorkflowRuntime> | null = null;
@@ -66,11 +66,11 @@ const resolveInputPreparationRuntime = async (
   return resolveNamedInputPreparationRuntime(runtime.name);
 };
 
-const canProbeDiscMagicSynchronously = (binFile: PatchFileInstance) =>
+const canProbeRomSpecificMagicSynchronously = (binFile: PatchFileInstance) =>
   binFile._u8array instanceof Uint8Array || (!binFile._browserFileBacked && typeof binFile.readIntoAt === "function");
 
-const isDiscDecompressionOutput = (binFile: PatchFileInstance) =>
-  !!(binFile as { _discDecompressionOutput?: boolean })._discDecompressionOutput;
+const isRomSpecificDecompressionOutput = (binFile: PatchFileInstance) =>
+  !!(binFile as { _romSpecificDecompressionOutput?: boolean })._romSpecificDecompressionOutput;
 
 const readSyncHeader = (binFile: PatchFileInstance, length: number) => {
   try {
@@ -87,8 +87,8 @@ const readSyncHeader = (binFile: PatchFileInstance, length: number) => {
 const hasMagicPrefix = (bytes: Uint8Array | null | undefined, magic: readonly number[]) =>
   !!bytes && bytes.length >= magic.length && magic.every((value, index) => bytes[index] === value);
 
-const resolveDiscKindFromHeader = (header: Uint8Array | null | undefined): CompressionInputKind | null => {
-  for (const registration of DISC_COMPRESSION_FORMAT_REGISTRATIONS) {
+const resolveRomSpecificKindFromHeader = (header: Uint8Array | null | undefined): CompressionInputKind | null => {
+  for (const registration of ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS) {
     if (hasMagicPrefix(header, registration.magicBytes)) return registration.format;
   }
   return null;
@@ -101,39 +101,41 @@ const readBlobHeader = async (binFile: PatchFileInstance, length: number): Promi
   return new Uint8Array(header, 0, Math.min(length, header.byteLength));
 };
 
-const resolveDiscCompressionKind = async (binFile: PatchFileInstance): Promise<CompressionInputKind | null> => {
-  if (canProbeDiscMagicSynchronously(binFile)) {
-    const kind = resolveDiscKindFromHeader(readSyncHeader(binFile, MAX_DISC_MAGIC_LENGTH));
-    if (kind || isDiscDecompressionOutput(binFile)) return kind;
+const resolveRomSpecificCompressionKind = async (binFile: PatchFileInstance): Promise<CompressionInputKind | null> => {
+  if (canProbeRomSpecificMagicSynchronously(binFile)) {
+    const kind = resolveRomSpecificKindFromHeader(readSyncHeader(binFile, MAX_ROM_SPECIFIC_MAGIC_LENGTH));
+    if (kind || isRomSpecificDecompressionOutput(binFile)) return kind;
   }
-  const header = await readBlobHeader(binFile, MAX_DISC_MAGIC_LENGTH);
+  const header = await readBlobHeader(binFile, MAX_ROM_SPECIFIC_MAGIC_LENGTH);
   if (header) {
-    const kind = resolveDiscKindFromHeader(header);
-    if (kind || isDiscDecompressionOutput(binFile)) return kind;
+    const kind = resolveRomSpecificKindFromHeader(header);
+    if (kind || isRomSpecificDecompressionOutput(binFile)) return kind;
   }
-  if (isDiscDecompressionOutput(binFile)) return null;
+  if (isRomSpecificDecompressionOutput(binFile)) return null;
   if (typeof binFile.getExtension === "function") {
     const extension = binFile.getExtension();
-    const registration = DISC_COMPRESSION_FORMAT_REGISTRATIONS.find((entry) =>
-      hasDiscCompressionFormatExtension(entry.format, extension),
+    const registration = ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS.find((entry) =>
+      hasRomSpecificCompressionFormatExtension(entry.format, extension),
     );
     if (registration) return registration.format;
   }
   return null;
 };
 
-const looksLikeDiscFile = (format: CompressionInputKind, binFile: PatchFileInstance) => {
-  const registration = getDiscCompressionFormatRegistration(format);
+const looksLikeRomSpecificFile = (format: CompressionInputKind, binFile: PatchFileInstance) => {
+  const registration = getRomSpecificCompressionFormatRegistration(format);
   if (!registration) return false;
   return (
     hasMagicPrefix(readSyncHeader(binFile, registration.magicBytes.length), registration.magicBytes) ||
-    (!isDiscDecompressionOutput(binFile) &&
-      hasDiscCompressionFormatExtension(registration.format, getFileExtension(binFile)))
+    (!isRomSpecificDecompressionOutput(binFile) &&
+      hasRomSpecificCompressionFormatExtension(registration.format, getFileExtension(binFile)))
   );
 };
 
-const getDiscCompressionInputProgressLabel = (file: PatchFileInstance): string | null => {
-  const registration = DISC_COMPRESSION_FORMAT_REGISTRATIONS.find((entry) => looksLikeDiscFile(entry.format, file));
+const getRomSpecificCompressionInputProgressLabel = (file: PatchFileInstance): string | null => {
+  const registration = ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRATIONS.find((entry) =>
+    looksLikeRomSpecificFile(entry.format, file),
+  );
   return registration ? `Preparing ${registration.label} extraction...` : null;
 };
 
@@ -225,21 +227,21 @@ const resolveSingleCompressionInput = async (
     extracted.fileName = output.fileName || outputName;
     return decorateCompressionPatchFile(extracted, {});
   };
-  const compressionKind = await resolveDiscCompressionKind(file);
-  const registration = compressionKind ? getDiscCompressionFormatRegistration(compressionKind) : undefined;
+  const compressionKind = await resolveRomSpecificCompressionKind(file);
+  const registration = compressionKind ? getRomSpecificCompressionFormatRegistration(compressionKind) : undefined;
   if (registration) {
     const decompressed = await extractInRuntime(
       registration.format,
-      getDiscExtractedFileName(registration.format, file),
+      getRomSpecificExtractedFileName(registration.format, file),
       `Extracting ${registration.label}...`,
     );
-    (decompressed as { _discDecompressionOutput?: boolean })._discDecompressionOutput = true;
+    (decompressed as { _romSpecificDecompressionOutput?: boolean })._romSpecificDecompressionOutput = true;
     return decompressed;
   }
   return null;
 };
 
-const resolveDiscCompressionInput = async (
+const resolveRomSpecificCompressionInput = async (
   file: PatchFileInstance,
   options: InputPreparationOptions,
   runtime: InputPreparationRuntime | Pick<WorkflowRuntime, "name"> = DEFAULT_INPUT_PREPARATION_RUNTIME,
@@ -252,7 +254,7 @@ const resolveDiscCompressionInput = async (
     await cleanupIntermediateFile(current, file);
     if (
       isLazyExternalPatchFile(decompressed) ||
-      (isDiscDecompressionOutput(decompressed) && !canProbeDiscMagicSynchronously(decompressed))
+      (isRomSpecificDecompressionOutput(decompressed) && !canProbeRomSpecificMagicSynchronously(decompressed))
     )
       return decompressed;
     current = decompressed;
@@ -263,13 +265,13 @@ const resolveDiscCompressionInput = async (
   });
 };
 
-const resolveCompressionInput = resolveDiscCompressionInput;
+const resolveCompressionInput = resolveRomSpecificCompressionInput;
 
 export type { InputPreparationRuntime };
 export {
   DEFAULT_INPUT_PREPARATION_RUNTIME,
-  getDiscCompressionInputProgressLabel,
+  getRomSpecificCompressionInputProgressLabel,
   resolveCompressionInput,
-  resolveDiscCompressionInput,
   resolveInputPreparationRuntime,
+  resolveRomSpecificCompressionInput,
 };

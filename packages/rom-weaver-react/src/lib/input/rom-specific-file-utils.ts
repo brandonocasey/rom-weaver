@@ -4,10 +4,10 @@ import {
   replaceCuePatchFileName,
 } from "../../workers/protocol/cue-file-utils.ts";
 import {
-  DISC_COMPRESSION_FORMAT_REGISTRY,
-  getDiscExtractedFileName,
   getFileExtension,
-  hasDiscCompressionFormatExtension,
+  getRomSpecificExtractedFileName,
+  hasRomSpecificCompressionFormatExtension,
+  ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY,
 } from "../compression/container-format-registry.ts";
 
 const BIN_EXTENSION_REGEX = /\.bin$/i;
@@ -44,21 +44,24 @@ const hasAsciiMagic = (source: unknown, magic: string): boolean => {
   return true;
 };
 
-const isDiscFormatFile = (format: keyof typeof DISC_COMPRESSION_FORMAT_REGISTRY, source: unknown): boolean => {
-  const registration = DISC_COMPRESSION_FORMAT_REGISTRY[format];
+const isRomSpecificFormatFile = (
+  format: keyof typeof ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY,
+  source: unknown,
+): boolean => {
+  const registration = ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY[format];
   const probeableSource = source as ByteProbeableSource | null | undefined;
   return (
     registration.extensionRegex.test(String(probeableSource?.fileName || "")) ||
-    hasDiscCompressionFormatExtension(format, getFileExtension(probeableSource)) ||
+    hasRomSpecificCompressionFormatExtension(format, getFileExtension(probeableSource)) ||
     hasAsciiMagic(source, registration.magic)
   );
 };
 
-const isChdFile = (source: unknown): boolean => isDiscFormatFile("chd", source);
+const isChdFile = (source: unknown): boolean => isRomSpecificFormatFile("chd", source);
 
-const isRvzFile = (source: unknown): boolean => isDiscFormatFile("rvz", source);
+const isRvzFile = (source: unknown): boolean => isRomSpecificFormatFile("rvz", source);
 
-const isZ3dsFile = (source: unknown): boolean => isDiscFormatFile("z3ds", source);
+const isZ3dsFile = (source: unknown): boolean => isRomSpecificFormatFile("z3ds", source);
 
 const getChdAutoCreateMode = (
   source: ByteProbeableSource & { _chdCuePath?: string; _chdCueText?: string; _chdMode?: string },
@@ -71,7 +74,7 @@ const getChdAutoCreateMode = (
 
 export {
   getChdAutoCreateMode,
-  getDiscExtractedFileName,
+  getRomSpecificExtractedFileName,
   getSingleTrackCdExtractionPlan,
   isChdFile,
   isRvzFile,

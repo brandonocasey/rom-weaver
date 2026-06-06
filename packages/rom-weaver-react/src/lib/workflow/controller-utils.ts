@@ -71,8 +71,8 @@ const cloneWarning = (warning: WorkflowWarning): WorkflowWarning => ({
   role: warning.role,
 });
 
-const isDiscDecompressionOutput = (file: PatchFileInstance) =>
-  !!(file as { _discDecompressionOutput?: boolean })._discDecompressionOutput;
+const isRomSpecificDecompressionOutput = (file: PatchFileInstance) =>
+  !!(file as { _romSpecificDecompressionOutput?: boolean })._romSpecificDecompressionOutput;
 
 const createChecksumSource = (file: PatchFileInstance, fallbackFileName?: string) => {
   const sourceAccess = getPatchFileSourceAccess(file, fallbackFileName);
@@ -84,7 +84,7 @@ const createChecksumSource = (file: PatchFileInstance, fallbackFileName?: string
   });
   if (sourceRef) return sourceRef;
 
-  const preferDirectBrowserSource = !isDiscDecompressionOutput(file);
+  const preferDirectBrowserSource = !isRomSpecificDecompressionOutput(file);
   if (preferDirectBrowserSource) {
     const blob = sourceAccess.getBlob();
     if (blob) {

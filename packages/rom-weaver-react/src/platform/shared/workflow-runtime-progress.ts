@@ -22,7 +22,7 @@ const forwardCreatePatchProgress =
     });
   };
 
-const forwardDiscProgress = (stage: "input" | "output", onProgress?: (progress: ProgressEvent) => void) => {
+const forwardRomSpecificProgress = (stage: "input" | "output", onProgress?: (progress: ProgressEvent) => void) => {
   if (!onProgress) return undefined;
   return (progress: RuntimeProgress) => {
     const label = progress.label || (stage === "input" ? "Extracting disc image..." : "Creating disc image...");
@@ -82,4 +82,4 @@ const forwardArchiveProgress = (stage: "input" | "output", onProgress?: (progres
   };
 };
 
-export { forwardArchiveProgress, forwardCreatePatchProgress, forwardDiscProgress };
+export { forwardArchiveProgress, forwardCreatePatchProgress, forwardRomSpecificProgress };

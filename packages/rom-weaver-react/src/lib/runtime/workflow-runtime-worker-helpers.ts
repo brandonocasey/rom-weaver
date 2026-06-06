@@ -15,7 +15,7 @@ const getWorkerOutputFileName = (result: RuntimeWorkerOutput, fallbackFileName: 
 const getWorkerOutputFilePath = (result: RuntimeWorkerOutput) =>
   result.outputRef?.filePath || result.filePath || result.patchFilePath;
 
-const attachDiscOutputMetadata = <TOutput extends PublicOutput>(
+const attachRomSpecificOutputMetadata = <TOutput extends PublicOutput>(
   output: TOutput,
   metadata: {
     chdCuePath?: string;
@@ -48,7 +48,7 @@ const createCompressionExtractResult = (outputs: CompressionExtractResult["outpu
 });
 
 export {
-  attachDiscOutputMetadata,
+  attachRomSpecificOutputMetadata,
   createCompressionExtractResult,
   getWorkerOutputBlob,
   getWorkerOutputFileName,

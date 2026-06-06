@@ -1,19 +1,22 @@
-import { forwardCreatePatchProgress, forwardDiscProgress } from "../../platform/shared/workflow-runtime-progress.ts";
+import {
+  forwardCreatePatchProgress,
+  forwardRomSpecificProgress,
+} from "../../platform/shared/workflow-runtime-progress.ts";
 import type { ChecksumResult } from "../../types/checksum.ts";
 import type { CompressionExtractResult, PublicOutput } from "../../types/workflow-runtime.ts";
 import type {
-  RuntimeDiscCreateChdInput,
-  RuntimeDiscCreateRvzInput,
-  RuntimeDiscCreateZ3dsInput,
-  RuntimeDiscExtractChdInput,
-  RuntimeDiscExtractRvzInput,
-  RuntimeDiscExtractZ3dsInput,
   RuntimePatchApplyWorkerInput,
   RuntimePatchCreateCandidatesWorkerInput,
   RuntimePatchCreateFormatCandidates,
   RuntimePatchCreateWorkerInput,
   RuntimePatchValidateWorkerInput,
   RuntimePatchWorkerProgress,
+  RuntimeRomSpecificCreateChdInput,
+  RuntimeRomSpecificCreateRvzInput,
+  RuntimeRomSpecificCreateZ3dsInput,
+  RuntimeRomSpecificExtractChdInput,
+  RuntimeRomSpecificExtractRvzInput,
+  RuntimeRomSpecificExtractZ3dsInput,
   RuntimeTrimWorkerInput,
   RuntimeWorkerIo,
   RuntimeWorkerPathSource,
@@ -24,9 +27,9 @@ import type {
   WorkflowRuntimeProgress,
 } from "../../types/workflow-runtime-adapter.ts";
 import {
-  type DiscCompressionFormat,
-  type DiscCompressionFormatRegistration,
-  getDiscCompressionFormatRegistration,
+  getRomSpecificCompressionFormatRegistration,
+  type RomSpecificCompressionFormat,
+  type RomSpecificCompressionFormatRegistration,
 } from "../compression/container-format-registry.ts";
 import { getPathBaseName } from "../path-utils.ts";
 import { getNamedSourceFileName, toWorkerMetadata } from "./source-normalization.ts";
@@ -39,27 +42,31 @@ const isCueOutput = (output: PublicOutput) => CUE_FILE_REGEX.test(output.fileNam
 const withOutputFileName = (output: PublicOutput, fileName: string): PublicOutput =>
   output.fileName === fileName ? output : { ...output, fileName };
 
-type DiscRuntimeAdapter = {
-  createChd?: (input: RuntimeDiscCreateChdInput) => Promise<Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>>;
-  createRvz?: (input: RuntimeDiscCreateRvzInput) => Promise<Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>>;
+type RomSpecificRuntimeAdapter = {
+  createChd?: (
+    input: RuntimeRomSpecificCreateChdInput,
+  ) => Promise<Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>>;
+  createRvz?: (
+    input: RuntimeRomSpecificCreateRvzInput,
+  ) => Promise<Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>>;
   createZ3ds?: (
-    input: RuntimeDiscCreateZ3dsInput,
+    input: RuntimeRomSpecificCreateZ3dsInput,
   ) => Promise<Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>>;
   listChd?: (
-    input: RuntimeDiscExtractChdInput,
+    input: RuntimeRomSpecificExtractChdInput,
   ) => Promise<Awaited<ReturnType<NonNullable<WorkflowRuntime["compression"]["list"]>>>["entries"]>;
   listRvz?: (
-    input: RuntimeDiscExtractRvzInput,
+    input: RuntimeRomSpecificExtractRvzInput,
   ) => Promise<Awaited<ReturnType<NonNullable<WorkflowRuntime["compression"]["list"]>>>["entries"]>;
   listZ3ds?: (
-    input: RuntimeDiscExtractZ3dsInput,
+    input: RuntimeRomSpecificExtractZ3dsInput,
   ) => Promise<Awaited<ReturnType<NonNullable<WorkflowRuntime["compression"]["list"]>>>["entries"]>;
-  extractChd?: (input: RuntimeDiscExtractChdInput) => Promise<CompressionExtractResult>;
+  extractChd?: (input: RuntimeRomSpecificExtractChdInput) => Promise<CompressionExtractResult>;
   extractRvz?: (
-    input: RuntimeDiscExtractRvzInput,
+    input: RuntimeRomSpecificExtractRvzInput,
   ) => Promise<Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>>;
   extractZ3ds?: (
-    input: RuntimeDiscExtractZ3dsInput,
+    input: RuntimeRomSpecificExtractZ3dsInput,
   ) => Promise<Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>>;
 };
 
@@ -501,7 +508,7 @@ const createSharedTrimRuntime = (adapter: TrimRuntimeAdapter): WorkflowRuntime["
 
 const createSharedCompressionRuntime = (
   archiveRuntime: Partial<WorkflowRuntime["compression"]>,
-  discRuntime: DiscRuntimeAdapter,
+  romSpecificRuntime: RomSpecificRuntimeAdapter,
   input: {
     archiveRuntimeOptional?: boolean;
   } = {},
@@ -510,21 +517,30 @@ const createSharedCompressionRuntime = (
     if (output === undefined) throw new Error(message);
     return output;
   };
-  const getSourceFileName = (source: RuntimeDiscExtractChdInput["source"], fallbackFileName: string) =>
+  const getSourceFileName = (source: RuntimeRomSpecificExtractChdInput["source"], fallbackFileName: string) =>
     getNamedSourceFileName(source, { fallback: fallbackFileName }) || fallbackFileName;
-  type DiscCreateRequest = Extract<
+  type RomSpecificCreateRequest = Extract<
     Parameters<NonNullable<WorkflowRuntime["compression"]["create"]>>[0],
     { source: unknown }
   >;
-  type DiscExtractRequest = Parameters<NonNullable<WorkflowRuntime["compression"]["extract"]>>[0];
-  type DiscListRequest = Parameters<NonNullable<WorkflowRuntime["compression"]["list"]>>[0];
-  type DiscCreateInput = RuntimeDiscCreateChdInput | RuntimeDiscCreateRvzInput | RuntimeDiscCreateZ3dsInput;
-  type DiscExtractInput = RuntimeDiscExtractChdInput | RuntimeDiscExtractRvzInput | RuntimeDiscExtractZ3dsInput;
-  type DiscListInput = RuntimeDiscExtractChdInput | RuntimeDiscExtractRvzInput | RuntimeDiscExtractZ3dsInput;
-  type DiscCreateOutput = Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>;
-  type DiscListEntries = Awaited<ReturnType<NonNullable<WorkflowRuntime["compression"]["list"]>>>["entries"];
-  const createDiscInputs = {
-    chd: (request: DiscCreateRequest): RuntimeDiscCreateChdInput => ({
+  type RomSpecificExtractRequest = Parameters<NonNullable<WorkflowRuntime["compression"]["extract"]>>[0];
+  type RomSpecificListRequest = Parameters<NonNullable<WorkflowRuntime["compression"]["list"]>>[0];
+  type RomSpecificCreateInput =
+    | RuntimeRomSpecificCreateChdInput
+    | RuntimeRomSpecificCreateRvzInput
+    | RuntimeRomSpecificCreateZ3dsInput;
+  type RomSpecificExtractInput =
+    | RuntimeRomSpecificExtractChdInput
+    | RuntimeRomSpecificExtractRvzInput
+    | RuntimeRomSpecificExtractZ3dsInput;
+  type RomSpecificListInput =
+    | RuntimeRomSpecificExtractChdInput
+    | RuntimeRomSpecificExtractRvzInput
+    | RuntimeRomSpecificExtractZ3dsInput;
+  type RomSpecificCreateOutput = Awaited<ReturnType<RuntimeWorkerIo["createWorkerOutput"]>>;
+  type RomSpecificListEntries = Awaited<ReturnType<NonNullable<WorkflowRuntime["compression"]["list"]>>>["entries"];
+  const createRomSpecificInputs = {
+    chd: (request: RomSpecificCreateRequest): RuntimeRomSpecificCreateChdInput => ({
       chdSourceMode: request.chdSourceMode,
       compressionCodecs: request.compressionCodecs,
       cueFilePath: request.cueFilePath,
@@ -533,16 +549,16 @@ const createSharedCompressionRuntime = (
       logLevel: request.options?.logLevel,
       mode: request.mode,
       onLog: request.options?.onLog,
-      onProgress: forwardDiscProgress("output", request.options?.onProgress),
+      onProgress: forwardRomSpecificProgress("output", request.options?.onProgress),
       outputName: request.outputName,
       source: request.source,
       threads: request.options?.workerThreads,
     }),
-    rvz: (request: DiscCreateRequest): RuntimeDiscCreateRvzInput => ({
+    rvz: (request: RomSpecificCreateRequest): RuntimeRomSpecificCreateRvzInput => ({
       fileName: request.fileName,
       logLevel: request.options?.logLevel,
       onLog: request.options?.onLog,
-      onProgress: forwardDiscProgress("output", request.options?.onProgress),
+      onProgress: forwardRomSpecificProgress("output", request.options?.onProgress),
       outputName: request.outputName,
       rvzBlockSize: request.rvzBlockSize,
       rvzCompression: request.rvzCompression,
@@ -553,11 +569,11 @@ const createSharedCompressionRuntime = (
       source: request.source,
       threads: request.options?.workerThreads,
     }),
-    z3ds: (request: DiscCreateRequest): RuntimeDiscCreateZ3dsInput => ({
+    z3ds: (request: RomSpecificCreateRequest): RuntimeRomSpecificCreateZ3dsInput => ({
       fileName: request.fileName,
       logLevel: request.options?.logLevel,
       onLog: request.options?.onLog,
-      onProgress: forwardDiscProgress("output", request.options?.onProgress),
+      onProgress: forwardRomSpecificProgress("output", request.options?.onProgress),
       outputName: request.outputName,
       source: request.source,
       threads: request.options?.workerThreads,
@@ -569,48 +585,59 @@ const createSharedCompressionRuntime = (
       z3dsSourceFileName: request.z3dsSourceFileName,
       z3dsUnderlyingMagic: request.z3dsUnderlyingMagic,
     }),
-  } satisfies Record<DiscCompressionFormat, (request: DiscCreateRequest) => DiscCreateInput>;
-  const createDiscOutput = async (registration: DiscCompressionFormatRegistration, input: DiscCreateInput) => {
-    const create = discRuntime[registration.create] as
-      | ((input: DiscCreateInput) => Promise<DiscCreateOutput>)
+  } satisfies Record<RomSpecificCompressionFormat, (request: RomSpecificCreateRequest) => RomSpecificCreateInput>;
+  const createRomSpecificOutput = async (
+    registration: RomSpecificCompressionFormatRegistration,
+    input: RomSpecificCreateInput,
+  ) => {
+    const create = romSpecificRuntime[registration.create] as
+      | ((input: RomSpecificCreateInput) => Promise<RomSpecificCreateOutput>)
       | undefined;
     return create?.(input);
   };
-  const extractDiscOutput = async (registration: DiscCompressionFormatRegistration, input: DiscExtractInput) => {
-    const extract = discRuntime[registration.extract] as
-      | ((input: DiscExtractInput) => Promise<CompressionExtractResult | DiscCreateOutput>)
+  const extractRomSpecificOutput = async (
+    registration: RomSpecificCompressionFormatRegistration,
+    input: RomSpecificExtractInput,
+  ) => {
+    const extract = romSpecificRuntime[registration.extract] as
+      | ((input: RomSpecificExtractInput) => Promise<CompressionExtractResult | RomSpecificCreateOutput>)
       | undefined;
     return extract?.(input);
   };
-  const listDiscEntries = async (registration: DiscCompressionFormatRegistration, input: DiscListInput) => {
-    const list = discRuntime[registration.list] as ((input: DiscListInput) => Promise<DiscListEntries>) | undefined;
+  const listRomSpecificEntries = async (
+    registration: RomSpecificCompressionFormatRegistration,
+    input: RomSpecificListInput,
+  ) => {
+    const list = romSpecificRuntime[registration.list] as
+      | ((input: RomSpecificListInput) => Promise<RomSpecificListEntries>)
+      | undefined;
     return list?.(input);
   };
-  const getDiscListInput = (
-    registration: DiscCompressionFormatRegistration,
-    request: DiscListRequest,
-  ): DiscListInput => ({
+  const getRomSpecificListInput = (
+    registration: RomSpecificCompressionFormatRegistration,
+    request: RomSpecificListRequest,
+  ): RomSpecificListInput => ({
     fileName: getSourceFileName(request.source, registration.fallbackFileName),
     logLevel: request.options?.logLevel,
     mode: undefined,
     onLog: request.options?.onLog,
-    onProgress: forwardDiscProgress("input", request.options?.onProgress),
+    onProgress: forwardRomSpecificProgress("input", request.options?.onProgress),
     source: request.source,
     threads: request.options?.workerThreads,
   });
-  const extractChd = async (request: DiscExtractRequest) => {
-    const registration = getDiscCompressionFormatRegistration("chd");
+  const extractChd = async (request: RomSpecificExtractRequest) => {
+    const registration = getRomSpecificCompressionFormatRegistration("chd");
     if (!registration) throw new Error("CHD compression extraction is unavailable");
     const selectedEntries = request.entries.filter((entryName) => typeof entryName === "string" && entryName);
     const cueEntryName = selectedEntries.find((entryName) => CUE_FILE_REGEX.test(entryName));
     const trackEntryName = selectedEntries.find((entryName) => !CUE_FILE_REGEX.test(entryName));
     const extracted = requireOutput(
-      (await extractDiscOutput(registration, {
+      (await extractRomSpecificOutput(registration, {
         fileName: getSourceFileName(request.source, registration.fallbackFileName),
         logLevel: request.options?.logLevel,
         mode: cueEntryName ? "cd" : undefined,
         onLog: request.options?.onLog,
-        onProgress: forwardDiscProgress("input", request.options?.onProgress),
+        onProgress: forwardRomSpecificProgress("input", request.options?.onProgress),
         outputName: trackEntryName || request.outputName,
         source: request.source,
         splitBin: typeof request.options?.chdSplitBin === "boolean" ? request.options.chdSplitBin : undefined,
@@ -648,36 +675,40 @@ const createSharedCompressionRuntime = (
       .filter((output): output is PublicOutput => !!output);
     return createCompressionExtractResult(outputs.length ? outputs : extracted.outputs);
   };
-  const extractSingleOutputDisc = async (
-    registration: DiscCompressionFormatRegistration,
-    request: DiscExtractRequest,
+  const extractSingleOutputRomSpecific = async (
+    registration: RomSpecificCompressionFormatRegistration,
+    request: RomSpecificExtractRequest,
   ) => {
     if (request.entries.length !== 1)
       throw new Error(`${registration.label} compression extraction requires exactly one synthetic output entry`);
     return createCompressionExtractResult([
       requireOutput(
-        (await extractDiscOutput(registration, {
+        (await extractRomSpecificOutput(registration, {
           fileName: getSourceFileName(request.source, registration.fallbackFileName),
           logLevel: request.options?.logLevel,
           onLog: request.options?.onLog,
-          onProgress: forwardDiscProgress("input", request.options?.onProgress),
+          onProgress: forwardRomSpecificProgress("input", request.options?.onProgress),
           outputName: request.entries[0] || request.outputName,
           source: request.source,
           threads: request.options?.workerThreads,
-        })) as DiscCreateOutput | undefined,
+        })) as RomSpecificCreateOutput | undefined,
         `${registration.label} compression extraction is unavailable`,
       ),
     ]);
   };
-  const extractDiscHandlers = {
-    chd: (_registration: DiscCompressionFormatRegistration, request: DiscExtractRequest) => extractChd(request),
-    rvz: (registration: DiscCompressionFormatRegistration, request: DiscExtractRequest) =>
-      extractSingleOutputDisc(registration, request),
-    z3ds: (registration: DiscCompressionFormatRegistration, request: DiscExtractRequest) =>
-      extractSingleOutputDisc(registration, request),
+  const extractRomSpecificHandlers = {
+    chd: (_registration: RomSpecificCompressionFormatRegistration, request: RomSpecificExtractRequest) =>
+      extractChd(request),
+    rvz: (registration: RomSpecificCompressionFormatRegistration, request: RomSpecificExtractRequest) =>
+      extractSingleOutputRomSpecific(registration, request),
+    z3ds: (registration: RomSpecificCompressionFormatRegistration, request: RomSpecificExtractRequest) =>
+      extractSingleOutputRomSpecific(registration, request),
   } satisfies Record<
-    DiscCompressionFormat,
-    (registration: DiscCompressionFormatRegistration, request: DiscExtractRequest) => Promise<CompressionExtractResult>
+    RomSpecificCompressionFormat,
+    (
+      registration: RomSpecificCompressionFormatRegistration,
+      request: RomSpecificExtractRequest,
+    ) => Promise<CompressionExtractResult>
   >;
   const runtime: WorkflowRuntime["compression"] = {
     create: async (request) => {
@@ -685,11 +716,11 @@ const createSharedCompressionRuntime = (
         if (!archiveRuntime.create) throw new Error("Archive compression creation is unavailable");
         return archiveRuntime.create(request);
       }
-      const registration = getDiscCompressionFormatRegistration(request.format);
+      const registration = getRomSpecificCompressionFormatRegistration(request.format);
       if (registration)
         return {
           output: requireOutput(
-            await createDiscOutput(registration, createDiscInputs[registration.format](request)),
+            await createRomSpecificOutput(registration, createRomSpecificInputs[registration.format](request)),
             `${registration.label} compression creation is unavailable`,
           ),
         };
@@ -699,18 +730,18 @@ const createSharedCompressionRuntime = (
     },
   };
   const extract = async (request: Parameters<NonNullable<WorkflowRuntime["compression"]["extract"]>>[0]) => {
-    const registration = getDiscCompressionFormatRegistration(request.format);
-    if (registration) return extractDiscHandlers[registration.format](registration, request);
+    const registration = getRomSpecificCompressionFormatRegistration(request.format);
+    if (registration) return extractRomSpecificHandlers[registration.format](registration, request);
     if (!archiveRuntime.extract) throw new Error("Archive compression extraction is unavailable");
     return archiveRuntime.extract(request);
   };
   if (!input.archiveRuntimeOptional || archiveRuntime.extract) runtime.extract = extract;
   runtime.list = async (request) => {
-    const registration = getDiscCompressionFormatRegistration(request.format);
+    const registration = getRomSpecificCompressionFormatRegistration(request.format);
     if (registration)
       return {
         entries: requireOutput(
-          await listDiscEntries(registration, getDiscListInput(registration, request)),
+          await listRomSpecificEntries(registration, getRomSpecificListInput(registration, request)),
           `${registration.label} compression listing is unavailable`,
         ),
       };
@@ -770,7 +801,7 @@ const getPreloadWasmTool = (capability: Parameters<NonNullable<WorkflowRuntimePr
   return undefined;
 };
 
-export type { DiscRuntimeAdapter, TrimRuntimeAdapter };
+export type { RomSpecificRuntimeAdapter, TrimRuntimeAdapter };
 export {
   createRuntimePreload,
   createSharedCompressionRuntime,

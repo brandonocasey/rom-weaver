@@ -1,15 +1,15 @@
 import type { ArchiveOutputSettings, CompressionIntermediateOptions } from "../../types/workflow-compression.ts";
 import type { WorkflowRomFileLike as SourceFileLike } from "../../types/workflow-source.ts";
-import {
-  createDiscExtensionRegex,
-  hasDiscExtension,
-  RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "../compression/disc-format-support.ts";
 import OutputCompressionManager from "../compression/output-compression-manager.ts";
+import {
+  createRomSpecificExtensionRegex,
+  hasRomSpecificExtension,
+  RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
+} from "../compression/rom-specific-format-support.ts";
 import { appendFileNameExtension, hasFileNameExtension, replaceFileNameExtension } from "../input/path-utils.ts";
 import { CHD_EXTENSION_REGEX } from "../path-utils.ts";
 
-const RVZ_EXTENSION_REGEX = createDiscExtensionRegex(RVZ_DECOMPRESSION_INPUT_EXTENSIONS);
+const RVZ_EXTENSION_REGEX = createRomSpecificExtensionRegex(RVZ_DECOMPRESSION_INPUT_EXTENSIONS);
 const Z3DS_EXTENSION_REGEX = /\.(zcia|zcci|zcxi|z3dsx|z3ds)$/i;
 const ARCHIVE_EXTENSION_REGEX = /\.(7z|zip)$/i;
 
@@ -124,7 +124,7 @@ const getArchiveIntermediateFileName = (fileName: string, source: SourceFileLike
 const getRvzIntermediateFileName = (fileName: string, source: SourceFileLike | null | undefined): string => {
   if (!source) return fileName;
   const normalizeRvzSourceExtension = (extension: string) =>
-    extension && hasDiscExtension(RVZ_DECOMPRESSION_INPUT_EXTENSIONS, extension) ? "iso" : extension;
+    extension && hasRomSpecificExtension(RVZ_DECOMPRESSION_INPUT_EXTENSIONS, extension) ? "iso" : extension;
   if (!hasFileNameExtension(fileName)) {
     const sourceExtension = normalizeRvzSourceExtension(getSourceExtension(source, "iso"));
     return replaceFileNameExtension(fileName, sourceExtension);

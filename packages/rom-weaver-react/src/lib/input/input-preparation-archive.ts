@@ -23,7 +23,6 @@ import {
   normalizeArchiveEntryBytes,
   PatchFile,
 } from "./binary-service.ts";
-import { parseCueFile } from "./disc-file-utils.ts";
 import {
   attachInputPreparationMetrics,
   type CueCandidateGroup,
@@ -48,6 +47,7 @@ import {
   normalizeArchiveEntryName,
   replaceFileNameExtension,
 } from "./path-utils.ts";
+import { parseCueFile } from "./rom-specific-file-utils.ts";
 import { applySidecarPatchOutputLabel, resolveSidecarPatchEntries } from "./sidecar-patch-resolution.ts";
 
 type ArchiveEntryLike = {
@@ -113,11 +113,11 @@ const validatedPatchArchiveEntriesByFile = new WeakMap<PatchFileInstance, Valida
 const patchArchiveValidationCleanupAttached = new WeakSet<PatchFileInstance>();
 
 const describeArchiveFileForTrace = (file: PatchFileInstance) => ({
-  discOutput: !!(file as { _discDecompressionOutput?: boolean })._discDecompressionOutput,
   fileName: file.fileName || "input.bin",
   filePath: typeof file.filePath === "string" ? file.filePath : "",
   fileSize: typeof file.fileSize === "number" && Number.isFinite(file.fileSize) ? file.fileSize : 0,
   isLazyExternal: isLazyExternalPatchFile(file),
+  romSpecificOutput: !!(file as { _romSpecificDecompressionOutput?: boolean })._romSpecificDecompressionOutput,
 });
 
 const getArchiveFileSourceIdentity = (file: PatchFileInstance) => {
@@ -587,7 +587,7 @@ const extractCompressionEntries = async (
       const requestedEntryName = entryNames[index] || output.fileName || "output.bin";
       const selectedEntryFileName = getBaseFileName(requestedEntryName);
       const usePathBackedOutput = isPathBackedCompressionOutput && !isCueEntryFileName(selectedEntryFileName);
-      const isDiscExtractionOutput = isPathBackedCompressionOutput && !isCueEntryFileName(selectedEntryFileName);
+      const isRomSpecificExtractionOutput = isPathBackedCompressionOutput && !isCueEntryFileName(selectedEntryFileName);
       const shouldMaterializeForSyncRead = SYNC_READ_ARCHIVE_ENTRY_REGEX.test(selectedEntryFileName);
       const resolvedFileName = isPathBackedCompressionOutput
         ? compressionFormat === "z3ds"
@@ -609,7 +609,8 @@ const extractCompressionEntries = async (
               ? binFile.fileSize
               : externalSource.size,
         });
-      if (isDiscExtractionOutput) (binFile as { _discDecompressionOutput?: boolean })._discDecompressionOutput = true;
+      if (isRomSpecificExtractionOutput)
+        (binFile as { _romSpecificDecompressionOutput?: boolean })._romSpecificDecompressionOutput = true;
       traceArchivePreparation(options, "input.archive.extract.output", {
         compressionFormat,
         output: describeArchiveFileForTrace(binFile),

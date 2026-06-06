@@ -11,19 +11,22 @@ const Z3DS_DECOMPRESSION_INPUT_EXTENSIONS = ["z3ds", "z3dsx", "zcci", "zcia", "z
 const uniqueExtensions = (...extensionLists: readonly (readonly string[])[]) =>
   Array.from(new Set(extensionLists.flat()));
 
-const DISC_COMPRESSION_INPUT_EXTENSIONS = uniqueExtensions(
+const ROM_SPECIFIC_COMPRESSION_INPUT_EXTENSIONS = uniqueExtensions(
   CHD_COMPRESSION_INPUT_EXTENSIONS,
   RVZ_COMPRESSION_INPUT_EXTENSIONS,
   Z3DS_COMPRESSION_INPUT_EXTENSIONS,
 );
-const DISC_DECOMPRESSION_INPUT_EXTENSIONS = uniqueExtensions(
+const ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS = uniqueExtensions(
   CHD_DECOMPRESSION_INPUT_EXTENSIONS,
   RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
   Z3DS_DECOMPRESSION_INPUT_EXTENSIONS,
 );
-const DISC_INPUT_EXTENSIONS = uniqueExtensions(DISC_COMPRESSION_INPUT_EXTENSIONS, DISC_DECOMPRESSION_INPUT_EXTENSIONS);
+const ROM_SPECIFIC_INPUT_EXTENSIONS = uniqueExtensions(
+  ROM_SPECIFIC_COMPRESSION_INPUT_EXTENSIONS,
+  ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS,
+);
 
-const DISC_COMPRESSION_INPUT_EXTENSION_COUNTS = [
+const ROM_SPECIFIC_COMPRESSION_INPUT_EXTENSION_COUNTS = [
   CHD_COMPRESSION_INPUT_EXTENSIONS,
   RVZ_COMPRESSION_INPUT_EXTENSIONS,
   Z3DS_COMPRESSION_INPUT_EXTENSIONS,
@@ -34,25 +37,27 @@ const DISC_COMPRESSION_INPUT_EXTENSION_COUNTS = [
     return counts;
   }, {});
 
-const normalizeDiscExtension = (extension: string | number | boolean | null | undefined) =>
+const normalizeRomSpecificExtension = (extension: string | number | boolean | null | undefined) =>
   String(extension || "")
     .replace(LEADING_EXTENSION_DOT_REGEX, "")
     .toLowerCase();
 
-const hasDiscExtension = (
+const hasRomSpecificExtension = (
   extensions: readonly string[],
   extension: string | number | boolean | null | undefined,
-): boolean => extensions.indexOf(normalizeDiscExtension(extension)) !== -1;
+): boolean => extensions.indexOf(normalizeRomSpecificExtension(extension)) !== -1;
 
-const getUnambiguousDiscCompressionInputExtensions = (extensions: readonly string[]): string[] =>
-  extensions.filter((extension) => DISC_COMPRESSION_INPUT_EXTENSION_COUNTS[normalizeDiscExtension(extension)] === 1);
+const getUnambiguousRomSpecificCompressionInputExtensions = (extensions: readonly string[]): string[] =>
+  extensions.filter(
+    (extension) => ROM_SPECIFIC_COMPRESSION_INPUT_EXTENSION_COUNTS[normalizeRomSpecificExtension(extension)] === 1,
+  );
 
-const hasUnambiguousDiscCompressionInputExtension = (
+const hasUnambiguousRomSpecificCompressionInputExtension = (
   extensions: readonly string[],
   extension: string | number | boolean | null | undefined,
-): boolean => hasDiscExtension(getUnambiguousDiscCompressionInputExtensions(extensions), extension);
+): boolean => hasRomSpecificExtension(getUnambiguousRomSpecificCompressionInputExtensions(extensions), extension);
 
-const createDiscExtensionRegex = (extensions: readonly string[]): RegExp => {
+const createRomSpecificExtensionRegex = (extensions: readonly string[]): RegExp => {
   const pattern = extensions.map((extension) => extension.replace(REGEX_SPECIAL_CHARACTER_REGEX, "\\$&")).join("|");
   return new RegExp(`\\.(${pattern})(?:[?#].*)?$`, "i");
 };
@@ -60,14 +65,14 @@ const createDiscExtensionRegex = (extensions: readonly string[]): RegExp => {
 export {
   CHD_COMPRESSION_INPUT_EXTENSIONS,
   CHD_DECOMPRESSION_INPUT_EXTENSIONS,
-  createDiscExtensionRegex,
-  DISC_COMPRESSION_INPUT_EXTENSIONS,
-  DISC_DECOMPRESSION_INPUT_EXTENSIONS,
-  DISC_INPUT_EXTENSIONS,
-  getUnambiguousDiscCompressionInputExtensions,
-  hasDiscExtension,
-  hasUnambiguousDiscCompressionInputExtension,
-  normalizeDiscExtension,
+  createRomSpecificExtensionRegex,
+  getUnambiguousRomSpecificCompressionInputExtensions,
+  hasRomSpecificExtension,
+  hasUnambiguousRomSpecificCompressionInputExtension,
+  normalizeRomSpecificExtension,
+  ROM_SPECIFIC_COMPRESSION_INPUT_EXTENSIONS,
+  ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS,
+  ROM_SPECIFIC_INPUT_EXTENSIONS,
   RVZ_COMPRESSION_INPUT_EXTENSIONS,
   RVZ_DECOMPRESSION_INPUT_EXTENSIONS,
   Z3DS_COMPRESSION_INPUT_EXTENSIONS,

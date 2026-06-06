@@ -30,11 +30,11 @@ type PreparedInputFileResult = {
 const MAX_DECOMPRESSION_PASSES = 12;
 
 const describeFileForTrace = (file: PatchFileInstance) => ({
-  discOutput: !!(file as { _discDecompressionOutput?: boolean })._discDecompressionOutput,
   fileName: file.fileName || "input.bin",
   filePath: typeof file.filePath === "string" ? file.filePath : "",
   fileSize: typeof file.fileSize === "number" && Number.isFinite(file.fileSize) ? file.fileSize : 0,
   isLazyExternal: isLazyExternalPatchFile(file),
+  romSpecificOutput: !!(file as { _romSpecificDecompressionOutput?: boolean })._romSpecificDecompressionOutput,
 });
 
 const traceInputDecompression = (
@@ -88,7 +88,7 @@ const getCompressedIdentityKey = (
     classification.kind === "compression" ? classification.compressionFormat : "raw",
     String(file.fileName || ""),
     Number(file.fileSize || 0),
-    isDiscDecompressionOutput(file) ? "" : String(file.filePath || ""),
+    isRomSpecificDecompressionOutput(file) ? "" : String(file.filePath || ""),
   ].join("|");
 
 const finalizePreparedInputAssets = (
@@ -124,10 +124,10 @@ const getFileExtension = (fileName: string | undefined) => {
 
 const getCompressionClassification = (file: PatchFileInstance) => classifyPatcherInput(file);
 
-const isDiscDecompressionOutput = (file: PatchFileInstance) =>
-  !!(file as { _discDecompressionOutput?: boolean })._discDecompressionOutput;
+const isRomSpecificDecompressionOutput = (file: PatchFileInstance) =>
+  !!(file as { _romSpecificDecompressionOutput?: boolean })._romSpecificDecompressionOutput;
 
-const canProbeDiscMagicSynchronously = (file: PatchFileInstance) =>
+const canProbeRomSpecificMagicSynchronously = (file: PatchFileInstance) =>
   file._u8array instanceof Uint8Array ||
   (!(file as { _browserFileBacked?: boolean })._browserFileBacked && typeof file.readIntoAt === "function");
 
@@ -135,7 +135,7 @@ const getPreparedInputFinalizeReason = (
   file: PatchFileInstance,
   classification: ReturnType<typeof getCompressionClassification>,
 ) =>
-  isDiscDecompressionOutput(file) && !canProbeDiscMagicSynchronously(file)
+  isRomSpecificDecompressionOutput(file) && !canProbeRomSpecificMagicSynchronously(file)
     ? "disc-output-non-probeable"
     : isLazyExternalPatchFile(file) && classification.kind !== "compression"
       ? "lazy-non-compression"
