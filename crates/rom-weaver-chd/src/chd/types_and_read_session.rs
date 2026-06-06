@@ -851,10 +851,9 @@
 
                 let chunk_size = jobs.len().div_ceil(effective_threads).max(1);
                 let header_ref = &header;
-                // Decode chunks on one-shot scoped threads. rayon keeps persistent work-stealing
-                // workers whose sleep/wake latch deadlocks the node wasi-threads runtime (one Worker
-                // per thread-spawn); `std::thread::scope` matches that model (spawn, run once, join)
-                // and `JoinHandle::join` surfaces a worker panic instead of hanging.
+                // Decode chunks on one-shot scoped threads. The node wasi-threads runtime maps one
+                // Worker per thread-spawn, so `std::thread::scope` matches that model and
+                // `JoinHandle::join` surfaces a worker panic instead of hanging.
                 std::thread::scope(|scope| -> std::result::Result<(), String> {
                     let (decoded_tx, decoded_rx) =
                         std::sync::mpsc::channel::<std::result::Result<WasmDecodedHunk, String>>();
@@ -1099,9 +1098,8 @@
             let source = source.to_path_buf();
             let parent_source = parent_source.map(Path::to_path_buf);
 
-            // Threaded WASM uses the producer/consumer helper (workers cannot open the file) with its
-            // own scoped threads — no rayon pool. Native builds a rayon pool and opens a reader per
-            // worker, decoding the file directly.
+            // Threaded WASM uses the producer/consumer helper because workers cannot open the OPFS
+            // file. Native opens one reader per scoped worker and decodes directly.
             #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
             let result = {
                 let _ = hunk_bytes;
@@ -1122,7 +1120,6 @@
 
             #[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
             let result = {
-                let pool = build_chd_thread_pool("stream", effective_threads)?;
                 let hunk_indices: Vec<u32> = (0..hunk_count).collect();
                 let hunk_bytes_usize = usize::try_from(hunk_bytes)
                     .ok()
@@ -1139,63 +1136,74 @@
                         break;
                     }
                     let chunk_size = batch.len().div_ceil(effective_threads).max(1);
-                    let chunk_results = pool.install(|| {
-                        batch
-                            .par_chunks(chunk_size)
+                    let source_path = source.as_path();
+                    let parent_source_path = parent_source.as_deref();
+                    let chunk_results = std::thread::scope(|scope| {
+                        let handles = batch
+                            .chunks(chunk_size)
                             .map(|chunk| {
-                                let mut chd =
-                                    Self::open_rust_chd(&source, parent_source.as_deref())
-                                        .map_err(|error| {
-                                            format!(
-                                                "failed to decode `{}`: {error}",
-                                                source.display()
-                                            )
-                                        })?;
-                                let mut hunk_buffer = chd.get_hunksized_buffer();
-                                let mut compressed_buffer = Vec::new();
-                                let mut decoded = Vec::with_capacity(chunk.len());
+                                scope.spawn(move || {
+                                    let mut chd =
+                                        Self::open_rust_chd(source_path, parent_source_path)
+                                            .map_err(|error| {
+                                                format!(
+                                                    "failed to decode `{}`: {error}",
+                                                    source_path.display()
+                                                )
+                                            })?;
+                                    let mut hunk_buffer = chd.get_hunksized_buffer();
+                                    let mut compressed_buffer = Vec::new();
+                                    let mut decoded = Vec::with_capacity(chunk.len());
 
-                                for &hunk_index in chunk {
-                                    let offset =
-                                        u64::from(hunk_index).saturating_mul(hunk_bytes);
-                                    if offset >= logical_bytes {
-                                        continue;
-                                    }
-                                    let mut hunk = chd.hunk(hunk_index).map_err(|error| {
-                                        format!(
-                                            "failed to decode hunk {} of `{}`: {error}",
-                                            hunk_index,
-                                            source.display()
-                                        )
-                                    })?;
-                                    hunk.read_hunk_in(&mut compressed_buffer, &mut hunk_buffer)
-                                        .map_err(|error| {
+                                    for &hunk_index in chunk {
+                                        let offset =
+                                            u64::from(hunk_index).saturating_mul(hunk_bytes);
+                                        if offset >= logical_bytes {
+                                            continue;
+                                        }
+                                        let mut hunk = chd.hunk(hunk_index).map_err(|error| {
                                             format!(
-                                                "failed to read hunk {} of `{}`: {error}",
+                                                "failed to decode hunk {} of `{}`: {error}",
                                                 hunk_index,
-                                                source.display()
+                                                source_path.display()
                                             )
                                         })?;
-                                    let write_len = usize::try_from(
-                                        logical_bytes
-                                            .saturating_sub(offset)
-                                            .min(hunk_buffer.len() as u64),
-                                    )
-                                    .map_err(|_| {
-                                        "decoded CHD chunk exceeded addressable memory"
-                                            .to_string()
-                                    })?;
-                                    decoded.push((
-                                        hunk_index,
-                                        hunk_buffer[..write_len].to_vec(),
-                                        write_len as u64,
-                                    ));
-                                }
-                                Ok(decoded)
+                                        hunk.read_hunk_in(&mut compressed_buffer, &mut hunk_buffer)
+                                            .map_err(|error| {
+                                                format!(
+                                                    "failed to read hunk {} of `{}`: {error}",
+                                                    hunk_index,
+                                                    source_path.display()
+                                                )
+                                            })?;
+                                        let write_len = usize::try_from(
+                                            logical_bytes
+                                                .saturating_sub(offset)
+                                                .min(hunk_buffer.len() as u64),
+                                        )
+                                        .map_err(|_| {
+                                            "decoded CHD chunk exceeded addressable memory"
+                                                .to_string()
+                                        })?;
+                                        decoded.push((
+                                            hunk_index,
+                                            hunk_buffer[..write_len].to_vec(),
+                                            write_len as u64,
+                                        ));
+                                    }
+                                    Ok(decoded)
+                                })
                             })
-                            .collect::<Vec<std::result::Result<Vec<(u32, Vec<u8>, u64)>, String>>>(
-                            )
-                    });
+                            .collect::<Vec<_>>();
+
+                        let mut results = Vec::with_capacity(handles.len());
+                        for handle in handles {
+                            results.push(handle.join().unwrap_or_else(|_| {
+                                Err("CHD stream worker thread panicked".to_string())
+                            }));
+                        }
+                        Ok::<_, String>(results)
+                    })?;
 
                     let mut decoded_batch = Vec::new();
                     for result in chunk_results {
@@ -1427,8 +1435,6 @@
                 );
             }
 
-            let pool = build_chd_thread_pool("extraction", effective_threads)?;
-
             let source = source.to_path_buf();
             let parent_source = parent_source.map(Path::to_path_buf);
             let output = Arc::new(output);
@@ -1436,62 +1442,81 @@
             let hunk_indices: Vec<u32> = (0..hunk_count).collect();
             let chunk_size = hunk_indices.len().div_ceil(effective_threads).max(1);
 
-            let chunk_results = pool.install(|| {
-                hunk_indices
-                    .par_chunks(chunk_size)
+            let source_path = source.as_path();
+            let parent_source_path = parent_source.as_deref();
+            let chunk_results = std::thread::scope(|scope| {
+                let handles = hunk_indices
+                    .chunks(chunk_size)
                     .map(|chunk| {
-                        let mut chd = Self::open_rust_chd(&source, parent_source.as_deref())
-                            .map_err(|error| {
-                                format!("failed to decode `{}`: {error}", source.display())
-                            })?;
+                        let output = Arc::clone(&output);
+                        let on_progress = on_progress.clone();
+                        scope.spawn(move || {
+                            let mut chd =
+                                Self::open_rust_chd(source_path, parent_source_path).map_err(
+                                    |error| {
+                                        format!(
+                                            "failed to decode `{}`: {error}",
+                                            source_path.display()
+                                        )
+                                    },
+                                )?;
 
-                        let mut hunk_buffer = chd.get_hunksized_buffer();
-                        let mut compressed_buffer = Vec::new();
+                            let mut hunk_buffer = chd.get_hunksized_buffer();
+                            let mut compressed_buffer = Vec::new();
 
-                        for &hunk_index in chunk {
-                            let mut hunk = chd.hunk(hunk_index).map_err(|error| {
-                                format!(
-                                    "failed to decode hunk {} of `{}`: {error}",
-                                    hunk_index,
-                                    source.display()
-                                )
-                            })?;
-                            hunk.read_hunk_in(&mut compressed_buffer, &mut hunk_buffer)
-                                .map_err(|error| {
+                            for &hunk_index in chunk {
+                                let mut hunk = chd.hunk(hunk_index).map_err(|error| {
                                     format!(
-                                        "failed to read hunk {} of `{}`: {error}",
+                                        "failed to decode hunk {} of `{}`: {error}",
                                         hunk_index,
-                                        source.display()
+                                        source_path.display()
                                     )
                                 })?;
+                                hunk.read_hunk_in(&mut compressed_buffer, &mut hunk_buffer)
+                                    .map_err(|error| {
+                                        format!(
+                                            "failed to read hunk {} of `{}`: {error}",
+                                            hunk_index,
+                                            source_path.display()
+                                        )
+                                    })?;
 
-                            let offset = u64::from(hunk_index).saturating_mul(hunk_bytes);
-                            if offset >= logical_bytes {
-                                continue;
-                            }
-                            let write_len = usize::try_from(
-                                logical_bytes
-                                    .saturating_sub(offset)
-                                    .min(hunk_buffer.len() as u64),
-                            )
-                            .map_err(|_| {
-                                "decoded CHD chunk exceeded addressable memory".to_string()
-                            })?;
-                            Self::write_all_at(&output, &hunk_buffer[..write_len], offset)
-                                .map_err(|error| {
-                                    format!(
-                                        "failed to write `{}` at offset {}: {error}",
-                                        output_path.display(),
-                                        offset
-                                    )
+                                let offset = u64::from(hunk_index).saturating_mul(hunk_bytes);
+                                if offset >= logical_bytes {
+                                    continue;
+                                }
+                                let write_len = usize::try_from(
+                                    logical_bytes
+                                        .saturating_sub(offset)
+                                        .min(hunk_buffer.len() as u64),
+                                )
+                                .map_err(|_| {
+                                    "decoded CHD chunk exceeded addressable memory".to_string()
                                 })?;
-                            if let Some(on_progress) = on_progress.as_ref() {
-                                on_progress(write_len as u64);
+                                Self::write_all_at(&output, &hunk_buffer[..write_len], offset)
+                                    .map_err(|error| {
+                                        format!(
+                                            "failed to write `{}` at offset {}: {error}",
+                                            output_path.display(),
+                                            offset
+                                        )
+                                    })?;
+                                if let Some(on_progress) = on_progress.as_ref() {
+                                    on_progress(write_len as u64);
+                                }
                             }
-                        }
-                        Ok(())
+                            Ok(())
+                        })
                     })
-                    .collect::<Vec<std::result::Result<(), String>>>()
+                    .collect::<Vec<_>>();
+
+                let mut results = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    results.push(handle.join().unwrap_or_else(|_| {
+                        Err("CHD extract worker thread panicked".to_string())
+                    }));
+                }
+                results
             });
 
             for result in chunk_results {

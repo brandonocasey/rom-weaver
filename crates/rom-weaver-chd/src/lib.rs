@@ -12,10 +12,6 @@ use std::{
 
 use flacenc::{component::BitRepr as _, error::Verify as _};
 use flate2::{Compression as GzipCompression, write::DeflateEncoder};
-// The rayon parallel-iterator prelude is only needed by decode paths that do not use wasi threads
-// paths (`par_chunks`); the wasi-threads build parallelises with scoped threads instead.
-#[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
-use rayon::prelude::*;
 use rom_weaver_checksum::StreamingChecksum;
 use rom_weaver_codecs::{CanonicalCodec, RequestedCodec, parse_requested_codec};
 use rom_weaver_core::{
@@ -26,9 +22,6 @@ use rom_weaver_core::{
     create_extract_output_file, file_starts_with, maybe_emit_container_byte_progress,
     ordered_streaming_compress,
 };
-// Only the decode paths use a shared pool, and they are absent on the wasi-threads build.
-#[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
-use rom_weaver_core::SharedThreadPool;
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use zstd::bulk::compress as zstd_compress;
@@ -106,22 +99,6 @@ struct ExtractedFileChecksum {
 
 fn create_extract_checksum(context: &OperationContext) -> Result<Option<StreamingChecksum>> {
     StreamingChecksum::new_with_context(context.extract_checksum_algorithms(), context)
-}
-
-// Only the decode paths build a shared pool; the compressed-create path uses scoped threads. Both
-// decode callers are absent on the wasi-threads build, so gate this to match and avoid dead code.
-#[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
-fn build_chd_thread_pool(
-    label: &str,
-    threads: usize,
-) -> std::result::Result<SharedThreadPool, String> {
-    SharedThreadPool::with_size(threads).map_err(|error| {
-        let reason = match error {
-            RomWeaverError::ThreadPoolBuild(reason) => reason,
-            other => other.to_string(),
-        };
-        format!("failed to build CHD rust {label} pool (threads={threads}): {reason}")
-    })
 }
 
 fn build_extract_checksum_emitted_file_detail(
