@@ -972,8 +972,102 @@ fn zip_emits_incremental_running_progress_beyond_placeholders() {
     assert_running_percent_event_in_range(&extract_events, "extract", "zip", 1.0, 95.0);
 }
 
+fn assert_no_running_hundred_percent(events: &[Value], format: &str) {
+    assert!(
+        !events.iter().any(|event| {
+            event["command"] == "compress"
+                && event["status"] == "running"
+                && event["format"] == format
+                && event["percent"].as_f64() == Some(100.0)
+        }),
+        "expected {format} compression to keep 100% for the terminal event"
+    );
+}
+
+fn assert_no_finalizing_percent(events: &[Value], format: &str) {
+    assert!(
+        !events.iter().any(|event| {
+            event["command"] == "compress"
+                && event["status"] == "running"
+                && event["format"] == format
+                && event["label"] == format!("finalizing `{format}` archive")
+                && event["percent"].as_f64().is_some()
+        }),
+        "expected {format} finalization progress to stay indeterminate"
+    );
+}
+
 #[test]
-fn seven_z_does_not_emit_synthetic_running_progress() {
+fn seven_z_lzma2_threaded_single_chunk_emits_codec_progress() {
+    let temp = setup_temp_dir();
+    let input = temp.child("input.bin");
+    let payload: Vec<u8> = (0..(2 * 1024 * 1024))
+        .map(|offset| (offset % 251) as u8)
+        .collect();
+    fs::write(input.path(), &payload).expect("fixture");
+
+    let archive = temp.child("sample.7z");
+    let compress_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            input.path().to_str().expect("path"),
+            "--format",
+            "7z",
+            "--output",
+            archive.path().to_str().expect("path"),
+            "--codec",
+            "lzma2:5",
+            "--threads",
+            "10",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let compress_events = parse_json_lines(&compress_output);
+    assert_no_compressed_write_progress(&compress_events, "7z");
+    assert_no_finalizing_percent(&compress_events, "7z");
+    assert_no_running_hundred_percent(&compress_events, "7z");
+    assert!(!compress_events.iter().any(|event| {
+        event["command"] == "compress"
+            && event["status"] == "running"
+            && event["format"] == "7z"
+            && event["stage"] == "create"
+            && event["label"] == "queueing input for `7z`"
+    }));
+    assert!(compress_events.iter().any(|event| {
+        event["command"] == "compress"
+            && event["status"] == "running"
+            && event["format"] == "7z"
+            && event["stage"] == "create"
+            && event["label"] == "compressing `7z`"
+            && event["percent"].as_f64() == Some(99.0)
+    }));
+
+    let out_dir = temp.child("threaded-extract");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--threads",
+            "1",
+        ])
+        .assert()
+        .code(0);
+    assert_eq!(
+        fs::read(out_dir.path().join("input.bin")).expect("extracted input"),
+        payload
+    );
+}
+
+#[test]
+fn seven_z_lzma2_single_thread_emits_running_codec_progress() {
     let temp = setup_temp_dir();
     let input_dir = temp.child("input");
     fs::create_dir_all(input_dir.path()).expect("input dir");
@@ -997,7 +1091,9 @@ fn seven_z_does_not_emit_synthetic_running_progress() {
             "--codec",
             "lzma2",
             "--threads",
-            "10",
+            "1",
+            "--level",
+            "low",
             "--json",
         ])
         .assert()
@@ -1007,23 +1103,26 @@ fn seven_z_does_not_emit_synthetic_running_progress() {
         .clone();
     let compress_events = parse_json_lines(&compress_output);
     assert_no_compressed_write_progress(&compress_events, "7z");
-    assert!(!compress_events.iter().any(|event| {
-        event["command"] == "compress"
-            && event["status"] == "running"
-            && event["format"] == "7z"
-            && event["label"] == "finalizing `7z` archive"
-            && event["percent"].as_f64() == Some(99.0)
-    }));
-    assert!(!compress_events.iter().any(|event| {
-        event["command"] == "compress"
-            && event["status"] == "running"
-            && event["format"] == "7z"
-            && event["stage"] == "create"
-            && event["percent"]
-                .as_f64()
-                .map(|percent| percent >= 99.0)
-                .unwrap_or(false)
-    }));
+    assert_no_finalizing_percent(&compress_events, "7z");
+    assert_no_running_hundred_percent(&compress_events, "7z");
+    let codec_progress_event_count = compress_events
+        .iter()
+        .filter(|event| {
+            event["command"] == "compress"
+                && event["status"] == "running"
+                && event["format"] == "7z"
+                && event["stage"] == "create"
+                && event["label"] == "compressing `7z`"
+                && event["percent"]
+                    .as_f64()
+                    .map(|percent| percent > 0.0 && percent < 100.0)
+                    .unwrap_or(false)
+        })
+        .count();
+    assert!(
+        codec_progress_event_count >= 2,
+        "expected single-thread 7z/lzma2 to emit repeated codec progress"
+    );
 
     let out_dir = temp.child("extract");
     let extract_output = Command::cargo_bin("rom-weaver")

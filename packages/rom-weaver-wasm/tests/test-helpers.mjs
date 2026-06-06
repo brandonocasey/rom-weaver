@@ -472,16 +472,37 @@ export async function runProgressMatrix({ runJson, opfsHandle, dir, sourcePath, 
     },
   );
   assertRunJsonSucceeded(sevenZCompressResult, { command: 'compress' });
-  for (const event of sevenZCompressEvents) {
-    if (
-      event.command === 'compress' &&
-      event.status === 'running' &&
-      event.format === '7z' &&
-      event.stage === 'create' &&
-      typeof event.percent === 'number'
-    )
-      expect(event.percent).toBeLessThan(99);
-  }
+  expect(
+    sevenZCompressEvents.some(
+      (event) => event.command === 'compress'
+        && event.status === 'running'
+        && event.format === '7z'
+        && event.stage === 'create'
+        && event.label === 'queueing input for `7z`'
+    ),
+  ).toBe(false);
+  expect(
+    sevenZCompressEvents.some(
+      (event) => event.command === 'compress'
+        && event.status === 'running'
+        && event.format === '7z'
+        && event.stage === 'create'
+        && event.label === 'compressing `7z`'
+        && typeof event.percent === 'number'
+        && event.percent > 0
+        && event.percent < 100,
+    ),
+  ).toBe(true);
+  expect(
+    sevenZCompressEvents.some(
+      (event) => event.command === 'compress'
+        && event.status === 'running'
+        && event.format === '7z'
+        && event.stage === 'write'
+        && event.percent === null
+        && Number(event.details?.compressedBytesWritten || 0) > 0,
+    ),
+  ).toBe(false);
 
   const extractEvents = [];
   const extractResult = await runJson(

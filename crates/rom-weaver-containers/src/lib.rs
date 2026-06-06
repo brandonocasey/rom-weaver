@@ -815,7 +815,8 @@ fn libarchive_write_archive_entry<F>(
     entry: &ArchiveInputEntry,
     entry_size_bytes: u64,
     io_buffer_bytes: usize,
-    mut on_bytes_written: F,
+    progress_on_source_read: bool,
+    mut on_source_bytes: F,
 ) -> Result<u64>
 where
     F: FnMut(u64),
@@ -852,13 +853,18 @@ where
             if read == 0 {
                 break;
             }
+            if progress_on_source_read {
+                on_source_bytes(read as u64);
+            }
             archive.write_data_all(
                 &buffer[..read],
                 &format!("{format_name} create failed while writing payload"),
                 ZeroWriteBehavior::Error,
             )?;
             logical_bytes = logical_bytes.saturating_add(read as u64);
-            on_bytes_written(read as u64);
+            if !progress_on_source_read {
+                on_source_bytes(read as u64);
+            }
         }
     }
 
@@ -913,22 +919,39 @@ fn write_archive_with_libarchive(
                 if running_processed == 0 {
                     return;
                 }
-                let percent = running_processed.saturating_mul(100) / total_input_bytes;
-                if percent >= 99 && codec_progress_bucket.load(Ordering::Relaxed) == 0 {
+                let percent_bucket = running_processed
+                    .saturating_mul(100)
+                    .checked_div(total_input_bytes)
+                    .unwrap_or(100)
+                    .min(99) as u8;
+                if percent_bucket == 0 {
                     return;
                 }
-                maybe_emit_container_byte_progress(
+                loop {
+                    let previous_bucket = codec_progress_bucket.load(Ordering::Relaxed);
+                    if percent_bucket <= previous_bucket {
+                        return;
+                    }
+                    if codec_progress_bucket
+                        .compare_exchange(
+                            previous_bucket,
+                            percent_bucket,
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                        )
+                        .is_ok()
+                    {
+                        break;
+                    }
+                }
+                emit_container_running_progress(
                     &codec_progress_context,
-                    running_processed,
-                    total_input_bytes,
-                    ContainerByteProgress {
-                        command: "compress",
-                        format: codec_progress_format,
-                        stage: "create",
-                        label: &format!("compressing `{codec_progress_format}`"),
-                        thread_execution: Some(&codec_progress_execution),
-                        emitted_progress_bucket: codec_progress_bucket.as_ref(),
-                    },
+                    "compress",
+                    codec_progress_format,
+                    "create",
+                    format!("compressing `{codec_progress_format}`"),
+                    percent_bucket as f32,
+                    Some(&codec_progress_execution),
                 );
             }))
         } else {
@@ -978,7 +1001,9 @@ fn write_archive_with_libarchive(
         Some(Box::new(on_compressed_bytes_written)),
     )?;
     let input_progress_enabled =
-        !matches!(config.format, LibarchiveCreateFormat::SevenZ) && total_input_bytes > 0;
+        total_input_bytes > 0 && !matches!(config.format, LibarchiveCreateFormat::SevenZ);
+    let observed_input_progress = false;
+    let input_progress_label = format!("creating `{}`", config.format_name);
     let input_progress_bytes = Arc::new(AtomicU64::new(0));
     let emitted_input_progress_bucket = Arc::new(AtomicU8::new(0));
     let input_progress_context = context.clone();
@@ -996,6 +1021,7 @@ fn write_archive_with_libarchive(
                 entry,
                 entry_size_bytes,
                 config.io_buffer_bytes,
+                observed_input_progress,
                 |delta| {
                     if !input_progress_enabled {
                         return;
@@ -1007,6 +1033,44 @@ fn write_archive_with_libarchive(
                     if accepted >= total_input_bytes {
                         return;
                     }
+                    if observed_input_progress {
+                        let percent_bucket = accepted
+                            .saturating_mul(100)
+                            .checked_div(total_input_bytes)
+                            .unwrap_or(100)
+                            .min(99) as u8;
+                        if percent_bucket == 0 {
+                            return;
+                        }
+                        loop {
+                            let previous_bucket =
+                                emitted_input_progress_bucket.load(Ordering::Relaxed);
+                            if percent_bucket <= previous_bucket {
+                                return;
+                            }
+                            if emitted_input_progress_bucket
+                                .compare_exchange(
+                                    previous_bucket,
+                                    percent_bucket,
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                )
+                                .is_ok()
+                            {
+                                break;
+                            }
+                        }
+                        emit_container_running_progress(
+                            &input_progress_context,
+                            "compress",
+                            input_progress_format,
+                            "create",
+                            input_progress_label.clone(),
+                            percent_bucket as f32,
+                            Some(&input_progress_execution),
+                        );
+                        return;
+                    }
                     maybe_emit_container_byte_progress(
                         &input_progress_context,
                         accepted,
@@ -1015,7 +1079,7 @@ fn write_archive_with_libarchive(
                             command: "compress",
                             format: input_progress_format,
                             stage: "create",
-                            label: &format!("creating `{input_progress_format}`"),
+                            label: &input_progress_label,
                             thread_execution: Some(&input_progress_execution),
                             emitted_progress_bucket: emitted_input_progress_bucket.as_ref(),
                         },

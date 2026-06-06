@@ -16,6 +16,7 @@ import {
   withTempFixture,
   writeGuestPatternFile,
   writeGuestFile,
+  writeGuestGeneratedFile,
 } from './test-helpers.mjs';
 
 const RUN_1GB_STRESS = typeof __ROM_WEAVER_WASM_STRESS_1GB__ !== 'undefined'
@@ -841,6 +842,192 @@ describe('rom-weaver-wasm browser runner parity', () => {
       },
     });
   });
+
+  it('threaded browser runner emits 7z lzma2 level 5 codec progress for large compress', async () => {
+    await withTempFixture(async ({ dir, init, worker, opfsHandle }) => {
+      expect(init.threaded).toBe(true);
+      const sourceSize = 32 * 1024 * 1024;
+      const sourcePath = joinGuestPath(dir, 'threaded-7z-lzma2-large-source.bin');
+      const archivePath = joinGuestPath(dir, 'threaded-7z-lzma2-large.7z');
+      const extractDir = joinGuestPath(dir, 'threaded-7z-lzma2-large-extract');
+      await writeGuestPatternFile(opfsHandle, sourcePath, sourceSize);
+
+      const events = [];
+      let resolveCodecEvent;
+      const firstCodecEvent = new Promise((resolve) => {
+        resolveCodecEvent = resolve;
+      });
+      const isCodecProgressEvent = (event) => event.command === 'compress'
+        && event.status === 'running'
+        && event.format === '7z'
+        && event.stage === 'create'
+        && event.label === 'compressing `7z`'
+        && typeof event.percent === 'number'
+        && event.percent > 0
+        && event.percent < 100;
+      const isQueueingInputEvent = (event) => event.command === 'compress'
+        && event.status === 'running'
+        && event.format === '7z'
+        && event.stage === 'create'
+        && event.label === 'queueing input for `7z`';
+      const resultPromise = worker.runJson(
+        [
+          'compress',
+          sourcePath,
+          '--format',
+          '7z',
+          '--codec',
+          'lzma2:5',
+          '--output',
+          archivePath,
+          '--threads',
+          '10',
+        ],
+        {
+          onEvent(event) {
+            events.push(event);
+            if (isCodecProgressEvent(event)) resolveCodecEvent(event);
+          },
+        },
+      );
+
+      const streamedCodecEvent = await Promise.race([firstCodecEvent, delay(15000)]);
+      expect(streamedCodecEvent).toMatchObject({
+        command: 'compress',
+        format: '7z',
+        label: 'compressing `7z`',
+        status: 'running',
+      });
+      const result = await resultPromise;
+      const terminal = assertRunJsonSucceeded(result, {
+        command: 'compress',
+      });
+      expect(terminal.requested_threads).toBe(10);
+      expect(terminal.effective_threads).toBeGreaterThan(1);
+      expect(terminal.used_parallelism).toBe(true);
+      expect(await getGuestFileSize(opfsHandle, archivePath)).toBeGreaterThan(0);
+      const extractResult = await worker.runJson([
+        'extract',
+        archivePath,
+        '--out-dir',
+        extractDir,
+        '--threads',
+        '1',
+      ]);
+      assertRunJsonSucceeded(extractResult, {
+        command: 'extract',
+      });
+      expect(await getGuestFileSize(
+        opfsHandle,
+        joinGuestPath(extractDir, 'threaded-7z-lzma2-large-source.bin'),
+      )).toBe(sourceSize);
+      expect(
+        events.some(
+          (event) => isQueueingInputEvent(event),
+        ),
+      ).toBe(false);
+      expect(
+        events.some(
+          (event) => isCodecProgressEvent(event),
+        ),
+      ).toBe(true);
+      expect(
+        events.some(
+          (event) => event.command === 'compress'
+            && event.status === 'running'
+            && event.format === '7z'
+            && event.stage === 'write'
+            && event.percent === null
+            && Number(event.details?.compressedBytesWritten || 0) > 0,
+        ),
+      ).toBe(false);
+    }, {
+      initOptions: {
+        wasmUrl: new URL('../rom-weaver-app.wasm', import.meta.url).href,
+      },
+    });
+  }, LONG_MATRIX_TIMEOUT_MS);
+
+  it('threaded browser runner compresses memory-heavy 7z lzma2 level 9 without worker traps', async () => {
+    await withTempFixture(async ({ dir, init, worker, opfsHandle }) => {
+      expect(init.threaded).toBe(true);
+      const sourceSize = 96 * 1024 * 1024;
+      const sourcePath = joinGuestPath(dir, 'threaded-7z-lzma2-level9-source.bin');
+      const archivePath = joinGuestPath(dir, 'threaded-7z-lzma2-level9.7z');
+      const extractDir = joinGuestPath(dir, 'threaded-7z-lzma2-level9-extract');
+      await writeGuestGeneratedFile(
+        opfsHandle,
+        sourcePath,
+        sourceSize,
+        (chunk) => {
+          chunk.fill(0);
+        },
+        { chunkSizeBytes: 4 * 1024 * 1024 },
+      );
+
+      const events = [];
+      const result = await worker.runJson(
+        [
+          'compress',
+          sourcePath,
+          '--format',
+          '7z',
+          '--codec',
+          'lzma2:9',
+          '--output',
+          archivePath,
+          '--threads',
+          '10',
+        ],
+        {
+          onEvent(event) {
+            events.push(event);
+          },
+        },
+      );
+      const terminal = assertRunJsonSucceeded(result, {
+        command: 'compress',
+      });
+      expect(terminal.requested_threads).toBe(10);
+      expect(terminal.effective_threads).toBeGreaterThan(1);
+      expect(terminal.used_parallelism).toBe(true);
+      expect(await getGuestFileSize(opfsHandle, archivePath)).toBeGreaterThan(0);
+      const codecProgressPercents = events
+        .filter(
+          (event) => event.command === 'compress'
+            && event.status === 'running'
+            && event.format === '7z'
+            && event.stage === 'create'
+            && event.label === 'compressing `7z`'
+            && typeof event.percent === 'number'
+            && event.percent > 0
+            && event.percent < 100,
+        )
+        .map((event) => event.percent);
+      expect(new Set(codecProgressPercents).size).toBeGreaterThanOrEqual(6);
+      expect(codecProgressPercents.at(-1)).toBe(99);
+
+      const extractResult = await worker.runJson([
+        'extract',
+        archivePath,
+        '--out-dir',
+        extractDir,
+        '--threads',
+        '1',
+      ]);
+      assertRunJsonSucceeded(extractResult, {
+        command: 'extract',
+      });
+      expect(await getGuestFileSize(
+        opfsHandle,
+        joinGuestPath(extractDir, 'threaded-7z-lzma2-level9-source.bin'),
+      )).toBe(sourceSize);
+    }, {
+      initOptions: {
+        wasmUrl: new URL('../rom-weaver-app.wasm', import.meta.url).href,
+      },
+    });
+  }, LONG_MATRIX_TIMEOUT_MS);
 
   it('threaded browser runner reuses thread-worker pool shells across repeated commands', async () => {
     const probeChannelName = 'rom-weaver-thread-worker-probe-channel';
