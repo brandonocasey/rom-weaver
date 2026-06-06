@@ -64,13 +64,13 @@ const ENGLISH_MESSAGES = {
   "settings.requireInputChecksumMatch": "Require input match",
   "settings.requireOutputChecksumMatch": "Require output match",
   "settings.rvzBlockSize": "RVZ block size",
-  "settings.rvzCompression": "Compression",
+  "settings.rvzCodec": "RVZ codec",
   "settings.rvzCompressionLevel": "Level override",
-  "settings.sevenZipCodec": "Codec",
+  "settings.sevenZipCodec": "7z codec",
   "settings.sevenZipLevel": "Level override",
   "settings.workerThreads": "Worker threads",
   "settings.z3dsCompressionLevel": "Level override",
-  "settings.zipCodec": "Codec",
+  "settings.zipCodec": "ZIP codec",
   "settings.zipLevel": "Level override",
 } as const satisfies MessageCatalog;
 

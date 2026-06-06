@@ -696,7 +696,10 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   const inputProgressProps = showInputProgress ? progressProps || waitingProgressProps : null;
 
   const rawExtensionOption = rawOutputFormat;
-  const formatOptions = useMemo(() => createTrimOutputOptions(rawExtensionOption), [rawExtensionOption]);
+  const formatOptions = useMemo(
+    () => createTrimOutputOptions(rawExtensionOption, { rawLabel: source ? undefined : "None" }),
+    [rawExtensionOption, source],
+  );
   const compressFormatOptions = useMemo(
     () => createCompressionTypeOptions(formatOptions, rawExtensionOption),
     [formatOptions, rawExtensionOption],

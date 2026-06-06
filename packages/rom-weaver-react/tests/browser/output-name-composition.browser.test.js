@@ -111,6 +111,14 @@ test("apply output options preserve configured compression order and labels", ()
   ]);
 });
 
+test("apply output options label unknown uncompressed output as none", () => {
+  expect(createApplyOutputOptions(["none", "zip", "7z"])).toEqual([
+    { label: "None", value: "none" },
+    { label: ".zip", value: "zip" },
+    { label: ".7z", value: "7z" },
+  ]);
+});
+
 test("create output options expose patch format and archive choices", () => {
   expect(createCreateOutputCompressionOptions("bps")).toEqual([
     { label: "None", value: "none" },
@@ -194,4 +202,8 @@ test("trim output options keep raw source extension alongside archive choices", 
     { label: ".zip", value: "zip" },
     { label: ".7z", value: "7z" },
   ]);
+});
+
+test("trim output options can label an unknown raw extension as none", () => {
+  expect(createTrimOutputOptions("raw", { rawLabel: "None" })[0]).toEqual({ label: "None", value: "raw" });
 });

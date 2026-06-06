@@ -1,11 +1,15 @@
 import { expect, test } from "vitest";
 import {
+  buildSettingsForWebapp,
   getDefaultSettings,
+  getSettingsUiState,
+  isSettingsFieldDisabled,
   LOCAL_STORAGE_SETTINGS_ID,
   loadSettings,
   SETTINGS_PANEL_FIELD_ORDER,
   SETTINGS_STORAGE_VERSION,
   serializeSettingsForStorage,
+  validateSettingsDraft,
 } from "../../src/webapp/settings/settings-state.ts";
 
 const createMemoryStorage = () => {
@@ -31,14 +35,14 @@ test("settings persistence round-trips every visible settings field", () => {
     requireInputChecksumMatch: false,
     requireOutputChecksumMatch: false,
     rvzBlockSize: 262144,
-    rvzCompression: "zstd",
+    rvzCodec: "zstd:7",
     rvzCompressionLevel: 7,
     rvzScrub: true,
-    sevenZipCodec: "lzma2",
+    sevenZipCodec: "lzma2:8",
     sevenZipLevel: 8,
     workerThreads: 2,
     z3dsCompressionLevel: 12,
-    zipCodec: "zstd",
+    zipCodec: "zstd:13",
     zipLevel: 13,
   };
 
@@ -47,13 +51,26 @@ test("settings persistence round-trips every visible settings field", () => {
 
   const storedSettings = JSON.parse(serializedSettings);
   expect(storedSettings.common.defaultCompression).toBe("7z only");
+  expect(storedSettings.apply.compression.rvzCodec).toBe("zstd:7");
+  expect(storedSettings.apply.compression.rvzCompression).toBeUndefined();
+  expect(storedSettings.apply.compression.rvzCompressionLevel).toBeUndefined();
+  expect(storedSettings.apply.compression.sevenZipLevel).toBeUndefined();
+  expect(storedSettings.apply.compression.z3dsCompressionLevel).toBeUndefined();
+  expect(storedSettings.apply.compression.zipLevel).toBeUndefined();
 
   const storage = createMemoryStorage();
   storage.setItem(LOCAL_STORAGE_SETTINGS_ID, serializedSettings);
 
   const loadedSettings = loadSettings(storage);
   expect(SETTINGS_PANEL_FIELD_ORDER).not.toContain("rvzScrub");
+  expect(SETTINGS_PANEL_FIELD_ORDER).not.toEqual(
+    expect.arrayContaining(["rvzCompressionLevel", "sevenZipLevel", "z3dsCompressionLevel", "zipLevel"]),
+  );
   expect(loadedSettings.rvzScrub).toBe(true);
+  expect(loadedSettings.rvzCompressionLevel).toBe("");
+  expect(loadedSettings.sevenZipLevel).toBe("");
+  expect(loadedSettings.z3dsCompressionLevel).toBe("");
+  expect(loadedSettings.zipLevel).toBe("");
   const roundTrippedFields = Object.fromEntries(
     SETTINGS_PANEL_FIELD_ORDER.map((fieldKey) => [fieldKey, loadedSettings[fieldKey]]),
   );
@@ -64,7 +81,7 @@ test("settings persistence round-trips every visible settings field", () => {
   expect(roundTrippedFields).toEqual(expectedFields);
 });
 
-test("legacy default archive settings load as default compression modes", () => {
+test("legacy default archive settings load as container preference modes", () => {
   const storage = createMemoryStorage();
   storage.setItem(
     LOCAL_STORAGE_SETTINGS_ID,
@@ -78,4 +95,88 @@ test("legacy default archive settings load as default compression modes", () => 
   );
 
   expect(loadSettings(storage).defaultCompression).toBe("7z only");
+});
+
+test("removed auto container preference settings load as zip or ROM specific", () => {
+  const storage = createMemoryStorage();
+  storage.setItem(
+    LOCAL_STORAGE_SETTINGS_ID,
+    JSON.stringify({
+      common: {
+        defaultCompression: "auto",
+      },
+      version: SETTINGS_STORAGE_VERSION,
+    }),
+  );
+
+  expect(loadSettings(storage).defaultCompression).toBe("zip/special");
+});
+
+test("codec text settings derive runtime codec levels", () => {
+  const runtimeSettings = buildSettingsForWebapp({
+    ...getDefaultSettings(),
+    rvzCodec: "zstd:7",
+    sevenZipCodec: "lzma2:8",
+    zipCodec: "zstd:13",
+  });
+
+  expect(runtimeSettings.rvzCompression).toBe("zstd");
+  expect(runtimeSettings.rvzCompressionLevel).toBe(7);
+  expect(runtimeSettings.sevenZipCodec).toBe("lzma2");
+  expect(runtimeSettings.sevenZipLevel).toBe(8);
+  expect(runtimeSettings.zipCodec).toBe("zstd");
+  expect(runtimeSettings.zipLevel).toBe(13);
+});
+
+test("7z codec remains editable when 7z is not the container preference", () => {
+  const settings = {
+    ...getDefaultSettings(),
+    defaultCompression: "zip/special",
+  };
+
+  expect(isSettingsFieldDisabled("sevenZipCodec", settings, getSettingsUiState(settings))).toBe(false);
+});
+
+test("codec text settings validate codecs and levels", () => {
+  const zipValidation = validateSettingsDraft({
+    ...getDefaultSettings(),
+    zipCodec: "zstd:23",
+  });
+  expect(zipValidation.invalidFields).toContain("settings-zip-codec");
+
+  const sevenZipValidation = validateSettingsDraft({
+    ...getDefaultSettings(),
+    defaultCompression: "7z/special",
+    sevenZipCodec: "lzma2:10",
+  });
+  expect(sevenZipValidation.invalidFields).toContain("settings-7z-codec");
+
+  const storeValidation = validateSettingsDraft({
+    ...getDefaultSettings(),
+    zipCodec: "store:1",
+  });
+  expect(storeValidation.invalidFields).toContain("settings-zip-codec");
+
+  const rvzValidation = validateSettingsDraft({
+    ...getDefaultSettings(),
+    rvzCodec: "zlib",
+  });
+  expect(rvzValidation.invalidFields).toContain("settings-rvz-codec");
+});
+
+test("legacy rvz compression settings load as rvz codec", () => {
+  const storage = createMemoryStorage();
+  storage.setItem(
+    LOCAL_STORAGE_SETTINGS_ID,
+    JSON.stringify({
+      apply: {
+        compression: {
+          rvzCompression: "zstd:7",
+        },
+      },
+      version: SETTINGS_STORAGE_VERSION,
+    }),
+  );
+
+  expect(loadSettings(storage).rvzCodec).toBe("zstd:7");
 });

@@ -13,7 +13,7 @@ const SETTINGS_MESSAGE_KEYS = [
   "requireInputChecksumMatch",
   "requireOutputChecksumMatch",
   "rvzBlockSize",
-  "rvzCompression",
+  "rvzCodec",
   "rvzCompressionLevel",
   "sevenZipCodec",
   "sevenZipLevel",

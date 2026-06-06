@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 /**
  * Output section: the filename field grouped with a format selector, an
- * optional collapsible "Compress" panel (codec/level/archive overrides), and a
+ * optional collapsible "Options" panel (codec/level/archive overrides), and a
  * caller-supplied action (run button or inline progress). Shared by apply,
  * create, and trim outputs.
  */
@@ -17,6 +17,7 @@ type OutputCompressPanel = {
   formatValue?: string;
   formatOptions?: FormatOption[];
   formatLabel?: string;
+  formatInfo?: ReactNode;
   formatId?: string;
   onFormatChange?: (value: string) => void;
 };
@@ -37,10 +38,21 @@ type OutputCardProps = {
 };
 const HEADER_SUMMARY_SEPARATOR = " · ";
 
-/** One labeled control row inside the Compress panel. */
-const OutputField = ({ label, children }: { label: ReactNode; children: ReactNode }) => (
+/** One labeled control row inside the output options panel. */
+const OutputField = ({
+  label,
+  labelInfo,
+  children,
+}: {
+  label: ReactNode;
+  labelInfo?: ReactNode;
+  children: ReactNode;
+}) => (
   <div className="ofield">
-    <span className="ofld-lbl">{label}</span>
+    <span className="ofld-lbl">
+      <span className="ofld-text">{label}</span>
+      {labelInfo}
+    </span>
     {children}
   </div>
 );
@@ -93,7 +105,7 @@ const OutputCard = ({
       <details className="outopts">
         <summary>
           <ChevronRight aria-hidden="true" className="chev" />
-          <span className="lab">Compress</span>
+          <span className="lab">Options</span>
           {compress.format ? <span className="sumv">{compress.format}</span> : null}
           {compress.format && compress.summary ? <span className="sumv">·</span> : null}
           {compress.summary ? (
@@ -111,7 +123,7 @@ const OutputCard = ({
         </summary>
         <div className="outopts-body">
           {compress.formatOptions?.length && compress.onFormatChange ? (
-            <OutputField label={compress.formatLabel || "Type"}>
+            <OutputField label={compress.formatLabel || "Type"} labelInfo={compress.formatInfo}>
               <select
                 aria-label={compress.formatLabel || "Type"}
                 className="select"

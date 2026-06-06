@@ -128,7 +128,7 @@ mod tests {
                 None,
                 CompressionLevelProfile::VeryHigh,
             ),
-            Some(21)
+            Some(19)
         );
         assert_eq!(
             CliApp::resolve_compression_level_for_profile(

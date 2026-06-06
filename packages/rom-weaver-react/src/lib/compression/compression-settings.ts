@@ -2,9 +2,11 @@ import { parseIntegerInRange } from "../compression/compression-option-utils.ts"
 import OutputCompressionManager from "../compression/output-compression-manager.ts";
 
 const compressionManager = OutputCompressionManager;
+const CODEC_WITH_OPTIONAL_LEVEL_REGEX = /^([a-z0-9_+-]+)(?::(\d+))?$/;
 
 type CompressionSettingsSource = {
   compressionProfile?: string | null;
+  rvzCodec?: string | null;
   rvzCompression?: string | null;
   rvzCompressionLevel?: string | number | null;
   z3dsCompressionLevel?: string | number | "default" | null;
@@ -12,6 +14,39 @@ type CompressionSettingsSource = {
   sevenZipLevel?: string | number | null;
   zipCodec?: string | null;
   zipLevel?: string | number | null;
+};
+
+type ParsedCodecLevel = {
+  codec: string;
+  level: number | null;
+};
+
+const parseCodecLevel = (
+  value: string | null | undefined,
+  fallback: string,
+  normalizeCodec: (codec: string | null | undefined, fallback?: string) => string,
+): ParsedCodecLevel => {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
+  const match = raw.match(CODEC_WITH_OPTIONAL_LEVEL_REGEX);
+  if (!match) return { codec: normalizeCodec(value, fallback), level: null };
+  return {
+    codec: normalizeCodec(match[1] || fallback, fallback),
+    level: match[2] === undefined ? null : parseInt(match[2], 10),
+  };
+};
+
+const parseRvzCodecLevel = (value: string | null | undefined): ParsedCodecLevel => {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
+  const match = raw.match(CODEC_WITH_OPTIONAL_LEVEL_REGEX);
+  if (!match) return { codec: compressionManager.normalizeRvzCompression(value || "zstd"), level: null };
+  return {
+    codec: compressionManager.normalizeRvzCompression(match[1] || "zstd"),
+    level: match[2] === undefined ? null : parseInt(match[2], 10),
+  };
 };
 
 const getCompressionProfileIndex = (validProfiles: string[], profile: string | null | undefined): number =>
@@ -56,22 +91,30 @@ const getOptionalCompressionLevel = (
 const resolveCompressionLevels = (source?: CompressionSettingsSource | null) => {
   const settings = source || {};
   const compressionProfile = compressionManager.normalizeCompressionProfile(settings.compressionProfile, "max");
-  const rvzCompression = compressionManager.normalizeRvzCompression(settings.rvzCompression || "zstd");
-  const sevenZipCodec = compressionManager.normalizeSevenZipCodec(settings.sevenZipCodec, "lzma2");
-  const zipCodec = compressionManager.normalizeZipCodec(settings.zipCodec, "deflate");
+  const rvzCodecSetting = parseRvzCodecLevel(settings.rvzCodec ?? settings.rvzCompression);
+  const sevenZipCodecSetting = parseCodecLevel(
+    settings.sevenZipCodec,
+    "lzma2",
+    compressionManager.normalizeSevenZipCodec,
+  );
+  const zipCodecSetting = parseCodecLevel(settings.zipCodec, "deflate", compressionManager.normalizeZipCodec);
+  const rvzCompression = rvzCodecSetting.codec;
+  const sevenZipCodec = sevenZipCodecSetting.codec;
+  const zipCodec = zipCodecSetting.codec;
+  const zipLevelMax = zipCodec === "zstd" ? 22 : 9;
 
   return {
     compressionProfile: compressionProfile,
     rvzCompression: rvzCompression,
     rvzCompressionLevel: getOptionalCompressionLevel(
-      settings.rvzCompressionLevel,
+      rvzCodecSetting.level ?? settings.rvzCompressionLevel,
       compressionManager.getCompressionProfileLevel(compressionProfile, rvzCompression),
       0,
       22,
     ),
     sevenZipCodec: sevenZipCodec,
     sevenZipLevel: getOptionalCompressionLevel(
-      settings.sevenZipLevel,
+      sevenZipCodecSetting.level ?? settings.sevenZipLevel,
       compressionManager.getCompressionProfileLevel(compressionProfile, sevenZipCodec, "7z"),
       0,
       9,
@@ -90,10 +133,10 @@ const resolveCompressionLevels = (source?: CompressionSettingsSource | null) => 
       zipCodec === "store"
         ? 9
         : getOptionalCompressionLevel(
-            settings.zipLevel,
+            zipCodecSetting.level ?? settings.zipLevel,
             compressionManager.getCompressionProfileLevel(compressionProfile, zipCodec, "zip"),
             0,
-            9,
+            zipLevelMax,
           ),
   };
 };

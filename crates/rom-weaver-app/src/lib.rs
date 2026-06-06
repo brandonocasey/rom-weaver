@@ -138,11 +138,11 @@ impl CompressionLevelProfile {
     const fn zstd_level(self) -> i32 {
         match self {
             Self::Min => 0,
-            Self::VeryLow => 3,
-            Self::Low => 5,
-            Self::Medium => 12,
-            Self::High => 19,
-            Self::VeryHigh => 21,
+            Self::VeryLow => 4,
+            Self::Low => 7,
+            Self::Medium => 11,
+            Self::High => 15,
+            Self::VeryHigh => 19,
             Self::Max => 22,
         }
     }

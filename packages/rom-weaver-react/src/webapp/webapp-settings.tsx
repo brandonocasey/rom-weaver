@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { CompressInfoContent } from "../public/react/components/ds/compress-panel.tsx";
+import { COMPRESSION_PROFILE_FIELD_INFO } from "../public/react/compress-options.ts";
 import { InfoToggle } from "./components/info-toggle.tsx";
 import type { SettingsDraftState, SettingsFieldKey, SettingsUiState } from "./settings/settings-state.ts";
 import {
@@ -42,16 +44,16 @@ const settingsPanelSections: Array<{ fields: SettingsFieldKey[]; title: string }
   { fields: ["fixChecksum"], title: "Fixes" },
   { fields: ["requireInputChecksumMatch", "requireOutputChecksumMatch"], title: "Verification" },
   { fields: ["defaultCompression", "compressionProfile", "workerThreads"], title: "Compression" },
-  { fields: ["zipCodec", "zipLevel"], title: "ZIP" },
-  { fields: ["sevenZipCodec", "sevenZipLevel"], title: "7z" },
-  { fields: ["rvzCompression", "rvzCompressionLevel", "rvzBlockSize"], title: "RVZ" },
-  { fields: ["chdCreateCdCodecs", "chdCreateDvdCodecs"], title: "CHD" },
-  { fields: ["z3dsCompressionLevel"], title: "z3ds" },
+  {
+    fields: ["zipCodec", "sevenZipCodec", "rvzCodec", "chdCreateCdCodecs", "chdCreateDvdCodecs"],
+    title: "Codecs",
+  },
+  { fields: ["rvzBlockSize"], title: "RVZ" },
 ];
 
-// Per-format groups render in the two-column grid (`.setcols`); the general
+// Per-format groups render in the same single-column stack (`.setcols`); the general
 // groups above them stay full-width in the grouped settings layout.
-const FORMAT_GROUP_TITLES = new Set(["ZIP", "7z", "RVZ", "CHD", "z3ds"]);
+const FORMAT_GROUP_TITLES = new Set(["Codecs", "RVZ"]);
 
 const DEFAULT_PLACEHOLDER_KINDS = new Set(["number", "text"]);
 const TOGGLE_KINDS = new Set(["checkbox", "choice-checkbox"]);
@@ -142,23 +144,16 @@ const renderFieldInfo = (fieldKey: SettingsFieldKey, draftSettings: SettingsDraf
   const suggestionDataLocalize = getSettingsFieldSuggestionDataLocalize(fieldKey, draftSettings, uiState);
   const label = SETTINGS_FIELD_METADATA[fieldKey].label || fieldKey;
   const content =
-    fieldKey === "compressionProfile" ? (
-      <ul className="info-list">
-        <li>Default: Max</li>
-        <li>
-          Codec level ranges
-          <ul>
-            <li>zstd: 0-22</li>
-            <li>Other codecs: 0-9</li>
-          </ul>
-        </li>
-      </ul>
-    ) : (
-      suggestion
-    );
+    fieldKey === "compressionProfile" ? <CompressInfoContent info={COMPRESSION_PROFILE_FIELD_INFO} /> : suggestion;
   return (
     <InfoToggle ariaLabel={`Show ${label} details`} portalPanel title={`Show ${label} details`}>
-      <div data-localize={typeof suggestionDataLocalize === "string" ? suggestionDataLocalize : undefined}>
+      <div
+        data-localize={
+          fieldKey !== "compressionProfile" && typeof suggestionDataLocalize === "string"
+            ? suggestionDataLocalize
+            : undefined
+        }
+      >
         {content}
       </div>
     </InfoToggle>

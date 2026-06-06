@@ -171,13 +171,13 @@ const OutputCompressionManager = (() => {
       "very-low": 2,
     },
     zstd: {
-      high: 19,
-      low: 5,
+      high: 15,
+      low: 7,
       max: 22,
-      medium: 12,
+      medium: 11,
       min: 0,
-      "very-high": 21,
-      "very-low": 3,
+      "very-high": 19,
+      "very-low": 4,
     },
   };
 
@@ -395,7 +395,7 @@ const OutputCompressionManager = (() => {
   };
   const _getArchiveThreadsOption = (options?: OutputCompressionOptions) =>
     normalizeThreadCount(options?.threads, { fallback: null });
-  const _getArchiveOutputExtension = (compression: CompressionChoiceInput, options?: OutputCompressionOptions) => {
+  const _getArchiveOutputExtension = (compression: CompressionChoiceInput, _options?: OutputCompressionOptions) => {
     const selected = _normalizeOutputCompression(compression);
     return selected;
   };
@@ -567,7 +567,8 @@ const OutputCompressionManager = (() => {
     normalizeRvzBlockSize: _normalizeRvzBlockSize,
     normalizeRvzCompression: _normalizeRvzCompression,
     normalizeRvzCompressionLevel: _normalizeRvzCompressionLevel,
-    normalizeSevenZipCodec: (_value: CodecChoiceInput, _fallback?: string) => "lzma2",
+    normalizeSevenZipCodec: (value: CodecChoiceInput, fallback?: string) =>
+      _normalizeArchiveCodec(value, SEVEN_ZIP_COMPRESSION_METHODS, fallback || "lzma2", "7z"),
     normalizeThreadCount: _normalizeThreadCount,
     normalizeZipCodec: (value: CodecChoiceInput, fallback?: string) =>
       _normalizeArchiveCodec(value, ZIP_COMPRESSION_METHODS, fallback || "deflate", "ZIP"),

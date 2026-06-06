@@ -8,8 +8,6 @@ import {
   normalizeCodecListWithFallback,
   normalizeCompressionProfile,
   normalizeIntegerInRange,
-  normalizeSevenZipCodec,
-  normalizeZipCodec,
   parseIntegerInRange,
   resolveCompressionLevels,
 } from "./settings-compression.ts";
@@ -34,18 +32,18 @@ import {
   LOCAL_STORAGE_SETTINGS_ID,
   normalizeChoiceSetting,
   SETTINGS_FIELD_ORDER,
+  SETTINGS_LEVEL_OVERRIDE_FIELDS,
   SETTINGS_VALID_CHD_OUTPUT_MODES,
   SETTINGS_VALID_OUTPUT_COMPRESSION,
 } from "./settings-metadata.ts";
 
-const CODEC_WITH_OPTIONAL_LEVEL_REGEX = /^([a-z0-9_+-]+)(?::(\d+))?$/;
-const CODEC_NAME_CAPTURE_REGEX = /^([a-z0-9_+-]+)$/;
 const SETTINGS_STORAGE_VERSION = 5;
 
 type RuntimeSharedSettings = Omit<
   SettingsState,
-  "erudaDevTools" | "rvzCompressionLevel" | "z3dsCompressionLevel" | "sevenZipLevel" | "zipLevel"
+  "erudaDevTools" | "rvzCodec" | "rvzCompressionLevel" | "z3dsCompressionLevel" | "sevenZipLevel" | "zipLevel"
 > & {
+  rvzCompression: string;
   rvzCompressionLevel: number;
   z3dsCompressionLevel: number | "default";
   sevenZipLevel: number;
@@ -88,18 +86,16 @@ const ALWAYS_VALIDATE_CHOICE_FIELDS = [
   "logLevel",
   "compressionProfile",
 ] as const satisfies readonly SettingsFieldKey[];
-const CONDITIONAL_CHOICE_FIELDS = [
-  "rvzCompression",
-  "sevenZipCodec",
-  "zipCodec",
-] as const satisfies readonly SettingsFieldKey[];
 const CHD_CODEC_FIELDS = ["chdCreateCdCodecs", "chdCreateDvdCodecs"] as const satisfies readonly SettingsFieldKey[];
-const OPTIONAL_INTEGER_FIELDS = [
-  "rvzCompressionLevel",
-  "z3dsCompressionLevel",
-  "sevenZipLevel",
-  "zipLevel",
+const SINGLE_CODEC_FIELDS = ["rvzCodec", "sevenZipCodec", "zipCodec"] as const satisfies readonly SettingsFieldKey[];
+const FORMAT_CODEC_FIELDS = [
+  ...SINGLE_CODEC_FIELDS,
+  ...CHD_CODEC_FIELDS,
 ] as const satisfies readonly SettingsFieldKey[];
+const isLevelOverrideField = (fieldKey: SettingsFieldKey): boolean =>
+  (SETTINGS_LEVEL_OVERRIDE_FIELDS as readonly SettingsFieldKey[]).includes(fieldKey);
+const isSingleCodecField = (fieldKey: SettingsFieldKey): boolean =>
+  (SINGLE_CODEC_FIELDS as readonly SettingsFieldKey[]).includes(fieldKey);
 
 const readStoredField = <T>(schema: v.BaseSchema<unknown, T, v.BaseIssue<unknown>>, value: unknown): T | undefined => {
   const result = v.safeParse(schema, value);
@@ -156,34 +152,23 @@ const defaultCompressionFromLegacySettings = (
   return "zip/special";
 };
 
-const normalizeCodecSetting = (
-  fieldKey: SettingsFieldKey,
-  value: unknown,
-  fallback: string,
-  allowLevels = false,
-): string => {
-  const validCodecs = getFieldChoiceValues(fieldKey);
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const codecs = raw
-    .split(",")
-    .map((codec) => codec.trim().toLowerCase())
-    .filter(Boolean);
-  if (!codecs.length) return "";
-  for (const codecValue of codecs) {
-    const match = allowLevels
-      ? codecValue.match(CODEC_WITH_OPTIONAL_LEVEL_REGEX)
-      : codecValue.match(CODEC_NAME_CAPTURE_REGEX);
-    if (!match) return fallback;
-    const codec = match[1] || "";
-    if (validCodecs.indexOf(codec) === -1) return fallback;
-    if (match[2] !== undefined) {
-      const level = parseInt(match[2], 10);
-      const maxLevel = CHD_CODEC_LEVEL_MAX[codec];
-      if (!Number.isFinite(level) || maxLevel === undefined || level < 0 || level > maxLevel) return fallback;
-    }
+const getCodecLevelMax = (fieldKey: SettingsFieldKey, codec: string): number | null => {
+  if (fieldKey === "rvzCodec") return codec === "zstd" ? 22 : null;
+  if (fieldKey === "sevenZipCodec") return codec === "lzma2" ? 9 : null;
+  if (fieldKey === "zipCodec") {
+    if (codec === "deflate") return 9;
+    if (codec === "zstd") return 22;
+    return null;
   }
-  return codecs.join(",");
+  return CHD_CODEC_LEVEL_MAX[codec] ?? null;
+};
+
+const getCodecValidationMessage = (fieldKey: SettingsFieldKey, validCodecs: readonly string[]): string => {
+  const levelHints = validCodecs.map((codec) => {
+    const maxLevel = getCodecLevelMax(fieldKey, codec);
+    return maxLevel === null ? codec : `${codec}[:0-${maxLevel}]`;
+  });
+  return `valid values: ${validCodecs.join(", ")}. Optional levels: ${levelHints.join(", ")}.`;
 };
 
 const createCodecListOptions = (
@@ -194,10 +179,37 @@ const createCodecListOptions = (
   allowLevels,
   isValidCodec: (codec) => validCodecs.indexOf(codec) !== -1,
   isValidLevel: (codec, level) => {
-    const maxLevel = CHD_CODEC_LEVEL_MAX[codec];
-    return maxLevel !== undefined && level >= 0 && level <= maxLevel;
+    const maxLevel = getCodecLevelMax(fieldKey, codec);
+    return maxLevel !== null && level >= 0 && level <= maxLevel;
   },
 });
+
+const normalizeValidatedCodecSetting = (
+  fieldKey: SettingsFieldKey,
+  value: string | string[] | number | null | undefined,
+  allowLevels = false,
+  validCodecs = getFieldChoiceValues(fieldKey),
+): string => {
+  const normalized = normalizeCodecList(value, createCodecListOptions(fieldKey, allowLevels, validCodecs));
+  if (isSingleCodecField(fieldKey) && normalized.split(",").filter(Boolean).length > 1) {
+    throw new Error(`Expected one codec for ${fieldKey}`);
+  }
+  return normalized;
+};
+
+const normalizeCodecSetting = (
+  fieldKey: SettingsFieldKey,
+  value: string | string[] | number | null | undefined,
+  fallback: string,
+  allowLevels = false,
+): string => {
+  try {
+    const normalized = normalizeValidatedCodecSetting(fieldKey, value, allowLevels);
+    return normalized || fallback;
+  } catch {
+    return fallback;
+  }
+};
 
 const normalizeStoredCodecSetting = (
   fieldKey: SettingsFieldKey,
@@ -205,6 +217,7 @@ const normalizeStoredCodecSetting = (
   fallback: string,
   allowLevels = false,
 ): string => {
+  if (isSingleCodecField(fieldKey)) return normalizeCodecSetting(fieldKey, value, fallback, allowLevels);
   return normalizeCodecListWithFallback(value, fallback, createCodecListOptions(fieldKey, allowLevels));
 };
 
@@ -220,25 +233,6 @@ const normalizeIntegerField = (
     max,
     min,
   }) as number;
-};
-
-const normalizeOptionalIntegerFieldInput = (value: unknown): string | number | null | undefined =>
-  typeof value === "string" || typeof value === "number" || value === null || value === undefined
-    ? value
-    : String(value);
-
-const normalizeOptionalIntegerField = (
-  fieldKey: SettingsFieldKey,
-  value: unknown,
-  fallback: number | "",
-  settings: SettingsState,
-): number | "" => {
-  const { max, min } = getNumericFieldRange(fieldKey, settings);
-  return normalizeIntegerInRange(normalizeOptionalIntegerFieldInput(value), {
-    fallback,
-    max,
-    min,
-  }) as number | "";
 };
 
 const normalizePositiveIntegerField = (
@@ -290,22 +284,6 @@ const validateMetadataChoiceField = <K extends SettingsFieldKey>(
   validation: SettingsValidation,
 ): SettingsState[K] => validateChoiceSetting(fieldKey, rawDraft[fieldKey], validation);
 
-const normalizeMetadataChoiceField = <K extends SettingsFieldKey>(
-  fieldKey: K,
-  rawDraft: SettingsDraft,
-  settings: SettingsState,
-): SettingsState[K] => normalizeChoiceField(fieldKey, rawDraft[fieldKey], settings[fieldKey]);
-
-const validateConditionalChoiceField = <K extends SettingsFieldKey>(
-  fieldKey: K,
-  rawDraft: SettingsDraft,
-  validation: SettingsValidation,
-  settings: SettingsState,
-): SettingsState[K] =>
-  isValidationFieldEnabled(fieldKey, validation.settings)
-    ? validateMetadataChoiceField(fieldKey, rawDraft, validation)
-    : normalizeMetadataChoiceField(fieldKey, rawDraft, settings);
-
 const validateConditionalCodecField = (
   fieldKey: SettingsFieldKey,
   rawDraft: SettingsDraft,
@@ -314,17 +292,12 @@ const validateConditionalCodecField = (
 ): string =>
   isValidationFieldEnabled(fieldKey, validation.settings)
     ? validateCodecList(fieldKey, rawDraft[fieldKey] as string | string[] | number | null | undefined, validation, true)
-    : normalizeCodecSetting(fieldKey, rawDraft[fieldKey], settings[fieldKey] as string, true);
-
-const validateConditionalOptionalIntegerField = (
-  fieldKey: SettingsFieldKey,
-  rawDraft: SettingsDraft,
-  validation: SettingsValidation,
-  settings: SettingsState,
-): number | "" =>
-  isValidationFieldEnabled(fieldKey, validation.settings)
-    ? normalizeOptionalIntegerOverride(fieldKey, rawDraft[fieldKey], validation)
-    : normalizeOptionalIntegerField(fieldKey, rawDraft[fieldKey], settings[fieldKey] as number | "", settings);
+    : normalizeCodecSetting(
+        fieldKey,
+        rawDraft[fieldKey] as string | string[] | number | null | undefined,
+        settings[fieldKey] as string,
+        true,
+      );
 
 const validateConditionalPositiveIntegerField = (
   fieldKey: SettingsFieldKey,
@@ -360,9 +333,9 @@ const validateCodecList = (
   const validCodecs = getFieldChoiceValues(fieldKey);
   try {
     const parsedValue = v.parse(v.union([v.string(), v.array(v.string()), v.number(), v.null(), v.undefined()]), value);
-    return normalizeCodecList(parsedValue, createCodecListOptions(fieldKey, allowLevels, validCodecs));
+    return normalizeValidatedCodecSetting(fieldKey, parsedValue, allowLevels, validCodecs);
   } catch {
-    validation.messages.push(getFieldValidationMessage(fieldKey, `valid values: ${validCodecs.join(", ")}.`));
+    validation.messages.push(getFieldValidationMessage(fieldKey, getCodecValidationMessage(fieldKey, validCodecs)));
     validation.invalidFields.push(getSettingsFieldId(fieldKey));
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -422,18 +395,6 @@ const normalizeWorkerThreadsSetting = (
   }
 };
 
-const normalizeOptionalIntegerOverride = (
-  fieldKey: SettingsFieldKey,
-  value: unknown,
-  validation: SettingsValidation,
-  settings: SettingsState = validation.settings,
-): number | "" => {
-  const nullableNumber = v.safeParse(v.union([v.string(), v.number(), v.null(), v.undefined()]), value);
-  const raw = String(nullableNumber.success ? (nullableNumber.output ?? "") : (value ?? "")).trim();
-  if (!raw) return "";
-  return normalizeIntegerSetting(fieldKey, raw, validation, settings);
-};
-
 const materializeChdCodecSettings = (source?: SettingsState | null): SettingsState => {
   const settings = copyObject(source || getDefaultSettings()) as SettingsState;
   settings.chdCreateCdCodecs = getChdCodecsForMode("cd", {
@@ -485,7 +446,7 @@ const readGroupedStoredSettings = (source: Record<string, unknown>): Record<stri
     requireInputChecksumMatch: validation.requireInputChecksumMatch,
     requireOutputChecksumMatch: validation.requireOutputChecksumMatch,
     rvzBlockSize: compression.rvzBlockSize,
-    rvzCompression: compression.rvzCompression,
+    rvzCodec: compression.rvzCodec ?? compression.rvzCompression,
     rvzCompressionLevel: compression.rvzCompressionLevel,
     rvzScrub: compression.rvzScrub,
     sevenZipCodec: compression.sevenZipCodec,
@@ -582,18 +543,11 @@ const loadSettings = (storage?: StorageLike): SettingsState => {
         true,
       );
 
-    const rvzCompression = readStoredField(storedStringSchema, loadedSettings.rvzCompression);
-    if (rvzCompression !== undefined)
-      settings.rvzCompression = normalizeChoiceField("rvzCompression", rvzCompression, settings.rvzCompression);
-
-    const rvzCompressionLevel = readStoredField(storedStringOrNumberSchema, loadedSettings.rvzCompressionLevel);
-    if (rvzCompressionLevel !== undefined)
-      settings.rvzCompressionLevel = normalizeOptionalIntegerField(
-        "rvzCompressionLevel",
-        rvzCompressionLevel,
-        settings.rvzCompressionLevel,
-        settings,
-      );
+    const rvzCodec =
+      readStoredField(storedStringSchema, loadedSettings.rvzCodec) ??
+      readStoredField(storedStringSchema, loadedSettings.rvzCompression);
+    if (rvzCodec !== undefined)
+      settings.rvzCodec = normalizeStoredCodecSetting("rvzCodec", rvzCodec, settings.rvzCodec, true);
 
     const rvzBlockSize = readStoredField(storedStringOrNumberSchema, loadedSettings.rvzBlockSize);
     if (rvzBlockSize !== undefined)
@@ -607,34 +561,18 @@ const loadSettings = (storage?: StorageLike): SettingsState => {
     const rvzScrub = readStoredField(storedBooleanSchema, loadedSettings.rvzScrub);
     if (rvzScrub !== undefined) settings.rvzScrub = rvzScrub;
 
-    const z3dsCompressionLevel = readStoredField(storedStringOrNumberSchema, loadedSettings.z3dsCompressionLevel);
-    if (z3dsCompressionLevel !== undefined)
-      settings.z3dsCompressionLevel = normalizeOptionalIntegerField(
-        "z3dsCompressionLevel",
-        z3dsCompressionLevel,
-        settings.z3dsCompressionLevel,
-        settings,
-      );
-
     const sevenZipCodec = readStoredField(storedStringSchema, loadedSettings.sevenZipCodec);
     if (sevenZipCodec !== undefined)
-      settings.sevenZipCodec = normalizeChoiceField("sevenZipCodec", sevenZipCodec, settings.sevenZipCodec);
-
-    const sevenZipLevel = readStoredField(storedStringOrNumberSchema, loadedSettings.sevenZipLevel);
-    if (sevenZipLevel !== undefined)
-      settings.sevenZipLevel = normalizeOptionalIntegerField(
-        "sevenZipLevel",
-        sevenZipLevel,
-        settings.sevenZipLevel,
-        settings,
+      settings.sevenZipCodec = normalizeStoredCodecSetting(
+        "sevenZipCodec",
+        sevenZipCodec,
+        settings.sevenZipCodec,
+        true,
       );
 
     const zipCodec = readStoredField(storedStringSchema, loadedSettings.zipCodec);
-    if (zipCodec !== undefined) settings.zipCodec = normalizeChoiceField("zipCodec", zipCodec, settings.zipCodec);
-
-    const zipLevel = readStoredField(storedStringOrNumberSchema, loadedSettings.zipLevel);
-    if (zipLevel !== undefined)
-      settings.zipLevel = normalizeOptionalIntegerField("zipLevel", zipLevel, settings.zipLevel, settings);
+    if (zipCodec !== undefined)
+      settings.zipCodec = normalizeStoredCodecSetting("zipCodec", zipCodec, settings.zipCodec, true);
 
     const workerThreads = readStoredField(storedStringOrNumberSchema, loadedSettings.workerThreads);
     if (workerThreads !== undefined)
@@ -711,6 +649,7 @@ const serializeSettingsForStorage = (source?: SettingsState | null): string | nu
     };
   };
   for (const fieldKey of SETTINGS_FIELD_ORDER) {
+    if (isLevelOverrideField(fieldKey)) continue;
     if (fieldKey === "chdCreateCdCodecs" || fieldKey === "chdCreateDvdCodecs") {
       if (canonicalSettings[fieldKey] !== canonicalDefaults[fieldKey]) storeSetting(fieldKey, settings[fieldKey]);
       continue;
@@ -744,24 +683,13 @@ const validateSettingsDraft = (rawDraft: SettingsDraft, currentSettings?: Settin
   validation.settings.requireOutputChecksumMatch =
     readStoredField(storedBooleanSchema, rawDraft.requireOutputChecksumMatch) !== false;
 
-  for (const fieldKey of CHD_CODEC_FIELDS)
+  for (const fieldKey of FORMAT_CODEC_FIELDS)
     assignSetting(
       validation.settings,
       fieldKey,
       validateConditionalCodecField(fieldKey, rawDraft, validation, settings),
     );
-  for (const fieldKey of CONDITIONAL_CHOICE_FIELDS)
-    assignSetting(
-      validation.settings,
-      fieldKey,
-      validateConditionalChoiceField(fieldKey, rawDraft, validation, settings),
-    );
-  for (const fieldKey of OPTIONAL_INTEGER_FIELDS)
-    assignSetting(
-      validation.settings,
-      fieldKey,
-      validateConditionalOptionalIntegerField(fieldKey, rawDraft, validation, settings),
-    );
+  applyDefaultFields(validation.settings, SETTINGS_LEVEL_OVERRIDE_FIELDS);
   validation.settings.rvzBlockSize = validateConditionalPositiveIntegerField(
     "rvzBlockSize",
     rawDraft,
@@ -790,14 +718,14 @@ const buildSettingsForWebapp = (source?: SettingsState | null, extraSettings?: R
       requireInputChecksumMatch: settings.requireInputChecksumMatch !== false,
       requireOutputChecksumMatch: settings.requireOutputChecksumMatch !== false,
       rvzBlockSize: settings.rvzBlockSize,
-      rvzCompression: settings.rvzCompression,
+      rvzCompression: compressionLevels.rvzCompression,
       rvzCompressionLevel: compressionLevels.rvzCompressionLevel,
       rvzScrub: settings.rvzScrub,
-      sevenZipCodec: settings.sevenZipCodec,
+      sevenZipCodec: compressionLevels.sevenZipCodec,
       sevenZipLevel: compressionLevels.sevenZipLevel,
       workerThreads: settings.workerThreads,
       z3dsCompressionLevel: compressionLevels.z3dsCompressionLevel,
-      zipCodec: settings.zipCodec,
+      zipCodec: compressionLevels.zipCodec,
       zipLevel: compressionLevels.zipLevel,
     },
     extraSettings || {},
@@ -868,8 +796,14 @@ const normalizeRuntimeSharedSettingsSource = (source?: Record<string, unknown> |
             settings.chdCreateDvdCodecs,
             true,
           );
-  if (typeof source.rvzCompression === "string")
-    settings.rvzCompression = normalizeChoiceField("rvzCompression", source.rvzCompression, settings.rvzCompression);
+  const sourceRvzCodec =
+    typeof source.rvzCodec === "string"
+      ? source.rvzCodec
+      : typeof source.rvzCompression === "string"
+        ? source.rvzCompression
+        : undefined;
+  if (sourceRvzCodec !== undefined)
+    settings.rvzCompression = normalizeStoredCodecSetting("rvzCodec", sourceRvzCodec, settings.rvzCompression, true);
   if (typeof source.rvzCompressionLevel === "number" || typeof source.rvzCompressionLevel === "string")
     settings.rvzCompressionLevel = normalizeIntegerField(
       "rvzCompressionLevel",
@@ -894,7 +828,12 @@ const normalizeRuntimeSharedSettingsSource = (source?: Record<string, unknown> |
       defaultSettings,
     );
   if (typeof source.sevenZipCodec === "string")
-    settings.sevenZipCodec = normalizeSevenZipCodec(source.sevenZipCodec, settings.sevenZipCodec);
+    settings.sevenZipCodec = normalizeStoredCodecSetting(
+      "sevenZipCodec",
+      source.sevenZipCodec,
+      settings.sevenZipCodec,
+      true,
+    );
   if (typeof source.sevenZipLevel === "number" || typeof source.sevenZipLevel === "string")
     settings.sevenZipLevel = normalizeArchiveCompressionLevelForFormat(
       "7z",
@@ -909,7 +848,8 @@ const normalizeRuntimeSharedSettingsSource = (source?: Record<string, unknown> |
       settings.sevenZipLevel,
       settings.sevenZipLevel,
     );
-  if (typeof source.zipCodec === "string") settings.zipCodec = normalizeZipCodec(source.zipCodec, settings.zipCodec);
+  if (typeof source.zipCodec === "string")
+    settings.zipCodec = normalizeStoredCodecSetting("zipCodec", source.zipCodec, settings.zipCodec, true);
   if (typeof source.zipLevel === "number" || typeof source.zipLevel === "string")
     settings.zipLevel = normalizeArchiveCompressionLevelForFormat(
       "zip",
@@ -929,6 +869,16 @@ const normalizeRuntimeSharedSettingsSource = (source?: Record<string, unknown> |
       source.workerThreads,
       resolveWorkerThreadsNumericFallback(settings.workerThreads),
     );
+
+  const compressionLevels = resolveCompressionLevels(settings);
+  settings.rvzCompression = compressionLevels.rvzCompression;
+  settings.rvzCompressionLevel = Number(compressionLevels.rvzCompressionLevel);
+  settings.sevenZipCodec = compressionLevels.sevenZipCodec;
+  settings.sevenZipLevel = Number(compressionLevels.sevenZipLevel);
+  settings.z3dsCompressionLevel =
+    compressionLevels.z3dsCompressionLevel === "default" ? "default" : Number(compressionLevels.z3dsCompressionLevel);
+  settings.zipCodec = compressionLevels.zipCodec;
+  settings.zipLevel = Number(compressionLevels.zipLevel);
 
   return settings;
 };

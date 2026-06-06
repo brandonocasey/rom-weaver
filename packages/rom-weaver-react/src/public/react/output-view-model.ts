@@ -146,6 +146,7 @@ const getGeneratedOutputName = (
 };
 
 const getOutputOptionExtensionLabel = (option: string, source?: GeneratedOutputSource) => {
+  if (option === "none" && !getGeneratedOutputSourceFileName(source, "")) return "";
   try {
     const fileName = OutputCompressionManager.getCompressedFileName(
       source as Parameters<typeof OutputCompressionManager.getCompressedFileName>[0],
@@ -167,14 +168,14 @@ const createOutputOptions = (
     label:
       labels[option] ||
       getOutputOptionExtensionLabel(option, source) ||
-      (option === "none" ? ".raw" : `.${String(option).toLowerCase()}`),
+      (option === "none" ? NONE_COMPRESSION_LABEL : `.${String(option).toLowerCase()}`),
     value: option,
   }));
 
 const createApplyOutputOptions = createOutputOptions;
 
 /**
- * Compression-type options for the output "Compress" panel. The uncompressed
+ * Compression-type options for the output "Options" panel. The uncompressed
  * choice collapses to a single "None" entry floated to the top, while compressed
  * formats keep their extension labels. The separate output-extension selector
  * still surfaces the real rom/patch extension for the uncompressed choice — only
@@ -225,11 +226,13 @@ const uniqueOutputOptions = (options: OutputOption[]): OutputOption[] => {
   });
 };
 
-const createTrimOutputOptions = (rawExtension: string): OutputOption[] =>
-  uniqueOutputOptions([
-    { label: `.${normalizeExtensionValue(rawExtension, "raw")}`, value: normalizeExtensionValue(rawExtension, "raw") },
+const createTrimOutputOptions = (rawExtension: string, { rawLabel }: { rawLabel?: string } = {}): OutputOption[] => {
+  const normalizedRawExtension = normalizeExtensionValue(rawExtension, "raw");
+  return uniqueOutputOptions([
+    { label: rawLabel || `.${normalizedRawExtension}`, value: normalizedRawExtension },
     ...createOutputOptions(["chd", "rvz", "z3ds", "zip", "7z"]),
   ]);
+};
 
 const formatLabeledByteSize = (label: string, value?: number | null) => {
   const formattedSize = formatByteSize(value);

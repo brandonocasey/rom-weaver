@@ -117,19 +117,27 @@ const getChdExtractedFileName = (source: ByteProbeableSource): string =>
 const getRvzExtractedFileName = (source: ByteProbeableSource): string =>
   replaceFileExtension(source.fileName || "input.rvz", "iso");
 
-const getZ3dsExtractedFileName = (source: ByteProbeableSource): string => {
+const getZ3dsExtractedExtensionForMagic = (magic: string): string | null => {
+  if (magic === "CIA\u0000") return "cia";
+  if (magic === "NCSD") return "cci";
+  if (magic === "NCCH") return "cxi";
+  if (magic === "3DSX") return "3dsx";
+  return null;
+};
+
+const getZ3dsExtractedExtension = (source: ByteProbeableSource): string => {
   const extension = getFileExtension(source);
-  if (extension === "zcia") return replaceFileExtension(source.fileName || "input.zcia", "cia");
-  if (extension === "zcci") return replaceFileExtension(source.fileName || "input.zcci", "cci");
-  if (extension === "zcxi") return replaceFileExtension(source.fileName || "input.zcxi", "cxi");
-  if (extension === "z3ds") return replaceFileExtension(source.fileName || "input.z3ds", "3ds");
-  if (extension === "z3dsx") return replaceFileExtension(source.fileName || "input.z3dsx", "3dsx");
-  const magic = source._z3dsUnderlyingMagic || "";
-  if (magic === "CIA\u0000") return replaceFileExtension(source.fileName || "input.z3ds", "cia");
-  if (magic === "NCSD") return replaceFileExtension(source.fileName || "input.z3ds", "cci");
-  if (magic === "NCCH") return replaceFileExtension(source.fileName || "input.z3ds", "cxi");
-  if (magic === "3DSX") return replaceFileExtension(source.fileName || "input.z3ds", "3dsx");
-  return replaceFileExtension(source.fileName || "input.z3ds", "cci");
+  if (extension === "zcia") return "cia";
+  if (extension === "zcci") return "cci";
+  if (extension === "zcxi") return "cxi";
+  if (extension === "z3dsx") return "3dsx";
+  const magicExtension = getZ3dsExtractedExtensionForMagic(source._z3dsUnderlyingMagic || "");
+  if (extension === "z3ds") return magicExtension || "3ds";
+  return magicExtension || "3ds";
+};
+
+const getZ3dsExtractedFileName = (source: ByteProbeableSource): string => {
+  return replaceFileNameExtension(source.fileName || "input.z3ds", getZ3dsExtractedExtension(source));
 };
 
 const createAutomaticDiscSourceExtensions = (

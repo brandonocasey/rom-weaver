@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from "react";
+import { resolveCompressionLevels } from "../../lib/compression/compression-settings.ts";
 import { createLogger } from "../../lib/logging.ts";
 import type {
   ApplyPatchFormSettings,
@@ -166,8 +167,6 @@ const normalizeApplyOutputCompression = (
   return undefined;
 };
 
-const normalizeSevenZipCodec = (_value: RuntimeValue): OutputContainerSettings["sevenZipCodec"] => "lzma2";
-
 const getNormalizedWorkflowSettings = (
   settings: ApplyPatchFormSettings | CreatePatchFormSettings,
   workerThreads?: RuntimeValue,
@@ -181,6 +180,36 @@ const getNormalizedWorkflowSettings = (
   const validation = toRecord(source.validation);
   const logging = toRecord(source.logging);
   const configuredLogSink = typeof logging.sink === "function" ? logging.sink : undefined;
+  const compressionProfile = readFirstDefined(
+    outputContainer.profile,
+    source.compressionProfile,
+    compressionSettings.profile,
+  );
+  const sevenZipCodec = readFirstDefined(
+    outputContainer.sevenZipCodec,
+    source.sevenZipCodec,
+    compressionSettings.sevenZipCodec,
+  );
+  const sevenZipLevel = readFirstDefined(
+    outputContainer.sevenZipLevel,
+    source.sevenZipLevel,
+    compressionSettings.sevenZipLevel,
+  );
+  const z3dsCompressionLevel = readFirstDefined(
+    outputContainer.z3dsCompressionLevel,
+    source.z3dsCompressionLevel,
+    compressionSettings.z3dsCompressionLevel,
+  );
+  const zipCodec = readFirstDefined(outputContainer.zipCodec, source.zipCodec, compressionSettings.zipCodec);
+  const zipLevel = readFirstDefined(outputContainer.zipLevel, source.zipLevel, compressionSettings.zipLevel);
+  const compressionLevels = resolveCompressionLevels({
+    compressionProfile: compressionProfile as string | null | undefined,
+    sevenZipCodec: sevenZipCodec as string | null | undefined,
+    sevenZipLevel: sevenZipLevel as string | number | null | undefined,
+    z3dsCompressionLevel: z3dsCompressionLevel as string | number | "default" | null | undefined,
+    zipCodec: zipCodec as string | null | undefined,
+    zipLevel: zipLevel as string | number | null | undefined,
+  });
 
   return {
     compatibility: {
@@ -199,28 +228,12 @@ const getNormalizedWorkflowSettings = (
       compression: readFirstDefined(output.compression, source.compressionFormat, compressionSettings.format),
       container: {
         ...outputContainer,
-        profile: readFirstDefined(outputContainer.profile, source.compressionProfile, compressionSettings.profile) as
-          | OutputContainerSettings["profile"]
-          | undefined,
-        sevenZipCodec: normalizeSevenZipCodec(
-          readFirstDefined(outputContainer.sevenZipCodec, source.sevenZipCodec, compressionSettings.sevenZipCodec),
-        ),
-        sevenZipLevel: readFirstDefined(
-          outputContainer.sevenZipLevel,
-          source.sevenZipLevel,
-          compressionSettings.sevenZipLevel,
-        ) as OutputContainerSettings["sevenZipLevel"] | undefined,
-        z3dsCompressionLevel: readFirstDefined(
-          outputContainer.z3dsCompressionLevel,
-          source.z3dsCompressionLevel,
-          compressionSettings.z3dsCompressionLevel,
-        ) as OutputContainerSettings["z3dsCompressionLevel"] | undefined,
-        zipCodec: readFirstDefined(outputContainer.zipCodec, source.zipCodec, compressionSettings.zipCodec) as
-          | OutputContainerSettings["zipCodec"]
-          | undefined,
-        zipLevel: readFirstDefined(outputContainer.zipLevel, source.zipLevel, compressionSettings.zipLevel) as
-          | OutputContainerSettings["zipLevel"]
-          | undefined,
+        profile: compressionLevels.compressionProfile as OutputContainerSettings["profile"],
+        sevenZipCodec: compressionLevels.sevenZipCodec as OutputContainerSettings["sevenZipCodec"],
+        sevenZipLevel: compressionLevels.sevenZipLevel as OutputContainerSettings["sevenZipLevel"],
+        z3dsCompressionLevel: compressionLevels.z3dsCompressionLevel as OutputContainerSettings["z3dsCompressionLevel"],
+        zipCodec: compressionLevels.zipCodec as OutputContainerSettings["zipCodec"],
+        zipLevel: compressionLevels.zipLevel as OutputContainerSettings["zipLevel"],
       },
     },
     validation: {
