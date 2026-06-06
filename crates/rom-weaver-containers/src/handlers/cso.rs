@@ -362,6 +362,10 @@ impl ContainerHandlerOperations for CsoContainerHandler {
         let extract_progress_label = format!("extracting `{}`", self.descriptor.name);
         let extract_progress_bytes = Arc::new(AtomicU64::new(0));
         let extract_progress_bucket = Arc::new(AtomicU8::new(0));
+        // Hash the decompressed output as it is written so a requested `--checksum` is computed
+        // during extract instead of forcing the caller into a second full read of the output,
+        // matching the libarchive/chd/rvz extract paths.
+        let mut extract_checksum = create_extract_checksum(context)?;
 
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent)?;
@@ -384,6 +388,11 @@ impl ContainerHandlerOperations for CsoContainerHandler {
             let chunk_index = u64::try_from(chunk.index).map_err(|_| {
                 RomWeaverError::Validation("cso extract chunk index overflowed".into())
             })?;
+            // `write_chunk` is invoked in strict ascending index order, so updating here hashes the
+            // output bytes in their final on-disk order.
+            if let Some(checksum) = extract_checksum.as_mut() {
+                checksum.update(&chunk.data)?;
+            }
             ordered_writer.write_chunk(chunk_index, chunk.data)?;
             if logical_bytes > 0 {
                 let completed = extract_progress_bytes
@@ -473,7 +482,15 @@ impl ContainerHandlerOperations for CsoContainerHandler {
             return Err(error);
         }
 
-        Ok(OperationReport::succeeded(
+        let mut output_checksums = Vec::new();
+        if let Some(checksum) = extract_checksum {
+            output_checksums.push(ExtractedFileChecksum {
+                path: output_path.clone(),
+                values: checksum.finalize()?,
+            });
+        }
+
+        let report = OperationReport::succeeded(
             OperationFamily::Container,
             Some(self.descriptor.name.to_string()),
             "extract",
@@ -485,7 +502,8 @@ impl ContainerHandlerOperations for CsoContainerHandler {
             ),
             Some(100.0),
             Some(execution),
-        ))
+        );
+        Ok(attach_extract_checksum_details(report, output_checksums))
     }
 
     fn create(

@@ -794,6 +794,10 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         let extract_progress_label = format!("extracting `{}`", Z3DS.name);
         let extract_progress_bytes = Arc::new(AtomicU64::new(0));
         let extract_progress_bucket = Arc::new(AtomicU8::new(0));
+        // Hash the decompressed output as it is written so a requested `--checksum` is computed
+        // during extract (overlapping the work) instead of forcing the caller into a second full
+        // read of the output, matching the libarchive/chd/rvz extract paths.
+        let mut extract_checksum = create_extract_checksum(context)?;
 
         {
             let output_file = create_extract_output_file(&output_path, request.overwrite)?;
@@ -816,6 +820,11 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
                 let chunk_index = u64::try_from(chunk.index).map_err(|_| {
                     RomWeaverError::Validation("z3ds extract chunk index overflowed".into())
                 })?;
+                // `write_chunk` is invoked in strict ascending index order, so updating here hashes
+                // the output bytes in their final on-disk order.
+                if let Some(checksum) = extract_checksum.as_mut() {
+                    checksum.update(&chunk.data)?;
+                }
                 ordered_writer.write_chunk(chunk_index, chunk.data)?;
                 if header.uncompressed_size > 0 {
                     let completed = extract_progress_bytes
@@ -929,7 +938,15 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
             }
         }
 
-        Ok(OperationReport::succeeded(
+        let mut output_checksums = Vec::new();
+        if let Some(checksum) = extract_checksum {
+            output_checksums.push(ExtractedFileChecksum {
+                path: output_path.clone(),
+                values: checksum.finalize()?,
+            });
+        }
+
+        let report = OperationReport::succeeded(
             OperationFamily::Container,
             Some(Z3DS.name.to_string()),
             "extract",
@@ -941,7 +958,8 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
             ),
             Some(100.0),
             Some(execution),
-        ))
+        );
+        Ok(attach_extract_checksum_details(report, output_checksums))
     }
 
     fn create(
