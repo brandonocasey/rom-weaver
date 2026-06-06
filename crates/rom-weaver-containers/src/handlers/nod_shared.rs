@@ -262,6 +262,18 @@ impl NodHandlerCore {
         vec![self.extract_name(source)]
     }
 
+    /// Enumerate the single decompressed output and its disc size using only the disc metadata
+    /// (no block decode), so input discovery can list the produced file without a full extract.
+    fn list_entry_records_for_probe(&self, source: &Path) -> Result<Vec<ContainerListEntry>> {
+        let disc = self.open_disc_for_probe(source)?;
+        let meta = self.validate_meta(source, &disc)?;
+        let disc_size = meta.disc_size.unwrap_or_else(|| disc.disc_size());
+        Ok(vec![ContainerListEntry {
+            path: self.extract_name(source),
+            size: Some(disc_size),
+        }])
+    }
+
     fn extract_name(&self, source: &Path) -> String {
         let stem = source
             .file_stem()

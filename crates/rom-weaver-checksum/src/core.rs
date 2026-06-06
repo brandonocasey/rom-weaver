@@ -82,6 +82,10 @@ struct AsyncStreamingChecksumWorker {
 }
 
 impl StreamingChecksum {
+    pub fn requested_algorithm_count(algorithms: &[String]) -> Result<usize> {
+        Ok(resolve_algorithms(algorithms)?.len())
+    }
+
     pub fn new(algorithms: &[String]) -> Result<Option<Self>> {
         let algorithms = resolve_algorithms(algorithms)?;
         if algorithms.is_empty() {

@@ -16,9 +16,9 @@ use rom_weaver_checksum::StreamingChecksum;
 use rom_weaver_codecs::{CanonicalCodec, RequestedCodec, parse_requested_codec};
 use rom_weaver_core::{
     ContainerByteProgress, ContainerCreateRequest, ContainerExtractRequest,
-    ContainerHandlerOperations, ContainerProbeRequest, FormatDescriptor, OperationContext,
-    OperationFamily, OperationReport, OperationStatus, OrderedStreamingMessages, ProbeConfidence,
-    Result, RomWeaverError, SelectionMatcher, ThreadCapability, ThreadExecution,
+    ContainerHandlerOperations, ContainerListEntry, ContainerProbeRequest, FormatDescriptor,
+    OperationContext, OperationFamily, OperationReport, OperationStatus, OrderedStreamingMessages,
+    ProbeConfidence, Result, RomWeaverError, SelectionMatcher, ThreadCapability, ThreadExecution,
     create_extract_output_file, file_starts_with, maybe_emit_container_byte_progress,
     ordered_streaming_compress,
 };

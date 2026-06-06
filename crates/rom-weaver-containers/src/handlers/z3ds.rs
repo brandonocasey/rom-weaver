@@ -771,6 +771,22 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         )])
     }
 
+    fn list_entry_records(
+        &self,
+        request: &ContainerProbeRequest,
+        _context: &OperationContext,
+    ) -> Result<Vec<ContainerListEntry>> {
+        // Report the decompressed output name and its size straight from the header so input
+        // discovery can enumerate the single produced file without performing a full extract.
+        let mut file = File::open(&request.source)?;
+        let header = self.read_header(&request.source, &mut file)?;
+        Ok(vec![ContainerListEntry {
+            path: self
+                .extract_name_with_underlying_magic(&request.source, Some(header.underlying_magic)),
+            size: Some(header.uncompressed_size),
+        }])
+    }
+
     fn extract(
         &self,
         request: &ContainerExtractRequest,

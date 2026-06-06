@@ -104,6 +104,81 @@ impl ContainerHandlerOperations for ChdContainerHandler {
         Ok(vec![self.extract_name(&request.source, media_kind)?])
     }
 
+    fn list_entry_records(
+        &self,
+        request: &ContainerProbeRequest,
+        _context: &OperationContext,
+    ) -> Result<Vec<ContainerListEntry>> {
+        // Enumerate the produced output files and their sizes from the CHD header/track metadata
+        // only (no hunk decode), so input discovery can list a `.cue` + `.bin`(s) — or the single
+        // raw image — without performing a full extract.
+        let chd = ChdReadSession::open(&request.source, None)?;
+        let media_kind = chd.media_kind();
+        let stem = request
+            .source
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("output");
+        let track_bin_bytes = |track: &DiscTrack| -> u64 {
+            u64::from(track.frames).saturating_mul(track.mode.data_bytes() as u64)
+        };
+        if media_kind == ChdMediaKind::CdRom {
+            let layout = self.read_disc_tracks(&chd, DiscKind::CdRom)?;
+            let first_data_bytes = layout
+                .tracks
+                .first()
+                .map(|track| track.mode.data_bytes())
+                .unwrap_or(2352);
+            // Mirror the extract naming decision: a single BIN is only produced when every track
+            // shares a sector size and split output was not explicitly requested.
+            let single_bin = !request.split_bin
+                && layout
+                    .tracks
+                    .iter()
+                    .all(|track| track.mode.data_bytes() == first_data_bytes);
+            // The `.cue` is generated text; its size is not known without rendering it, so leave it
+            // unsized (discovery only needs the patchable bin sizes).
+            let mut entries = vec![ContainerListEntry {
+                path: format!("{stem}.cue"),
+                size: None,
+            }];
+            if single_bin {
+                let total = layout.tracks.iter().map(track_bin_bytes).sum();
+                entries.push(ContainerListEntry {
+                    path: format!("{stem}.bin"),
+                    size: Some(total),
+                });
+            } else {
+                for track in &layout.tracks {
+                    entries.push(ContainerListEntry {
+                        path: self.track_output_name(stem, track.number),
+                        size: Some(track_bin_bytes(track)),
+                    });
+                }
+            }
+            return Ok(entries);
+        }
+        if media_kind == ChdMediaKind::GdRom {
+            let layout = self.read_disc_tracks(&chd, DiscKind::GdRom)?;
+            let mut entries = vec![ContainerListEntry {
+                path: format!("{stem}.gdi"),
+                size: None,
+            }];
+            for track in &layout.tracks {
+                entries.push(ContainerListEntry {
+                    path: self.track_output_name(stem, track.number),
+                    size: Some(track_bin_bytes(track)),
+                });
+            }
+            return Ok(entries);
+        }
+        Ok(vec![ContainerListEntry {
+            path: self.extract_name(&request.source, media_kind)?,
+            size: Some(chd.header().logical_bytes),
+        }])
+    }
+
     fn extract(
         &self,
         request: &ContainerExtractRequest,

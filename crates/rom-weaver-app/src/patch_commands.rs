@@ -404,6 +404,7 @@ impl CliApp {
 
         let probe_request = ContainerProbeRequest {
             source: input.to_path_buf(),
+            split_bin: false,
         };
         handler.probe_details(&probe_request, context)?;
         let listed_entries = handler.list_entries(&probe_request, context)?;

@@ -159,6 +159,9 @@ impl OperationReport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContainerProbeRequest {
     pub source: PathBuf,
+    /// For container `list`, request split CUE + per-track BIN entries instead of a single BIN.
+    /// Only CHD CD listing honors this; other containers ignore it. Probe ignores it entirely.
+    pub split_bin: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

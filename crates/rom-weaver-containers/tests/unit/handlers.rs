@@ -10,8 +10,9 @@ mod tests {
     };
 
     use super::{
-        ChdCodec, ContainerCreateRequest, ContainerRegistry, SEVEN_Z, SelectionMatcher,
-        SevenZContainerHandler, SevenZMethod, Z3dsContainerHandler, ZipContainerHandler,
+        ChdCodec, ContainerCreateRequest, ContainerRegistry, RvzContainerHandler, SEVEN_Z,
+        SelectionMatcher, SevenZContainerHandler, SevenZMethod, Z3dsContainerHandler,
+        ZipContainerHandler, copy_progress_buffer_size,
     };
     use chd::{
         header::Header,
@@ -997,6 +998,7 @@ mod tests {
                     .list_entries(
                         &rom_weaver_core::ContainerProbeRequest {
                             source: archive_path,
+                            split_bin: false,
                         },
                         &context,
                     )
@@ -1636,6 +1638,7 @@ mod tests {
             .probe_details(
                 &rom_weaver_core::ContainerProbeRequest {
                     source: source_path.clone(),
+                    split_bin: false,
                 },
                 &context,
             )
@@ -1648,6 +1651,7 @@ mod tests {
             .list_entries(
                 &rom_weaver_core::ContainerProbeRequest {
                     source: source_path.clone(),
+                    split_bin: false,
                 },
                 &context,
             )
@@ -1703,6 +1707,7 @@ mod tests {
             .list_entries(
                 &rom_weaver_core::ContainerProbeRequest {
                     source: source_path.clone(),
+                    split_bin: false,
                 },
                 &context,
             )
@@ -1823,6 +1828,7 @@ mod tests {
             .probe_details(
                 &rom_weaver_core::ContainerProbeRequest {
                     source: bad_magic_path,
+                    split_bin: false,
                 },
                 &test_context(&temp_dir, 1),
             )
@@ -1845,6 +1851,7 @@ mod tests {
             .probe_details(
                 &rom_weaver_core::ContainerProbeRequest {
                     source: bad_payload_path,
+                    split_bin: false,
                 },
                 &test_context(&temp_dir, 1),
             )
@@ -2026,6 +2033,26 @@ mod tests {
         assert!(output_path.exists());
 
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn rvz_extract_first_progress_chunk_caps_large_outputs_at_point_one_percent() {
+        let total_bytes = 1_459_978_240_u64;
+        let default_buffer_size = copy_progress_buffer_size(total_bytes);
+        let first_buffer_size =
+            RvzContainerHandler::extract_read_buffer_size(default_buffer_size, total_bytes, 0);
+
+        assert!(first_buffer_size > 0);
+        assert!(first_buffer_size < default_buffer_size);
+        assert!((first_buffer_size as u64) <= total_bytes / 1000);
+        assert_eq!(
+            RvzContainerHandler::extract_read_buffer_size(
+                default_buffer_size,
+                total_bytes,
+                first_buffer_size as u64,
+            ),
+            default_buffer_size
+        );
     }
 
     #[test]

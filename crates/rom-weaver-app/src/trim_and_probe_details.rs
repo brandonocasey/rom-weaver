@@ -308,6 +308,7 @@ impl CliApp {
             // on non-container payloads do not abort the batch.
             let probe_request = ContainerProbeRequest {
                 source: current.clone(),
+                split_bin: false,
             };
             if handler.probe_details(&probe_request, options.context).is_err() {
                 continue;
@@ -392,6 +393,7 @@ impl CliApp {
         }
         let probe_request = ContainerProbeRequest {
             source: archive.to_path_buf(),
+            split_bin: false,
         };
         if handler.probe_details(&probe_request, options.context).is_err() {
             return Ok(Vec::new());
