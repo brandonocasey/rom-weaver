@@ -1,12 +1,26 @@
+import { ROM_WEAVER_CONTAINER_FORMATS } from "rom-weaver-wasm/format-metadata";
+
 const REGEX_SPECIAL_CHARACTER_REGEX = /[\\^$.*+?()[\]{}|]/g;
 const LEADING_EXTENSION_DOT_REGEX = /^\./;
 
-const CHD_COMPRESSION_INPUT_EXTENSIONS = ["bin", "cue", "gdi", "iso"];
-const CHD_DECOMPRESSION_INPUT_EXTENSIONS = ["chd"];
-const RVZ_COMPRESSION_INPUT_EXTENSIONS = ["gcm", "iso", "wbfs"];
-const RVZ_DECOMPRESSION_INPUT_EXTENSIONS = ["gcz", "rvz", "wia"];
-const Z3DS_COMPRESSION_INPUT_EXTENSIONS = ["3ds", "3dsx", "app", "cci", "cia", "cxi"];
-const Z3DS_DECOMPRESSION_INPUT_EXTENSIONS = ["z3ds", "z3dsx", "zcci", "zcia", "zcxi"];
+type GeneratedContainerDefaultOutput = NonNullable<(typeof ROM_WEAVER_CONTAINER_FORMATS)[number]["defaultOutput"]>;
+
+const getGeneratedDefaultOutputMetadata = (format: string): GeneratedContainerDefaultOutput => {
+  const metadata = ROM_WEAVER_CONTAINER_FORMATS.find((entry) => entry.name === format)?.defaultOutput;
+  if (!metadata) throw new Error(`Generated container output metadata is missing for ${format}`);
+  return metadata;
+};
+
+const CHD_DEFAULT_OUTPUT_METADATA = getGeneratedDefaultOutputMetadata("chd");
+const RVZ_DEFAULT_OUTPUT_METADATA = getGeneratedDefaultOutputMetadata("rvz");
+const Z3DS_DEFAULT_OUTPUT_METADATA = getGeneratedDefaultOutputMetadata("z3ds");
+
+const CHD_COMPRESSION_INPUT_EXTENSIONS = CHD_DEFAULT_OUTPUT_METADATA.compressionInputExtensions;
+const CHD_DECOMPRESSION_INPUT_EXTENSIONS = CHD_DEFAULT_OUTPUT_METADATA.decompressionInputExtensions;
+const RVZ_COMPRESSION_INPUT_EXTENSIONS = RVZ_DEFAULT_OUTPUT_METADATA.compressionInputExtensions;
+const RVZ_DECOMPRESSION_INPUT_EXTENSIONS = RVZ_DEFAULT_OUTPUT_METADATA.decompressionInputExtensions;
+const Z3DS_COMPRESSION_INPUT_EXTENSIONS = Z3DS_DEFAULT_OUTPUT_METADATA.compressionInputExtensions;
+const Z3DS_DECOMPRESSION_INPUT_EXTENSIONS = Z3DS_DEFAULT_OUTPUT_METADATA.decompressionInputExtensions;
 
 const uniqueExtensions = (...extensionLists: readonly (readonly string[])[]) =>
   Array.from(new Set(extensionLists.flat()));

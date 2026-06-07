@@ -66,7 +66,11 @@ use extract_support::{
 };
 #[cfg(test)]
 use formats::SEVEN_Z;
-pub use formats::{CompressFormatRecommendation, ContainerRegistry};
+pub use formats::{
+    CompressFormatRecommendation, ContainerCapabilitiesMetadata, ContainerDefaultOutputMetadata,
+    ContainerFormatMetadata, ContainerOutputExtensionStrategy, ContainerRegistry,
+    ContainerThreadCapabilityMetadata, container_format_metadata,
+};
 use formats::{GCZ, NFS, PBP, RVZ, TGC, WBFS, WIA, XISO, Z3DS};
 use libarchive_support::{
     LibarchiveCreateConfig, extract_regular_archive_with_libarchive, libarchive_close_read_stream,

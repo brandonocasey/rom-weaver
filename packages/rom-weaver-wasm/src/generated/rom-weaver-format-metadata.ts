@@ -205,7 +205,675 @@ export const ROM_WEAVER_FILE_FILTERS = {
   ]
 } as const;
 
+export const ROM_WEAVER_CONTAINER_FORMATS = [
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": true,
+      "createThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": {
+      "automaticParentKinds": [
+        "zip"
+      ],
+      "automaticSourceExtensions": [
+        "zip",
+        "zipx"
+      ],
+      "compressionInputExtensions": [],
+      "decompressionInputExtensions": [
+        "zip",
+        "zipx"
+      ],
+      "format": "zip",
+      "label": "ZIP",
+      "outputExtension": "zip",
+      "outputExtensionStrategy": "append"
+    },
+    "extensions": [
+      ".zip"
+    ],
+    "name": "zip"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".zipx"
+    ],
+    "name": "zipx"
+  },
+  {
+    "aliases": [
+      "7zip"
+    ],
+    "capabilities": {
+      "create": true,
+      "createThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": {
+      "automaticParentKinds": [
+        "7z"
+      ],
+      "automaticSourceExtensions": [
+        "7z"
+      ],
+      "compressionInputExtensions": [],
+      "decompressionInputExtensions": [
+        "7z"
+      ],
+      "format": "7z",
+      "label": "7z",
+      "outputExtension": "7z",
+      "outputExtensionStrategy": "append"
+    },
+    "extensions": [
+      ".7z"
+    ],
+    "name": "7z"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".rar"
+    ],
+    "name": "rar"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".tar"
+    ],
+    "name": "tar"
+  },
+  {
+    "aliases": [
+      "tgz"
+    ],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".tar.gz",
+      ".tgz"
+    ],
+    "name": "tar.gz"
+  },
+  {
+    "aliases": [
+      "tbz2"
+    ],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".tar.bz2",
+      ".tbz2"
+    ],
+    "name": "tar.bz2"
+  },
+  {
+    "aliases": [
+      "txz"
+    ],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".tar.xz",
+      ".txz"
+    ],
+    "name": "tar.xz"
+  },
+  {
+    "aliases": [
+      "gzip"
+    ],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".gz"
+    ],
+    "name": "gz"
+  },
+  {
+    "aliases": [
+      "bzip2"
+    ],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".bz2"
+    ],
+    "name": "bz2"
+  },
+  {
+    "aliases": [
+      "lzma",
+      "lzma2"
+    ],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".xz"
+    ],
+    "name": "xz"
+  },
+  {
+    "aliases": [
+      "zstd",
+      "zstandard"
+    ],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".zst"
+    ],
+    "name": "zst"
+  },
+  {
+    "aliases": [
+      "ciso"
+    ],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".cso",
+      ".ciso"
+    ],
+    "name": "cso"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".pbp"
+    ],
+    "name": "pbp"
+  },
+  {
+    "aliases": [
+      "chd-cd",
+      "chd-dvd",
+      "chd-raw",
+      "chd-hd"
+    ],
+    "capabilities": {
+      "create": true,
+      "createThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": {
+      "automaticParentKinds": [
+        "chd"
+      ],
+      "automaticSourceExtensions": [
+        "bin",
+        "cue",
+        "gdi",
+        "chd"
+      ],
+      "compressionInputExtensions": [
+        "bin",
+        "cue",
+        "gdi",
+        "iso"
+      ],
+      "decompressionInputExtensions": [
+        "chd"
+      ],
+      "format": "chd",
+      "label": "CHD",
+      "outputExtension": "chd",
+      "outputExtensionStrategy": "replace"
+    },
+    "extensions": [
+      ".chd"
+    ],
+    "name": "chd"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".gcz"
+    ],
+    "name": "gcz"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".wia"
+    ],
+    "name": "wia"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".tgc"
+    ],
+    "name": "tgc"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".nfs"
+    ],
+    "name": "nfs"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".wbfs"
+    ],
+    "name": "wbfs"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": true,
+      "createThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": {
+      "automaticParentKinds": [
+        "rvz"
+      ],
+      "automaticSourceExtensions": [
+        "gcm",
+        "wbfs",
+        "gcz",
+        "rvz",
+        "wia"
+      ],
+      "compressionInputExtensions": [
+        "gcm",
+        "iso",
+        "wbfs"
+      ],
+      "decompressionInputExtensions": [
+        "gcz",
+        "rvz",
+        "wia"
+      ],
+      "format": "rvz",
+      "label": "RVZ",
+      "outputExtension": "rvz",
+      "outputExtensionStrategy": "replace"
+    },
+    "extensions": [
+      ".rvz"
+    ],
+    "name": "rvz"
+  },
+  {
+    "aliases": [
+      "3ds"
+    ],
+    "capabilities": {
+      "create": true,
+      "createThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": null,
+        "parallel": true
+      },
+      "probeDetails": true
+    },
+    "defaultOutput": {
+      "automaticParentKinds": [
+        "z3ds"
+      ],
+      "automaticSourceExtensions": [
+        "3ds",
+        "3dsx",
+        "app",
+        "cci",
+        "cia",
+        "cxi",
+        "z3ds",
+        "z3dsx",
+        "zcci",
+        "zcia",
+        "zcxi"
+      ],
+      "compressionInputExtensions": [
+        "3ds",
+        "3dsx",
+        "app",
+        "cci",
+        "cia",
+        "cxi"
+      ],
+      "decompressionInputExtensions": [
+        "z3ds",
+        "z3dsx",
+        "zcci",
+        "zcia",
+        "zcxi"
+      ],
+      "format": "z3ds",
+      "label": "Z3DS",
+      "outputExtension": "z3ds",
+      "outputExtensionStrategy": "z3ds-subtype"
+    },
+    "extensions": [
+      ".z3ds",
+      ".zcci",
+      ".zcxi",
+      ".zcia",
+      ".z3dsx"
+    ],
+    "name": "z3ds"
+  },
+  {
+    "aliases": [],
+    "capabilities": {
+      "create": false,
+      "createThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "extract": true,
+      "extractThreads": {
+        "maxThreads": 1,
+        "parallel": false
+      },
+      "probeDetails": false
+    },
+    "defaultOutput": null,
+    "extensions": [
+      ".xiso",
+      ".xiso.iso"
+    ],
+    "name": "xiso"
+  }
+] as const;
+
+export const ROM_WEAVER_CONTAINER_FORMAT_ALIASES = {
+  "3ds": "z3ds",
+  "7zip": "7z",
+  "bzip2": "bz2",
+  "chd-cd": "chd",
+  "chd-dvd": "chd",
+  "chd-hd": "chd",
+  "chd-raw": "chd",
+  "ciso": "cso",
+  "gzip": "gz",
+  "lzma": "xz",
+  "lzma2": "xz",
+  "tbz2": "tar.bz2",
+  "tgz": "tar.gz",
+  "txz": "tar.xz",
+  "zstandard": "zst",
+  "zstd": "zst"
+} as const;
+
+export const ROM_WEAVER_CREATE_CONTAINER_FORMATS = [
+  "zip",
+  "7z",
+  "chd",
+  "rvz",
+  "z3ds"
+] as const;
+
 export const ROM_WEAVER_FORMAT_METADATA = {
+  containerFormatAliases: ROM_WEAVER_CONTAINER_FORMAT_ALIASES,
+  containerFormats: ROM_WEAVER_CONTAINER_FORMATS,
+  createContainerFormats: ROM_WEAVER_CREATE_CONTAINER_FORMATS,
   createPatchFormatPolicy: ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY,
   fileFilters: ROM_WEAVER_FILE_FILTERS,
 } as const;

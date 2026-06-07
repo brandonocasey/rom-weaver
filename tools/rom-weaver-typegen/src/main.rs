@@ -6,6 +6,10 @@ use rom_weaver_app::{
     PatchCreateCommand, PatchValidateCommand, ProbeCommand, RomWeaverRunOutputOptions,
     RomWeaverRunRequest, TrimCommand, patch_create_format_policy_metadata,
 };
+use rom_weaver_containers::{
+    ContainerDefaultOutputMetadata, ContainerFormatMetadata, ContainerOutputExtensionStrategy,
+    ContainerThreadCapabilityMetadata, container_format_metadata,
+};
 use rom_weaver_core::{
     CONTAINER_FILTER_FILE_EXTENSIONS, OperationFamily, OperationStatus,
     PATCH_FILTER_FILE_EXTENSIONS, ProgressEvent, ROM_FILTER_FILE_EXTENSIONS, ThreadBudget,
@@ -161,13 +165,22 @@ fn export_decl<T: TS>(config: &ts_rs::Config) -> String {
 
 fn render_metadata() -> String {
     format!(
-        "{METADATA_HEADER}{}\n\n{}\n\n{}\n",
+        "{METADATA_HEADER}{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n",
         render_ts_const(
             "ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY",
             create_patch_format_policy_value()
         ),
         render_ts_const("ROM_WEAVER_FILE_FILTERS", file_filters_value()),
-        "export const ROM_WEAVER_FORMAT_METADATA = {\n  createPatchFormatPolicy: ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY,\n  fileFilters: ROM_WEAVER_FILE_FILTERS,\n} as const;",
+        render_ts_const("ROM_WEAVER_CONTAINER_FORMATS", container_formats_value()),
+        render_ts_const(
+            "ROM_WEAVER_CONTAINER_FORMAT_ALIASES",
+            container_format_aliases_value()
+        ),
+        render_ts_const(
+            "ROM_WEAVER_CREATE_CONTAINER_FORMATS",
+            create_container_formats_value()
+        ),
+        "export const ROM_WEAVER_FORMAT_METADATA = {\n  containerFormatAliases: ROM_WEAVER_CONTAINER_FORMAT_ALIASES,\n  containerFormats: ROM_WEAVER_CONTAINER_FORMATS,\n  createContainerFormats: ROM_WEAVER_CREATE_CONTAINER_FORMATS,\n  createPatchFormatPolicy: ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY,\n  fileFilters: ROM_WEAVER_FILE_FILTERS,\n} as const;",
     )
 }
 
@@ -209,6 +222,85 @@ fn file_filters_value() -> Value {
         "patchExtensions": PATCH_FILTER_FILE_EXTENSIONS,
         "romExtensions": ROM_FILTER_FILE_EXTENSIONS,
     })
+}
+
+fn container_formats_value() -> Value {
+    Value::Array(
+        container_format_metadata()
+            .into_iter()
+            .map(container_format_value)
+            .collect(),
+    )
+}
+
+fn container_format_value(metadata: ContainerFormatMetadata) -> Value {
+    json!({
+        "name": metadata.name,
+        "aliases": metadata.aliases,
+        "extensions": metadata.extensions,
+        "capabilities": {
+            "probeDetails": metadata.capabilities.probe_details,
+            "extract": metadata.capabilities.extract,
+            "create": metadata.capabilities.create,
+            "extractThreads": thread_capability_value(metadata.capabilities.extract_threads),
+            "createThreads": thread_capability_value(metadata.capabilities.create_threads),
+        },
+        "defaultOutput": metadata
+            .default_output
+            .map(container_default_output_value)
+            .unwrap_or(Value::Null),
+    })
+}
+
+fn thread_capability_value(metadata: ContainerThreadCapabilityMetadata) -> Value {
+    json!({
+        "parallel": metadata.parallel,
+        "maxThreads": metadata.max_threads,
+    })
+}
+
+fn container_default_output_value(metadata: ContainerDefaultOutputMetadata) -> Value {
+    json!({
+        "format": metadata.format,
+        "label": metadata.label,
+        "outputExtension": metadata.output_extension,
+        "outputExtensionStrategy": output_extension_strategy_name(metadata.output_extension_strategy),
+        "automaticParentKinds": metadata.automatic_parent_kinds,
+        "automaticSourceExtensions": metadata.automatic_source_extensions,
+        "compressionInputExtensions": metadata.compression_input_extensions,
+        "decompressionInputExtensions": metadata.decompression_input_extensions,
+    })
+}
+
+fn output_extension_strategy_name(strategy: ContainerOutputExtensionStrategy) -> &'static str {
+    match strategy {
+        ContainerOutputExtensionStrategy::Append => "append",
+        ContainerOutputExtensionStrategy::Replace => "replace",
+        ContainerOutputExtensionStrategy::Z3dsSubtype => "z3ds-subtype",
+    }
+}
+
+fn container_format_aliases_value() -> Value {
+    let mut out = Map::new();
+    for metadata in container_format_metadata() {
+        for alias in metadata.aliases {
+            out.insert(
+                (*alias).to_string(),
+                Value::String(metadata.name.to_string()),
+            );
+        }
+    }
+    Value::Object(out)
+}
+
+fn create_container_formats_value() -> Value {
+    Value::Array(
+        container_format_metadata()
+            .into_iter()
+            .filter(|metadata| metadata.capabilities.create)
+            .map(|metadata| Value::String(metadata.name.to_string()))
+            .collect(),
+    )
 }
 
 fn alias_map(aliases: &[(&'static str, &'static str)]) -> Value {

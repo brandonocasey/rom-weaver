@@ -149,12 +149,125 @@ pub(crate) const XISO: FormatDescriptor = FormatDescriptor {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContainerOutputExtensionStrategy {
+    Append,
+    Replace,
+    Z3dsSubtype,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContainerDefaultOutputMetadata {
+    pub format: &'static str,
+    pub label: &'static str,
+    pub output_extension: &'static str,
+    pub output_extension_strategy: ContainerOutputExtensionStrategy,
+    pub automatic_parent_kinds: &'static [&'static str],
+    pub automatic_source_extensions: &'static [&'static str],
+    pub compression_input_extensions: &'static [&'static str],
+    pub decompression_input_extensions: &'static [&'static str],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContainerThreadCapabilityMetadata {
+    pub parallel: bool,
+    pub max_threads: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContainerCapabilitiesMetadata {
+    pub probe_details: bool,
+    pub extract: bool,
+    pub create: bool,
+    pub extract_threads: ContainerThreadCapabilityMetadata,
+    pub create_threads: ContainerThreadCapabilityMetadata,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContainerFormatMetadata {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub extensions: &'static [&'static str],
+    pub capabilities: ContainerCapabilitiesMetadata,
+    pub default_output: Option<ContainerDefaultOutputMetadata>,
+}
+
+const SEVEN_Z_DEFAULT_OUTPUT: ContainerDefaultOutputMetadata = ContainerDefaultOutputMetadata {
+    format: "7z",
+    label: "7z",
+    output_extension: "7z",
+    output_extension_strategy: ContainerOutputExtensionStrategy::Append,
+    automatic_parent_kinds: &["7z"],
+    automatic_source_extensions: &["7z"],
+    compression_input_extensions: &[],
+    decompression_input_extensions: &["7z"],
+};
+
+const ZIP_DEFAULT_OUTPUT: ContainerDefaultOutputMetadata = ContainerDefaultOutputMetadata {
+    format: "zip",
+    label: "ZIP",
+    output_extension: "zip",
+    output_extension_strategy: ContainerOutputExtensionStrategy::Append,
+    automatic_parent_kinds: &["zip"],
+    automatic_source_extensions: &["zip", "zipx"],
+    compression_input_extensions: &[],
+    decompression_input_extensions: &["zip", "zipx"],
+};
+
+const CHD_DEFAULT_OUTPUT: ContainerDefaultOutputMetadata = ContainerDefaultOutputMetadata {
+    format: "chd",
+    label: "CHD",
+    output_extension: "chd",
+    output_extension_strategy: ContainerOutputExtensionStrategy::Replace,
+    automatic_parent_kinds: &["chd"],
+    automatic_source_extensions: &["bin", "cue", "gdi", "chd"],
+    compression_input_extensions: &["bin", "cue", "gdi", "iso"],
+    decompression_input_extensions: &["chd"],
+};
+
+const RVZ_DEFAULT_OUTPUT: ContainerDefaultOutputMetadata = ContainerDefaultOutputMetadata {
+    format: "rvz",
+    label: "RVZ",
+    output_extension: "rvz",
+    output_extension_strategy: ContainerOutputExtensionStrategy::Replace,
+    automatic_parent_kinds: &["rvz"],
+    automatic_source_extensions: &["gcm", "wbfs", "gcz", "rvz", "wia"],
+    compression_input_extensions: &["gcm", "iso", "wbfs"],
+    decompression_input_extensions: &["gcz", "rvz", "wia"],
+};
+
+const Z3DS_DEFAULT_OUTPUT: ContainerDefaultOutputMetadata = ContainerDefaultOutputMetadata {
+    format: "z3ds",
+    label: "Z3DS",
+    output_extension: "z3ds",
+    output_extension_strategy: ContainerOutputExtensionStrategy::Z3dsSubtype,
+    automatic_parent_kinds: &["z3ds"],
+    automatic_source_extensions: &[
+        "3ds", "3dsx", "app", "cci", "cia", "cxi", "z3ds", "z3dsx", "zcci", "zcia", "zcxi",
+    ],
+    compression_input_extensions: &["3ds", "3dsx", "app", "cci", "cia", "cxi"],
+    decompression_input_extensions: &["z3ds", "z3dsx", "zcci", "zcia", "zcxi"],
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RegisteredThreadCapability {
     SingleThreaded,
     Parallel { max_threads: Option<usize> },
 }
 
 impl RegisteredThreadCapability {
+    fn metadata(self) -> ContainerThreadCapabilityMetadata {
+        match self {
+            Self::SingleThreaded => ContainerThreadCapabilityMetadata {
+                parallel: false,
+                max_threads: Some(1),
+            },
+            Self::Parallel { max_threads } => ContainerThreadCapabilityMetadata {
+                parallel: true,
+                max_threads,
+            },
+        }
+    }
+
     fn into_thread_capability(self) -> ThreadCapability {
         match self {
             Self::SingleThreaded => ThreadCapability::single_threaded(),
@@ -173,6 +286,16 @@ struct RegisteredContainerCapabilities {
 }
 
 impl RegisteredContainerCapabilities {
+    fn metadata(self) -> ContainerCapabilitiesMetadata {
+        ContainerCapabilitiesMetadata {
+            probe_details: self.probe_details,
+            extract: self.extract,
+            create: self.create,
+            extract_threads: self.extract_threads.metadata(),
+            create_threads: self.create_threads.metadata(),
+        }
+    }
+
     fn into_container_capabilities(self) -> ContainerCapabilities {
         ContainerCapabilities {
             probe_details: self.probe_details,
@@ -233,6 +356,7 @@ impl ContainerHandlerKind {
 struct ContainerFormatRegistration {
     descriptor: &'static FormatDescriptor,
     capabilities: RegisteredContainerCapabilities,
+    default_output: Option<ContainerDefaultOutputMetadata>,
     handler: ContainerHandlerKind,
 }
 
@@ -242,6 +366,16 @@ impl ContainerFormatRegistration {
             registration: self,
             inner: self.handler.build(self.descriptor),
         })
+    }
+
+    fn metadata(&self) -> ContainerFormatMetadata {
+        ContainerFormatMetadata {
+            name: self.descriptor.name,
+            aliases: self.descriptor.aliases,
+            extensions: self.descriptor.extensions,
+            capabilities: self.capabilities.metadata(),
+            default_output: self.default_output,
+        }
     }
 }
 
@@ -351,111 +485,133 @@ static CONTAINER_FORMAT_REGISTRY: &[ContainerFormatRegistration] = &[
     ContainerFormatRegistration {
         descriptor: &ZIP,
         capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        default_output: Some(ZIP_DEFAULT_OUTPUT),
         handler: ContainerHandlerKind::Zip(ZipContainerFlavor::Zip),
     },
     ContainerFormatRegistration {
         descriptor: &ZIPX,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Zip(ZipContainerFlavor::Zipx),
     },
     ContainerFormatRegistration {
         descriptor: &SEVEN_Z,
         capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        default_output: Some(SEVEN_Z_DEFAULT_OUTPUT),
         handler: ContainerHandlerKind::SevenZ,
     },
     ContainerFormatRegistration {
         descriptor: &RAR,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Rar,
     },
     ContainerFormatRegistration {
         descriptor: &TAR,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Tar(TarCompression::None),
     },
     ContainerFormatRegistration {
         descriptor: &TAR_GZ,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Tar(TarCompression::Gzip),
     },
     ContainerFormatRegistration {
         descriptor: &TAR_BZ2,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Tar(TarCompression::Bzip2),
     },
     ContainerFormatRegistration {
         descriptor: &TAR_XZ,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Tar(TarCompression::Xz),
     },
     ContainerFormatRegistration {
         descriptor: &GZ,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Stream(StreamCompression::Gzip),
     },
     ContainerFormatRegistration {
         descriptor: &BZ2,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Stream(StreamCompression::Bzip2),
     },
     ContainerFormatRegistration {
         descriptor: &XZ,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Stream(StreamCompression::Xz),
     },
     ContainerFormatRegistration {
         descriptor: &ZST,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Stream(StreamCompression::Zstd),
     },
     ContainerFormatRegistration {
         descriptor: &CSO,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Cso,
     },
     ContainerFormatRegistration {
         descriptor: &PBP,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Pbp,
     },
     ContainerFormatRegistration {
         descriptor: &rom_weaver_chd::CHD,
         capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        default_output: Some(CHD_DEFAULT_OUTPUT),
         handler: ContainerHandlerKind::Chd,
     },
     ContainerFormatRegistration {
         descriptor: &GCZ,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Gcz,
     },
     ContainerFormatRegistration {
         descriptor: &WIA,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Wia,
     },
     ContainerFormatRegistration {
         descriptor: &TGC,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Tgc,
     },
     ContainerFormatRegistration {
         descriptor: &NFS,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Nfs,
     },
     ContainerFormatRegistration {
         descriptor: &WBFS,
         capabilities: EXTRACT_ONLY_PARALLEL,
+        default_output: None,
         handler: ContainerHandlerKind::Wbfs,
     },
     ContainerFormatRegistration {
         descriptor: &RVZ,
         capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        default_output: Some(RVZ_DEFAULT_OUTPUT),
         handler: ContainerHandlerKind::Rvz,
     },
     ContainerFormatRegistration {
         descriptor: &Z3DS,
         capabilities: CREATE_AND_EXTRACT_PARALLEL,
+        default_output: Some(Z3DS_DEFAULT_OUTPUT),
         handler: ContainerHandlerKind::Z3ds,
     },
     ContainerFormatRegistration {
@@ -467,9 +623,17 @@ static CONTAINER_FORMAT_REGISTRY: &[ContainerFormatRegistration] = &[
             extract_threads: SINGLE_THREADED,
             create_threads: SINGLE_THREADED,
         },
+        default_output: None,
         handler: ContainerHandlerKind::Xiso,
     },
 ];
+
+pub fn container_format_metadata() -> Vec<ContainerFormatMetadata> {
+    CONTAINER_FORMAT_REGISTRY
+        .iter()
+        .map(ContainerFormatRegistration::metadata)
+        .collect()
+}
 
 pub struct ContainerRegistry {
     handlers: Vec<Arc<dyn ContainerHandler>>,

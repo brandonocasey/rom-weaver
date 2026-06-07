@@ -1,6 +1,8 @@
+import type { ROM_WEAVER_CREATE_CONTAINER_FORMATS } from "rom-weaver-wasm/format-metadata";
+
 type PatchFormat = "aps" | "bdf" | "bps" | "ebp" | "ips" | "pmsr" | "ppf" | "rup" | "ups" | "vcdiff" | "xdelta";
 
-type CompressionFormat = "7z" | "chd" | "none" | "rvz" | "z3ds" | "zip";
+type CompressionFormat = (typeof ROM_WEAVER_CREATE_CONTAINER_FORMATS)[number] | "none";
 
 type DefaultCompression = "auto" | "7z/special" | "zip/special" | "special only" | "7z only" | "zip only" | "none";
 

@@ -1865,6 +1865,7 @@ name = "rom-weaver-typegen"
 version = "0.1.0"
 dependencies = [
  "rom-weaver-app",
+ "rom-weaver-containers",
  "rom-weaver-core",
  "serde_json",
  "ts-rs",
