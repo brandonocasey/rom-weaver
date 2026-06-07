@@ -1,43 +1,108 @@
-name: CHD Rust Backend
+name: CI
 
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - ".github/workflows/chd-rust-backend.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/rom-weaver-cli/**"
-      - "crates/rom-weaver-containers/**"
-      - "crates/rom-weaver-chd-sys/**"
   push:
     branches:
       - main
-    paths:
-      - ".github/workflows/chd-rust-backend.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/rom-weaver-cli/**"
-      - "crates/rom-weaver-containers/**"
-      - "crates/rom-weaver-chd-sys/**"
 
 jobs:
-  chd-rust-tests:
-    runs-on: ubuntu-latest
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
+      WASI_SDK_VERSION: "33"
+      WASI_SDK_SHA256: 0ba8b5bfaeb2adf3f29bab5841d76cf5318ab8e1642ea195f88baba1abd47bce
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes brotli cmake ninja-build pkg-config ripgrep
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-wasip1-threads
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Container CHD tests (rust backend)
-        run: cargo test -p rom-weaver-containers chd_ -- --nocapture
+      - name: Install WASI SDK
+        run: |
+          curl --fail --location --show-error \
+            --output "$RUNNER_TEMP/wasi-sdk.tar.gz" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
+          echo "${WASI_SDK_SHA256}  $RUNNER_TEMP/wasi-sdk.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$RUNNER_TEMP/wasi-sdk.tar.gz" --directory "$RUNNER_TEMP"
+          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" >> "$GITHUB_ENV"
 
-      - name: CLI CHD tests (rust backend)
-        run: cargo test -p rom-weaver-cli chd_ -- --nocapture
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            packages/rom-weaver-react/package-lock.json
+            packages/rom-weaver-wasm/package-lock.json
+
+      - name: Install package dependencies
+        run: |
+          npm ci --prefix packages/rom-weaver-wasm
+          npm ci --prefix packages/rom-weaver-react
+
+      - name: Install browser test dependencies
+        run: npm --prefix packages/rom-weaver-react exec playwright install --with-deps chromium
+
+      - name: Rust format
+        run: cargo fmt --check
+
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust typegen
+        run: cargo run -p rom-weaver-typegen -- --check
+
+      - name: WASM threaded check
+        run: RUSTFLAGS="${RUSTFLAGS:-} -D warnings" scripts/wasm/with-wasi-env.sh cargo check -p rom-weaver-containers --target wasm32-wasip1-threads --lib
+
+      - name: Whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ -n "$BASE_SHA" && "$BASE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            git diff --check "$BASE_SHA" "$HEAD_SHA"
+          else
+            git diff-tree --check --no-commit-id --exit-code -r "$HEAD_SHA"
+          fi
+
+      - name: Thread guard regressions
+        run: scripts/check-thread-guards.sh
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: WASM build
+        run: scripts/build-wasm-cli.sh
+
+      - name: rom-weaver-wasm checks
+        run: |
+          npm --prefix packages/rom-weaver-wasm run lint:code
+          npm --prefix packages/rom-weaver-wasm run check:types
+          npm --prefix packages/rom-weaver-wasm test
+
+      - name: rom-weaver-react checks
+        run: |
+          npm --prefix packages/rom-weaver-react run lint:code
+          npm --prefix packages/rom-weaver-react test
+          npm --prefix packages/rom-weaver-react run build
