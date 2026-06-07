@@ -287,14 +287,27 @@ pub(crate) fn write_archive_with_libarchive(
         if matches!(config.format, LibarchiveCreateFormat::SevenZ) && total_input_bytes > 0 {
             Some(Box::new(move |processed_bytes| {
                 let running_processed = processed_bytes.min(total_input_bytes.saturating_sub(1));
+                let percent = running_processed
+                    .saturating_mul(100)
+                    .checked_div(total_input_bytes)
+                    .unwrap_or(100);
+                // Every codec callback is a raw progress event (one per streamed
+                // block step), most of which are coalesced before reaching the
+                // UI. Trace them all for progress debugging.
+                trace!(
+                    command = "compress",
+                    format = codec_progress_format,
+                    stage = "create",
+                    processed_bytes,
+                    running_processed,
+                    total_input_bytes,
+                    percent,
+                    "7z codec progress event"
+                );
                 if running_processed == 0 {
                     return;
                 }
-                let percent_bucket = running_processed
-                    .saturating_mul(100)
-                    .checked_div(total_input_bytes)
-                    .unwrap_or(100)
-                    .min(99) as u8;
+                let percent_bucket = percent.min(99) as u8;
                 if percent_bucket == 0 {
                     return;
                 }

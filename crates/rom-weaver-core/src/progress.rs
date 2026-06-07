@@ -5,6 +5,7 @@ use std::sync::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::trace;
 #[cfg(feature = "typescript-types")]
 use ts_rs::TS;
 
@@ -81,6 +82,16 @@ pub fn emit_container_running_progress(
     thread_execution: Option<&ThreadExecution>,
 ) {
     let clamped_percent = percent.clamp(0.0, 100.0);
+    // Every emitted container progress event, across all formats and commands.
+    trace!(
+        command,
+        family = ?OperationFamily::Container,
+        format,
+        stage,
+        percent = clamped_percent,
+        effective_threads = ?thread_execution.map(|value| value.effective_threads),
+        "container progress event"
+    );
     context.emit(ProgressEvent {
         command: command.to_string(),
         family: OperationFamily::Container,
