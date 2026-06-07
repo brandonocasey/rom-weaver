@@ -109,9 +109,11 @@ impl SevenZContainerHandler {
     }
 }
 
-/// Files at or below this stay single-threaded for best ratio and smooth
-/// progress; mirrors `LZMA2_MT_SPLIT_THRESHOLD` in the C writer.
-const LZMA2_MT_SPLIT_THRESHOLD_BYTES: u64 = 16 << 20;
+/// Files at or below this stay single-threaded (threading overhead not worth
+/// it); larger files parallelise. Mirrors `LZMA2_MT_SPLIT_THRESHOLD` in the C
+/// writer. Seeded blocks keep cross-block matches, so real ROM data stays at
+/// size parity even when parallelised.
+const LZMA2_MT_SPLIT_THRESHOLD_BYTES: u64 = 4 << 20;
 /// Smallest parallel block; mirrors `LZMA2_MT_MIN_CHUNK_SIZE` in the C writer.
 const LZMA2_MT_MIN_CHUNK_BYTES: u64 = 1 << 20;
 
