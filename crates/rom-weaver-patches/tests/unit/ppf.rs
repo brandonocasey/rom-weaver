@@ -6,12 +6,53 @@ use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
 use super::{
     CREATE_THREAD_SCAN_CHUNK_BYTES, FILE_ID_BEGIN_MARKER, FILE_ID_END_MARKER,
     PPF_VALIDATION_BLOCK_SIZE, PPF2_BLOCKCHECK_OFFSET, PpfPatchHandler, PpfVersion,
-    parse_ppf_bytes, parse_ppf_file,
+    collect_ppf_chunk_diff_runs, collect_ppf_chunk_diff_runs_from_bytes, parse_ppf_bytes,
+    parse_ppf_file,
 };
 use crate::{
-    PPF,
+    PPF, read_original_modified_chunk,
     test_support::{TestDir, test_context_with_threads},
 };
+
+/// Regression: when the modified file grows past the original, every new byte -- including a
+/// 0x00 -- is new content and must be recorded. The main-thread-read path buffers the original
+/// zero-filled past its length, so it must compare positions past `original_len` as always
+/// changed (mirroring the worker-read path) instead of equating a new 0x00 byte with the
+/// zero padding. Otherwise the two read modes produce different PPF patches and a trailing
+/// 0x00 could be dropped from the output entirely.
+#[test]
+fn ppf_create_scan_agrees_on_zero_bytes_past_original_eof() {
+    let temp = TestDir::new();
+    let original = temp.child("orig.bin");
+    let modified = temp.child("mod.bin");
+    let original_bytes = [1u8, 2, 3, 4];
+    // Three new bytes past the original EOF, two of which are 0x00 (including the final byte).
+    let modified_bytes = [1u8, 2, 3, 4, 0, 9, 0];
+    fs::write(&original, original_bytes).expect("write original");
+    fs::write(&modified, modified_bytes).expect("write modified");
+    let original_len = original_bytes.len() as u64;
+    let modified_len = modified_bytes.len() as u64;
+
+    let worker_read =
+        collect_ppf_chunk_diff_runs(&original, original_len, &modified, 0, modified_len)
+            .expect("worker-read scan");
+
+    let (original_chunk, modified_chunk) =
+        read_original_modified_chunk(&original, original_len, &modified, 0, modified_len)
+            .expect("buffer chunk");
+    let main_thread_read =
+        collect_ppf_chunk_diff_runs_from_bytes(0, &original_chunk, &modified_chunk, original_len)
+            .expect("main-thread-read scan");
+
+    assert_eq!(
+        worker_read, main_thread_read,
+        "worker-read and main-thread-read PPF scans must produce identical diff runs"
+    );
+    // The three new bytes at offsets 4..7 form one contiguous run, zeros included.
+    assert_eq!(worker_read.len(), 1, "expected a single trailing diff run");
+    assert_eq!(worker_read[0].offset, 4);
+    assert_eq!(worker_read[0].len, 3);
+}
 
 #[derive(Clone)]
 struct V1V2Record {

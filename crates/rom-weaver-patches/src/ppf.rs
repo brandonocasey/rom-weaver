@@ -701,6 +701,7 @@ fn collect_ppf_diff_runs_parallel(
                         range.start,
                         &original_bytes,
                         &modified_bytes,
+                        original_len,
                     )
                 })
                 .collect::<Vec<_>>()
@@ -847,6 +848,7 @@ fn collect_ppf_chunk_diff_runs_from_bytes(
     start: u64,
     original_bytes: &[u8],
     modified_bytes: &[u8],
+    original_len: u64,
 ) -> Result<Vec<PpfDiffRun>> {
     let mut runs = Vec::new();
     let mut pending_start: Option<u64> = None;
@@ -854,7 +856,12 @@ fn collect_ppf_chunk_diff_runs_from_bytes(
     let mut absolute = start;
 
     for (index, &target) in modified_bytes.iter().enumerate() {
-        let differs = original_bytes.get(index).is_none_or(|o| *o != target);
+        // Any position past the original's length is new content and always differs. The
+        // `original_bytes` buffer is zero-filled past the original, so without this guard a
+        // modified 0x00 byte beyond EOF would compare equal to the padding and be dropped --
+        // diverging from the worker-read path, which treats every beyond-EOF byte as changed.
+        let differs =
+            absolute >= original_len || original_bytes.get(index).is_none_or(|o| *o != target);
         if differs {
             if pending_start.is_none() {
                 pending_start = Some(absolute);
