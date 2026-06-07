@@ -57,7 +57,7 @@ const createZipFile = async (entryName, bytes, outputName) => {
   }
 };
 
-const createTraceWorkflow = (output) => {
+const createTraceWorkflow = (output, workerThreads = 1) => {
   const logs = [];
   const workflow = new CreateWorkflow({
     settings: {
@@ -68,7 +68,7 @@ const createTraceWorkflow = (output) => {
       },
       output,
       workers: {
-        threads: 1,
+        threads: workerThreads,
       },
     },
   });
@@ -147,6 +147,31 @@ test("create workflow supports raw and zip output compression", async () => {
     await zipResult.output.dispose();
   } finally {
     await zipWorkflow.dispose();
+  }
+});
+
+test("create workflow supports 7z output compression with auto browser threads", async () => {
+  const original = new File([makeOriginalBytes()], "original.bin", { type: "application/octet-stream" });
+  const modified = new File([makeModifiedBytes()], "modified.bin", { type: "application/octet-stream" });
+  const workflow = createTraceWorkflow(
+    {
+      compression: "7z",
+      outputName: "change.7z",
+    },
+    "auto",
+  ).workflow;
+  try {
+    await workflow.setOriginal(original);
+    await workflow.setModified(modified);
+    const result = await workflow.run();
+    expect(result.output.fileName).toBe("change.7z");
+    expect(result.sizeSummary?.rawSize).toBeGreaterThan(0);
+    const blob = await result.output.getBlob?.();
+    const header = new Uint8Array(await blob.slice(0, 6).arrayBuffer());
+    expect([...header]).toEqual([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
+    await result.output.dispose();
+  } finally {
+    await workflow.dispose();
   }
 });
 

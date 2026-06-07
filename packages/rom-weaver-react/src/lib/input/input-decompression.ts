@@ -325,17 +325,6 @@ const resolveCompressedInputFile = async (
   return throwDecompressionLimitExceeded();
 };
 
-const resolveCompressedInput = async (
-  file: PatchFileInstance,
-  role: "rom" | "patch",
-  options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
-  selectedArchiveEntry?: string,
-  sourceIndex = 0,
-): Promise<PatchFileInstance> => {
-  return (await resolveCompressedInputFile(file, role, options, runtime, selectedArchiveEntry, sourceIndex)).file;
-};
-
 const resolveCompressedInputAssets = async (
   file: PatchFileInstance,
   options: ApplyWorkflowOptions | undefined,
@@ -507,4 +496,4 @@ const resolveCompressedInputAssets = async (
 };
 
 export type { PreparedInputFileResult };
-export { resolveCompressedInput, resolveCompressedInputAssets, resolveCompressedInputFile };
+export { resolveCompressedInputAssets, resolveCompressedInputFile };

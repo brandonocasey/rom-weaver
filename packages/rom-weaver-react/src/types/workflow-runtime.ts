@@ -4,7 +4,7 @@ import type { ParsedPatchLike, PatchFileInstance } from "../workers/protocol/pat
 import type { LogLevel, LogRecord } from "./logging.ts";
 import type { RuntimeTiming } from "./output.ts";
 import type { CandidateSelectionRequest } from "./selection.ts";
-import type { ApplySettings, CreateSettings } from "./settings.ts";
+import type { ApplySettings, CreateSettings, DecompressionLimits } from "./settings.ts";
 import type { SourceRef } from "./source.ts";
 import type { ChdCompressionCodecs } from "./workflow-compression.ts";
 
@@ -140,6 +140,7 @@ type CompressionEntryInput = RuntimeCompressionEntryInput;
 type CompressionWorkflowOptions = {
   workerThreads?: number | string;
   chdSplitBin?: boolean;
+  limits?: DecompressionLimits;
   romFilter?: boolean;
   patchFilter?: boolean;
   logLevel?: LogLevel;
@@ -160,6 +161,10 @@ type CompressionExtractInput = {
   format?: string;
   outputName?: string;
   options?: CompressionWorkflowOptions;
+  /** Extract the whole container as a single recursive descent (the Rust core resolves one payload
+   * per nested level via the interactive selection callback), ignoring `entries`. Returns the bottom
+   * leaf output(s). Used by input discovery to avoid a separate `list` + per-entry extract. */
+  descendSinglePayload?: boolean;
 };
 
 type SevenZipZstdCompressionOptions = CompressionWorkflowOptions & {

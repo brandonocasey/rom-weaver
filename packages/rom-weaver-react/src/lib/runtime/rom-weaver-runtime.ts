@@ -240,6 +240,7 @@ const toRomWeaverOptions = (input: {
   logLevel?: LogLevel | string;
   onEvent?: (event: RomWeaverRunJsonEvent) => void;
   onLog?: (log: WorkflowRuntimeLog) => void;
+  preopenOutputPaths?: string[];
   scratchFilePoolSize?: number | null;
   syncAccessMode?: string;
   virtualFiles?: RuntimeValue[];
@@ -281,6 +282,12 @@ const toRomWeaverOptions = (input: {
       .map((pathValue) => String(pathValue || "").trim())
       .filter((pathValue) => !!pathValue);
     if (knownInputPaths.length) options.knownInputPaths = knownInputPaths;
+  }
+  if (Array.isArray(input.preopenOutputPaths)) {
+    const preopenOutputPaths = input.preopenOutputPaths
+      .map((pathValue) => String(pathValue || "").trim())
+      .filter((pathValue) => !!pathValue);
+    if (preopenOutputPaths.length) options.preopenOutputPaths = preopenOutputPaths;
   }
   if (Array.isArray(input.virtualFiles)) options.virtualFiles = input.virtualFiles;
   if (typeof input.virtualOnlyMounts === "boolean") options.virtualOnlyMounts = input.virtualOnlyMounts;
@@ -677,6 +684,7 @@ const invokeRomWeaverCompressionCreateWorker = async (
     logLevel?: LogLevel | string;
     outputFileName: string;
     outputPath: string;
+    preopenOutputPaths?: string[];
     virtualFiles?: RuntimeValue[];
     workerThreads?: number | string | null;
   },
@@ -735,6 +743,7 @@ const invokeRomWeaverCompressionCreateWorker = async (
         if (progress) onProgress?.(progress);
       },
       onLog,
+      preopenOutputPaths: input.preopenOutputPaths,
       virtualFiles: input.virtualFiles,
     }),
   );
@@ -755,8 +764,10 @@ const invokeRomWeaverCompressionCreateWorker = async (
 const invokeRomWeaverExtractWorker = async (
   input: {
     invalidateMountCacheBeforeRun?: boolean;
+    knownInputPaths?: string[];
     logLevel?: LogLevel | string;
     outDirPath: string;
+    preopenOutputPaths?: string[];
     scratchFilePoolSize?: number | null;
     select?: string[];
     romFilter?: boolean;
@@ -765,6 +776,10 @@ const invokeRomWeaverExtractWorker = async (
     sourcePath: string;
     splitBin?: boolean;
     workerThreads?: number | string | null;
+    /** When false, let the Rust core recursively descend nested containers in this one extract
+     * (resolving a single payload per level via the interactive callback). Defaults to true, which
+     * keeps the legacy single-level extract behaviour for existing per-entry callers. */
+    noNestedExtract?: boolean;
   },
   onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
   onLog?: (log: WorkflowRuntimeLog) => void,
@@ -789,7 +804,7 @@ const invokeRomWeaverExtractWorker = async (
   const command: RomWeaverCommand = {
     args: {
       checksum,
-      no_nested_extract: true,
+      no_nested_extract: input.noNestedExtract !== false,
       out_dir: outDirPath,
       ...(input.romFilter ? { rom_filter: true } : {}),
       ...(input.patchFilter ? { patch_filter: true } : {}),
@@ -813,12 +828,14 @@ const invokeRomWeaverExtractWorker = async (
     command,
     toRomWeaverOptions({
       invalidateMountCacheBeforeRun: input.invalidateMountCacheBeforeRun,
+      knownInputPaths: input.knownInputPaths,
       logLevel: input.logLevel,
       onEvent: (event) => {
         const progress = toSimpleProgress(event);
         if (progress) onProgress?.(progress);
       },
       onLog,
+      preopenOutputPaths: input.preopenOutputPaths,
       scratchFilePoolSize: input.scratchFilePoolSize,
     }),
   );

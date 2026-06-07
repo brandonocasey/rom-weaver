@@ -558,69 +558,53 @@ const getBrowserExtractOutputPathCandidates = (outDirPath: string, entryName: st
     });
 };
 
-type ArchiveEntrySizeHint = {
-  filename?: string;
-  fileName?: string;
-  name?: string;
-  size?: number;
-};
-
-const getArchiveEntryCandidateNames = (entry: ArchiveEntrySizeHint): string[] =>
-  uniqueNonEmptyStrings([entry.filename || "", entry.fileName || "", entry.name || ""]);
-
-const getArchiveEntrySizeHint = (entries: ArchiveEntrySizeHint[], entryName: string): number | null => {
-  const normalizedEntry = normalizeEntryPath(entryName);
-  const normalizedBase = getPathBaseName(normalizedEntry, normalizedEntry);
-  for (const entry of entries) {
-    const size =
-      typeof entry.size === "number" && Number.isFinite(entry.size) ? Math.max(0, Math.floor(entry.size)) : null;
-    if (size === null) continue;
-    for (const candidateName of getArchiveEntryCandidateNames(entry)) {
-      const normalizedCandidate = normalizeEntryPath(candidateName);
-      const normalizedCandidateBase = getPathBaseName(normalizedCandidate, normalizedCandidate);
-      if (normalizedCandidate === normalizedEntry) return size;
-      if (normalizedCandidateBase === normalizedBase) return size;
-      if (normalizedEntry.endsWith(`/${normalizedCandidate}`)) return size;
-    }
-  }
-  return null;
-};
-
-const getBrowserArchiveExtractSizeHints = async ({
-  entryNames,
+const getDescendPreopenOutputPaths = async ({
+  archivePath,
+  fileName,
+  format,
   logLevel,
   onLog,
-  sourcePath,
+  outDirPath,
 }: {
-  entryNames: string[];
+  archivePath: string;
+  fileName: string;
+  format?: string;
   logLevel?: unknown;
   onLog?: (log: WorkflowRuntimeLog) => void;
-  sourcePath: string;
-}): Promise<Map<string, number>> => {
-  const hints = new Map<string, number>();
-  if (!entryNames.length) return hints;
-  try {
-    const listed = await runRomWeaverListWorker({
+  outDirPath: string;
+}): Promise<string[]> => {
+  const normalizedFormat = String(format || "")
+    .trim()
+    .toLowerCase();
+  if (!["chd", "rvz", "z3ds"].includes(normalizedFormat)) return [];
+  const listed = await runRomWeaverListWorker(
+    {
       logLevel: logLevel as Parameters<typeof runRomWeaverListWorker>[0]["logLevel"],
-      sourcePath,
-    });
-    for (const entryName of entryNames) {
-      const size = getArchiveEntrySizeHint(listed.entries || [], entryName);
-      if (size !== null) hints.set(normalizeEntryPath(entryName), size);
-    }
-    emitBrowserWorkflowTrace({ logLevel, onLog }, "archive extract size hints resolved", {
-      hints: Array.from(hints.entries()).map(([entryName, sizeBytes]) => ({ entryName, sizeBytes })),
-      requestedEntries: entryNames,
-      sourcePath,
-    });
-  } catch (error) {
-    emitBrowserWorkflowTrace({ logLevel, onLog }, "archive extract size hints unavailable", {
-      message: error instanceof Error ? error.message : String(error || ""),
-      requestedEntries: entryNames,
-      sourcePath,
-    });
-  }
-  return hints;
+      sourcePath: archivePath,
+    },
+    undefined,
+    onLog,
+  ).catch(() => null);
+  const sourceFileName = fileName || getPathBaseName(archivePath, "archive.bin");
+  const stagedSourceFileName = getPathDerivedFileName(archivePath, sourceFileName);
+  const listedEntries = normalizeRomSpecificListEntries(listed?.entries || [], stagedSourceFileName, sourceFileName);
+  const preopenOutputPaths = filterOutputCandidatesAwayFromSource(
+    uniqueNonEmptyStrings(
+      listedEntries.flatMap((entry) =>
+        getBrowserExtractOutputPathCandidates(
+          outDirPath,
+          String(entry?.fileName || entry?.filename || entry?.name || ""),
+        ),
+      ),
+    ),
+    archivePath,
+  );
+  emitBrowserWorkflowTrace({ logLevel, onLog }, "archive descend output preopen candidates", {
+    archivePath,
+    format: normalizedFormat,
+    preopenOutputPaths,
+  });
+  return preopenOutputPaths;
 };
 
 const createBrowserChecksumRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["checksum"] =>
@@ -745,10 +729,12 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
               format,
               inputPaths: staged.inputPaths,
               invalidateMountCacheBeforeRun: true,
+              knownInputPaths: staged.inputPaths,
               levelProfile,
               logLevel: workflowInput.options?.logLevel,
               outputFileName,
               outputPath,
+              preopenOutputPaths: [outputPath],
               workerThreads: workflowInput.options?.workerThreads,
             },
             forwardArchiveProgress("output", workflowInput.options?.onProgress),
@@ -771,12 +757,68 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
       trace: { logLevel: workflowInput.options?.logLevel, onLog: workflowInput.options?.onLog },
     });
     try {
-      const extractSizeHints = await getBrowserArchiveExtractSizeHints({
-        entryNames: workflowInput.entries,
-        logLevel: workflowInput.options?.logLevel,
-        onLog: workflowInput.options?.onLog,
-        sourcePath: archive.filePath,
-      });
+      if (workflowInput.descendSinglePayload) {
+        const outDirPath = WORKER_OPFS_MOUNTPOINT;
+        const selectedEntries = Array.isArray(workflowInput.entries)
+          ? workflowInput.entries.map((entryName) => String(entryName || "").trim()).filter((entryName) => !!entryName)
+          : [];
+        const cleanupExtractedFiles = async (filePaths: string[]) => {
+          await Promise.all(filePaths.map((filePath) => browserVfs.remove(filePath).catch(() => undefined)));
+        };
+        const preopenOutputPaths = await getDescendPreopenOutputPaths({
+          archivePath: archive.filePath,
+          fileName: archive.fileName,
+          format: workflowInput.format,
+          logLevel: workflowInput.options?.logLevel,
+          onLog: workflowInput.options?.onLog,
+          outDirPath,
+        });
+        await removeBrowserVfsOutputPaths(preopenOutputPaths, [archive.filePath]);
+        const extractChecksumAlgorithms = Array.isArray(workflowInput.options?.extractChecksumAlgorithms)
+          ? workflowInput.options.extractChecksumAlgorithms
+              .map((algorithm) =>
+                String(algorithm || "")
+                  .trim()
+                  .toLowerCase(),
+              )
+              .filter((algorithm) => !!algorithm)
+          : [...EXTRACT_CHECKSUM_ALGORITHMS];
+        const extracted = await invokeRomWeaverExtractWorker(
+          {
+            ...(extractChecksumAlgorithms.length ? { checksumAlgorithms: extractChecksumAlgorithms } : {}),
+            knownInputPaths: [archive.filePath],
+            logLevel: workflowInput.options?.logLevel,
+            noNestedExtract: false,
+            outDirPath,
+            patchFilter: workflowInput.options?.patchFilter,
+            preopenOutputPaths,
+            romFilter: workflowInput.options?.romFilter,
+            select: selectedEntries,
+            sourcePath: archive.filePath,
+            splitBin: workflowInput.format === "chd" && workflowInput.options?.chdSplitBin !== false,
+            workerThreads: workflowInput.options?.workerThreads,
+          },
+          forwardArchiveProgress("input", workflowInput.options?.onProgress),
+          workflowInput.options?.onLog,
+        );
+        const descendOutputs = await Promise.all(
+          extracted.emittedFiles.map((entry) => {
+            const fileName = entry.fileName || getPathBaseName(entry.path, entry.path);
+            return workerIo.createWorkerOutput(
+              {
+                checksums: entry.checksums,
+                cleanup: () => cleanupExtractedFiles([entry.path]),
+                fileName,
+                filePath: entry.path,
+                size: entry.sizeBytes,
+              },
+              fileName,
+              "archive descend extract worker did not return browser output",
+            );
+          }),
+        );
+        return createCompressionExtractResult(descendOutputs);
+      }
       const outputs = [];
       for (const entryName of workflowInput.entries) {
         const outDirPath = WORKER_OPFS_MOUNTPOINT;
@@ -816,7 +858,7 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
               forwardArchiveProgress("input", workflowInput.options?.onProgress),
               workflowInput.options?.onLog,
             );
-          const requiredBytes = extractSizeHints.get(normalizeEntryPath(entryName)) ?? null;
+          const requiredBytes = null;
           const operationLabel = `extract \`${entryName}\``;
           await ensureBrowserStorageAvailableForOutput({
             operationLabel,
@@ -988,10 +1030,11 @@ const createBrowserRomSpecificRuntime = (workerIo: RuntimeWorkerIo): RomSpecific
           format: getChdCreateFormat(requestedMode),
           inputPaths: [chdInputPath],
           invalidateMountCacheBeforeRun: true,
-          knownInputPaths: stagedInputPaths,
+          knownInputPaths: uniqueNonEmptyStrings([...stagedInputPaths, chdInputPath]),
           logLevel,
           outputFileName,
           outputPath,
+          preopenOutputPaths: [outputPath],
           workerThreads: threads,
         },
         onProgress,
@@ -1038,6 +1081,7 @@ const createBrowserRomSpecificRuntime = (workerIo: RuntimeWorkerIo): RomSpecific
             logLevel,
             outputFileName,
             outputPath,
+            preopenOutputPaths: [outputPath],
             workerThreads: threads,
           },
           onProgress,
@@ -1070,6 +1114,7 @@ const createBrowserRomSpecificRuntime = (workerIo: RuntimeWorkerIo): RomSpecific
             logLevel,
             outputFileName,
             outputPath,
+            preopenOutputPaths: [outputPath],
             workerThreads: threads,
           },
           onProgress,
@@ -1152,14 +1197,20 @@ const createBrowserRomSpecificRuntime = (workerIo: RuntimeWorkerIo): RomSpecific
             ];
         staleOutputPaths.push(...outputPathCandidates);
       }
-      await removeBrowserVfsOutputPaths(uniqueNonEmptyStrings(staleOutputPaths), [workerSource.filePath]);
+      const preopenOutputPaths = filterOutputCandidatesAwayFromSource(
+        uniqueNonEmptyStrings(staleOutputPaths),
+        workerSource.filePath,
+      );
+      await removeBrowserVfsOutputPaths(preopenOutputPaths, [workerSource.filePath]);
       const runExtract = () =>
         invokeRomWeaverExtractWorker(
           {
             checksumAlgorithms: [...EXTRACT_CHECKSUM_ALGORITHMS],
-            invalidateMountCacheBeforeRun: !!directOutputPath || !!workerSource.virtual,
+            invalidateMountCacheBeforeRun: !!workerSource.virtual,
+            knownInputPaths: uniqueNonEmptyStrings([workerSource.filePath]),
             logLevel,
             outDirPath,
+            preopenOutputPaths,
             scratchFilePoolSize: directOutputPath
               ? shouldPreseedSingleBinCdOutputs
                 ? CHD_CD_OUTPUT_SCRATCH_FILE_POOL_SIZE
@@ -1288,35 +1339,62 @@ const createBrowserRomSpecificRuntime = (workerIo: RuntimeWorkerIo): RomSpecific
     };
     try {
       const outDirPath = WORKER_OPFS_MOUNTPOINT;
-      const actualOutputFileName = getRomSpecificExtractedFileName("rvz", { fileName });
+      const sourceFileName = fileName || workerSource.fileName || RVZ_ROM_SPECIFIC_FORMAT.fallbackFileName;
+      const stagedSourceFileName = getPathDerivedFileName(workerSource.filePath, sourceFileName);
+      const actualOutputFileName = getRomSpecificExtractedFileName("rvz", { fileName: sourceFileName });
       const stagedOutputFileName = getRomSpecificExtractedFileName("rvz", {
-        fileName: getPathDerivedFileName(workerSource.filePath, workerSource.fileName || fileName),
+        fileName: stagedSourceFileName,
       });
-      const outputFileName = outputName || actualOutputFileName;
-      const outputPath = joinPath(outDirPath, stagedOutputFileName);
       await ensureRvzSourceExists();
-      await removeBrowserVfsOutputPaths(
-        uniqueNonEmptyStrings([
-          outputPath,
-          actualOutputFileName ? joinPath(outDirPath, actualOutputFileName) : "",
-          outputName ? joinPath(outDirPath, outputName) : "",
-        ]),
-        [workerSource.filePath],
+      const listed = await runRomWeaverListWorker(
+        {
+          logLevel,
+          sourcePath: workerSource.filePath,
+        },
+        undefined,
+        onLog,
+      ).catch(() => null);
+      const listedEntries = normalizeRomSpecificListEntries(
+        listed?.entries || [],
+        stagedSourceFileName,
+        sourceFileName,
       );
+      const listedOutputFileName = getPathBaseName(
+        String(listedEntries[0]?.fileName || listedEntries[0]?.filename || listedEntries[0]?.name || ""),
+      );
+      const outputFileName = outputName || listedOutputFileName || actualOutputFileName;
+      const outputPath = joinPath(outDirPath, listedOutputFileName || stagedOutputFileName || actualOutputFileName);
+      const preopenOutputPaths = filterOutputCandidatesAwayFromSource(
+        uniqueNonEmptyStrings([
+          ...listedEntries.flatMap((entry) =>
+            getBrowserExtractOutputPathCandidates(
+              outDirPath,
+              String(entry?.fileName || entry?.filename || entry?.name || ""),
+            ),
+          ),
+          ...(outputName ? getBrowserExtractOutputPathCandidates(outDirPath, outputName) : []),
+          ...(stagedOutputFileName ? getBrowserExtractOutputPathCandidates(outDirPath, stagedOutputFileName) : []),
+          ...(actualOutputFileName ? getBrowserExtractOutputPathCandidates(outDirPath, actualOutputFileName) : []),
+          outputPath,
+        ]),
+        workerSource.filePath,
+      );
+      await removeBrowserVfsOutputPaths(preopenOutputPaths, [workerSource.filePath]);
       if (outputPath === workerSource.filePath) {
         throw new Error(`RVZ output path conflicts with the active input: ${outputPath}`);
       }
-      await browserVfs.truncate(outputPath, 0);
       emitBrowserWorkflowTrace({ logLevel, onLog }, "rvz output precreated", {
+        candidates: preopenOutputPaths,
         outputPath,
         sourcePath: workerSource.filePath,
       });
       const extracted = await invokeRomWeaverExtractWorker(
         {
           checksumAlgorithms: [...EXTRACT_CHECKSUM_ALGORITHMS],
-          invalidateMountCacheBeforeRun: true,
+          knownInputPaths: [workerSource.filePath],
           logLevel,
           outDirPath,
+          preopenOutputPaths,
           scratchFilePoolSize: 1,
           select: [],
           sourcePath: workerSource.filePath,
@@ -1337,7 +1415,13 @@ const createBrowserRomSpecificRuntime = (workerIo: RuntimeWorkerIo): RomSpecific
         emittedFiles: extracted.emittedFiles,
         logLevel,
         onLog,
-        preferredEntryNames: [outputFileName, actualOutputFileName, stagedOutputFileName, outputName],
+        preferredEntryNames: [
+          outputFileName,
+          actualOutputFileName,
+          stagedOutputFileName,
+          listedOutputFileName,
+          outputName,
+        ],
         traceLabel: "rvz",
       });
       return await workerIo.createWorkerOutput(
@@ -1405,15 +1489,18 @@ const createBrowserRomSpecificRuntime = (workerIo: RuntimeWorkerIo): RomSpecific
         preseedPaths.push(...getBrowserExtractOutputPathCandidates(outDirPath, stagedOutputFileName));
       preseedPaths.push(outputPath);
       preseedPaths.push(joinPath(outDirPath, actualOutputFileName));
-      await removeBrowserVfsOutputPaths(filterOutputCandidatesAwayFromSource(preseedPaths, workerSource.filePath), [
+      const preopenOutputPaths = filterOutputCandidatesAwayFromSource(
+        uniqueNonEmptyStrings(preseedPaths),
         workerSource.filePath,
-      ]);
+      );
+      await removeBrowserVfsOutputPaths(preopenOutputPaths, [workerSource.filePath]);
       const extracted = await invokeRomWeaverExtractWorker(
         {
           checksumAlgorithms: [...EXTRACT_CHECKSUM_ALGORITHMS],
-          invalidateMountCacheBeforeRun: true,
+          knownInputPaths: [workerSource.filePath],
           logLevel,
           outDirPath,
+          preopenOutputPaths,
           scratchFilePoolSize: 1,
           select: [],
           sourcePath: workerSource.filePath,
