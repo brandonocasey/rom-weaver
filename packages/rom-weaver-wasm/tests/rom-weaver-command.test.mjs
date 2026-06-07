@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  KNOWN_COMMAND_TYPES,
+  KNOWN_PATCH_COMMAND_TYPES,
   clampRomWeaverBrowserThreadRequest,
   collectRomWeaverRunInputPaths,
   createRomWeaverCommand,
@@ -10,6 +12,25 @@ import {
 } from '../src/rom-weaver-command.ts';
 
 describe('rom-weaver command boundary helpers', () => {
+  it('exports Rust-generated known command discriminants', () => {
+    expect(KNOWN_COMMAND_TYPES).toEqual([
+      'probe',
+      'list',
+      'extract',
+      'checksum',
+      'compress',
+      'trim',
+      'batch-header-fixer',
+      'patch',
+    ]);
+    expect(KNOWN_PATCH_COMMAND_TYPES).toEqual([
+      'apply',
+      'validate',
+      'create-candidates',
+      'create',
+    ]);
+  });
+
   it('builds nested patch commands and preserves patch labels', () => {
     const command = createRomWeaverCommand('patch-apply', {
       input: '/work/original.bin',
@@ -73,5 +94,19 @@ describe('rom-weaver command boundary helpers', () => {
       createRomWeaverCommand('list', { source: '/work/archive.zip' }),
     );
     expect(withRomWeaverDefaultThreads(listRequest, 4)).toBe(listRequest);
+  });
+
+  it('rejects malformed command discriminants with known command details', () => {
+    expect(() => normalizeRomWeaverRunRequest({ type: 'convert', args: {} })).toThrow(
+      /rom-weaver typed command has unsupported `type` field: convert .*known: "probe".*"patch"/,
+    );
+    expect(() =>
+      normalizeRomWeaverRunRequest({
+        type: 'patch',
+        args: { type: 'repair', args: {} },
+      }),
+    ).toThrow(
+      /rom-weaver patch command has unsupported nested `type` field: repair .*known: "apply".*"create"/,
+    );
   });
 });

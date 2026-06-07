@@ -5,6 +5,23 @@ import type {
   RomWeaverRunOutputOptions,
   RomWeaverRunRequest,
 } from './rom-weaver-types.d.ts';
+import {
+  assertKnownRomWeaverCommandType,
+  assertKnownRomWeaverPatchCommandType,
+} from './generated/rom-weaver-command-types.ts';
+
+export {
+  KNOWN_COMMAND_TYPES,
+  KNOWN_PATCH_COMMAND_TYPES,
+  assertKnownRomWeaverCommandType,
+  assertKnownRomWeaverPatchCommandType,
+  isKnownRomWeaverCommandType,
+  isKnownRomWeaverPatchCommandType,
+} from './generated/rom-weaver-command-types.ts';
+export type {
+  KnownRomWeaverCommandType,
+  KnownRomWeaverPatchCommandType,
+} from './generated/rom-weaver-command-types.ts';
 
 type RomWeaverPatchCommand = Extract<RomWeaverCommand, { type: 'patch' }>['args'];
 type RomWeaverPatchCommandType = RomWeaverPatchCommand['type'];
@@ -90,7 +107,7 @@ export function normalizeRomWeaverCommand(command: RomWeaverCommand): RomWeaverC
   if (!isObjectRecord(command)) {
     throw new TypeError('rom-weaver typed command must be an object');
   }
-  const type = readRequiredType(command.type, 'rom-weaver typed command');
+  const type = assertKnownRomWeaverCommandType(command.type, 'rom-weaver typed command');
   if (type === 'patch') {
     return normalizeRomWeaverPatchCommand((command as Extract<RomWeaverCommand, { type: 'patch' }>).args);
   }
@@ -106,7 +123,7 @@ export function normalizeRomWeaverCommand(command: RomWeaverCommand): RomWeaverC
     case 'batch-header-fixer':
       return { args, type } as RomWeaverCommand;
     default:
-      throw new TypeError(`rom-weaver typed command has unsupported type: ${type}`);
+      return assertNever(type);
   }
 }
 
@@ -266,7 +283,7 @@ function normalizeRomWeaverPatchCommand(patchCommand: RomWeaverPatchCommand): Ro
   if (!isObjectRecord(patchCommand) || Array.isArray(patchCommand)) {
     throw new TypeError('rom-weaver patch command requires an object `args` payload');
   }
-  const patchType = readRequiredType(
+  const patchType = assertKnownRomWeaverPatchCommandType(
     patchCommand.type,
     'rom-weaver patch command',
     'nested `type` field',
@@ -287,7 +304,7 @@ function normalizeRomWeaverPatchCommand(patchCommand: RomWeaverPatchCommand): Ro
         type: 'patch',
       } as RomWeaverCommand;
     default:
-      throw new TypeError(`rom-weaver patch command has unsupported type: ${patchType}`);
+      return assertNever(patchType);
   }
 }
 
@@ -431,12 +448,6 @@ function isRomWeaverRunRequestLike(input: unknown): input is RomWeaverRunRequest
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function readRequiredType(value: unknown, label: string, field = '`type` field'): string {
-  const type = typeof value === 'string' ? value.trim() : '';
-  if (!type) throw new TypeError(`${label} requires a string ${field}`);
-  return type;
 }
 
 function pushPathValues(out: Set<string>, value: unknown) {
