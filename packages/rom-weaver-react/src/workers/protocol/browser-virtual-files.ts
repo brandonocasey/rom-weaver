@@ -1,3 +1,18 @@
+import {
+  VIRTUAL_FILE_CONTROL_BYTES_READ_INDEX as CONTROL_BYTES_READ_INDEX,
+  VIRTUAL_FILE_CONTROL_WORD_COUNT as CONTROL_LENGTH,
+  VIRTUAL_FILE_CONTROL_LENGTH_INDEX as CONTROL_LENGTH_INDEX,
+  VIRTUAL_FILE_CONTROL_OFFSET_HIGH_INDEX as CONTROL_OFFSET_HIGH_INDEX,
+  VIRTUAL_FILE_CONTROL_OFFSET_LOW_INDEX as CONTROL_OFFSET_LOW_INDEX,
+  VIRTUAL_FILE_STATE_DONE as CONTROL_STATE_DONE,
+  VIRTUAL_FILE_CONTROL_STATE_INDEX as CONTROL_STATE_INDEX,
+  VIRTUAL_FILE_STATE_PRODUCER_READING as CONTROL_STATE_READING,
+  VIRTUAL_FILE_STATE_REQUESTED as CONTROL_STATE_REQUESTED,
+  VIRTUAL_FILE_STATUS_ERROR as CONTROL_STATUS_ERROR,
+  VIRTUAL_FILE_CONTROL_STATUS_INDEX as CONTROL_STATUS_INDEX,
+  VIRTUAL_FILE_STATUS_OK as CONTROL_STATUS_OK,
+} from "rom-weaver-wasm/browser-virtual-file-protocol";
+
 type BrowserVirtualFileSource = Blob | Uint8Array | ArrayBuffer;
 
 type BrowserVirtualFileSlot = {
@@ -31,21 +46,11 @@ const VIRTUAL_FILE_MIN_CHUNK_SIZE = 256 * 1024;
 const VIRTUAL_FILE_MAX_CHUNK_SIZE = 2 * 1024 * 1024;
 const VIRTUAL_FILE_MAX_SLOT_COUNT = 4;
 const VIRTUAL_FILE_MAX_TOTAL_SAB_BYTES_PER_FILE = 4 * 1024 * 1024;
-const CONTROL_STATE_INDEX = 0;
-const CONTROL_OFFSET_LOW_INDEX = 1;
-const CONTROL_OFFSET_HIGH_INDEX = 2;
-const CONTROL_LENGTH_INDEX = 3;
-const CONTROL_BYTES_READ_INDEX = 4;
-const CONTROL_STATUS_INDEX = 5;
-const CONTROL_LENGTH = 6;
-const CONTROL_STATE_REQUESTED = 1;
-const CONTROL_STATE_DONE = 2;
-// Distinct from the WASM consumer's transient LOCKED slot-acquire state (control-word value 3),
-// so the producer's in-flight marker can never alias the consumer's, and the ownership check in
-// respondToVirtualFileRead is unambiguous.
-const CONTROL_STATE_READING = 4;
-const CONTROL_STATUS_ERROR = 1;
-const CONTROL_STATUS_OK = 0;
+// Control-word layout and slot states are imported from rom-weaver-wasm/browser-virtual-file-protocol
+// (aliased above to this file's CONTROL_* vocabulary) so the producer and the WASM consumer can never
+// disagree on the wire format. CONTROL_STATE_READING (the producer's in-flight marker) is deliberately
+// a distinct value from the consumer's LOCKED slot-acquire marker; both are defined in that one module
+// so the no-alias invariant is enforced in a single place. See docs/browser-concurrency.md.
 let virtualFileId = 0;
 
 const getVirtualSourceSize = (source: BrowserVirtualFileSource) =>

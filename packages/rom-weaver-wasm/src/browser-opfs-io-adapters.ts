@@ -1,4 +1,17 @@
-// @ts-nocheck
+import {
+  VIRTUAL_FILE_CONTROL_BYTES_READ_INDEX,
+  VIRTUAL_FILE_CONTROL_LENGTH_INDEX,
+  VIRTUAL_FILE_CONTROL_OFFSET_HIGH_INDEX,
+  VIRTUAL_FILE_CONTROL_OFFSET_LOW_INDEX,
+  VIRTUAL_FILE_CONTROL_STATE_INDEX,
+  VIRTUAL_FILE_CONTROL_STATUS_INDEX,
+  VIRTUAL_FILE_CONTROL_WORD_COUNT,
+  VIRTUAL_FILE_STATE_CONSUMER_LOCKED,
+  VIRTUAL_FILE_STATE_DONE,
+  VIRTUAL_FILE_STATE_IDLE,
+  VIRTUAL_FILE_STATE_REQUESTED,
+  VIRTUAL_FILE_STATUS_OK,
+} from './browser-virtual-file-protocol.ts';
 
 const RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES = 1024 * 1024;
 const RANDOM_ACCESS_READ_CACHE_BLOCK_COUNT = 4;
@@ -8,18 +21,76 @@ const VIRTUAL_BLOB_READ_CACHE_BLOCK_COUNT = 8;
 const VIRTUAL_BLOB_READ_CACHE_MAX_REQUEST_BYTES = 512 * 1024;
 const ATOMICS_WAIT_SLICE_MS = 100;
 const ATOMICS_WAIT_TIMEOUT_MS = 8000;
-const VIRTUAL_FILE_PROXY_STATE_IDLE = 0;
-const VIRTUAL_FILE_PROXY_STATE_REQUESTED = 1;
-const VIRTUAL_FILE_PROXY_STATE_DONE = 2;
-const VIRTUAL_FILE_PROXY_STATE_LOCKED = 3;
 const VIRTUAL_FILE_PROXY_TRACE_READ_LIMIT = 12;
 const VIRTUAL_FILE_PROXY_READ_TIMEOUT_MS = 12_000;
 const VIRTUAL_FILE_PROXY_SLOT_ACQUIRE_TIMEOUT_MS = ATOMICS_WAIT_TIMEOUT_MS;
 
-class BrowserOpfsRandomAccessFile {
-  [key: string]: any;
+type TraceLine = (line: string) => void;
+type AtomicsWaitResult = 'changed' | 'timed-out';
 
-  constructor(syncHandle, options = {}) {
+type FileReaderSyncLike = {
+  readAsArrayBuffer(blob: Blob): ArrayBuffer;
+};
+
+declare const FileReaderSync: {
+  new(): FileReaderSyncLike;
+};
+
+type SyncAccessHandleLike = {
+  close(): void;
+  flush(): void;
+  getSize(): number;
+  read(buffer: Uint8Array, options?: { at?: number }): number;
+  truncate(size: number): void;
+  write(buffer: Uint8Array, options?: { at?: number }): number;
+};
+
+type BrowserOpfsRandomAccessFileOptions = {
+  scratchName?: string | null;
+};
+
+type BrowserVirtualRandomAccessFileOptions = {
+  trace?: TraceLine | null;
+};
+
+type ReadCacheBlock = {
+  bytes: Uint8Array;
+  lastUsed: number;
+  length: number;
+  start: number;
+};
+
+type RandomAccessFileIoStats = ReturnType<typeof createRandomAccessFileIoStats>;
+
+type VirtualFileProxySlot = {
+  controlBuffer: SharedArrayBuffer;
+  dataBuffer: SharedArrayBuffer;
+};
+
+type VirtualFileProxy = {
+  id: string;
+  size: number;
+  slots: VirtualFileProxySlot[];
+};
+
+type VirtualFileProxySlotView = {
+  control: Int32Array<SharedArrayBuffer>;
+  data: Uint8Array<SharedArrayBuffer>;
+};
+
+class BrowserOpfsRandomAccessFile {
+  closed: boolean;
+  dirty: boolean;
+  ioStats: RandomAccessFileIoStats;
+  logicalSize: number | null;
+  readCacheBlocks: ReadCacheBlock[];
+  readCacheTick: number;
+  scratchName: string | null;
+  supportsBufferedSequentialWrite: boolean;
+  supportsDirectWasmRead: boolean;
+  syncHandle: SyncAccessHandleLike;
+
+  constructor(syncHandle: SyncAccessHandleLike, options: BrowserOpfsRandomAccessFileOptions = {}) {
     this.syncHandle = syncHandle;
     this.scratchName = options.scratchName ?? null;
     this.dirty = false;
@@ -32,7 +103,7 @@ class BrowserOpfsRandomAccessFile {
     this.closed = false;
   }
 
-  readAt(offset, dst) {
+  readAt(offset: unknown, dst: Uint8Array) {
     if (dst.byteLength <= 0) return 0;
     const start = Number(offset);
     if (!Number.isFinite(start) || start < 0) return 0;
@@ -46,7 +117,7 @@ class BrowserOpfsRandomAccessFile {
     return this.readSyncAccessHandleAt(start, dst);
   }
 
-  writeAt(offset, src) {
+  writeAt(offset: unknown, src: Uint8Array) {
     const start = Number(offset);
     const callStartMs = monotonicNowMs();
     const written = this.syncHandle.write(src, { at: start });
@@ -67,13 +138,13 @@ class BrowserOpfsRandomAccessFile {
     return Math.max(this.syncHandle.getSize(), this.logicalSize ?? 0);
   }
 
-  allocateAtLeast(size) {
+  allocateAtLeast(size: unknown) {
     const normalizedSize = Math.max(0, Number(size) || 0);
     if (normalizedSize <= this.size()) return;
     this.logicalSize = normalizedSize;
   }
 
-  truncate(size) {
+  truncate(size: unknown) {
     const normalizedSize = Number(size);
     if (this.syncHandle.getSize() === normalizedSize && this.logicalSize === normalizedSize) return;
     // A shrink drops cached bytes at/after the new end; a grow only zero-fills past the old end.
@@ -84,7 +155,7 @@ class BrowserOpfsRandomAccessFile {
     this.dirty = true;
   }
 
-  readFromCache(offset, dst) {
+  readFromCache(offset: number, dst: Uint8Array) {
     const cached = this.findReadCacheBlock(offset);
     if (cached) {
       const bytesRead = this.copyReadCacheBlock(cached, offset, dst);
@@ -110,7 +181,7 @@ class BrowserOpfsRandomAccessFile {
     return this.copyReadCacheBlock(block, offset, dst);
   }
 
-  readSyncAccessHandleAt(offset, dst, requestedLength = dst.byteLength) {
+  readSyncAccessHandleAt(offset: number, dst: Uint8Array, requestedLength = dst.byteLength) {
     const logicalSize = this.size();
     const length = Math.max(0, Math.min(requestedLength, dst.byteLength, logicalSize - offset));
     if (length <= 0) return 0;
@@ -128,7 +199,7 @@ class BrowserOpfsRandomAccessFile {
     return totalRead;
   }
 
-  findReadCacheBlock(offset) {
+  findReadCacheBlock(offset: number): ReadCacheBlock | null {
     for (const block of this.readCacheBlocks) {
       if (offset >= block.start && offset < block.start + block.length) {
         block.lastUsed = ++this.readCacheTick;
@@ -156,7 +227,7 @@ class BrowserOpfsRandomAccessFile {
     return oldest;
   }
 
-  copyReadCacheBlock(block, offset, dst) {
+  copyReadCacheBlock(block: ReadCacheBlock, offset: number, dst: Uint8Array) {
     const relativeOffset = offset - block.start;
     if (relativeOffset < 0 || relativeOffset >= block.length) return 0;
     const available = block.length - relativeOffset;
@@ -172,7 +243,7 @@ class BrowserOpfsRandomAccessFile {
 
   // Empties any cache block whose [start, start+length) overlaps [start, end). A block is reset to
   // empty (length 0) rather than removed so its backing buffer can be reused by acquireReadCacheBlock.
-  invalidateReadCacheRange(start, end) {
+  invalidateReadCacheRange(start: number, end: number) {
     if (this.readCacheBlocks.length === 0) return;
     for (const block of this.readCacheBlocks) {
       if (block.length <= 0) continue;
@@ -215,16 +286,19 @@ class BrowserOpfsRandomAccessFile {
 }
 
 class BrowserMemoryRandomAccessFile {
-  [key: string]: any;
+  bytes: Uint8Array;
+  closed: boolean;
+  length: number;
+  supportsDirectWasmRead: boolean;
 
-  constructor(initialCapacity = 0) {
+  constructor(initialCapacity: unknown = 0) {
     this.bytes = new Uint8Array(Math.max(0, Number(initialCapacity) || 0));
     this.length = 0;
     this.supportsDirectWasmRead = true;
     this.closed = false;
   }
 
-  readAt(offset, dst) {
+  readAt(offset: unknown, dst: Uint8Array) {
     if (this.closed) return 0;
     const start = Number(offset);
     if (!Number.isFinite(start) || start < 0 || start >= this.length) return 0;
@@ -234,7 +308,7 @@ class BrowserMemoryRandomAccessFile {
     return length;
   }
 
-  writeAt(offset, src) {
+  writeAt(offset: unknown, src: Uint8Array) {
     if (this.closed) return 0;
     const start = Number(offset);
     if (!Number.isFinite(start) || start < 0) return 0;
@@ -249,7 +323,7 @@ class BrowserMemoryRandomAccessFile {
     return this.length;
   }
 
-  truncate(size) {
+  truncate(size: unknown) {
     const nextSize = Math.max(0, Number(size) || 0);
     this.ensureCapacity(nextSize);
     if (nextSize > this.length) this.bytes.fill(0, this.length, nextSize);
@@ -262,7 +336,7 @@ class BrowserMemoryRandomAccessFile {
     this.closed = true;
   }
 
-  ensureCapacity(size) {
+  ensureCapacity(size: number) {
     if (size <= this.bytes.byteLength) return;
     let nextCapacity = Math.max(1024, this.bytes.byteLength);
     while (nextCapacity < size) nextCapacity *= 2;
@@ -273,9 +347,20 @@ class BrowserMemoryRandomAccessFile {
 }
 
 class BrowserVirtualRandomAccessFile {
-  [key: string]: any;
+  closed: boolean;
+  ioStats: RandomAccessFileIoStats;
+  proxy: VirtualFileProxy | null;
+  proxyFailed: boolean;
+  readCacheTick: number;
+  readCacheBlocks: ReadCacheBlock[];
+  readCount: number;
+  reader: FileReaderSyncLike | null;
+  slots: VirtualFileProxySlotView[];
+  source: unknown;
+  supportsDirectWasmRead: boolean;
+  trace: TraceLine | null;
 
-  constructor(source, options = {}) {
+  constructor(source: unknown, options: BrowserVirtualRandomAccessFileOptions = {}) {
     this.source = source;
     this.proxy = isVirtualFileProxy(source) ? source : null;
     this.reader = isBlobLike(source) ? new FileReaderSync() : null;
@@ -292,7 +377,7 @@ class BrowserVirtualRandomAccessFile {
     this.proxyFailed = false;
   }
 
-  readAt(offset, dst) {
+  readAt(offset: unknown, dst: Uint8Array) {
     if (this.closed) return 0;
     this.readCount += 1;
     const readIndex = this.readCount;
@@ -319,11 +404,13 @@ class BrowserVirtualRandomAccessFile {
     return this.readBlobAt(start, dst, length);
   }
 
-  readBlobAt(offset, dst, requestedLength = dst.byteLength) {
+  readBlobAt(offset: number, dst: Uint8Array, requestedLength = dst.byteLength) {
     const length = Math.max(0, Math.min(requestedLength, dst.byteLength, this.size() - offset));
     if (length <= 0) return 0;
     const callStartMs = monotonicNowMs();
-    const bytes = new Uint8Array(this.reader.readAsArrayBuffer(this.source.slice(offset, offset + length)));
+    const bytes = new Uint8Array(
+      this.reader.readAsArrayBuffer((this.source as Blob).slice(offset, offset + length)),
+    );
     this.ioStats.blobReadCalls += 1;
     this.ioStats.blobReadMs += monotonicNowMs() - callStartMs;
     this.ioStats.blobReadBytes += bytes.byteLength;
@@ -331,7 +418,7 @@ class BrowserVirtualRandomAccessFile {
     return bytes.byteLength;
   }
 
-  readBlobFromCache(offset, dst) {
+  readBlobFromCache(offset: number, dst: Uint8Array) {
     const cached = this.findReadCacheBlock(offset);
     if (cached) {
       const bytesRead = this.copyReadCacheBlock(cached, offset, dst);
@@ -367,7 +454,7 @@ class BrowserVirtualRandomAccessFile {
     return null;
   }
 
-  acquireReadCacheBlock() {
+  acquireReadCacheBlock(): ReadCacheBlock {
     if (this.readCacheBlocks.length < VIRTUAL_BLOB_READ_CACHE_BLOCK_COUNT) {
       const block = {
         bytes: new Uint8Array(VIRTUAL_BLOB_READ_CACHE_BLOCK_BYTES),
@@ -399,14 +486,14 @@ class BrowserVirtualRandomAccessFile {
     this.readCacheBlocks.length = 0;
   }
 
-  readProxyAt(offset, dst, requestedLength, readIndex) {
+  readProxyAt(offset: number, dst: Uint8Array, requestedLength: number, readIndex: number) {
     const shouldTrace = this.shouldTraceRead(readIndex);
     if (shouldTrace) {
       this.trace?.(
         `[browser-opfs] virtual proxy slot acquire start id=${this.proxy.id} read=${readIndex}`,
       );
     }
-    let slot = null;
+    let slot: VirtualFileProxySlotView | null = null;
     let abandonedSlot = false;
     try {
       slot = this.acquireProxySlot();
@@ -424,18 +511,23 @@ class BrowserVirtualRandomAccessFile {
       }
       const low = offset >>> 0;
       const high = Math.floor(offset / 2 ** 32) >>> 0;
-      Atomics.store(slot.control, 1, low);
-      Atomics.store(slot.control, 2, high);
-      Atomics.store(slot.control, 3, length);
-      Atomics.store(slot.control, 4, 0);
-      Atomics.store(slot.control, 5, 0);
-      Atomics.store(slot.control, 0, VIRTUAL_FILE_PROXY_STATE_REQUESTED);
-      Atomics.notify(slot.control, 0, 1);
+      Atomics.store(slot.control, VIRTUAL_FILE_CONTROL_OFFSET_LOW_INDEX, low);
+      Atomics.store(slot.control, VIRTUAL_FILE_CONTROL_OFFSET_HIGH_INDEX, high);
+      Atomics.store(slot.control, VIRTUAL_FILE_CONTROL_LENGTH_INDEX, length);
+      Atomics.store(slot.control, VIRTUAL_FILE_CONTROL_BYTES_READ_INDEX, 0);
+      Atomics.store(slot.control, VIRTUAL_FILE_CONTROL_STATUS_INDEX, VIRTUAL_FILE_STATUS_OK);
+      Atomics.store(slot.control, VIRTUAL_FILE_CONTROL_STATE_INDEX, VIRTUAL_FILE_STATE_REQUESTED);
+      Atomics.notify(slot.control, VIRTUAL_FILE_CONTROL_STATE_INDEX, 1);
       const deadline = createWaitDeadline(VIRTUAL_FILE_PROXY_READ_TIMEOUT_MS);
       while (true) {
-        const state = Atomics.load(slot.control, 0);
-        if (state === VIRTUAL_FILE_PROXY_STATE_DONE) break;
-        const result = waitForAtomicsStateChange(slot.control, 0, state, { deadline });
+        const state = Atomics.load(slot.control, VIRTUAL_FILE_CONTROL_STATE_INDEX);
+        if (state === VIRTUAL_FILE_STATE_DONE) break;
+        const result = waitForAtomicsStateChange(
+          slot.control,
+          VIRTUAL_FILE_CONTROL_STATE_INDEX,
+          state,
+          { deadline },
+        );
         if (result === 'timed-out') {
           // The producer may still own this slot (mid read). Poison the proxy and do not recycle
           // the slot below, so a stale producer completion can never satisfy a later request.
@@ -444,10 +536,13 @@ class BrowserVirtualRandomAccessFile {
           throw new Error(`virtual file read timed out for ${this.proxy.id}`);
         }
       }
-      if (Atomics.load(slot.control, 5) !== 0) {
+      if (Atomics.load(slot.control, VIRTUAL_FILE_CONTROL_STATUS_INDEX) !== VIRTUAL_FILE_STATUS_OK) {
         throw new Error(`virtual file read failed for ${this.proxy.id}`);
       }
-      const bytesRead = Math.max(0, Math.min(Atomics.load(slot.control, 4), length));
+      const bytesRead = Math.max(
+        0,
+        Math.min(Atomics.load(slot.control, VIRTUAL_FILE_CONTROL_BYTES_READ_INDEX), length),
+      );
       if (bytesRead > 0) dst.set(slot.data.subarray(0, bytesRead));
       if (shouldTrace) {
         this.trace?.(
@@ -465,39 +560,44 @@ class BrowserVirtualRandomAccessFile {
     }
   }
 
-  shouldTraceRead(readIndex) {
+  shouldTraceRead(readIndex: number) {
     return readIndex <= VIRTUAL_FILE_PROXY_TRACE_READ_LIMIT || readIndex % 128 === 0;
   }
 
-  acquireProxySlot() {
+  acquireProxySlot(): VirtualFileProxySlotView {
     if (this.proxyFailed) {
       throw new Error(`virtual file proxy is no longer usable for ${this.proxy.id}`);
     }
     const deadline = createWaitDeadline(VIRTUAL_FILE_PROXY_SLOT_ACQUIRE_TIMEOUT_MS);
     while (true) {
       for (const slot of this.slots) {
-        const state = Atomics.load(slot.control, 0);
-        if (state === VIRTUAL_FILE_PROXY_STATE_DONE) {
+        const state = Atomics.load(slot.control, VIRTUAL_FILE_CONTROL_STATE_INDEX);
+        if (state === VIRTUAL_FILE_STATE_DONE) {
           this.reclaimStaleDoneProxySlot(slot);
           continue;
         }
         if (Atomics.compareExchange(
           slot.control,
-          0,
-          VIRTUAL_FILE_PROXY_STATE_IDLE,
-          VIRTUAL_FILE_PROXY_STATE_LOCKED,
-        ) === VIRTUAL_FILE_PROXY_STATE_IDLE) {
+          VIRTUAL_FILE_CONTROL_STATE_INDEX,
+          VIRTUAL_FILE_STATE_IDLE,
+          VIRTUAL_FILE_STATE_CONSUMER_LOCKED,
+        ) === VIRTUAL_FILE_STATE_IDLE) {
           return slot;
         }
       }
       const first = this.slots[0];
       if (!first) throw new Error(`virtual file proxy has no read slots for ${this.proxy.id}`);
-      const state = Atomics.load(first.control, 0);
-      if (state === VIRTUAL_FILE_PROXY_STATE_DONE) {
+      const state = Atomics.load(first.control, VIRTUAL_FILE_CONTROL_STATE_INDEX);
+      if (state === VIRTUAL_FILE_STATE_DONE) {
         this.reclaimStaleDoneProxySlot(first);
         continue;
       }
-      const waitResult = waitForAtomicsStateChange(first.control, 0, state, { deadline });
+      const waitResult = waitForAtomicsStateChange(
+        first.control,
+        VIRTUAL_FILE_CONTROL_STATE_INDEX,
+        state,
+        { deadline },
+      );
       if (waitResult === 'timed-out') {
         this.proxyFailed = true;
         throw new Error(`virtual file read slot acquisition timed out for ${this.proxy.id}`);
@@ -505,20 +605,20 @@ class BrowserVirtualRandomAccessFile {
     }
   }
 
-  reclaimStaleDoneProxySlot(slot) {
+  reclaimStaleDoneProxySlot(slot: VirtualFileProxySlotView) {
     if (Atomics.compareExchange(
       slot.control,
-      0,
-      VIRTUAL_FILE_PROXY_STATE_DONE,
-      VIRTUAL_FILE_PROXY_STATE_IDLE,
-    ) === VIRTUAL_FILE_PROXY_STATE_DONE) {
-      Atomics.notify(slot.control, 0, 1);
+      VIRTUAL_FILE_CONTROL_STATE_INDEX,
+      VIRTUAL_FILE_STATE_DONE,
+      VIRTUAL_FILE_STATE_IDLE,
+    ) === VIRTUAL_FILE_STATE_DONE) {
+      Atomics.notify(slot.control, VIRTUAL_FILE_CONTROL_STATE_INDEX, 1);
     }
   }
 
-  releaseProxySlot(slot) {
-    Atomics.store(slot.control, 0, VIRTUAL_FILE_PROXY_STATE_IDLE);
-    Atomics.notify(slot.control, 0, 1);
+  releaseProxySlot(slot: VirtualFileProxySlotView) {
+    Atomics.store(slot.control, VIRTUAL_FILE_CONTROL_STATE_INDEX, VIRTUAL_FILE_STATE_IDLE);
+    Atomics.notify(slot.control, VIRTUAL_FILE_CONTROL_STATE_INDEX, 1);
   }
 
   writeAt() {
@@ -530,7 +630,7 @@ class BrowserVirtualRandomAccessFile {
     if (this.source instanceof Uint8Array || this.source instanceof ArrayBuffer) {
       return this.source.byteLength;
     }
-    return Number(this.source.size || 0);
+    return isBlobLike(this.source) ? Number(this.source.size || 0) : 0;
   }
 
   truncate() {}
@@ -578,32 +678,34 @@ function createRandomAccessFileIoStats() {
   };
 }
 
-function addRandomAccessFileIoStats(target, source) {
+function addRandomAccessFileIoStats(target: RandomAccessFileIoStats, source: Partial<Record<keyof RandomAccessFileIoStats, unknown>> | null | undefined) {
   if (!source || typeof source !== 'object') return;
-  for (const key of Object.keys(target)) target[key] += Number(source[key]) || 0;
+  for (const key of Object.keys(target) as Array<keyof RandomAccessFileIoStats>) {
+    target[key] += Number(source[key]) || 0;
+  }
 }
 
-function randomAccessFileIoStatsHaveData(stats) {
+function randomAccessFileIoStatsHaveData(stats: RandomAccessFileIoStats) {
   return Object.values(stats).some((value) => value > 0);
 }
 
-function isVirtualFileProxy(value) {
+function isVirtualFileProxy(value: unknown): value is VirtualFileProxy {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<VirtualFileProxy>;
   return Boolean(
-    value
-      && typeof value === 'object'
-      && typeof value.id === 'string'
-      && Array.isArray(value.slots)
-      && Number.isFinite(Number(value.size))
-      && Number(value.size) >= 0,
+    typeof record.id === 'string'
+      && Array.isArray(record.slots)
+      && Number.isFinite(Number(record.size))
+      && Number(record.size) >= 0,
   );
 }
 
-function normalizeVirtualFileProxySlots(proxy) {
-  const slots = [];
+function normalizeVirtualFileProxySlots(proxy: VirtualFileProxy): VirtualFileProxySlotView[] {
+  const slots: VirtualFileProxySlotView[] = [];
   for (const slot of proxy.slots) {
     if (!isSharedArrayBufferLike(slot?.controlBuffer) || !isSharedArrayBufferLike(slot?.dataBuffer)) continue;
     const control = new Int32Array(slot.controlBuffer);
-    if (control.length < 6) continue;
+    if (control.length < VIRTUAL_FILE_CONTROL_WORD_COUNT) continue;
     slots.push({
       control,
       data: new Uint8Array(slot.dataBuffer),
@@ -615,7 +717,7 @@ function normalizeVirtualFileProxySlots(proxy) {
   return slots;
 }
 
-function isSharedArrayBufferLike(value) {
+function isSharedArrayBufferLike(value: unknown): value is SharedArrayBuffer {
   return Boolean(
     typeof SharedArrayBuffer === 'function'
       && value
@@ -624,17 +726,19 @@ function isSharedArrayBufferLike(value) {
   );
 }
 
-function isBlobLike(value) {
-  return Boolean(value && typeof value === 'object' && typeof value.slice === 'function' && 'size' in value);
+function isBlobLike(value: unknown): value is Blob {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<Blob>;
+  return Boolean(typeof record.slice === 'function' && 'size' in record);
 }
 
-function readFitsWithinCacheBlock(offset, byteLength, blockBytes = RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES) {
+function readFitsWithinCacheBlock(offset: number, byteLength: number, blockBytes = RANDOM_ACCESS_READ_CACHE_BLOCK_BYTES) {
   const blockStart =
     Math.floor(offset / blockBytes) * blockBytes;
   return offset + byteLength <= blockStart + blockBytes;
 }
 
-function readSyncAccessHandleFully(syncHandle, dst, offset) {
+function readSyncAccessHandleFully(syncHandle: SyncAccessHandleLike, dst: Uint8Array, offset: number) {
   let totalRead = 0;
   while (totalRead < dst.byteLength) {
     const chunk = dst.subarray(totalRead);
@@ -652,12 +756,17 @@ function monotonicNowMs() {
   return Date.now();
 }
 
-function createWaitDeadline(timeoutMs) {
+function createWaitDeadline(timeoutMs: unknown) {
   const normalized = Math.max(0, Number(timeoutMs) || 0);
   return normalized > 0 ? monotonicNowMs() + normalized : Number.POSITIVE_INFINITY;
 }
 
-function waitForAtomicsStateChange(control, index, expectedState, options = {}) {
+function waitForAtomicsStateChange(
+  control: Int32Array<SharedArrayBuffer>,
+  index: number,
+  expectedState: number,
+  options: { deadline?: number; timeoutMs?: number } = {},
+): AtomicsWaitResult {
   const deadline = typeof options.deadline === 'number'
     ? options.deadline
     : createWaitDeadline(options.timeoutMs ?? ATOMICS_WAIT_TIMEOUT_MS);

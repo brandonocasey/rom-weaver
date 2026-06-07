@@ -30,6 +30,10 @@
       "types": "./src/rom-weaver-browser-opfs-api.d.ts",
       "import": "./src/rom-weaver-browser-opfs-api.ts"
     },
+    "./browser-virtual-file-protocol": {
+      "types": "./src/browser-virtual-file-protocol.ts",
+      "import": "./src/browser-virtual-file-protocol.ts"
+    },
     "./workers/browser-client": {
       "types": "./src/workers/browser-worker-client.d.ts",
       "import": "./src/workers/browser-worker-client.ts"
@@ -51,8 +55,10 @@
   "scripts": {
     "prepare:dist": "node ./scripts/sync-dist.mjs",
     "prepack": "npm run check",
-    "check": "npm run check:types && node --check ./src/index.mjs && npm run lint:knip",
+    "check": "npm run lint:code && npm run check:types && node --check ./src/index.mjs && npm run lint:knip",
     "check:types": "tsc -p tsconfig.json --noEmit",
+    "lint": "npm run check",
+    "lint:code": "biome check package.json knip.jsonc vitest.browser.config.mjs tsconfig.json src tests --diagnostic-level=error",
     "lint:knip": "knip --no-progress",
     "test": "npm run test:browser",
     "test:browser": "vitest --config ./vitest.browser.config.mjs run",
@@ -62,6 +68,7 @@
     "test:browser:stress:1gb": "ROM_WEAVER_WASM_STRESS_1GB=1 vitest --config ./vitest.browser.config.mjs run -t \"survives 1 GiB compress extract checksum and 100MB-class xdelta apply workload\""
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.13",
     "@bjorn3/browser_wasi_shim": "^0.4.2",
     "@vitest/browser": "^4.1.7",
     "@vitest/browser-playwright": "^4.1.7",
