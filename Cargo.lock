@@ -1808,6 +1808,7 @@ dependencies = [
 name = "rom-weaver-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rayon",
  "serde",
  "serde_json",

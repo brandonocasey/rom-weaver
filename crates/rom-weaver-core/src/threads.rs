@@ -33,6 +33,41 @@ fn clamp_platform_thread_count(count: usize) -> usize {
     }
 }
 
+/// Best-effort total physical RAM in bytes, used to bound memory-hungry
+/// parallelism (e.g. seeded 7z block encoding, where each worker holds a full
+/// dictionary). Returns `None` when it cannot be queried; callers then fall back
+/// to a fixed budget.
+#[cfg(target_os = "linux")]
+pub fn physical_memory_bytes() -> Option<u64> {
+    // SAFETY: `sysconf` reads a numeric system limit and has no preconditions.
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    (pages > 0 && page_size > 0).then(|| (pages as u64).saturating_mul(page_size as u64))
+}
+
+#[cfg(target_os = "macos")]
+pub fn physical_memory_bytes() -> Option<u64> {
+    let mut value: u64 = 0;
+    let mut size = std::mem::size_of::<u64>();
+    // SAFETY: `hw.memsize` writes a single u64; `size` matches its width and the
+    // name is a valid NUL-terminated C string.
+    let rc = unsafe {
+        libc::sysctlbyname(
+            c"hw.memsize".as_ptr(),
+            (&mut value as *mut u64).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (rc == 0 && value > 0).then_some(value)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn physical_memory_bytes() -> Option<u64> {
+    None
+}
+
 /// Resolves the thread count for `ThreadBudget::Auto`: the host's available parallelism on
 /// native targets, falling back to [`DEFAULT_THREAD_COUNT`] on wasm or when the query fails.
 fn auto_thread_count() -> usize {

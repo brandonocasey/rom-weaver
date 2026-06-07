@@ -15,3 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 ts-rs = { workspace = true, optional = true, features = ["serde-json-impl"] }
+
+# Used only to query physical RAM for memory-bounded parallelism on native hosts.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+libc = "0.2.137"

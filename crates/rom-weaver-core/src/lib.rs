@@ -45,4 +45,7 @@ pub use registry::{
     traced_container_handler, traced_patch_handler,
 };
 pub use selection::{SelectionMatcher, normalize_archive_name};
-pub use threads::{SharedThreadPool, ThreadBudget, ThreadCapability, ThreadExecution, ThreadMode};
+pub use threads::{
+    SharedThreadPool, ThreadBudget, ThreadCapability, ThreadExecution, ThreadMode,
+    physical_memory_bytes,
+};
