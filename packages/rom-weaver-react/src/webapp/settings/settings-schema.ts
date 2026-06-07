@@ -41,7 +41,7 @@ const SETTINGS_STORAGE_VERSION = 5;
 
 type RuntimeSharedSettings = Omit<
   SettingsState,
-  "erudaDevTools" | "rvzCodec" | "rvzCompressionLevel" | "z3dsCompressionLevel" | "sevenZipLevel" | "zipLevel"
+  "mobileDevTools" | "rvzCodec" | "rvzCompressionLevel" | "z3dsCompressionLevel" | "sevenZipLevel" | "zipLevel"
 > & {
   rvzCompression: string;
   rvzCompressionLevel: number;
@@ -74,7 +74,7 @@ const storedStringOrNumberSchema = v.union([v.string(), v.number()]);
 const BOOLEAN_SETTINGS_FIELDS = [
   "fixChecksum",
   "rvzScrub",
-  "erudaDevTools",
+  "mobileDevTools",
 ] as const satisfies readonly SettingsFieldKey[];
 const HIDDEN_DEFAULT_SETTINGS_FIELDS = [
   "compressionFormat",
@@ -439,10 +439,10 @@ const readGroupedStoredSettings = (source: Record<string, unknown>): Record<stri
     compressionProfile: compression.profile,
     defaultArchive: commonSettings.defaultArchive,
     defaultCompression: commonSettings.defaultCompression,
-    erudaDevTools: commonSettings.erudaDevTools,
     fixChecksum: patch.fixChecksum,
     language: commonSettings.language,
     logLevel: commonSettings.logLevel,
+    mobileDevTools: commonSettings.mobileDevTools,
     requireInputChecksumMatch: validation.requireInputChecksumMatch,
     requireOutputChecksumMatch: validation.requireOutputChecksumMatch,
     rvzBlockSize: compression.rvzBlockSize,
@@ -581,8 +581,8 @@ const loadSettings = (storage?: StorageLike): SettingsState => {
         resolveWorkerThreadsNumericFallback(settings.workerThreads),
       );
 
-    const erudaDevTools = readStoredField(storedBooleanSchema, loadedSettings.erudaDevTools);
-    if (erudaDevTools !== undefined) settings.erudaDevTools = erudaDevTools;
+    const mobileDevTools = readStoredField(storedBooleanSchema, loadedSettings.mobileDevTools);
+    if (mobileDevTools !== undefined) settings.mobileDevTools = mobileDevTools;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     resetStoredSettings(storageObject, message);
@@ -614,7 +614,7 @@ const serializeSettingsForStorage = (source?: SettingsState | null): string | nu
       (storedSettings.common as Record<string, unknown>)[fieldKey] = value;
       return;
     }
-    if (fieldKey === "language" || fieldKey === "logLevel" || fieldKey === "erudaDevTools") {
+    if (fieldKey === "language" || fieldKey === "logLevel" || fieldKey === "mobileDevTools") {
       (storedSettings.common as Record<string, unknown>)[fieldKey] = value;
       return;
     }

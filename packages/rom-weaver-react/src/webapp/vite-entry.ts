@@ -1,3 +1,4 @@
+import "./console-log-capture.ts";
 import "./browser-runtime-diagnostics.ts";
 import "./eruda-loader.ts";
 // Applies the persisted/system theme to <html data-theme> before first paint.

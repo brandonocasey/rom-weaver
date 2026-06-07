@@ -97,6 +97,10 @@
 }
 .rw-app .iconbtn:hover { border-color: var(--rw-line-strong); color: var(--rw-ink); }
 .rw-app .iconbtn svg { width: 17px; height: 17px; }
+.rw-app .console-copy-toggle.copied { border-color: var(--rw-ok); background: color-mix(in oklab, var(--rw-ok) 16%, var(--rw-inset)); color: var(--rw-ok); }
+.rw-app .console-copy-toggle.failed { border-color: var(--rw-bad); background: color-mix(in oklab, var(--rw-bad) 12%, var(--rw-inset)); color: var(--rw-bad); }
+.rw-app .mobile-devtools-toggle[aria-pressed="true"] { border-color: var(--rw-accent); background: var(--rw-accent); color: var(--rw-accent-ink); }
+.rw-app .mobile-devtools-toggle[aria-pressed="true"]:hover { color: var(--rw-accent-ink); }
 
 /* ── panel + steps ── */
 .rw-app .panel { border: 1px solid var(--rw-line); border-radius: 8px; background: var(--rw-panel); box-shadow: var(--rw-shadow); }
@@ -626,5 +630,11 @@
 }
 
 @media (max-width: 420px) {
+  .rw-app .topbar { column-gap: 8px; }
+  .rw-app .topbar .iconbtn { width: 32px; height: 32px; }
   .rw-modal .setrow, .rw-modal .setcols .setrow, .rw-modal.settings-modal .setrow { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 5px; padding-top: 7px; padding-bottom: 8px; }
+}
+
+@media (max-width: 350px) {
+  .rw-app .wordmark .wm-text { display: none; }
 }

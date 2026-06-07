@@ -21,11 +21,11 @@ import { WebappRoot } from "./webapp-root.tsx";
 import { type ConfirmationDialogState, createEmptyConfirmationDialogState } from "./webapp-root-types.ts";
 
 // Webapp controller invariants now live across `settings-state` and `webapp-controller`:
-// erudaDevTools: false
-// loadedSettings.erudaDevTools
+// mobileDevTools: false
+// loadedSettings.mobileDevTools
 // localStorage.setItem(LOCAL_STORAGE_SETTINGS_ID, JSON.stringify(settings))
-// ROM_WEAVER_ERUDA_LOADER.setEnabled(settings.erudaDevTools)
-// window.ROM_WEAVER_ERUDA_LOADER.setEnabled(settings.erudaDevTools)
+// ROM_WEAVER_ERUDA_LOADER.setEnabled(settings.mobileDevTools)
+// window.ROM_WEAVER_ERUDA_LOADER.setEnabled(settings.mobileDevTools)
 // SETTINGS_VALID_CHD_CREATECD_CODECS = ['cdzs', 'cdlz', 'cdzl', 'cdfl']
 // validCodecs.indexOf(codec) === -1
 // rawDraft.compressionProfile
@@ -54,9 +54,9 @@ type RuntimeValue =
 type RuntimeSettings = Record<string, RuntimeValue> & {
   language?: RuntimeScalar;
   allowDropFiles?: RuntimeScalar;
+  mobileDevTools?: RuntimeScalar;
   ondropfiles?: (...args: RuntimeValue[]) => RuntimeValue;
   oninitialize?: (runtime?: RuntimeValue) => void;
-  erudaDevTools?: RuntimeScalar;
 };
 
 type WebAppConfig = {
@@ -158,7 +158,7 @@ const applySettingsToRuntime = (settings: RuntimeSettings) => {
     workerThreads: settings.workerThreads,
   });
   if (window.ROM_WEAVER_ERUDA_LOADER && typeof window.ROM_WEAVER_ERUDA_LOADER.setEnabled === "function")
-    window.ROM_WEAVER_ERUDA_LOADER.setEnabled(settings.erudaDevTools);
+    window.ROM_WEAVER_ERUDA_LOADER.setEnabled(settings.mobileDevTools);
 };
 
 const webappController = createWebappRootController({
@@ -290,6 +290,11 @@ const renderWebappRoot = (): undefined => {
             })();
           },
           onConfirmConfirmation: () => closeConfirmationDialog(true),
+          onCopyConsoleLogs: () => {
+            const copyLogs = window.ROM_WEAVER_CONSOLE_LOGS?.copy;
+            if (typeof copyLogs !== "function") return Promise.reject(new Error("Console log capture is unavailable"));
+            return copyLogs();
+          },
           onCreatorModifiedChange: (file) => webappController.setCreatorModifiedState(file),
           onCreatorOriginalChange: (file) => webappController.setCreatorOriginalState(file),
           onCreatorPatchTypeChange: (patchType) => webappController.setCreatorPatchType(patchType),
@@ -311,6 +316,9 @@ const renderWebappRoot = (): undefined => {
             webappController.saveDraftSettings();
           },
           onSelectView: (view) => webappController.selectView(view),
+          onToggleMobileDevTools: () => {
+            window.ROM_WEAVER_ERUDA_LOADER?.toggle?.();
+          },
           onTrimOutputFormatChange: (format) => webappController.setTrimOutputFormat(format),
           onTrimSettingsChange: (settings) => webappController.setTrimSettingsState(settings),
           onTrimSourceChange: (file) => webappController.setTrimSourceState(file),

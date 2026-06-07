@@ -40,7 +40,7 @@ type FieldRenderProps = Pick<SettingsPanelProps, "draftSettings" | "uiState" | "
 };
 
 const settingsPanelSections: Array<{ fields: SettingsFieldKey[]; title: string }> = [
-  { fields: ["language", "logLevel", "erudaDevTools"], title: "General" },
+  { fields: ["language", "logLevel", "mobileDevTools"], title: "General" },
   { fields: ["fixChecksum"], title: "Fixes" },
   { fields: ["requireInputChecksumMatch", "requireOutputChecksumMatch"], title: "Verification" },
   { fields: ["defaultCompression", "compressionProfile", "workerThreads"], title: "Compression" },

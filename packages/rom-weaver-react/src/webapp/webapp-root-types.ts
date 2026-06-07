@@ -52,6 +52,8 @@ type WebappRootProps = {
   actions: {
     onSelectView: (view: WorkflowView) => void;
     onDraftChange: (field: string, value: string | boolean) => void;
+    onCopyConsoleLogs: () => Promise<void | string>;
+    onToggleMobileDevTools: () => void;
     onOpenSettings: () => void;
     onCloseSettings: () => void;
     onReloadUpdate: () => void;

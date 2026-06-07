@@ -28,10 +28,10 @@ test("settings persistence round-trips every visible settings field", () => {
     chdCreateDvdCodecs: "zstd:12,lzma:7,zlib:6,huff,flac:5",
     compressionProfile: "medium",
     defaultCompression: "7z only",
-    erudaDevTools: true,
     fixChecksum: true,
     language: "fr",
     logLevel: "debug",
+    mobileDevTools: true,
     requireInputChecksumMatch: false,
     requireOutputChecksumMatch: false,
     rvzBlockSize: 262144,
@@ -51,6 +51,7 @@ test("settings persistence round-trips every visible settings field", () => {
 
   const storedSettings = JSON.parse(serializedSettings);
   expect(storedSettings.common.defaultCompression).toBe("7z only");
+  expect(storedSettings.common.mobileDevTools).toBe(true);
   expect(storedSettings.apply.compression.rvzCodec).toBe("zstd:7");
   expect(storedSettings.apply.compression.rvzCompression).toBeUndefined();
   expect(storedSettings.apply.compression.rvzCompressionLevel).toBeUndefined();

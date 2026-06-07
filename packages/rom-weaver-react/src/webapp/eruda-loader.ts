@@ -5,6 +5,9 @@
   const SETTINGS_STORAGE_VERSION = 5;
 
   let erudaEnabled = false;
+  let erudaScriptLoading = false;
+  let openErudaWhenReady = false;
+  let erudaPanelOpen = false;
   const addErudaScript = (script: HTMLScriptElement) => {
     document.head.insertBefore(script, document.head.firstChild);
   };
@@ -15,7 +18,7 @@
     const settings = JSON.parse(rawSettings) as unknown;
     if (!isRecord(settings) || settings.version !== SETTINGS_STORAGE_VERSION) return false;
     const commonSettings = isRecord(settings.common) ? settings.common : null;
-    return commonSettings?.erudaDevTools === true;
+    return commonSettings?.mobileDevTools === true;
   };
 
   const readStoredErudaSetting = (): boolean => {
@@ -28,11 +31,92 @@
     }
   };
   const shouldEnableEruda = () => readStoredErudaSetting();
+  const setErudaPanelOpen = (open: boolean) => {
+    erudaPanelOpen = open;
+    window.ROM_WEAVER_ERUDA_PANEL_OPEN = open;
+    document.documentElement.dataset.mobileDevtoolsOpen = open ? "true" : "false";
+    window.dispatchEvent(new CustomEvent("rom-weaver:mobile-devtools-state", { detail: { open } }));
+  };
   const initEruda = () => {
-    if (!(erudaEnabled && window.eruda) || window.__ROM_WEAVER_ERUDA_INITIALIZED__) return;
-    window.__ROM_WEAVER_ERUDA_INITIALIZED__ = true;
-    window.eruda.init();
-    console.log("Eruda dev tools initialized");
+    if (!(erudaEnabled && window.eruda)) return;
+    if (!window.__ROM_WEAVER_ERUDA_INITIALIZED__) {
+      window.__ROM_WEAVER_ERUDA_INITIALIZED__ = true;
+      window.eruda.init();
+      console.log("Mobile dev tools initialized");
+    }
+    scheduleHideFloatingErudaButton();
+  };
+  const getErudaShadowRoot = () => document.getElementById("eruda")?.shadowRoot ?? null;
+  const hideFloatingErudaButton = () => {
+    const entryButton = getErudaShadowRoot()?.querySelector(".eruda-entry-btn");
+    if (entryButton instanceof HTMLElement) entryButton.style.display = "none";
+  };
+  const scheduleHideFloatingErudaButton = () => {
+    hideFloatingErudaButton();
+    window.requestAnimationFrame(hideFloatingErudaButton);
+    window.setTimeout(hideFloatingErudaButton, 50);
+    window.setTimeout(hideFloatingErudaButton, 250);
+  };
+  const getErudaPanelElements = () => {
+    const shadowRoot = getErudaShadowRoot();
+    const container = shadowRoot?.querySelector(".eruda-container");
+    const devTools = shadowRoot?.querySelector(".eruda-dev-tools");
+    return {
+      container: container instanceof HTMLElement ? container : null,
+      devTools: devTools instanceof HTMLElement ? devTools : null,
+      shadowRoot,
+    };
+  };
+  const isErudaPanelOpen = () => {
+    const { container, devTools } = getErudaPanelElements();
+    return !!(
+      container &&
+      !container.classList.contains("__chobitsu-hide__") &&
+      (!devTools || devTools.style.display !== "none")
+    );
+  };
+  const syncErudaPanelOpenState = () => setErudaPanelOpen(isErudaPanelOpen());
+  const openErudaPanel = () => {
+    hideFloatingErudaButton();
+    const { container, devTools, shadowRoot } = getErudaPanelElements();
+    if (!shadowRoot) return;
+    container?.classList.remove("__chobitsu-hide__");
+    if (devTools) {
+      devTools.style.display = "block";
+      devTools.style.opacity = "1";
+    }
+    const consoleTab = shadowRoot.querySelector('.luna-tab-item[data-id="console"]');
+    if (consoleTab instanceof HTMLElement) consoleTab.click();
+    setErudaPanelOpen(true);
+  };
+  const closeErudaPanel = () => {
+    if (window.eruda && typeof window.eruda.hide === "function") window.eruda.hide();
+    const { container, devTools } = getErudaPanelElements();
+    container?.classList.add("__chobitsu-hide__");
+    if (devTools) {
+      devTools.style.display = "none";
+      devTools.style.opacity = "0";
+    }
+    scheduleHideFloatingErudaButton();
+    setErudaPanelOpen(false);
+  };
+  const forceOpenErudaPanel = () => {
+    openErudaPanel();
+  };
+  const scheduleForceOpenErudaPanel = () => {
+    forceOpenErudaPanel();
+    window.requestAnimationFrame(forceOpenErudaPanel);
+    window.setTimeout(forceOpenErudaPanel, 50);
+  };
+  const showEruda = () => {
+    if (!(erudaEnabled && window.eruda)) return;
+    initEruda();
+    openErudaWhenReady = false;
+    if (typeof window.eruda.show === "function") {
+      window.eruda.show();
+      window.eruda.show("console");
+    }
+    scheduleForceOpenErudaPanel();
   };
   const loadEruda = () => {
     erudaEnabled = true;
@@ -41,19 +125,46 @@
       initEruda();
       return;
     }
+    if (erudaScriptLoading) return;
+    erudaScriptLoading = true;
 
     const script = document.createElement("script");
     script.src = ERUDA_URL;
     script.crossOrigin = "anonymous";
-    script.onload = initEruda;
+    script.onload = () => {
+      erudaScriptLoading = false;
+      initEruda();
+      if (openErudaWhenReady) showEruda();
+    };
     script.onerror = () => {
-      console.error(`Failed to load Eruda dev tools from ${ERUDA_URL}`);
+      erudaScriptLoading = false;
+      openErudaWhenReady = false;
+      console.error(`Failed to load mobile dev tools from ${ERUDA_URL}`);
     };
     addErudaScript(script);
   };
+  const openEruda = () => {
+    openErudaWhenReady = true;
+    loadEruda();
+    showEruda();
+  };
+  const toggleEruda = () => {
+    if (erudaScriptLoading && openErudaWhenReady) {
+      openErudaWhenReady = false;
+      setErudaPanelOpen(false);
+      return;
+    }
+    if (erudaEnabled && window.eruda && isErudaPanelOpen()) {
+      closeErudaPanel();
+      return;
+    }
+    openEruda();
+  };
   const unloadEruda = () => {
     erudaEnabled = false;
+    openErudaWhenReady = false;
     window.ROM_WEAVER_ERUDA_ENABLED = false;
+    setErudaPanelOpen(false);
     if (!(window.eruda && window.__ROM_WEAVER_ERUDA_INITIALIZED__)) return;
     if (typeof window.eruda.destroy === "function") window.eruda.destroy();
     else if (typeof window.eruda.hide === "function") window.eruda.hide();
@@ -66,13 +177,17 @@
 
   window.ROM_WEAVER_ERUDA_LOADER = {
     isEnabled: () => erudaEnabled,
+    isOpen: () => erudaPanelOpen,
+    open: openEruda,
     setEnabled: (enabled) => {
       setErudaEnabled(!!enabled);
     },
     syncFromStoredSettings: () => {
       setErudaEnabled(readStoredErudaSetting());
     },
+    toggle: toggleEruda,
   };
+  syncErudaPanelOpenState();
 
   if (!shouldEnableEruda()) return;
 
@@ -81,7 +196,7 @@
     window.ROM_WEAVER_ERUDA_ENABLED = true;
     document.write(`<script crossorigin="anonymous" src="${ERUDA_URL}"></script>`);
     document.write(
-      `<script>(function(){if(window.eruda&&!window.${ERUDA_INITIALIZED_FLAG}){window.${ERUDA_INITIALIZED_FLAG}=true;window.eruda.init();console.log("Eruda dev tools initialized");}}());</script>`,
+      `<script>(function(){function h(){var r=document.getElementById("eruda");var s=r&&r.shadowRoot;var b=s&&s.querySelector(".eruda-entry-btn");if(b)b.style.display="none";}if(window.eruda&&!window.${ERUDA_INITIALIZED_FLAG}){window.${ERUDA_INITIALIZED_FLAG}=true;window.eruda.init();console.log("Mobile dev tools initialized");}h();requestAnimationFrame(h);setTimeout(h,50);setTimeout(h,250);}());</script>`,
     );
     return;
   }

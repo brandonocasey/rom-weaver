@@ -12,10 +12,21 @@ declare global {
       markMounted?: () => void;
       showError?: (messageText?: string) => void;
     };
+    ROM_WEAVER_CONSOLE_LOGS?: {
+      clear: () => void;
+      copy: () => Promise<string>;
+      formatJsonLines: () => string;
+      getReport: () => import("./console-log-capture.ts").ConsoleLogReport;
+      size: () => number;
+    };
     ROM_WEAVER_ERUDA_ENABLED?: boolean;
+    ROM_WEAVER_ERUDA_PANEL_OPEN?: boolean;
     ROM_WEAVER_ERUDA_LOADER?: {
+      open?: () => void;
+      isOpen?: () => boolean;
       setEnabled: (enabled: RuntimeValue) => void;
       syncFromStoredSettings: () => void;
+      toggle?: () => void;
       isEnabled: () => boolean;
     };
     ROM_WEAVER_BROWSER_DIAGNOSTICS?: import("./browser-runtime-diagnostics.ts").BrowserRuntimeDiagnosticsApi;
@@ -30,6 +41,7 @@ declare global {
       init: () => void;
       destroy?: () => void;
       hide?: () => void;
+      show?: (tool?: string) => void;
     };
   }
 }
