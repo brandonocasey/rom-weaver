@@ -158,11 +158,7 @@ impl PatchHandler for GdiffPatchHandler {
         let _ = fs::metadata(&request.original)?;
         let modified_len = fs::metadata(&request.modified)?.len();
         let (execution, pool) = context.build_pool(gdiff_create_thread_capability(modified_len))?;
-        if let Some(parent) = request.output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let mut output = BufWriter::new(File::create(&request.output)?);
+        let mut output = crate::create_buffered_output(&request.output)?;
         let (command_count, output_bytes) = create_gdiff_patch(
             &request.modified,
             &pool,
@@ -185,14 +181,7 @@ impl PatchHandler for GdiffPatchHandler {
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        PatchCapabilities {
-            parse: true,
-            apply: true,
-            create: true,
-            threaded_scan: false,
-            threaded_diff: true,
-            threaded_output: true,
-        }
+        crate::threaded_create_capabilities()
     }
 }
 
@@ -432,11 +421,7 @@ fn apply_gdiff_prepared_chunks(
     output_path: &Path,
     context: &OperationContext,
 ) -> Result<()> {
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let mut output = BufWriter::new(File::create(output_path)?);
+    let mut output = crate::create_buffered_output(output_path)?;
     for chunk in chunks {
         context.cancel().check()?;
         output.seek(SeekFrom::Start(chunk.command.output_offset))?;
@@ -523,15 +508,13 @@ fn create_gdiff_patch(
     output: &mut dyn Write,
 ) -> Result<(usize, u64)> {
     if use_parallel_scan {
-        if crate::patches_reads_source_on_main_thread() {
-            let modified_len = fs::metadata(modified_path)?.len();
-            if modified_len > crate::IN_MEMORY_APPLY_LIMIT_BYTES {
-                info!(
-                    modified_len,
-                    "GDIFF create: modified size exceeds in-memory limit; falling back to serial path"
-                );
-                return create_gdiff_patch_streaming(modified_path, output);
-            }
+        let modified_len = fs::metadata(modified_path)?.len();
+        if crate::create_exceeds_main_thread_cap(modified_len) {
+            info!(
+                modified_len,
+                "GDIFF create: modified size exceeds in-memory limit; falling back to serial path"
+            );
+            return create_gdiff_patch_streaming(modified_path, output);
         }
         create_gdiff_patch_parallel(modified_path, pool, output)
     } else {

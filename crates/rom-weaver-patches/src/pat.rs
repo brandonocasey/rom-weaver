@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
@@ -198,10 +198,7 @@ impl PatchHandler for PatPatchHandler {
             execution.used_parallelism,
         )?;
 
-        if let Some(parent) = request.output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut output = BufWriter::new(File::create(&request.output)?);
+        let mut output = crate::create_buffered_output(&request.output)?;
         for record in &created.records {
             writeln!(
                 output,
@@ -224,14 +221,7 @@ impl PatchHandler for PatPatchHandler {
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        PatchCapabilities {
-            parse: true,
-            apply: true,
-            create: true,
-            threaded_scan: false,
-            threaded_diff: true,
-            threaded_output: true,
-        }
+        crate::threaded_create_capabilities()
     }
 }
 

@@ -194,12 +194,7 @@ impl PatchHandler for BpsPatchHandler {
         let modified_len = fs::metadata(&request.modified)?.len();
         let execution = context.plan_threads(ThreadCapability::single_threaded());
 
-        if let Some(parent) = request.output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let output_file = File::create(&request.output)?;
-        let mut output = BufWriter::new(output_file);
+        let mut output = crate::create_buffered_output(&request.output)?;
         let created = create_bps_patch_in_memory(
             crate::PatchCreateSources {
                 original_path: &request.original,

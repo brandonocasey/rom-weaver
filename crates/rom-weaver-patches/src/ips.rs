@@ -1,7 +1,7 @@
 use std::{
     cmp::{max, min},
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -200,12 +200,7 @@ impl PatchHandler for IpsPatchHandler {
         let thread_capability = ips_create_thread_capability(modified_len)?;
         let planned_execution = context.plan_threads(thread_capability.clone());
 
-        if let Some(parent) = request.output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let output_file = File::create(&request.output)?;
-        let mut output = BufWriter::new(output_file);
+        let mut output = crate::create_buffered_output(&request.output)?;
         let (execution, create_result) = if planned_execution.used_parallelism {
             let (execution, pool) = context.build_pool(thread_capability)?;
             let create_result = create_ips_patch_parallel(
@@ -258,14 +253,7 @@ impl PatchHandler for IpsPatchHandler {
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        PatchCapabilities {
-            parse: true,
-            apply: true,
-            create: true,
-            threaded_scan: false,
-            threaded_diff: true,
-            threaded_output: true,
-        }
+        crate::threaded_create_capabilities()
     }
 }
 
@@ -814,24 +802,24 @@ fn create_ips_patch_parallel(
         modified_path,
         modified_len,
     } = sources;
+    let combined_bytes = original_len.saturating_add(modified_len);
+    if crate::create_exceeds_main_thread_cap(combined_bytes) {
+        tracing::info!(
+            combined_bytes,
+            cap = crate::IN_MEMORY_APPLY_LIMIT_BYTES,
+            "IPS parallel create: combined size exceeds cap, falling back to streaming"
+        );
+        return create_ips_patch_streaming(
+            original_path,
+            original_len,
+            modified_path,
+            modified_len,
+            output,
+            context,
+            flavor,
+        );
+    }
     if crate::patches_reads_source_on_main_thread() {
-        let combined = original_len.saturating_add(modified_len);
-        if combined > crate::IN_MEMORY_APPLY_LIMIT_BYTES {
-            tracing::info!(
-                combined_bytes = combined,
-                cap = crate::IN_MEMORY_APPLY_LIMIT_BYTES,
-                "IPS parallel create: combined size exceeds cap, falling back to streaming"
-            );
-            return create_ips_patch_streaming(
-                original_path,
-                original_len,
-                modified_path,
-                modified_len,
-                output,
-                context,
-                flavor,
-            );
-        }
         let chunk_count = ips_create_chunk_count(modified_len)?;
         let chunk_pairs = (0..chunk_count)
             .map(|chunk_index| {
@@ -1621,10 +1609,7 @@ fn render_chunk_task(
         }
     }
 
-    if let Some(parent) = task.temp_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut writer = BufWriter::new(File::create(&task.temp_path)?);
+    let mut writer = crate::create_buffered_output(&task.temp_path)?;
     writer.write_all(&buffer)?;
     writer.flush()?;
     Ok(changed)
@@ -1659,11 +1644,7 @@ fn assemble_output(
     tasks: &[ChunkTask],
     context: &OperationContext,
 ) -> Result<()> {
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let mut output = BufWriter::new(File::create(output_path)?);
+    let mut output = crate::create_buffered_output(output_path)?;
     for task in tasks {
         context.cancel().check()?;
         let mut reader = BufReader::new(File::open(&task.temp_path)?);

@@ -190,14 +190,7 @@ impl PatchHandler for UpsPatchHandler {
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        PatchCapabilities {
-            parse: true,
-            apply: true,
-            create: true,
-            threaded_scan: false,
-            threaded_diff: true,
-            threaded_output: true,
-        }
+        crate::threaded_create_capabilities()
     }
 }
 
@@ -590,16 +583,13 @@ fn create_ups_patch_parallel(
     let source_size = fs::metadata(source_path)?.len();
     let target_size = fs::metadata(target_path)?.len();
 
-    if crate::patches_reads_source_on_main_thread() {
-        let combined = source_size.saturating_add(target_size);
-        if combined > crate::IN_MEMORY_APPLY_LIMIT_BYTES {
-            info!(
-                source_size,
-                target_size,
-                "UPS create: combined size exceeds in-memory limit; falling back to serial path"
-            );
-            return create_ups_patch_streaming(source_path, target_path);
-        }
+    if crate::create_exceeds_main_thread_cap(source_size.saturating_add(target_size)) {
+        info!(
+            source_size,
+            target_size,
+            "UPS create: combined size exceeds in-memory limit; falling back to serial path"
+        );
+        return create_ups_patch_streaming(source_path, target_path);
     }
 
     let source_checksum = crc32_path_cached(source_path, context)?;

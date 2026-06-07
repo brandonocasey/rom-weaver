@@ -21,8 +21,8 @@ mod test_support;
 mod ups;
 
 use std::{
-    fs,
-    io::{Read, Seek, SeekFrom},
+    fs::{self, File},
+    io::{BufWriter, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -42,8 +42,8 @@ use pat::{PatPatchHandler, has_pat_record_signature};
 use pmsr::PmsrPatchHandler;
 use ppf::PpfPatchHandler;
 use rom_weaver_core::{
-    FormatDescriptor, OperationFamily, OperationReport, PatchHandler, Result, RomWeaverError,
-    ThreadExecution,
+    FormatDescriptor, OperationFamily, OperationReport, PatchCapabilities, PatchHandler, Result,
+    RomWeaverError, ThreadExecution,
 };
 use rom_weaver_xdelta::VcdiffPatchHandler;
 use rup::RupPatchHandler;
@@ -74,6 +74,19 @@ pub(crate) fn can_apply_in_memory(a: u64, b: u64) -> bool {
 /// Delegates to the shared [`rom_weaver_core::reads_source_on_main_thread`] gate.
 pub(crate) fn patches_reads_source_on_main_thread() -> bool {
     rom_weaver_core::reads_source_on_main_thread("ROM_WEAVER_PATCH_MAIN_THREAD_READER")
+}
+
+/// Whether a threaded create must fall back to the serial streaming path instead of buffering
+/// source bytes on the main thread. We only buffer on the main thread when main-thread reads are
+/// required (wasm/Safari OPFS) AND the bytes to buffer fit under [`IN_MEMORY_APPLY_LIMIT_BYTES`];
+/// past the cap the source is streamed serially. When workers can open the source themselves this
+/// is always `false` (size is irrelevant — no main-thread buffering happens).
+///
+/// `scan_len` is the number of bytes buffered on the main thread for the scan: the combined
+/// original+modified length for diff formats, or the single scanned file length for whole-file
+/// formats. Centralizes the gate + cap so future read-on-main changes are one edit, not several.
+pub(crate) fn create_exceeds_main_thread_cap(scan_len: u64) -> bool {
+    patches_reads_source_on_main_thread() && scan_len > IN_MEMORY_APPLY_LIMIT_BYTES
 }
 
 /// Reads a chunk of bytes from both `original_path` and `modified_path` on the calling
@@ -287,6 +300,30 @@ pub(crate) fn patch_success_report(
         Some(100.0),
         thread_execution,
     )
+}
+
+/// Create `path` (truncating any existing file) after ensuring its parent directory exists,
+/// returning a buffered writer. Every apply/create handler funnels its final patch or patched
+/// ROM through this same `create_dir_all(parent)` → `File::create` → `BufWriter` sequence.
+pub(crate) fn create_buffered_output(path: &Path) -> Result<BufWriter<File>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(BufWriter::new(File::create(path)?))
+}
+
+/// Capabilities for a fully-featured patch format that parses, applies, and creates, with the
+/// create-side diff and the output stage both parallelized. This is the common case shared by
+/// most create-capable handlers (IPS/UPS/PPF/APS/DLDI/DPS/GDIFF/PAT/PMSR/RUP/SOLID/BDF).
+pub(crate) fn threaded_create_capabilities() -> PatchCapabilities {
+    PatchCapabilities {
+        parse: true,
+        apply: true,
+        create: true,
+        threaded_scan: false,
+        threaded_diff: true,
+        threaded_output: true,
+    }
 }
 
 pub(crate) fn patch_parse_report_with(

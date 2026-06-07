@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
@@ -222,11 +222,7 @@ impl PatchHandler for PpfPatchHandler {
         let modified_len = fs::metadata(&request.modified)?.len();
         let (execution, pool) = context.build_pool(ppf_create_thread_capability(modified_len))?;
 
-        if let Some(parent) = request.output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let output_file = File::create(&request.output)?;
-        let mut output = BufWriter::new(output_file);
+        let mut output = crate::create_buffered_output(&request.output)?;
         let created = create_ppf3_patch(
             &request.original,
             original_len,
@@ -258,14 +254,7 @@ impl PatchHandler for PpfPatchHandler {
     }
 
     fn capabilities(&self) -> PatchCapabilities {
-        PatchCapabilities {
-            parse: true,
-            apply: true,
-            create: true,
-            threaded_scan: false,
-            threaded_diff: true,
-            threaded_output: true,
-        }
+        crate::threaded_create_capabilities()
     }
 }
 
@@ -352,22 +341,19 @@ fn create_ppf3_patch(
     output: &mut impl Write,
 ) -> Result<CreatedPpfPatch> {
     if use_parallel_scan {
-        if crate::patches_reads_source_on_main_thread() {
-            let combined = original_len.saturating_add(modified_len);
-            if combined > crate::IN_MEMORY_APPLY_LIMIT_BYTES {
-                info!(
-                    original_len,
-                    modified_len,
-                    "PPF create: combined size exceeds in-memory limit; falling back to serial path"
-                );
-                return create_ppf3_patch_streaming(
-                    original_path,
-                    original_len,
-                    modified_path,
-                    modified_len,
-                    output,
-                );
-            }
+        if crate::create_exceeds_main_thread_cap(original_len.saturating_add(modified_len)) {
+            info!(
+                original_len,
+                modified_len,
+                "PPF create: combined size exceeds in-memory limit; falling back to serial path"
+            );
+            return create_ppf3_patch_streaming(
+                original_path,
+                original_len,
+                modified_path,
+                modified_len,
+                output,
+            );
         }
         create_ppf3_patch_parallel(
             original_path,

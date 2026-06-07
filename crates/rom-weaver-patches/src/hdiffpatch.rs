@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufReader, Read, Write},
     path::Path,
     sync::Arc,
 };
@@ -91,10 +91,7 @@ impl PatchHandler for HdiffPatchHandler {
         let (output_bytes, execution) =
             render_hdiff_patch_to_memory(&request.input, patch_path, context)?;
 
-        if let Some(parent) = request.output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut output = BufWriter::new(File::create(&request.output)?);
+        let mut output = crate::create_buffered_output(&request.output)?;
         output.write_all(&output_bytes)?;
         output.flush()?;
 
