@@ -1,4 +1,5 @@
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.js";
+import { getBaseFileName } from "../../../../lib/input/path-utils.ts";
 import { createTiming, formatTiming } from "../../../../lib/progress/timing.ts";
 import { formatByteSize } from "../../../../presentation/workflow-presentation.ts";
 
@@ -56,8 +57,10 @@ const buildExtractionLevels = (
       timing: formatExtractionElapsedMs(entry.decompressionTimeMs),
     };
   });
+  // Compare by basename: when the chain already ends with the extracted leaf (whose name may carry
+  // its full in-archive path), don't append a duplicate bare-basename level for the same file.
   const last = levels[levels.length - 1];
-  if (!last || last.name !== fileName) {
+  if (!last || getBaseFileName(last.name) !== getBaseFileName(fileName)) {
     levels.push({
       name: fileName,
       sizeBytes: fileSize,
