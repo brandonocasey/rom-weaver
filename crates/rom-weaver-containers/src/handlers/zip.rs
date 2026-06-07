@@ -1,6 +1,8 @@
 /* jscpd:ignore-start */
+use super::*;
+
 #[derive(Clone, Copy, Debug)]
-enum ZipContainerFlavor {
+pub(crate) enum ZipContainerFlavor {
     Zip,
     Zipx,
 }
@@ -12,7 +14,7 @@ enum ZipCompressionMethod {
     Zstd,
 }
 
-struct ZipContainerHandler {
+pub(crate) struct ZipContainerHandler {
     descriptor: &'static FormatDescriptor,
     flavor: ZipContainerFlavor,
 }
@@ -21,7 +23,10 @@ impl ZipContainerHandler {
     const ZSTD_LEVEL_MIN: i32 = -7;
     const ZSTD_LEVEL_MAX: i32 = 22;
 
-    const fn new(descriptor: &'static FormatDescriptor, flavor: ZipContainerFlavor) -> Self {
+    pub(crate) const fn new(
+        descriptor: &'static FormatDescriptor,
+        flavor: ZipContainerFlavor,
+    ) -> Self {
         Self { descriptor, flavor }
     }
 
@@ -98,9 +103,7 @@ impl ZipContainerHandler {
     fn libarchive_level(&self, method: ZipCompressionMethod, level: Option<i32>) -> Option<i32> {
         match method {
             ZipCompressionMethod::Deflated => level,
-            ZipCompressionMethod::Zstd => {
-                level.map(Self::map_zstd_level_to_zip_level)
-            }
+            ZipCompressionMethod::Zstd => level.map(Self::map_zstd_level_to_zip_level),
             _ => None,
         }
     }
@@ -128,7 +131,7 @@ impl ZipContainerHandler {
         }
     }
 
-    fn map_zstd_level_to_zip_level(level: i32) -> i32 {
+    pub(crate) fn map_zstd_level_to_zip_level(level: i32) -> i32 {
         level.clamp(Self::ZSTD_LEVEL_MIN, Self::ZSTD_LEVEL_MAX)
     }
 

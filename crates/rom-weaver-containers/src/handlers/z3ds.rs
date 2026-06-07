@@ -1,5 +1,7 @@
 /* jscpd:ignore-start */
-struct Z3dsContainerHandler;
+use super::*;
+
+pub(crate) struct Z3dsContainerHandler;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Z3dsFileHeader {
@@ -279,7 +281,7 @@ impl<R: Read + Seek> Seek for Z3dsPayloadReader<R> {
 /// wasm32 (only the main runner thread can open OPFS-backed files; worker `path_open` fails with
 /// `os error 44`), and gated by [`crate::constants::MAIN_THREAD_READER_ENV`] on native so tests
 /// can exercise the main-thread reader path.
-fn container_reads_source_on_main_thread() -> bool {
+pub(crate) fn container_reads_source_on_main_thread() -> bool {
     rom_weaver_core::reads_source_on_main_thread(crate::constants::MAIN_THREAD_READER_ENV)
 }
 
@@ -348,7 +350,7 @@ impl Z3dsContainerHandler {
         }
     }
 
-    fn extract_name_with_underlying_magic(
+    pub(crate) fn extract_name_with_underlying_magic(
         &self,
         source: &Path,
         underlying_magic: Option<[u8; 4]>,
@@ -373,8 +375,7 @@ impl Z3dsContainerHandler {
         if !(Z3DS_MIN_COMPRESSION_LEVEL..=Z3DS_MAX_COMPRESSION_LEVEL).contains(&level) {
             return Err(RomWeaverError::Validation(format!(
                 "z3ds level `{level}` is out of range; expected {}..={}",
-                Z3DS_MIN_COMPRESSION_LEVEL,
-                Z3DS_MAX_COMPRESSION_LEVEL
+                Z3DS_MIN_COMPRESSION_LEVEL, Z3DS_MAX_COMPRESSION_LEVEL
             )));
         }
 
@@ -890,68 +891,67 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
                 Ok(())
             };
 
-            let decode_result: Result<()> = if execution.used_parallelism
-                && container_reads_source_on_main_thread()
-            {
-                // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
-                // runner thread, so the compressed payload range is read here into a single shared
-                // buffer. Worker threads then decompress from that in-memory buffer (never the
-                // file). The payload buffer already begins at `payload_start`, so each reader uses
-                // start 0. Bytes written are identical to the native path.
-                let payload_len = usize::try_from(header.compressed_size).map_err(|_| {
-                    RomWeaverError::Validation(
-                        "z3ds compressed payload exceeded addressable memory".into(),
-                    )
-                })?;
-                let mut payload = vec![0_u8; payload_len];
-                {
-                    let mut payload_file = BufReader::new(File::open(&source)?);
-                    payload_file.seek(SeekFrom::Start(payload_start))?;
-                    payload_file.read_exact(&mut payload)?;
-                }
-                let payload = payload.as_slice();
+            let decode_result: Result<()> =
+                if execution.used_parallelism && container_reads_source_on_main_thread() {
+                    // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
+                    // runner thread, so the compressed payload range is read here into a single shared
+                    // buffer. Worker threads then decompress from that in-memory buffer (never the
+                    // file). The payload buffer already begins at `payload_start`, so each reader uses
+                    // start 0. Bytes written are identical to the native path.
+                    let payload_len = usize::try_from(header.compressed_size).map_err(|_| {
+                        RomWeaverError::Validation(
+                            "z3ds compressed payload exceeded addressable memory".into(),
+                        )
+                    })?;
+                    let mut payload = vec![0_u8; payload_len];
+                    {
+                        let mut payload_file = BufReader::new(File::open(&source)?);
+                        payload_file.seek(SeekFrom::Start(payload_start))?;
+                        payload_file.read_exact(&mut payload)?;
+                    }
+                    let payload = payload.as_slice();
 
-                Self::decode_extract_tasks_ordered(
-                    &tasks,
-                    execution.effective_threads,
-                    |task| {
-                        let reader = Z3dsPayloadReader::new(
-                            io::Cursor::new(payload),
-                            0,
-                            header.compressed_size,
-                        )?;
-                        self.extract_chunk_from_reader(reader, &seek_table, &task)
-                    },
-                    &mut write_chunk,
-                )
-            } else if execution.used_parallelism {
-                Self::decode_extract_tasks_ordered(
-                    &tasks,
-                    execution.effective_threads,
-                    |task| {
-                        self.extract_chunk_task(
+                    Self::decode_extract_tasks_ordered(
+                        &tasks,
+                        execution.effective_threads,
+                        |task| {
+                            let reader = Z3dsPayloadReader::new(
+                                io::Cursor::new(payload),
+                                0,
+                                header.compressed_size,
+                            )?;
+                            self.extract_chunk_from_reader(reader, &seek_table, &task)
+                        },
+                        &mut write_chunk,
+                    )
+                } else if execution.used_parallelism {
+                    Self::decode_extract_tasks_ordered(
+                        &tasks,
+                        execution.effective_threads,
+                        |task| {
+                            self.extract_chunk_task(
+                                &source,
+                                payload_start,
+                                header.compressed_size,
+                                &seek_table,
+                                &task,
+                            )
+                        },
+                        &mut write_chunk,
+                    )
+                } else {
+                    for task in &tasks {
+                        let chunk = self.extract_chunk_task(
                             &source,
                             payload_start,
                             header.compressed_size,
                             &seek_table,
-                            &task,
-                        )
-                    },
-                    &mut write_chunk,
-                )
-            } else {
-                for task in &tasks {
-                    let chunk = self.extract_chunk_task(
-                        &source,
-                        payload_start,
-                        header.compressed_size,
-                        &seek_table,
-                        task,
-                    )?;
-                    write_chunk(chunk, task.len)?;
-                }
-                Ok(())
-            };
+                            task,
+                        )?;
+                        write_chunk(chunk, task.len)?;
+                    }
+                    Ok(())
+                };
             if let Err(error) = decode_result {
                 let _ = fs::remove_file(&output_path);
                 return Err(error);
@@ -1049,10 +1049,8 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
             // coordinator thread's read-ahead, so batching them into a few big writes (instead of
             // the default 8 KiB BufWriter's thousands of small ones) keeps the reader feeding the
             // compressors at fast levels. 4 MiB is negligible against the wasm memory budget.
-            let mut output = BufWriter::with_capacity(
-                4 * 1024 * 1024,
-                File::create(&request.output)?,
-            );
+            let mut output =
+                BufWriter::with_capacity(4 * 1024 * 1024, File::create(&request.output)?);
             let mut seek_table = ZeekstdSeekTable::new();
             header.write_to(output.get_mut())?;
             if !metadata.is_empty() {
@@ -1080,10 +1078,8 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
                     &create_tasks,
                     execution.effective_threads,
                     OrderedStreamingMessages {
-                        worker_closed:
-                            "z3ds compression workers ended before all frames were consumed",
-                        result_closed:
-                            "z3ds compression pipeline ended before all frames were produced",
+                        worker_closed: "z3ds compression workers ended before all frames were consumed",
+                        result_closed: "z3ds compression pipeline ended before all frames were produced",
                     },
                     |_, task| {
                         let read_len = usize::try_from(task.len).map_err(|_| {
@@ -1155,7 +1151,9 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
 
             let seek_table_bytes = self.write_seek_table(&mut output, seek_table)?;
             output.flush()?;
-            header.compressed_size = totals.compressed_frame_bytes.saturating_add(seek_table_bytes);
+            header.compressed_size = totals
+                .compressed_frame_bytes
+                .saturating_add(seek_table_bytes);
             header.uncompressed_size = totals.uncompressed_bytes;
             header.write_to(output.get_mut())?;
             output.flush()?;

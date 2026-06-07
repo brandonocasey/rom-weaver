@@ -87,17 +87,27 @@ const ZSTD_SIGNATURE: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 const CSO_SIGNATURE: [u8; 4] = [b'C', b'I', b'S', b'O'];
 const PBP_SIGNATURE: [u8; 4] = [0x00, b'P', b'B', b'P'];
 
-include!("handlers/zip.rs");
+#[path = "handlers/zip.rs"]
+mod zip;
+pub(crate) use zip::{ZipContainerFlavor, ZipContainerHandler};
 
-include!("handlers/tar.rs");
+#[path = "handlers/tar.rs"]
+mod tar_handler;
+pub(crate) use tar_handler::{TarCompression, TarContainerHandler};
 
 #[path = "handlers/stream.rs"]
 mod stream;
 pub(crate) use stream::{StreamCompression, StreamContainerHandler};
 
-include!("handlers/cso.rs");
+#[path = "handlers/cso.rs"]
+mod cso;
+pub(crate) use cso::CsoContainerHandler;
 
-include!("handlers/sevenz.rs");
+#[path = "handlers/sevenz.rs"]
+mod sevenz;
+pub(crate) use sevenz::SevenZContainerHandler;
+#[cfg(test)]
+pub(crate) use sevenz::SevenZMethod;
 
 #[path = "handlers/rar.rs"]
 mod rar;
@@ -139,6 +149,8 @@ pub(crate) use wbfs::WbfsContainerHandler;
 mod rvz;
 pub(crate) use rvz::RvzContainerHandler;
 
-include!("handlers/z3ds.rs");
+#[path = "handlers/z3ds.rs"]
+mod z3ds;
+pub(crate) use z3ds::{Z3dsContainerHandler, container_reads_source_on_main_thread};
 
 include!("../tests/unit/handlers.rs");

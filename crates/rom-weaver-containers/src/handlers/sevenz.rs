@@ -1,5 +1,7 @@
 /* jscpd:ignore-start */
-struct SevenZContainerHandler {
+use super::*;
+
+pub(crate) struct SevenZContainerHandler {
     descriptor: &'static FormatDescriptor,
 }
 
@@ -10,19 +12,19 @@ struct SevenZCodecSettings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SevenZMethod {
+pub(crate) enum SevenZMethod {
     Lzma2,
 }
 
 impl SevenZContainerHandler {
     const DEFAULT_CODEC_LEVEL: u32 = 6;
 
-    const fn new(descriptor: &'static FormatDescriptor) -> Self {
+    pub(crate) const fn new(descriptor: &'static FormatDescriptor) -> Self {
         Self { descriptor }
     }
 
     #[cfg(test)]
-    fn parse_codec(
+    pub(crate) fn parse_codec(
         &self,
         codec: Option<&str>,
         level: Option<i32>,

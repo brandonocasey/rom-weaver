@@ -1,18 +1,23 @@
 /* jscpd:ignore-start */
+use super::*;
+
 #[derive(Clone, Copy, Debug)]
-enum TarCompression {
+pub(crate) enum TarCompression {
     None,
     Gzip,
     Bzip2,
     Xz,
 }
 
-struct TarContainerHandler {
+pub(crate) struct TarContainerHandler {
     descriptor: &'static FormatDescriptor,
 }
 
 impl TarContainerHandler {
-    const fn new(descriptor: &'static FormatDescriptor, _compression: TarCompression) -> Self {
+    pub(crate) const fn new(
+        descriptor: &'static FormatDescriptor,
+        _compression: TarCompression,
+    ) -> Self {
         Self { descriptor }
     }
 }

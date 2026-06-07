@@ -1,4 +1,6 @@
 /* jscpd:ignore-start */
+use super::*;
+
 const CSO_EXTRACT_TASK_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -107,12 +109,12 @@ impl ciso::read::Read<io::Error> for CsoSourceReader {
 
 type CsoImageReader = CsoReader<io::Error, CsoSourceReader>;
 
-struct CsoContainerHandler {
+pub(crate) struct CsoContainerHandler {
     descriptor: &'static FormatDescriptor,
 }
 
 impl CsoContainerHandler {
-    const fn new(descriptor: &'static FormatDescriptor) -> Self {
+    pub(crate) const fn new(descriptor: &'static FormatDescriptor) -> Self {
         Self { descriptor }
     }
 
@@ -313,7 +315,6 @@ impl CsoContainerHandler {
             |_, (task_len, chunk)| write_chunk(chunk, task_len),
         )
     }
-
 }
 
 impl ContainerHandlerOperations for CsoContainerHandler {
@@ -461,11 +462,7 @@ impl ContainerHandlerOperations for CsoContainerHandler {
                 &tasks,
                 execution.effective_threads,
                 |task| {
-                    self.decode_extract_task_from_buffer(
-                        &source,
-                        Arc::clone(&source_bytes),
-                        &task,
-                    )
+                    self.decode_extract_task_from_buffer(&source, Arc::clone(&source_bytes), &task)
                 },
                 &mut write_chunk,
             )
