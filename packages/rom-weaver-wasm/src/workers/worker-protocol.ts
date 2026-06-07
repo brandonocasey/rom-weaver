@@ -107,6 +107,18 @@ export interface RomWeaverWorkerErrorMessage {
   error: RomWeaverWorkerSerializedError;
 }
 
+/**
+ * Mid-run interactive selection request. The runner worker posts this when the wasm app needs the
+ * user to pick a candidate, then blocks on `control` (a SharedArrayBuffer-backed Int32Array) until
+ * the main thread writes the chosen index at slot 1 and sets slot 0 to 1 with `Atomics.notify`.
+ */
+export interface RomWeaverWorkerSelectRequestMessage {
+  type: 'selectRequest';
+  requestId: number | null;
+  request: string;
+  control: ArrayBufferLike;
+}
+
 export type RomWeaverWorkerResponse =
   | RomWeaverWorkerReadyMessage
   | RomWeaverWorkerResultMessage
@@ -115,6 +127,7 @@ export type RomWeaverWorkerResponse =
   | RomWeaverWorkerTraceEventMessage
   | RomWeaverWorkerTraceNonJsonLineMessage
   | RomWeaverWorkerDisposedMessage
+  | RomWeaverWorkerSelectRequestMessage
   | RomWeaverWorkerErrorMessage;
 
 export type RomWeaverWorkerStreamMessage =

@@ -36,6 +36,8 @@ type BrowserOpfsRunOptions = RomWeaverBrowserOpfsRunOptions &
     __streamRequestId?: number;
     onStderrLine?: LineHandler;
     onStdoutLine?: LineHandler;
+    hostSelect?: (request: string) => number;
+    preopenOutputPaths?: string[];
     threadScratchFilePoolSize?: number;
   };
 type BrowserOpfsRuntimePayload = AnyRecord;
@@ -66,12 +68,18 @@ const DEFAULT_BROWSER_WASM_URLS = [
 const DEFAULT_SCRATCH_FILE_POOL_SIZE = 16;
 const DEFAULT_THREAD_SCRATCH_FILE_POOL_SIZE = DEFAULT_SCRATCH_FILE_POOL_SIZE;
 const DEFAULT_SHARED_MEMORY_INITIAL_PAGES = 256;
-// 32768 pages * 64 KiB = 2 GiB. Must match the threaded wasm's imported memory maximum (set via
-// --max-memory in scripts/build-wasm-app.sh); a mismatch fails WebAssembly instantiation. Threaded
-// wasm needs shared memory, which must declare a fixed maximum, so the cap cannot be omitted. The
-// cap is intentionally much larger than the initial size: engines reserve address space up front,
-// and a shared memory's maximum only reserves address space and commits lazily on memory.grow.
+// 32768 pages * 64 KiB = 2 GiB, matching the threaded wasm's linked maximum from
+// scripts/build-wasm-app.sh. Threaded wasm needs shared memory, which must declare a fixed maximum,
+// so the cap cannot be omitted. Most engines reserve address space lazily, but constrained browsers
+// can reject the 2 GiB reservation before small commands run; default construction falls back to
+// smaller compatible maxima below.
 const DEFAULT_SHARED_MEMORY_MAX_PAGES = 32768;
+const FALLBACK_SHARED_MEMORY_MAX_PAGES = [
+  24576,
+  16384,
+  8192,
+  4096,
+];
 const PATH_SEPARATOR_REGEX = /[/\\]+/;
 const SCRATCH_DIRECTORY_NAME = '.rom-weaver-opfs-scratch';
 const SCRATCH_FILE_CREATE_CONCURRENCY = 16;
@@ -212,6 +220,11 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
       trace(
         `[browser-opfs] run start command=${formatCommandForTrace(command)} threaded=${threaded} wasm=${basenameForTrace(wasmUrl)}`,
       );
+      if (runOptions.invalidateMountCacheBeforeRun) {
+        trace('[browser-opfs] invalidate mount cache before run start');
+        await mountCache.invalidateMountPaths(runtimeMounts);
+        trace('[browser-opfs] invalidate mount cache before run done');
+      }
       const env = createRunEnv({
         baseEnv: options.env,
         runEnv: runOptions.env,
@@ -235,11 +248,6 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
         ...(Array.isArray(runOptions.virtualFiles) ? runOptions.virtualFiles : []),
       ]);
       trace(`[browser-opfs] virtual files normalized ${summarizeNormalizedVirtualFiles(virtualFiles)}`);
-      if (runOptions.invalidateMountCacheBeforeRun) {
-        trace('[browser-opfs] invalidate mount cache before run start');
-        await mountCache.invalidateMountPaths(runtimeMounts);
-        trace('[browser-opfs] invalidate mount cache before run done');
-      }
 
       const closeables: any[] = [];
       let runSucceeded = false;
@@ -262,6 +270,10 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
       const knownInputPaths = normalizeKnownInputPaths([
         ...(Array.isArray(options.knownInputPaths) ? options.knownInputPaths : []),
         ...(Array.isArray(runOptions.knownInputPaths) ? runOptions.knownInputPaths : []),
+      ]);
+      const preopenOutputPaths = normalizePreopenOutputPaths([
+        ...(Array.isArray(options.preopenOutputPaths) ? options.preopenOutputPaths : []),
+        ...(Array.isArray(runOptions.preopenOutputPaths) ? runOptions.preopenOutputPaths : []),
       ]);
       const resolvedMainScratchFilePoolSize = normalizeScratchFilePoolSize(
         runOptions.scratchFilePoolSize ?? options.scratchFilePoolSize,
@@ -296,6 +308,7 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
           request,
           runtimeMounts,
           knownInputPaths,
+          preopenOutputPaths,
           scratchFilePoolSize: resolvedMainScratchFilePoolSize,
           threadScratchFilePoolSize: resolvedThreadScratchFilePoolSize,
           syncAccessMode: resolvedSyncAccessMode,
@@ -320,6 +333,7 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
         runtimeMounts,
         mountHandles,
         knownInputPaths,
+        preopenOutputPaths,
         stderrLineHandler: runOptions.onStderrLine,
         stdoutLineHandler: runOptions.onStdoutLine,
         virtualFiles,
@@ -345,7 +359,7 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
 
         const instance = await WebAssembly.instantiate(module, {
           wasi_snapshot_preview1: wasi.wasiImport,
-          env: createWasmEnvImports(wasmMemory),
+          env: createWasmEnvImports(wasmMemory, runOptions.hostSelect),
           ...(importsWasiThreadSpawn ? { wasi: { 'thread-spawn': threadSpawner.spawn } } : {}),
         });
         trace('[browser-opfs] instantiate done');
@@ -531,6 +545,7 @@ export async function __runRomWeaverBrowserWasiThread(payload: BrowserOpfsRuntim
       runtimeMounts: normalizedRuntimeMounts,
       mountHandles: normalizedMountHandles,
       knownInputPaths: runtime?.knownInputPaths,
+      preopenOutputPaths: runtime?.preopenOutputPaths,
       stderrLineHandler,
       stdoutLineHandler,
       scratchFilePoolSize: runtime?.threadScratchFilePoolSize ?? runtime?.scratchFilePoolSize,
@@ -785,7 +800,11 @@ async function resolveThreadRuntimeMountHandles({ runtime, runtimeMounts, trace 
 
 function createThreadWorkerRuntimePayload(runtime) {
   if (!runtime || typeof runtime !== 'object') return runtime;
-  const { mountHandles: _mountHandles, ...rest } = runtime;
+  const {
+    mountHandles: _mountHandles,
+    preopenOutputPaths: _preopenOutputPaths,
+    ...rest
+  } = runtime;
   return {
     ...rest,
     resolveMountHandlesInWorker: true,
@@ -999,6 +1018,7 @@ async function buildBrowserOpfsWasiFds({
   runtimeMounts,
   mountHandles,
   knownInputPaths,
+  preopenOutputPaths,
   stderrLineHandler,
   stdoutLineHandler,
   virtualFiles,
@@ -1055,6 +1075,7 @@ async function buildBrowserOpfsWasiFds({
         trace,
       });
       trace?.(`[browser-opfs] mount startRun done path=${mountPath}`);
+      await mount.preopenOutputPaths({ paths: preopenOutputPaths, trace });
       fds.push(new PreparedWasiPreopenDirectory(mount));
       if (mountPath === cwdMountPath) cwdMount = mount;
     }
@@ -1202,7 +1223,8 @@ function traceRandomAccessFileIoStats(trace, fds, label) {
     + ` blobCacheHits=${stats.blobCacheHits} blobCacheMisses=${stats.blobCacheMisses} blobCacheHitBytes=${stats.blobCacheHitBytes} blobCacheFillBytes=${stats.blobCacheFillBytes}`
     + ` opfsReadCalls=${stats.opfsReadCalls} opfsReadBytes=${stats.opfsReadBytes} opfsReadMs=${stats.opfsReadMs.toFixed(1)} opfsReadMiBps=${formatIoMiBps(stats.opfsReadBytes, stats.opfsReadMs)}`
     + ` opfsCacheHits=${stats.opfsCacheHits} opfsCacheMisses=${stats.opfsCacheMisses} opfsCacheHitBytes=${stats.opfsCacheHitBytes} opfsCacheFillBytes=${stats.opfsCacheFillBytes}`
-    + ` opfsWriteCalls=${stats.opfsWriteCalls} opfsWriteBytes=${stats.opfsWriteBytes} opfsWriteMs=${stats.opfsWriteMs.toFixed(1)} opfsWriteMiBps=${formatIoMiBps(stats.opfsWriteBytes, stats.opfsWriteMs)}`,
+    + ` opfsWriteCalls=${stats.opfsWriteCalls} opfsWriteBytes=${stats.opfsWriteBytes} opfsWriteMs=${stats.opfsWriteMs.toFixed(1)} opfsWriteMiBps=${formatIoMiBps(stats.opfsWriteBytes, stats.opfsWriteMs)}`
+    + ` opfsFlushCalls=${stats.opfsFlushCalls} opfsFlushMs=${stats.opfsFlushMs.toFixed(1)}`,
   );
 }
 
@@ -1247,6 +1269,8 @@ function createRandomAccessFileIoStats() {
     opfsCacheHitBytes: 0,
     opfsCacheHits: 0,
     opfsCacheMisses: 0,
+    opfsFlushCalls: 0,
+    opfsFlushMs: 0,
     opfsReadBytes: 0,
     opfsReadCalls: 0,
     opfsReadMs: 0,
@@ -1539,6 +1563,70 @@ class BrowserOpfsMount {
     }
     this.virtualRestores = null;
     this.trace = null;
+  }
+
+  async preopenOutputPaths({ paths, trace } = {}) {
+    if (this.virtualOnly) return;
+    const normalizedPaths = normalizePreopenOutputPaths(paths);
+    if (normalizedPaths.length === 0) return;
+    let preopened = 0;
+    for (const guestPath of normalizedPaths) {
+      if (!isGuestPathWithinMount(guestPath, this.mountPath)) continue;
+      await this.preopenOutputPath(guestPath);
+      preopened += 1;
+    }
+    if (preopened > 0) {
+      trace?.(`[browser-opfs] mount preopen outputs path=${this.mountPath} files=${preopened}`);
+    }
+  }
+
+  async preopenOutputPath(guestPath) {
+    if (!this.isWritablePath(guestPath)) {
+      throw new Error(`Browser OPFS output path is not writable: ${guestPath}`);
+    }
+    const relativePath = guestPath === this.mountPath ? '' : guestPath.slice(this.mountPath.length + 1);
+    const parts = normalizeWasiRelativePathParts(relativePath);
+    if (parts === null || parts.length === 0) {
+      throw new Error(`Browser OPFS output path must be a file inside ${this.mountPath}: ${guestPath}`);
+    }
+
+    let entries = this.contents;
+    let directoryHandle = this.directoryHandle;
+    for (const part of parts.slice(0, -1)) {
+      let entry = entries.get(part) ?? null;
+      if (!entry) {
+        entry = new wasiShim.Directory(new Map());
+        entries.set(part, entry);
+      }
+      if (!(entry instanceof wasiShim.Directory)) {
+        throw new Error(`Browser OPFS output parent is not a directory: ${guestPath}`);
+      }
+      directoryHandle = await directoryHandle.getDirectoryHandle(part, { create: true });
+      entries = entry.contents;
+    }
+
+    const name = parts[parts.length - 1];
+    const existing = entries.get(name) ?? null;
+    if (existing instanceof wasiShim.Directory) {
+      throw new Error(`Browser OPFS output path is a directory: ${guestPath}`);
+    }
+    if (existing instanceof WasiRandomAccessFileInode && typeof existing.file?.close === 'function') {
+      try {
+        existing.file.close();
+      } catch {
+        // ignore stale output handle cleanup failures; the new handle below owns the path.
+      }
+    }
+
+    const fileHandle = await directoryHandle.getFileHandle(name, { create: true });
+    const syncHandle = await openSyncAccessHandle({
+      fileHandle,
+      mode: writableSyncAccessMode(this.syncAccessMode),
+    });
+    const file = new BrowserOpfsRandomAccessFile(syncHandle);
+    file.truncate(0);
+    this.trackOwnedFile(file);
+    entries.set(name, new WasiRandomAccessFileInode(file));
   }
 
   trackOwnedFile(file) {
@@ -1864,7 +1952,10 @@ class BrowserOpfsRandomAccessFile {
       this.dirty = false;
       return;
     }
+    const callStartMs = monotonicNowMs();
     this.syncHandle.flush();
+    this.ioStats.opfsFlushCalls += 1;
+    this.ioStats.opfsFlushMs += monotonicNowMs() - callStartMs;
     this.dirty = false;
   }
 
@@ -3520,6 +3611,10 @@ function normalizeKnownInputPaths(value) {
   return normalizeGuestPathList(value, 'knownInputPaths');
 }
 
+function normalizePreopenOutputPaths(value) {
+  return normalizeGuestPathList(value, 'preopenOutputPaths');
+}
+
 function isGuestPathWithinRoots(path, roots) {
   const normalizedPath = normalizeGuestPath(path, { label: 'guest path' });
   for (const root of roots) {
@@ -4456,6 +4551,7 @@ function createSharedThreadMemory({ initialPages, maximumPages } = {}) {
     DEFAULT_SHARED_MEMORY_INITIAL_PAGES,
     'sharedMemoryInitialPages',
   );
+  const hasConfiguredMaximum = maximumPages !== undefined && maximumPages !== null;
   const maximum = normalizePositiveInteger(
     maximumPages,
     DEFAULT_SHARED_MEMORY_MAX_PAGES,
@@ -4464,7 +4560,28 @@ function createSharedThreadMemory({ initialPages, maximumPages } = {}) {
   if (maximum < initial) {
     throw new Error('sharedMemoryMaximumPages must be >= sharedMemoryInitialPages');
   }
-  return new WebAssembly.Memory({ initial, maximum, shared: true });
+  const candidates = hasConfiguredMaximum
+    ? [maximum]
+    : [
+        maximum,
+        ...FALLBACK_SHARED_MEMORY_MAX_PAGES.filter((candidate) => candidate < maximum && candidate >= initial),
+      ];
+  let allocationError = null;
+  for (const candidate of candidates) {
+    try {
+      return new WebAssembly.Memory({ initial, maximum: candidate, shared: true });
+    } catch (error) {
+      if (!isSharedMemoryAllocationError(error)) throw error;
+      allocationError = error;
+    }
+  }
+  throw allocationError ?? new RangeError('failed to allocate shared wasm memory');
+}
+
+function isSharedMemoryAllocationError(error) {
+  if (error instanceof RangeError) return true;
+  const message = String(error?.message || '');
+  return /\b(out of memory|allocation|reserve|could not allocate)\b/i.test(message);
 }
 
 function normalizePositiveInteger(value, fallback, label) {

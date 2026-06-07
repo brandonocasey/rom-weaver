@@ -6,6 +6,15 @@ import type {
   RomWeaverRunJsonEvent,
 } from './rom-weaver-types.d.ts';
 
+/**
+ * Host selection callback. The wasm app calls `rom_weaver_host_select(requestPtr, requestLen)` with
+ * a UTF-8 JSON request (`{heading, candidates:[{value,label}]}`) and expects the chosen 0-based
+ * index back, or a negative value to cancel. The runner supplies an implementation that blocks the
+ * worker until the UI resolves the pick; when no handler is registered it returns -1 (cancel),
+ * matching the historical non-interactive behavior.
+ */
+type HostSelectCallback = (request: string) => number;
+
 type WasmEnvImports = {
   __archive_write_program_allocate: () => number;
   __archive_write_program_close: () => number;
@@ -14,6 +23,7 @@ type WasmEnvImports = {
   __archive_write_program_write: () => number;
   __cxa_allocate_exception: () => number;
   __cxa_throw: (pointer: unknown, typeInfo: unknown) => never;
+  rom_weaver_host_select: (requestPtr: number, requestLen: number) => number;
   memory?: WebAssembly.Memory;
 };
 
@@ -25,9 +35,31 @@ type TraceJsonLineParser<TTraceEvent> = ParseTraceJsonLinesResult<TTraceEvent> &
   pushLine: (line: string) => void;
 };
 
-export function createWasmEnvImports(memory?: WebAssembly.Memory) {
+export function createWasmEnvImports(memory?: WebAssembly.Memory, hostSelect?: HostSelectCallback) {
   const ARCHIVE_FAILED = -25;
+  const SELECT_CANCELLED = -1;
+  const readHostSelectRequest = (requestPtr: number, requestLen: number): string | null => {
+    const activeMemory = imports.memory;
+    if (!(activeMemory instanceof WebAssembly.Memory) || requestLen <= 0) return null;
+    try {
+      const bytes = new Uint8Array(activeMemory.buffer, requestPtr, requestLen).slice();
+      return new TextDecoder().decode(bytes);
+    } catch {
+      return null;
+    }
+  };
   const imports: WasmEnvImports = {
+    rom_weaver_host_select(requestPtr, requestLen) {
+      if (typeof hostSelect !== "function") return SELECT_CANCELLED;
+      const request = readHostSelectRequest(requestPtr, requestLen);
+      if (request === null) return SELECT_CANCELLED;
+      try {
+        const selected = hostSelect(request);
+        return Number.isInteger(selected) ? selected : SELECT_CANCELLED;
+      } catch {
+        return SELECT_CANCELLED;
+      }
+    },
     __cxa_allocate_exception() {
       return 0;
     },

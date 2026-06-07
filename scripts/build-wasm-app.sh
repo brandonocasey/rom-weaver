@@ -124,9 +124,9 @@ THREADED_RUSTFLAGS+=" -C link-arg=--export=malloc -C link-arg=--export=free"
 # Shared memory ceiling for the threaded module. Browser LZMA2 workers can need more than 1 GiB
 # when several raw encoders run concurrently. Threaded wasm needs *shared* memory, which the threads
 # spec requires to declare a fixed maximum (the engine reserves the address range up front and cannot
-# grow a SharedArrayBuffer past it). The maximum is baked in here at link time and must match
-# DEFAULT_SHARED_MEMORY_MAX_PAGES (32768) on the JS side; a mismatch makes WebAssembly instantiation
-# fail. 2147483648 = 2 GiB = 32768 * 64 KiB pages.
+# grow a SharedArrayBuffer past it). The linked maximum is the browser runtime's first-choice shared
+# memory cap; constrained browsers can provide a smaller compatible maximum when 2 GiB cannot be
+# reserved. 2147483648 = 2 GiB = 32768 * 64 KiB pages.
 THREADED_RUSTFLAGS+=" -C link-arg=--max-memory=2147483648"
 
 WASI_CXX_THREADS_DIR="${WASI_CXX_THREADS_DIR:-$WASI_SYSROOT/lib/wasm32-wasip1-threads/noeh}"

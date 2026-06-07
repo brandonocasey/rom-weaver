@@ -949,6 +949,55 @@ describe('rom-weaver-wasm browser runner parity', () => {
     });
   }, LONG_MATRIX_TIMEOUT_MS);
 
+  it('threaded browser runner compresses small 7z lzma2 with constrained shared memory', async () => {
+    await withTempFixture(async ({ dir, init, worker, opfsHandle }) => {
+      expect(init.threaded).toBe(true);
+      const sourceSize = 1024 * 1024;
+      const sourcePath = joinGuestPath(dir, 'threaded-7z-lzma2-constrained-source.bin');
+      const archivePath = joinGuestPath(dir, 'threaded-7z-lzma2-constrained.7z');
+      const extractDir = joinGuestPath(dir, 'threaded-7z-lzma2-constrained-extract');
+      await writeGuestPatternFile(opfsHandle, sourcePath, sourceSize);
+
+      const compressResult = await worker.runJson([
+        'compress',
+        sourcePath,
+        '--format',
+        '7z',
+        '--codec',
+        'lzma2:9',
+        '--output',
+        archivePath,
+        '--threads',
+        '4',
+      ]);
+      assertRunJsonSucceeded(compressResult, {
+        command: 'compress',
+      });
+      expect(await getGuestFileSize(opfsHandle, archivePath)).toBeGreaterThan(0);
+
+      const extractResult = await worker.runJson([
+        'extract',
+        archivePath,
+        '--out-dir',
+        extractDir,
+        '--threads',
+        '1',
+      ]);
+      assertRunJsonSucceeded(extractResult, {
+        command: 'extract',
+      });
+      expect(await getGuestFileSize(
+        opfsHandle,
+        joinGuestPath(extractDir, 'threaded-7z-lzma2-constrained-source.bin'),
+      )).toBe(sourceSize);
+    }, {
+      initOptions: {
+        sharedMemoryMaximumPages: 16384,
+        wasmUrl: new URL('../rom-weaver-app.wasm', import.meta.url).href,
+      },
+    });
+  }, LONG_MATRIX_TIMEOUT_MS);
+
   it('threaded browser runner compresses memory-heavy 7z lzma2 level 9 without worker traps', async () => {
     await withTempFixture(async ({ dir, init, worker, opfsHandle }) => {
       expect(init.threaded).toBe(true);

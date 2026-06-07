@@ -57,6 +57,7 @@ export class RomWeaverWorkerClientCore {
   protected _nextRequestId: number;
   protected _pending: Map<number, PendingRequest>;
   protected _disposed: boolean;
+  protected _onSelect?: (request: string) => Promise<number> | number;
 
   constructor(worker: Worker, transport: WorkerTransport) {
     this.worker = worker;
@@ -74,6 +75,15 @@ export class RomWeaverWorkerClientCore {
     this._transport.onError(this.worker, this._onError);
     this._transport.onMessageError?.(this.worker, this._onMessageError);
     this._transport.onExit?.(this.worker, this._onExit);
+  }
+
+  /**
+   * Register the interactive selection handler invoked when the worker requests a candidate pick.
+   * It receives the JSON request (`{heading, candidates:[{value,label}]}`) and returns the chosen
+   * 0-based index (or a negative value / rejection to cancel). Without a handler, prompts cancel.
+   */
+  setSelectionHandler(handler?: (request: string) => Promise<number> | number) {
+    this._onSelect = handler;
   }
 
   run(request: RomWeaverRunInput, options: RomWeaverRunOptions & Record<string, unknown> = {}) {
@@ -211,6 +221,26 @@ export class RomWeaverWorkerClientCore {
         );
         pending?.resolve(message.result);
         return;
+      case 'selectRequest': {
+        // The runner worker is blocked on `control` waiting for the chosen index; resolve via the
+        // registered selection handler (or cancel) and wake it with Atomics.notify.
+        const control = new Int32Array(message.control as ArrayBufferLike);
+        const respond = (index: number) => {
+          Atomics.store(control, 1, Number.isInteger(index) ? index : -1);
+          Atomics.store(control, 0, 1);
+          Atomics.notify(control, 0);
+        };
+        const handler = this._onSelect;
+        if (typeof handler !== 'function') {
+          respond(-1);
+          return;
+        }
+        Promise.resolve()
+          .then(() => handler(message.request))
+          .then((index) => respond(typeof index === 'number' ? index : -1))
+          .catch(() => respond(-1));
+        return;
+      }
       case 'error':
         this._pending.delete(requestId);
         if (!pending && (requestId === null || requestId === undefined)) {

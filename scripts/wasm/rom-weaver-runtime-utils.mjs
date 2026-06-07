@@ -1,6 +1,30 @@
-export function createWasmEnvImports(memory) {
+export function createWasmEnvImports(memory, hostSelect) {
   const ARCHIVE_FAILED = -25;
+  const SELECT_CANCELLED = -1;
+  const readHostSelectRequest = (requestPtr, requestLen) => {
+    const activeMemory = imports.memory;
+    if (!(activeMemory instanceof WebAssembly.Memory) || requestLen <= 0) {
+      return null;
+    }
+    try {
+      const bytes = new Uint8Array(activeMemory.buffer, requestPtr, requestLen).slice();
+      return new TextDecoder().decode(bytes);
+    } catch {
+      return null;
+    }
+  };
   const imports = {
+    rom_weaver_host_select(requestPtr, requestLen) {
+      if (typeof hostSelect !== 'function') return SELECT_CANCELLED;
+      const request = readHostSelectRequest(requestPtr, requestLen);
+      if (request === null) return SELECT_CANCELLED;
+      try {
+        const selected = hostSelect(request);
+        return Number.isInteger(selected) ? selected : SELECT_CANCELLED;
+      } catch {
+        return SELECT_CANCELLED;
+      }
+    },
     __cxa_allocate_exception() {
       return 0;
     },
