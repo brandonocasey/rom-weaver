@@ -1307,6 +1307,115 @@ fn extract_recursively_handles_nested_containers() {
 }
 
 #[test]
+fn extract_nested_checksum_reports_only_leaf_with_step_events() {
+    let temp = setup_temp_dir();
+    let payload = b"leaf rom payload for nested checksum test".to_vec();
+    fs::write(temp.child("leaf.bin").path(), &payload).expect("fixture");
+
+    let inner_zip = temp.child("inner.zip");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("leaf.bin").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            inner_zip.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let outer_7z = temp.child("outer.7z");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            inner_zip.path().to_str().expect("path"),
+            "--format",
+            "7z",
+            "--output",
+            outer_7z.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let out_dir = temp.child("extract");
+    let events = run_json_events(
+        &[
+            "extract",
+            outer_7z.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--checksum",
+            "sha1",
+            "--json",
+        ],
+        0,
+    );
+
+    // Terminal report carries only the bottom/leaf output, with its checksum — not the intermediate
+    // `inner.zip` container we descended through.
+    let json = events.last().expect("extract terminal event");
+    assert_eq!(json["status"], "succeeded");
+    let emitted = json["details"]["emitted_files"]
+        .as_array()
+        .expect("emitted_files array");
+    let names = emitted
+        .iter()
+        .filter_map(|entry| entry["file_name"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["leaf.bin"], "expected only the leaf output");
+    let leaf = emitted_file_entry(json, "leaf.bin");
+    assert_eq!(
+        leaf["checksums"]["sha1"].as_str().map(str::len),
+        Some(40),
+        "leaf output should carry a sha1 digest"
+    );
+
+    // Each descended level emits a structured `extract-step` event; the deepest level reports the
+    // leaf output, and the whole command still ends with exactly one terminal event.
+    let step_events = events
+        .iter()
+        .filter(|event| event["stage"] == "extract-step")
+        .collect::<Vec<_>>();
+    assert!(
+        step_events
+            .iter()
+            .any(|event| event["details"]["extract_step"]["depth"] == 0),
+        "expected a depth-0 (input container) step event"
+    );
+    let leaf_step = step_events.iter().find(|event| {
+        event["details"]["extract_step"]["status"] == "succeeded"
+            && event["details"]["extract_step"]["outputs"]
+                .as_array()
+                .map(|outputs| {
+                    outputs
+                        .iter()
+                        .any(|output| output["file_name"] == "leaf.bin")
+                })
+                .unwrap_or(false)
+    });
+    assert!(
+        leaf_step.is_some(),
+        "expected a succeeded step event reporting the leaf output"
+    );
+    for event in &step_events {
+        assert_eq!(
+            event["status"], "running",
+            "step events must stay live so they are not treated as the command terminal"
+        );
+    }
+    let terminal_count = events
+        .iter()
+        .filter(|event| event["status"] == "succeeded" || event["status"] == "failed")
+        .count();
+    assert_eq!(terminal_count, 1, "exactly one terminal finish for the command");
+}
+
+#[test]
 fn extract_nested_scan_ignores_existing_output_archives() {
     let temp = setup_temp_dir();
     let out_dir = temp.child("extract");

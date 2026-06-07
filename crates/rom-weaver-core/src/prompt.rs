@@ -5,11 +5,13 @@
 //! (wasm, `--json`, non-tty) use the [`NoninteractivePrompter`], which never blocks on input.
 
 /// One selectable entry presented to the user. `value` is the machine value returned to the app;
-/// `label` is the human-facing text shown by the prompter.
+/// `label` is the human-facing text shown by the prompter. `size` is the entry's byte size when
+/// known, so front-ends can show it alongside the name.
 #[derive(Clone, Debug)]
 pub struct PromptCandidate {
     pub value: String,
     pub label: String,
+    pub size: Option<u64>,
 }
 
 /// The resolved outcome of a list selection.

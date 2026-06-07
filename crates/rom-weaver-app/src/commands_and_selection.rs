@@ -11,6 +11,14 @@ struct SelectionExtract<'a> {
     source_label: &'a str,
 }
 
+#[derive(Clone, Copy)]
+struct SelectionResolutionOptions<'a> {
+    kind_filter: ArchiveEntryKindFilter,
+    split_bin: bool,
+    ignore_common_files: bool,
+    source_label: &'a str,
+}
+
 /// Identifies the inner payload selected from a tar stream for the streamed-checksum fast path.
 #[derive(Clone, Copy)]
 struct TarStreamCandidate<'a> {
@@ -32,6 +40,16 @@ struct ChecksumStreamOptions<'a> {
     no_trim_fix: bool,
     start: Option<u64>,
     length: Option<u64>,
+}
+
+struct ExtractStepEvent<'a> {
+    format: &'a str,
+    depth: usize,
+    source: &'a Path,
+    out_dir: &'a Path,
+    step_status: &'a str,
+    outputs: &'a [Value],
+    thread_execution: Option<ThreadExecution>,
 }
 
 impl CliApp {
@@ -113,6 +131,23 @@ impl CliApp {
             }
         }
         (payload_matches, container_fallback_matches)
+    }
+
+    /// Note that `--split-bin` was ignored when listing a container that does not support it (only
+    /// CHD CD listing honors split CUE + per-track BIN output).
+    fn attach_split_bin_list_note(
+        mut report: OperationReport,
+        handler: &dyn ContainerHandler,
+        split_bin: bool,
+    ) -> OperationReport {
+        if split_bin && !handler.descriptor().matches_name("chd") {
+            report.label = format!(
+                "{}; ignored --split-bin for non-CHD input `{}`",
+                report.label,
+                handler.descriptor().name
+            );
+        }
+        report
     }
 
     fn run_probe(&self, args: ProbeCommand) -> AppRunOutcome {
@@ -214,27 +249,25 @@ impl CliApp {
             );
             let request = ContainerProbeRequest {
                 source: probe_source.clone(),
+                split_bin: false,
             };
-            let mut report = handler.probe_details(&request, &context).unwrap_or_else(|error| {
-                OperationReport::failed(
-                    OperationFamily::Container,
-                    Some(handler.descriptor().name.to_string()),
-                    "probe",
-                    error.to_string(),
-                    None,
-                )
-            });
+            let mut report = handler
+                .probe_details(&request, &context)
+                .unwrap_or_else(|error| {
+                    OperationReport::failed(
+                        OperationFamily::Container,
+                        Some(handler.descriptor().name.to_string()),
+                        "probe",
+                        error.to_string(),
+                        None,
+                    )
+                });
             if !self.emit_progress_events {
-                report = Self::append_recommended_compress_label(
-                    report,
-                    probe_recommendation.as_ref(),
-                );
+                report =
+                    Self::append_recommended_compress_label(report, probe_recommendation.as_ref());
             }
-            report = Self::attach_container_probe_details(
-                report,
-                None,
-                probe_recommendation.as_ref(),
-            );
+            report =
+                Self::attach_container_probe_details(report, None, probe_recommendation.as_ref());
             return self.finish_probe(report, extracted_archives, cleanup_paths);
         }
 
@@ -250,20 +283,20 @@ impl CliApp {
                 Some(0.0),
                 None,
             );
-            let mut report = handler.parse(&probe_source, &context).unwrap_or_else(|error| {
-                OperationReport::failed(
-                    OperationFamily::Patch,
-                    Some(handler.descriptor().name.to_string()),
-                    "probe",
-                    error.to_string(),
-                    None,
-                )
-            });
+            let mut report = handler
+                .parse(&probe_source, &context)
+                .unwrap_or_else(|error| {
+                    OperationReport::failed(
+                        OperationFamily::Patch,
+                        Some(handler.descriptor().name.to_string()),
+                        "probe",
+                        error.to_string(),
+                        None,
+                    )
+                });
             if !self.emit_progress_events {
-                report = Self::append_recommended_compress_label(
-                    report,
-                    probe_recommendation.as_ref(),
-                );
+                report =
+                    Self::append_recommended_compress_label(report, probe_recommendation.as_ref());
             }
             return self.finish_probe(
                 Self::attach_patch_probe_details(report),
@@ -284,10 +317,8 @@ impl CliApp {
                 Some(context.plan_threads(ThreadCapability::single_threaded())),
             );
             if !self.emit_progress_events {
-                report = Self::append_recommended_compress_label(
-                    report,
-                    probe_recommendation.as_ref(),
-                );
+                report =
+                    Self::append_recommended_compress_label(report, probe_recommendation.as_ref());
             }
             return self.finish_probe(report, extracted_archives, cleanup_paths);
         }
@@ -311,10 +342,8 @@ impl CliApp {
                 Some(context.plan_threads(ThreadCapability::single_threaded())),
             );
             if !self.emit_progress_events {
-                report = Self::append_recommended_compress_label(
-                    report,
-                    probe_recommendation.as_ref(),
-                );
+                report =
+                    Self::append_recommended_compress_label(report, probe_recommendation.as_ref());
             }
             return self.finish_probe(report, extracted_archives, cleanup_paths);
         }
@@ -323,15 +352,11 @@ impl CliApp {
             OperationFamily::Command,
             None,
             "probe",
-            format!(
-                "no registered handler matched `{}`",
-                probe_source.display()
-            ),
+            format!("no registered handler matched `{}`", probe_source.display()),
             None,
         );
         if !self.emit_progress_events {
-            report =
-                Self::append_recommended_compress_label(report, probe_recommendation.as_ref());
+            report = Self::append_recommended_compress_label(report, probe_recommendation.as_ref());
         }
         self.finish_probe(report, extracted_archives, cleanup_paths)
     }
@@ -359,6 +384,7 @@ impl CliApp {
             rom_filter,
             patch_filter,
             no_ignore,
+            split_bin,
         } = args;
         let kind_filter = Self::archive_entry_kind_filter(rom_filter, patch_filter);
         trace!(
@@ -367,6 +393,7 @@ impl CliApp {
             rom_filter,
             patch_filter,
             no_ignore,
+            split_bin,
             "starting list command"
         );
         let context = self.context(ThreadBudget::Fixed(1));
@@ -389,11 +416,16 @@ impl CliApp {
         {
             let request = ContainerProbeRequest {
                 source: source.clone(),
+                split_bin,
             };
             match handler.list_entry_records(&request, &context) {
                 Ok(entries) => {
                     let (payload_entries, fallback_entries) =
-                        Self::kind_filtered_container_list_entries(&entries, kind_filter, !no_ignore);
+                        Self::kind_filtered_container_list_entries(
+                            &entries,
+                            kind_filter,
+                            !no_ignore,
+                        );
                     let report_entries = if payload_entries.is_empty() {
                         fallback_entries
                     } else {
@@ -419,6 +451,8 @@ impl CliApp {
                             &context,
                         )
                     };
+                    let report =
+                        Self::attach_split_bin_list_note(report, handler.as_ref(), split_bin);
                     return self.finish_list(report, 0, Vec::new());
                 }
                 Err(error) => {
@@ -484,6 +518,7 @@ impl CliApp {
         if let Some(handler) = self.containers.probe(&list_source) {
             let request = ContainerProbeRequest {
                 source: list_source.clone(),
+                split_bin,
             };
             self.emit_running(
                 OperationLabel {
@@ -511,6 +546,7 @@ impl CliApp {
                     None,
                 ),
             };
+            let report = Self::attach_split_bin_list_note(report, handler.as_ref(), split_bin);
             return self.finish_list(report, extracted_archives, cleanup_paths);
         }
 
@@ -621,7 +657,9 @@ impl CliApp {
         } = args;
         let kind_filter = Self::archive_entry_kind_filter(rom_filter, patch_filter);
         let out_dir_before = Self::snapshot_file_tree(&out_dir).unwrap_or_default();
-        let context = self.context(threads).with_extract_checksum_algorithms(checksum);
+        let context = self
+            .context(threads)
+            .with_extract_checksum_algorithms(checksum);
         let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
         if let Some(report) = self.require_existing_path(
             "extract",
@@ -659,6 +697,40 @@ impl CliApp {
                 (split_bin, None)
             };
         let extract_threads = Some(context.plan_threads(handler.capabilities().extract_threads));
+        // When interactive selection is enabled and the caller did not pin an entry, extract a single
+        // payload path instead of every entry: auto-pick when unambiguous, otherwise prompt the host
+        // (the same resolution is applied per nested level during the descent below). This is what lets
+        // the browser "just extract" with no separate `list` command.
+        let selections = if self.interactive_selection_enabled && selections.is_empty() {
+            match self.resolve_single_payload_selection(
+                handler.as_ref(),
+                &source,
+                SelectionResolutionOptions {
+                    kind_filter,
+                    split_bin: extract_split_bin,
+                    ignore_common_files: !no_ignore,
+                    source_label: "extract input",
+                },
+                &context,
+            ) {
+                Ok(Some(entry)) => vec![entry],
+                Ok(None) => selections,
+                Err(error) => {
+                    return self.finish(
+                        "extract",
+                        OperationReport::failed(
+                            OperationFamily::Container,
+                            Some(handler.descriptor().name.to_string()),
+                            "extract",
+                            error.to_string(),
+                            extract_threads.clone(),
+                        ),
+                    );
+                }
+            }
+        } else {
+            selections
+        };
         self.emit_running(
             OperationLabel {
                 command: "extract",
@@ -727,69 +799,88 @@ impl CliApp {
                 }
             }
         }
-        if report.status == OperationStatus::Succeeded && !no_nested_extract {
-            let progress_execution = report.thread_execution.clone();
-            self.emit_running(
-                OperationLabel {
-                    command: "extract",
-                    family: OperationFamily::Container,
-                    format: Some(handler.descriptor().name),
-                },
-                "extract",
-                format!("extracting `{}`", source.display()),
-                None,
-                progress_execution,
-            );
-            self.emit_running(
-                OperationLabel {
-                    command: "extract",
-                    family: OperationFamily::Container,
-                    format: Some(handler.descriptor().name),
-                },
-                "nested-extract",
-                "checking nested archives in extracted outputs".to_string(),
-                None,
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
-            );
-            match self.extract_nested_archives(
-                &source,
+        if report.status == OperationStatus::Succeeded {
+            let format_name = handler.descriptor().name;
+            // Level 0 (the input container itself). Its outputs carry the inline checksums computed
+            // by the handler when `--checksum` was requested.
+            let primary_details = Self::build_emitted_file_detail_values(
+                report.details.as_ref(),
                 &primary_emitted_files,
-                kind_filter,
-                !no_ignore,
-                !no_overwrite,
-                &context,
-            ) {
-                Ok(0) => {}
-                Ok(nested_count) => {
-                    report.label = format!(
-                        "{}; recursively extracted {nested_count} nested container(s)",
-                        report.label
-                    );
-                }
-                Err(error) => {
-                    report = OperationReport::failed(
-                        OperationFamily::Container,
-                        Some(handler.descriptor().name.to_string()),
-                        "extract",
-                        error.to_string(),
-                        Some(context.plan_threads(ThreadCapability::single_threaded())),
-                    );
+                None,
+            );
+            self.emit_extract_step(ExtractStepEvent {
+                format: format_name,
+                depth: 0,
+                source: &source,
+                out_dir: &out_dir,
+                step_status: "succeeded",
+                outputs: &primary_details,
+                thread_execution: report.thread_execution.clone(),
+            });
+            let mut all_emitted_details = primary_details;
+            // Canonical paths (normalized) of every container we descended into; these are the
+            // intermediate archives, so they are excluded from the final leaf output set.
+            let mut descended: HashSet<String> = HashSet::new();
+            if !no_nested_extract {
+                self.emit_running(
+                    OperationLabel {
+                        command: "extract",
+                        family: OperationFamily::Container,
+                        format: Some(format_name),
+                    },
+                    "nested-extract",
+                    "checking nested archives in extracted outputs".to_string(),
+                    None,
+                    Some(context.plan_threads(ThreadCapability::single_threaded())),
+                );
+                match self.extract_nested_archives(
+                    &source,
+                    &primary_emitted_files,
+                    kind_filter,
+                    !no_ignore,
+                    !no_overwrite,
+                    &context,
+                ) {
+                    Ok(outcome) => {
+                        descended = outcome.descended;
+                        all_emitted_details.extend(outcome.emitted_details);
+                        if outcome.count > 0 {
+                            report.label = format!(
+                                "{}; recursively extracted {} nested container(s)",
+                                report.label, outcome.count
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        report = OperationReport::failed(
+                            OperationFamily::Container,
+                            Some(format_name.to_string()),
+                            "extract",
+                            error.to_string(),
+                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                        );
+                    }
                 }
             }
-        }
-        if report.status == OperationStatus::Succeeded {
-            report = Self::attach_emitted_files_details(report, primary_emitted_files, None);
-            self.emit_running(
-                OperationLabel {
-                    command: "extract",
-                    family: OperationFamily::Container,
-                    format: Some(handler.descriptor().name),
-                },
-                "extract",
-                format!("finalizing extracted output from `{}`", source.display()),
-                None,
-                report.thread_execution.clone(),
-            );
+            if report.status == OperationStatus::Succeeded {
+                // Report only the bottom/leaf outputs: any emitted file we did not further descend
+                // into. For a non-nested extract `descended` is empty, so every primary output is a
+                // leaf and the result is identical to the previous single-level behaviour.
+                let leaves = all_emitted_details
+                    .into_iter()
+                    .filter(|value| {
+                        match value
+                            .as_object()
+                            .and_then(|map| map.get("path"))
+                            .and_then(Value::as_str)
+                        {
+                            Some(path) => !descended.contains(path),
+                            None => true,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                report = Self::set_emitted_files_detail(report, leaves);
+            }
         }
         self.finish("extract", report)
     }
@@ -912,10 +1003,9 @@ impl CliApp {
             }
         }
 
-        if let Some(stream_format) = self.select_streamed_checksum_auto_extract_format(
-            &source,
-            &checksum_options,
-        ) {
+        if let Some(stream_format) =
+            self.select_streamed_checksum_auto_extract_format(&source, &checksum_options)
+        {
             return self.finish(
                 "checksum",
                 self.run_checksum_stream_auto_extract(
@@ -1072,13 +1162,12 @@ impl CliApp {
             start,
             length,
         };
-        let header_only_translated_range =
-            strip_header
-                && !user_requested_range
-                && !should_auto_trim_fix
-                && stripped_header_offset > 0
-                && request.start == Some(stripped_header_offset)
-                && request.length.is_none();
+        let header_only_translated_range = strip_header
+            && !user_requested_range
+            && !should_auto_trim_fix
+            && stripped_header_offset > 0
+            && request.start == Some(stripped_header_offset)
+            && request.length.is_none();
         let checksum_stage = if (request.start.is_some() || request.length.is_some())
             && !header_only_translated_range
         {
@@ -1192,6 +1281,7 @@ impl CliApp {
 
         let request = ContainerProbeRequest {
             source: source.to_path_buf(),
+            split_bin: false,
         };
         let entries = handler.list_entries(&request, context)?;
         if !Self::chd_raw_sha1_fast_path_entries_supported(&entries) {
@@ -1761,6 +1851,7 @@ impl CliApp {
 
             let probe_request = ContainerProbeRequest {
                 source: current_source.clone(),
+                split_bin: false,
             };
             if let Err(error) = handler.probe_details(&probe_request, context) {
                 trace!(
@@ -2105,6 +2196,94 @@ impl CliApp {
         }
     }
 
+    /// Resolve a single payload entry to extract from `source`. Used when interactive selection is
+    /// enabled and no explicit `--select` was given: lists the container's payload candidates
+    /// (grouping a CD's cue + bin/iso/img tracks into the single cue candidate so a disc is not
+    /// treated as ambiguous), auto-picks when there is exactly one, and otherwise prompts the host to
+    /// choose one. Returns `None` when the container exposes no distinct payload candidate, in which
+    /// case the caller extracts everything as before.
+    fn resolve_single_payload_selection(
+        &self,
+        handler: &dyn ContainerHandler,
+        source: &Path,
+        options: SelectionResolutionOptions<'_>,
+        context: &OperationContext,
+    ) -> Result<Option<String>> {
+        let entries = handler
+            .list_entry_records(
+                &ContainerProbeRequest {
+                    source: source.to_path_buf(),
+                    split_bin: options.split_bin,
+                },
+                context,
+            )
+            .map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "interactive selection could not list entries for `{}` ({}): {error}",
+                    source.display(),
+                    handler.descriptor().name
+                ))
+            })?;
+        let (payload, containers) = Self::kind_filtered_container_list_entries(
+            &entries,
+            options.kind_filter,
+            options.ignore_common_files,
+        );
+        let has_cue = payload
+            .iter()
+            .any(|entry| entry.path.to_ascii_lowercase().ends_with(".cue"));
+        let mut candidates: Vec<(String, Option<u64>)> = Vec::new();
+        for entry in payload.iter().chain(containers.iter()) {
+            let name = Self::normalize_selection_entry_name(&entry.path);
+            if name.is_empty() {
+                continue;
+            }
+            if has_cue {
+                let lower = name.to_ascii_lowercase();
+                if lower.ends_with(".bin") || lower.ends_with(".iso") || lower.ends_with(".img") {
+                    continue;
+                }
+            }
+            if !candidates.iter().any(|(existing, _)| existing == &name) {
+                candidates.push((name, entry.size));
+            }
+        }
+        trace!(
+            source = %source.display(),
+            candidate_count = candidates.len(),
+            interactive = self.interactive_selection_enabled,
+            "resolving single payload selection"
+        );
+        match candidates.len() {
+            // 0 or 1 distinct payload: extract everything at this level. This keeps a single logical
+            // payload whole — notably a CD image whose cue + bin/iso/img tracks were grouped into one
+            // candidate must be extracted together, not just the cue.
+            0 | 1 => Ok(None),
+            _ => {
+                let prompt_candidates = candidates
+                    .iter()
+                    .map(|(name, size)| PromptCandidate {
+                        value: name.clone(),
+                        label: name.clone(),
+                        size: *size,
+                    })
+                    .collect::<Vec<_>>();
+                let heading = format!(
+                    "{source_label} payload selection for `{}` is ambiguous. Choose one entry:",
+                    source.display(),
+                    source_label = options.source_label
+                );
+                match self.prompt_for_selection(&heading, &prompt_candidates)? {
+                    Some(index) => Ok(Some(prompt_candidates[index].value.clone())),
+                    None => Err(RomWeaverError::Validation(format!(
+                        "interactive selection was cancelled for `{}`",
+                        source.display()
+                    ))),
+                }
+            }
+        }
+    }
+
     fn is_selection_resolution_error(label: &str) -> bool {
         let lower = label.to_ascii_lowercase();
         lower.contains("requested selections were not found")
@@ -2123,6 +2302,7 @@ impl CliApp {
             .list_entries(
                 &ContainerProbeRequest {
                     source: source.to_path_buf(),
+                    split_bin: false,
                 },
                 context,
             )
@@ -2156,6 +2336,7 @@ impl CliApp {
             .map(|entry| PromptCandidate {
                 value: entry.clone(),
                 label: entry.clone(),
+                size: None,
             })
             .collect::<Vec<_>>();
         let heading = format!(
@@ -2196,6 +2377,9 @@ impl CliApp {
                 } else {
                     candidate.display_name.clone()
                 },
+                size: fs::metadata(&candidate.source)
+                    .ok()
+                    .map(|metadata| metadata.len()),
             })
             .collect::<Vec<_>>();
         let selected_index = self.prompt_for_selection(&heading, &prompt_candidates)?;
@@ -2324,49 +2508,164 @@ impl CliApp {
     }
 
     fn attach_emitted_files_details(
-        mut report: OperationReport,
+        report: OperationReport,
         emitted_files: Vec<PathBuf>,
         default_kind: Option<&str>,
     ) -> OperationReport {
         if report.status != OperationStatus::Succeeded {
             return report;
         }
+        let emitted = Self::build_emitted_file_detail_values(
+            report.details.as_ref(),
+            &emitted_files,
+            default_kind,
+        );
+        Self::set_emitted_files_detail(report, emitted)
+    }
 
-        let mut details = match report.details.take() {
-            Some(Value::Object(map)) => map,
-            _ => Map::new(),
-        };
-        let existing = match details.remove("emitted_files") {
-            Some(Value::Array(entries)) => entries
-                .into_iter()
-                .filter_map(|entry| match entry {
-                    Value::Object(map) => {
-                        let key = Self::emitted_file_detail_key(&map)?;
-                        Some((key, map))
-                    }
-                    _ => None,
-                })
-                .collect::<BTreeMap<_, _>>(),
+    /// Builds the `emitted_files` detail objects for the given paths, merging in any checksum (or
+    /// other) fields already present for the same path in `report_details`. Used both by the
+    /// single-level attach and by the nested descent, which captures each level's outputs.
+    fn build_emitted_file_detail_values(
+        report_details: Option<&Value>,
+        emitted_files: &[PathBuf],
+        default_kind: Option<&str>,
+    ) -> Vec<Value> {
+        let existing = match report_details {
+            Some(Value::Object(map)) => match map.get("emitted_files") {
+                Some(Value::Array(entries)) => entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        Value::Object(map) => {
+                            let key = Self::emitted_file_detail_key(map)?;
+                            Some((key, map.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+                _ => BTreeMap::new(),
+            },
             _ => BTreeMap::new(),
         };
-        let emitted = emitted_files
-            .into_iter()
+        emitted_files
+            .iter()
             .filter_map(|path| {
-                let mut detail = match Self::build_emitted_file_detail(&path, default_kind)? {
+                let mut detail = match Self::build_emitted_file_detail(path, default_kind)? {
                     Value::Object(map) => map,
                     _ => return None,
                 };
-                if let Some(extra) = existing.get(&Self::normalized_emitted_path_key(&path)) {
+                if let Some(extra) = existing.get(&Self::normalized_emitted_path_key(path)) {
                     for (key, value) in extra {
                         detail.entry(key.clone()).or_insert_with(|| value.clone());
                     }
                 }
                 Some(Value::Object(detail))
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    }
+
+    /// Replaces the report's `emitted_files` detail with the given pre-built objects, preserving any
+    /// other detail keys already present.
+    fn set_emitted_files_detail(
+        mut report: OperationReport,
+        emitted: Vec<Value>,
+    ) -> OperationReport {
+        let mut details = match report.details.take() {
+            Some(Value::Object(map)) => map,
+            _ => Map::new(),
+        };
         details.insert("emitted_files".to_string(), Value::Array(emitted));
         report.details = Some(Value::Object(details));
         report
+    }
+
+    /// Emits a structured per-level extract "step" event so the UI can render each descended level
+    /// (its source, format, and output names + sizes) as a discrete extraction while still ending
+    /// the whole command with a single terminal finish. The event status stays `Running` because
+    /// the host treats `succeeded`/`failed` as the command terminal; the per-level lifecycle is
+    /// carried in `details.extract_step.status` instead.
+    fn emit_extract_step(&self, event: ExtractStepEvent<'_>) {
+        if !self.emit_progress_events {
+            return;
+        }
+        let ExtractStepEvent {
+            format,
+            depth,
+            source,
+            out_dir,
+            step_status,
+            outputs,
+            thread_execution,
+        } = event;
+        let source_name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let output_summaries = outputs
+            .iter()
+            .filter_map(|value| {
+                let map = value.as_object()?;
+                let mut entry = Map::new();
+                for key in ["file_name", "size_bytes", "kind"] {
+                    if let Some(field) = map.get(key) {
+                        entry.insert(key.to_string(), field.clone());
+                    }
+                }
+                Some(Value::Object(entry))
+            })
+            .collect::<Vec<_>>();
+        let mut step = Map::new();
+        step.insert("depth".to_string(), json!(depth));
+        step.insert(
+            "source".to_string(),
+            json!(source.to_string_lossy().replace('\\', "/")),
+        );
+        step.insert("source_name".to_string(), json!(source_name));
+        // The directory this level extracted into. The UI relativizes each level's source (and the
+        // final leaf) against the longest matching `out_dir` to show the path *inside* its immediate
+        // parent archive, rather than the accumulated full nested path.
+        step.insert(
+            "out_dir".to_string(),
+            json!(out_dir.to_string_lossy().replace('\\', "/")),
+        );
+        step.insert("format".to_string(), json!(format));
+        step.insert("status".to_string(), json!(step_status));
+        step.insert("outputs".to_string(), Value::Array(output_summaries));
+        let mut details = Map::new();
+        details.insert("extract_step".to_string(), Value::Object(step));
+        let label = if step_status == "running" {
+            format!("extracting `{}`", source.display())
+        } else {
+            format!("extracted `{}`", source.display())
+        };
+        trace!(
+            format,
+            depth,
+            source = %source.display(),
+            step_status,
+            output_count = outputs.len(),
+            "emitting extract step event"
+        );
+        let thread_execution = thread_execution.as_ref();
+        self.reporter.emit(ProgressEvent {
+            command: "extract".to_string(),
+            family: OperationFamily::Container,
+            format: Some(format.to_string()),
+            stage: "extract-step".to_string(),
+            label,
+            details: Some(Value::Object(details)),
+            percent: None,
+            requested_threads: thread_execution.map(|value| value.requested_threads),
+            effective_threads: thread_execution.map(|value| value.effective_threads),
+            thread_mode: thread_execution.map(|value| value.thread_mode),
+            used_parallelism: thread_execution.map(|value| value.used_parallelism),
+            thread_fallback: thread_execution.map(|value| value.thread_fallback),
+            thread_fallback_reason: thread_execution
+                .and_then(|value| value.thread_fallback_reason.clone()),
+            elapsed_ms: None,
+            status: OperationStatus::Running,
+        });
     }
 
     fn emitted_file_detail_key(entry: &Map<String, Value>) -> Option<String> {

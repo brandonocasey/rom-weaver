@@ -18,13 +18,12 @@ use rom_weaver_containers::{CompressFormatRecommendation, ContainerRegistry};
 use rom_weaver_core::{
     ArchiveEntryKindFilter, CancellationToken, ChecksumEngine, ChecksumRequest,
     ContainerCreateRequest, ContainerExtractRequest, ContainerHandler, ContainerListEntry,
-    ContainerProbeRequest, NoninteractivePrompter, OperationContext, OperationFamily,
-    OperationReport, OperationStatus, PatchApplyRequest, PatchChecksumValidation,
-    PatchCreateRequest, PatchValidateRequest, ProbeConfidence, ProgressEvent, ProgressSink,
-    PromptCandidate, Result, RomWeaverError, Selection, SelectionMatcher, SelectionPrompter,
-    ThreadBudget, ThreadCapability, ThreadExecution, XdeltaSecondaryMode,
-    is_patch_filter_candidate_name, is_rom_filter_candidate_name, normalize_archive_name,
-    should_ignore_common_container_file,
+    ContainerProbeRequest, OperationContext, OperationFamily, OperationReport, OperationStatus,
+    PatchApplyRequest, PatchChecksumValidation, PatchCreateRequest, PatchValidateRequest,
+    ProgressEvent, ProgressSink, PromptCandidate, Result, RomWeaverError, Selection,
+    SelectionMatcher, SelectionPrompter, ThreadBudget, ThreadCapability, ThreadExecution,
+    XdeltaSecondaryMode, is_patch_filter_candidate_name, is_rom_filter_candidate_name,
+    normalize_archive_name, should_ignore_common_container_file,
 };
 // The selection-input parser moved to core; the app keeps a thin wrapper only so the existing unit
 // test in `tests.rs` can exercise it through `CliApp`.
@@ -268,6 +267,16 @@ pub struct ListCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub no_ignore: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "For CHD CD listing, report split CUE + per-track BIN entries (`*.trackNN.bin`) instead of a single BIN; ignored for containers that do not support it"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub split_bin: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1136,15 +1145,69 @@ impl RunCommandOptions {
     }
 }
 
-/// Entrypoint for headless callers (wasm). Always emits the JSON event stream and never prompts,
-/// so the worker that parses stdout sees a clean machine-readable stream.
+/// Browser host selection callback. The wasm prompter serializes the choice request to JSON and
+/// hands it to the JS runner, which blocks the worker until the UI resolves the pick (or a negative
+/// return cancels — also used when no interactive handler is registered). Lives in the `env` import
+/// module the runner already supplies at instantiation.
+#[cfg(target_arch = "wasm32")]
+mod wasm_host_prompt {
+    use std::sync::Arc;
+
+    use rom_weaver_core::{PromptCandidate, Selection, SelectionPrompter};
+    use serde_json::json;
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn rom_weaver_host_select(request_ptr: *const u8, request_len: usize) -> i32;
+    }
+
+    /// Prompter that delegates list selection to the browser host. Confirmation prompts are declined
+    /// (matching the historical headless behavior); only candidate selection is interactive.
+    pub struct WasmHostPrompter;
+
+    impl SelectionPrompter for WasmHostPrompter {
+        fn select(&self, heading: &str, candidates: &[PromptCandidate]) -> Selection {
+            let request = json!({
+                "heading": heading,
+                "candidates": candidates
+                    .iter()
+                    .map(|candidate| json!({ "value": candidate.value, "label": candidate.label, "size": candidate.size }))
+                    .collect::<Vec<_>>(),
+            })
+            .to_string();
+            let bytes = request.as_bytes();
+            // SAFETY: the pointer and length describe a live byte slice for the duration of the
+            // call; the host reads it synchronously before returning.
+            let selected = unsafe { rom_weaver_host_select(bytes.as_ptr(), bytes.len()) };
+            match usize::try_from(selected) {
+                Ok(index) if index < candidates.len() => Selection::Selected(index),
+                _ => Selection::Cancelled,
+            }
+        }
+
+        fn confirm(&self, _heading: &str, _details: &[String]) -> bool {
+            false
+        }
+    }
+
+    pub fn prompter() -> Arc<dyn SelectionPrompter> {
+        Arc::new(WasmHostPrompter)
+    }
+}
+
+/// Entrypoint for headless callers (wasm). Always emits the JSON event stream. On wasm it routes
+/// interactive selection back to the browser host; elsewhere it never prompts.
 pub fn run_request(request: RomWeaverRunRequest, stdout_is_tty: bool) -> ExitCode {
     let output = request.output;
+    #[cfg(target_arch = "wasm32")]
+    let prompter: Arc<dyn SelectionPrompter> = wasm_host_prompt::prompter();
+    #[cfg(not(target_arch = "wasm32"))]
+    let prompter: Arc<dyn SelectionPrompter> = Arc::new(rom_weaver_core::NoninteractivePrompter);
     run_command(
         request.command,
         RunCommandOptions::from_output(output, stdout_is_tty),
         Arc::new(JsonProgressSink),
-        Arc::new(NoninteractivePrompter),
+        prompter,
     )
 }
 

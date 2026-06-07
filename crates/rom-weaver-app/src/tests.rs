@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use rom_weaver_core::ArchiveEntryKindFilter;
+
 use super::{CliApp, CompressionLevelProfile, ParsedSelectionInput};
 
 #[test]
@@ -236,6 +238,37 @@ fn emitted_rom_extensions_cover_3ds_family_inputs() {
             "missing {extension}"
         );
     }
+}
+
+#[test]
+fn nested_probe_skips_known_leaf_outputs_only_when_kind_filtered() {
+    let no_filter = ArchiveEntryKindFilter::new(false, false);
+    let rom_filter = ArchiveEntryKindFilter::new(true, false);
+
+    assert!(CliApp::should_probe_nested_candidate(
+        Path::new("disc.iso"),
+        no_filter
+    ));
+    assert!(!CliApp::should_probe_nested_candidate(
+        Path::new("disc.iso"),
+        rom_filter
+    ));
+    assert!(!CliApp::should_probe_nested_candidate(
+        Path::new("track.bin"),
+        rom_filter
+    ));
+    assert!(CliApp::should_probe_nested_candidate(
+        Path::new("inner.zip"),
+        rom_filter
+    ));
+    assert!(CliApp::should_probe_nested_candidate(
+        Path::new("inner.rvz"),
+        rom_filter
+    ));
+    assert!(CliApp::should_probe_nested_candidate(
+        Path::new("payload.unknown"),
+        rom_filter
+    ));
 }
 
 #[test]

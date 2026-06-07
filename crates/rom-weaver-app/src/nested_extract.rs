@@ -1,3 +1,14 @@
+/// The result of descending nested archives during a single `extract` command.
+struct NestedExtractOutcome {
+    /// Number of nested containers that were extracted.
+    count: usize,
+    /// Normalized canonical paths of every container we descended into (the intermediate archives).
+    descended: HashSet<String>,
+    /// `emitted_files` detail objects (with checksums when requested) for every file produced by the
+    /// nested levels, in extraction order.
+    emitted_details: Vec<Value>,
+}
+
 impl CliApp {
     fn require_existing_path(
         &self,
@@ -33,7 +44,10 @@ impl CliApp {
         );
         let status = report.status;
         self.reporter.emit(report.into_event(command));
-        AppRunOutcome { status, exit_code: status.exit_code() }
+        AppRunOutcome {
+            status,
+            exit_code: status.exit_code(),
+        }
     }
 
     fn extract_nested_archives(
@@ -44,7 +58,7 @@ impl CliApp {
         ignore_common_files: bool,
         overwrite: bool,
         context: &OperationContext,
-    ) -> Result<usize> {
+    ) -> Result<NestedExtractOutcome> {
         trace!(
             root_source = %root_source.display(),
             candidate_count = root_candidates.len(),
@@ -53,12 +67,14 @@ impl CliApp {
         let root_source =
             fs::canonicalize(root_source).unwrap_or_else(|_| root_source.to_path_buf());
         let mut nested_count = 0usize;
+        let mut descended: HashSet<String> = HashSet::new();
+        let mut emitted_details: Vec<Value> = Vec::new();
         let mut processed = HashSet::new();
         processed.insert(root_source);
 
         let mut queue = VecDeque::new();
         for candidate in root_candidates {
-            self.enqueue_nested_candidate(candidate, 1, &processed, &mut queue);
+            self.enqueue_nested_candidate(candidate, 1, kind_filter, &processed, &mut queue);
         }
         trace!(
             initial_queue_len = queue.len(),
@@ -98,6 +114,8 @@ impl CliApp {
             }
 
             let canonical_source = fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
+            let canonical_source_key =
+                Self::normalize_emitted_path_string(&canonical_source.to_string_lossy());
             if !processed.insert(canonical_source) {
                 trace!(
                     source = %source.display(),
@@ -118,6 +136,7 @@ impl CliApp {
             // do not fail nested extraction on non-container payload files.
             let probe_request = ContainerProbeRequest {
                 source: source.clone(),
+                split_bin: false,
             };
             if let Err(error) = handler.probe_details(&probe_request, context) {
                 trace!(
@@ -130,15 +149,36 @@ impl CliApp {
             }
 
             let nested_out_dir = self.next_nested_out_dir(&source);
+            // Mirror the primary level: when interactive selection is enabled, descend a single payload
+            // path per nested container (auto-pick when unambiguous, otherwise prompt) rather than
+            // extracting every nested entry.
+            let nested_selections: Vec<String> = if self.interactive_selection_enabled {
+                self.resolve_single_payload_selection(
+                    handler.as_ref(),
+                    &source,
+                    SelectionResolutionOptions {
+                        kind_filter,
+                        split_bin: false,
+                        ignore_common_files,
+                        source_label: "nested extract",
+                    },
+                    context,
+                )?
+                .into_iter()
+                .collect()
+            } else {
+                Vec::new()
+            };
             trace!(
                 source = %source.display(),
                 format = handler.descriptor().name,
                 nested_out_dir = %nested_out_dir.display(),
+                nested_selection_count = nested_selections.len(),
                 "extracting nested archive candidate"
             );
             let nested_request = ContainerExtractRequest {
                 source: source.clone(),
-                selections: Vec::new(),
+                selections: nested_selections,
                 kind_filter,
                 out_dir: nested_out_dir.clone(),
                 split_bin: false,
@@ -146,34 +186,61 @@ impl CliApp {
                 overwrite,
                 parent: None,
             };
-            self.emit_running(
-                OperationLabel {
-                    command: "extract",
-                    family: OperationFamily::Container,
-                    format: Some(handler.descriptor().name),
-                },
-                "nested-extract",
-                format!("extracting nested archive `{}`", source.display()),
-                None,
-                Some(context.plan_threads(handler.capabilities().extract_threads)),
-            );
-            handler.extract(&nested_request, context).map_err(|error| {
+            let format_name = handler.descriptor().name;
+            let step_threads = Some(context.plan_threads(handler.capabilities().extract_threads));
+            self.emit_extract_step(ExtractStepEvent {
+                format: format_name,
+                depth,
+                source: &source,
+                out_dir: &nested_out_dir,
+                step_status: "running",
+                outputs: &[],
+                thread_execution: step_threads.clone(),
+            });
+            let nested_report = handler.extract(&nested_request, context).map_err(|error| {
                 RomWeaverError::Validation(format!(
                     "nested extract failed for `{}` ({}): {error}",
                     source.display(),
-                    handler.descriptor().name
+                    format_name
                 ))
             })?;
+            descended.insert(canonical_source_key);
             nested_count = nested_count.saturating_add(1);
+            // Snapshot this level's freshly-extracted outputs (the nested dir is created empty),
+            // merging in any inline checksums the handler attached, then surface them as a
+            // succeeded step event and accumulate them for leaf selection by the caller.
+            let nested_emitted =
+                Self::collect_changed_files(&nested_out_dir, &HashMap::new()).unwrap_or_default();
+            let nested_details = Self::build_emitted_file_detail_values(
+                nested_report.details.as_ref(),
+                &nested_emitted,
+                None,
+            );
+            self.emit_extract_step(ExtractStepEvent {
+                format: format_name,
+                depth,
+                source: &source,
+                out_dir: &nested_out_dir,
+                step_status: "succeeded",
+                outputs: &nested_details,
+                thread_execution: step_threads,
+            });
+            emitted_details.extend(nested_details);
             trace!(
                 source = %source.display(),
                 nested_out_dir = %nested_out_dir.display(),
-                format = handler.descriptor().name,
+                format = format_name,
                 extracted_nested_archives = nested_count,
                 "nested archive extraction completed"
             );
 
-            self.enqueue_nested_candidates(&nested_out_dir, depth + 1, &processed, &mut queue)?;
+            self.enqueue_nested_candidates(
+                &nested_out_dir,
+                depth + 1,
+                kind_filter,
+                &processed,
+                &mut queue,
+            )?;
             trace!(
                 source = %source.display(),
                 queue_len = queue.len(),
@@ -185,19 +252,29 @@ impl CliApp {
         trace!(
             extracted_nested_archives = nested_count,
             processed_sources = processed.len(),
+            descended_containers = descended.len(),
+            emitted_outputs = emitted_details.len(),
             "completed nested archive extraction scan"
         );
-        Ok(nested_count)
+        Ok(NestedExtractOutcome {
+            count: nested_count,
+            descended,
+            emitted_details,
+        })
     }
 
     fn enqueue_nested_candidate(
         &self,
         path: &Path,
         depth: usize,
+        kind_filter: ArchiveEntryKindFilter,
         processed: &HashSet<PathBuf>,
         queue: &mut VecDeque<(PathBuf, usize)>,
     ) {
-        if !path.is_file() || self.containers.probe(path).is_none() {
+        if !path.is_file()
+            || !Self::should_probe_nested_candidate(path, kind_filter)
+            || self.containers.probe(path).is_none()
+        {
             return;
         }
         let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -223,6 +300,7 @@ impl CliApp {
         &self,
         root: &Path,
         depth: usize,
+        kind_filter: ArchiveEntryKindFilter,
         processed: &HashSet<PathBuf>,
         queue: &mut VecDeque<(PathBuf, usize)>,
     ) -> Result<()> {
@@ -247,11 +325,14 @@ impl CliApp {
                     directories.push(path);
                     continue;
                 }
-                if !file_type.is_file() || self.containers.probe(&path).is_none() {
+                if !file_type.is_file()
+                    || !Self::should_probe_nested_candidate(&path, kind_filter)
+                    || self.containers.probe(&path).is_none()
+                {
                     continue;
                 }
                 let prior_len = queue.len();
-                self.enqueue_nested_candidate(&path, depth, processed, queue);
+                self.enqueue_nested_candidate(&path, depth, kind_filter, processed, queue);
                 if queue.len() > prior_len {
                     queued_count = queued_count.saturating_add(1);
                 }
@@ -265,6 +346,16 @@ impl CliApp {
             "completed nested candidate scan"
         );
         Ok(())
+    }
+
+    fn should_probe_nested_candidate(path: &Path, kind_filter: ArchiveEntryKindFilter) -> bool {
+        if kind_filter.disabled() {
+            return true;
+        }
+        match Self::infer_emitted_file_kind(path) {
+            Some("archive") | None => true,
+            Some(_) => false,
+        }
     }
 
     fn next_nested_out_dir(&self, source: &Path) -> PathBuf {
