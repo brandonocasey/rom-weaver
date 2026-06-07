@@ -138,6 +138,13 @@ class StagedRomSourceController<TSource, TState extends SharedRomSourceState> {
     ) {
       requests.length = 0;
     }
+    if (!requests.length) {
+      const preparedAssetRequest = this.createPreparedAssetSelectionRequest(stage);
+      if (preparedAssetRequest) {
+        requests.push(preparedAssetRequest);
+        releasePreparedRomSource(stage as never);
+      }
+    }
     for (const request of requests) this.addCandidateRequest(stage, request);
     if (!stage.state.candidates.length) this.addDirectCandidate(stage, stage.index, stage.state.id);
     const selectable = stage.state.candidates.filter((candidate) => candidate.selectable);
@@ -486,6 +493,29 @@ class StagedRomSourceController<TSource, TState extends SharedRomSourceState> {
       releasePreparedRomSource(stage as never);
     stage.state.selectedCandidateId = candidateId;
     stage.selectedArchiveEntry = stage.internalCandidates.get(candidateId)?.archiveEntry;
+  }
+
+  private createPreparedAssetSelectionRequest(
+    stage: SharedRomStagedSource<TSource, TState>,
+  ): CandidateSelectionRequest | null {
+    const assets = stage.preparedInputAssets || [];
+    if (assets.filter((asset) => asset.patchable).length <= 1) return null;
+    return {
+      candidates: assets.map((asset) => ({
+        fileName: asset.fileName,
+        id: asset.id,
+        kind: asset.kind,
+        patchable: asset.patchable,
+        path: asset.fileName,
+        selectable: asset.patchable,
+        size: asset.size,
+        type: "file",
+      })),
+      role: stage.state.role,
+      sourceIndex: stage.index,
+      sourceName: stage.state.fileName || stage.state.id,
+      warnings: stage.state.warnings.map((warning) => warning.message),
+    };
   }
 
   private handleSourceSelectionRequests(

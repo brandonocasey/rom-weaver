@@ -1,11 +1,9 @@
 import type {
-  ApplyWorkflowChecksums,
   ApplyWorkflowInputState,
   ApplyWorkflowParentCompression,
   ApplyWorkflowPatchState,
   ApplyWorkflowResolvedInput,
 } from "../../types/apply-workflow.ts";
-import type { ChecksumRomProbe } from "../../types/checksum.ts";
 import type { WorkflowProgress } from "../../types/progress.ts";
 import type { ApplyResult } from "../../types/public.ts";
 import type { CandidateSelectionRequest, SelectionCandidate, SelectionFileCandidate } from "../../types/selection.ts";
@@ -16,11 +14,7 @@ import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { ParsedPatchLike, PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
 import { getPatchProbeRequirements } from "../apply/patch-apply-service.ts";
 import { patchWorkflowDeps, runApplyWorkflow } from "../apply/workflow.ts";
-import {
-  getCompressionOutputExtension,
-  isCompressionFormat,
-  resolveAutomaticCompressionFormat,
-} from "../compression/container-format-registry.ts";
+import { isCompressionFormat } from "../compression/container-format-registry.ts";
 import { RomWeaverError, throwIfAborted, toRomWeaverError, withAbortSignal } from "../errors.ts";
 import {
   getPatchFileBlob,
@@ -30,16 +24,35 @@ import {
 } from "../input/binary-service.ts";
 import { getInputPreparationMetrics, type InputAsset, type InputParentCompression } from "../input/input-assets.ts";
 import { prepareAutoPatchInputs, prepareInputFile } from "../input/input-preparation-service.ts";
-import {
-  appendFileNameExtension,
-  getBaseFileName,
-  getFileNameWithoutExtension,
-  stripFileNameQuery,
-} from "../input/path-utils.ts";
+import { getBaseFileName } from "../input/path-utils.ts";
 import { selectionToArchiveEntry } from "../input/selection.ts";
 import { wrapPublicOutput } from "../output/index.ts";
-import { buildPatchedOutputBaseName } from "../output/output-name-composition.ts";
-import { getFileNameExtension } from "../path-utils.ts";
+import {
+  type ApplyOutputState,
+  applyOutputSettings,
+  createApplyOutputState,
+  getApplyExecutionOutputName,
+  recomputeApplyOutputState,
+  setApplyOutputFormat,
+  setApplyOutputName,
+} from "./apply-output-state-machine.ts";
+import {
+  assignApplyPatchTarget,
+  clearApplyPatchTarget,
+  createApplyPatchValidationKey,
+  evaluateApplyPatchReadiness,
+} from "./apply-patch-readiness-state-machine.ts";
+import type {
+  InputSession,
+  InternalCandidate,
+  InternalPatchChecksumPreflight,
+  InternalPatchRequirements,
+  InternalPatchValidation,
+  InternalSourceState,
+  SourceRole,
+  SourceValidator,
+  StagedSource,
+} from "./apply-workflow-state.ts";
 import {
   cloneCandidate,
   cloneValue,
@@ -51,12 +64,7 @@ import {
   getSourceSize,
   isRecord,
 } from "./controller-utils.ts";
-import {
-  type SharedInternalCandidate,
-  type SharedRomSourceSession,
-  type SharedRomStagedSource,
-  StagedRomSourceController,
-} from "./staged-rom-source.ts";
+import { StagedRomSourceController } from "./staged-rom-source.ts";
 import {
   calculateStandardInputChecksumsForFile,
   cloneChecksumRomProbe,
@@ -71,60 +79,6 @@ import {
 import { WorkflowController } from "./workflow-controller.ts";
 import { traceWorkflowControllerEvent } from "./workflow-tracing.ts";
 
-type SourceValidator<TSource> = (sources: TSource | TSource[] | undefined) => void;
-type SourceRole = "input" | "patch";
-type SourceStatus = ApplyWorkflowInputState["status"];
-type InternalPatchRequirements = NonNullable<ApplyWorkflowPatchState["requirements"]>;
-type InternalPatchChecksumPreflight = NonNullable<ApplyWorkflowPatchState["checksumPreflight"]>;
-type InternalPatchValidation = NonNullable<ApplyWorkflowPatchState["patchValidation"]>;
-type InternalSourceState = {
-  id: string;
-  fileName?: string;
-  order: number;
-  status: SourceStatus;
-  candidates: SelectionCandidate[];
-  selectedCandidateId?: string;
-  targetInputId?: string;
-  targetInputFileName?: string;
-  size?: number;
-  sourceSize?: number;
-  decompressionTimeMs?: number;
-  wasDecompressed?: boolean;
-  warnings: WorkflowWarning[];
-  checksums?: ApplyWorkflowChecksums;
-  checksumTimeMs?: number;
-  romProbe?: ChecksumRomProbe;
-  requirements?: InternalPatchRequirements;
-  checksumPreflight?: InternalPatchChecksumPreflight;
-  patchValidation?: InternalPatchValidation;
-  /** User-pasted checksum (raw hex) to validate the patch target input before apply. */
-  validateInputChecksum?: string;
-  /** User-pasted checksum (raw hex) to validate the patched output after apply. */
-  validateOutputChecksum?: string;
-  /** User toggle for PPF undo-aware apply; `undefined` means "default on for PPF patches". */
-  ppfUndo?: boolean;
-  role: SourceRole;
-};
-type InternalCandidate<TSource> = SharedInternalCandidate<TSource, InternalSourceState>;
-type StagedSource<TSource> = SharedRomStagedSource<TSource, InternalSourceState> & {
-  preparedInputAssets?: InputAsset[];
-  preparedPatchFile?: PatchFileInstance;
-  parsedPatch?: ParsedPatchLike;
-  selectedArchiveEntry?: string;
-  outputLabel?: string;
-};
-type InputSession<TSource> = SharedRomSourceSession<TSource, InternalSourceState>;
-const toNormalizedCrc32 = (value: unknown): string | undefined => {
-  if (typeof value === "number" && Number.isFinite(value)) return (value >>> 0).toString(16).padStart(8, "0");
-  if (typeof value !== "string") return undefined;
-  const normalized = value.trim().toLowerCase().replace(/^0x/, "");
-  if (!normalized) return undefined;
-  if (/^[0-9a-f]+$/i.test(normalized) && normalized.length <= 8)
-    return Number.parseInt(normalized, 16).toString(16).padStart(8, "0");
-  if (/^\d+$/.test(normalized)) return (Number.parseInt(normalized, 10) >>> 0).toString(16).padStart(8, "0");
-  return undefined;
-};
-
 const clonePatchRequirements = (
   requirements: InternalPatchRequirements | undefined,
 ): InternalPatchRequirements | undefined => (requirements ? { ...requirements } : undefined);
@@ -137,7 +91,6 @@ const clonePatchValidation = (validation: InternalPatchValidation | undefined): 
   validation ? { ...validation } : undefined;
 
 const PATCH_OUTPUT_LABEL_PATTERN = /\[([^\]]+)\](?:\.[^.]+)?\d*$/;
-const PATCH_TARGET_SELECTION_ERROR_CODES = new Set(["AMBIGUOUS_SELECTION", "PATCH_TARGET_MISMATCH"]);
 
 const cloneInputState = (
   state: InternalSourceState | null | undefined,
@@ -293,23 +246,6 @@ const createPatchOutputLabel = (fileName: string | undefined) => {
   return label || undefined;
 };
 
-const getCompressionExtension = (
-  format: CompressionFormat,
-  inputFileName: string | undefined,
-  settings: Partial<ApplySettings>,
-): string => getCompressionOutputExtension(format, { inputFileName, settings });
-
-const resolveAutomaticFormat = (
-  input: InputSession<unknown> | undefined,
-  _settings: Partial<ApplySettings>,
-): CompressionFormat => {
-  const sourceName = input?.sources[0] ? getSourceFileName(input.sources[0], "input") : "";
-  return resolveAutomaticCompressionFormat({
-    parentCompressions: input?.view?.parentCompressions,
-    sourceFileName: stripFileNameQuery(sourceName),
-  });
-};
-
 const releasePreparedFile = (file?: PatchFileInstance) => {
   const cleanup = file ? getPatchFileCleanup(file) : undefined;
   if (cleanup) void Promise.resolve(cleanup()).catch(() => undefined);
@@ -367,10 +303,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   private nextCandidateSequence = 0;
   private nextInputSequence = 0;
   private nextPatchSequence = 0;
-  private manualOutputName = false;
-  private manualOutputFormat = false;
-  private outputName = "";
-  private outputFormat: CompressionFormat = "7z";
+  private outputState: ApplyOutputState;
   private settings: Partial<ApplySettings>;
   private inputSession?: InputSession<TSource>;
   private mutationQueue: Promise<void> | null = null;
@@ -387,18 +320,9 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     this.validateSources = validateSources;
     this.id = options.id || createWorkflowId();
     this.settings = cloneValue(options.settings || {});
+    this.outputState = createApplyOutputState(this.settings);
     this.constructorSignal = options.signal;
     this.selectFile = options.selectFile;
-    const initialCompression = this.settings.output?.compression;
-    if (initialCompression && initialCompression !== "auto" && isCompressionFormat(initialCompression)) {
-      this.manualOutputFormat = true;
-      this.outputFormat = initialCompression;
-    }
-    if (typeof this.settings.output?.outputName === "string") {
-      this.manualOutputName = true;
-      this.outputName = this.settings.output.outputName;
-    }
-    if (!this.manualOutputFormat) this.outputFormat = resolveAutomaticFormat(undefined, this.settings);
     this.inputStages = new StagedRomSourceController<TSource, InternalSourceState>({
       clearRequestsWhenSinglePatchableAsset: true,
       emitProgress: (event) => this.emitProgress(event),
@@ -419,7 +343,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
 
   getInput(): ApplyWorkflowInputState | null {
     const session = this.inputSession;
-    if (!session) return null;
+    if (!session?.view) return null;
     const selectedOwner = this.getSelectedInputOwner();
     const resolvedInputs = session.synthetic
       ? session.stages
@@ -611,46 +535,19 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
         hasInputSession: !!this.inputSession,
       });
       this.settings = cloneValue(settings || {});
-      const output = this.settings.output || {};
-      const initialCompression = output.compression;
-      this.manualOutputFormat = !!(
-        initialCompression &&
-        initialCompression !== "auto" &&
-        isCompressionFormat(initialCompression)
-      );
-      if (this.manualOutputFormat) {
-        this.outputFormat = initialCompression as CompressionFormat;
-      } else {
-        this.outputFormat = resolveAutomaticFormat(
-          this.inputSession as InputSession<unknown> | undefined,
-          this.settings,
-        );
-      }
-      this.manualOutputName = typeof output.outputName === "string" && !!output.outputName.trim();
-      this.outputName = this.manualOutputName ? output.outputName || "" : "";
+      applyOutputSettings(this.outputState, this.settings, this.inputSession as InputSession<unknown> | undefined);
       this.preloadRuntimeCapability("compression");
       await this.refreshPatchReadiness();
       this.recomputeOutputState();
       this.trace("settings.set.finish", {
-        outputFormat: this.outputFormat,
+        outputFormat: this.outputState.outputFormat,
       });
     });
   }
 
   async setOutputName(name: string): Promise<void> {
     return this.mutate("setOutputName", async () => {
-      const normalizedName = name.trim();
-      this.manualOutputName = !!normalizedName;
-      if (this.manualOutputName) {
-        this.outputName = name;
-        this.settings.output = {
-          ...(this.settings.output || {}),
-          outputName: name,
-        };
-      } else {
-        if (this.settings.output) delete this.settings.output.outputName;
-        this.recomputeOutputState();
-      }
+      setApplyOutputName(this.outputState, this.settings, name, () => this.recomputeOutputState());
     });
   }
 
@@ -658,12 +555,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     return this.mutate("setOutputFormat", async () => {
       if (!isCompressionFormat(format))
         throw new RomWeaverError("INVALID_SETTINGS", `Unsupported output format: ${format}`);
-      this.manualOutputFormat = true;
-      this.outputFormat = format;
-      this.settings.output = {
-        ...(this.settings.output || {}),
-        compression: format,
-      };
+      setApplyOutputFormat(this.outputState, this.settings, format);
       this.recomputeOutputState();
     });
   }
@@ -673,7 +565,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       const stage = this.patches[index];
       if (!stage) throw new RomWeaverError("INVALID_INPUT", `Patch ${index + 1} was not found`);
       if (targetInputId === "auto") {
-        this.clearPatchTarget(stage);
+        clearApplyPatchTarget(stage);
         await this.evaluatePatchReadiness(stage);
         this.recomputeOutputState();
         return;
@@ -682,7 +574,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
         (asset) => asset.id === targetInputId || asset.fileName === targetInputId,
       );
       if (!target) throw new RomWeaverError("SELECTION_NOT_FOUND", `Patch target was not found: ${targetInputId}`);
-      this.assignPatchTarget(stage, target);
+      assignApplyPatchTarget(stage, target);
       await this.evaluatePatchReadiness(stage);
       this.recomputeOutputState();
     });
@@ -733,7 +625,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
           pendingPatch.state.warnings.at(-1)?.message || `${pendingPatch.state.fileName || "Patch"} is not ready`,
         );
       }
-      const outputName = this.outputName;
+      const outputName = this.outputState.outputName;
       if (!outputName) throw new RomWeaverError("INVALID_SETTINGS", "Output name is required");
       const result = await withAbortSignal(
         runApplyWorkflow(
@@ -1387,114 +1279,12 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     return this.getPreparedInputAssets().filter((asset) => asset.patchable);
   }
 
-  private clearPatchTarget(stage: StagedSource<TSource>) {
-    stage.state.checksumTimeMs = undefined;
-    stage.state.targetInputId = undefined;
-    stage.state.targetInputFileName = undefined;
-    stage.state.checksumPreflight = undefined;
-    stage.state.patchValidation = undefined;
-  }
-
-  private assignPatchTarget(stage: StagedSource<TSource>, target: InputAsset) {
-    stage.state.targetInputId = target.id;
-    stage.state.targetInputFileName = target.fileName;
-  }
-
-  private createPatchChecksumPreflight(
-    stage: StagedSource<TSource>,
-    target: InputAsset,
-  ): InternalPatchChecksumPreflight {
-    const requirements = stage.state.requirements;
-    const actualSize = typeof target.size === "number" && Number.isFinite(target.size) ? target.size : undefined;
-    const actualCrc32 = toNormalizedCrc32(getInputAssetChecksums(target)?.crc32);
-    const requiredSize =
-      typeof requirements?.sourceSize === "number" && Number.isFinite(requirements.sourceSize)
-        ? requirements.sourceSize
-        : undefined;
-    const minimumSourceSize =
-      typeof requirements?.minimumSourceSize === "number" && Number.isFinite(requirements.minimumSourceSize)
-        ? requirements.minimumSourceSize
-        : undefined;
-    const requiredCrc32 = toNormalizedCrc32(requirements?.sourceCrc32);
-    if (requiredSize === undefined && minimumSourceSize === undefined && !requiredCrc32) {
-      return {
-        actualCrc32,
-        actualSize,
-        status: "unknown",
-      };
-    }
-    const sizeMismatch = requiredSize !== undefined && actualSize !== undefined && actualSize !== requiredSize;
-    const minimumSizeMismatch =
-      minimumSourceSize !== undefined && actualSize !== undefined && actualSize < minimumSourceSize;
-    const crcMismatch = !!(requiredCrc32 && actualCrc32 && actualCrc32 !== requiredCrc32);
-    if (sizeMismatch || minimumSizeMismatch || crcMismatch) {
-      const hasSizeMismatch = sizeMismatch || minimumSizeMismatch;
-      const mismatchReason = hasSizeMismatch && crcMismatch ? "size+crc32" : hasSizeMismatch ? "size" : "crc32";
-      return {
-        actualCrc32,
-        actualSize,
-        minimumSourceSize,
-        mismatchReason,
-        requiredCrc32,
-        requiredSize,
-        status: "invalid",
-      };
-    }
-    const missingActual =
-      ((requiredSize !== undefined || minimumSourceSize !== undefined) && actualSize === undefined) ||
-      (requiredCrc32 && !actualCrc32);
-    if (missingActual) {
-      return {
-        actualCrc32,
-        actualSize,
-        minimumSourceSize,
-        requiredCrc32,
-        requiredSize,
-        status: "pending",
-      };
-    }
-    return {
-      actualCrc32,
-      actualSize,
-      minimumSourceSize,
-      requiredCrc32,
-      requiredSize,
-      status: "valid",
-    };
-  }
-
-  private createPatchValidationKey(
-    stage: StagedSource<TSource>,
-    target: InputAsset,
-    preflight: InternalPatchChecksumPreflight,
-  ): string {
-    return JSON.stringify({
-      patch: {
-        fileName: stage.preparedPatchFile?.fileName || stage.state.fileName,
-        size: stage.preparedPatchFile?.fileSize ?? stage.state.size,
-      },
-      preflight: {
-        actualCrc32: preflight.actualCrc32,
-        actualSize: preflight.actualSize,
-        minimumSourceSize: preflight.minimumSourceSize,
-        requiredCrc32: preflight.requiredCrc32,
-        requiredSize: preflight.requiredSize,
-      },
-      requirements: stage.state.requirements || null,
-      target: {
-        fileName: target.fileName,
-        id: target.id,
-        size: target.size,
-      },
-    });
-  }
-
   private async validatePatchTarget(
     stage: StagedSource<TSource>,
     target: InputAsset,
     preflight: InternalPatchChecksumPreflight,
   ): Promise<void> {
-    const validationKey = this.createPatchValidationKey(stage, target, preflight);
+    const validationKey = createApplyPatchValidationKey(stage, target, preflight);
     const existingValidation = stage.state.patchValidation;
     if (
       existingValidation?.validationKey === validationKey &&
@@ -1597,76 +1387,14 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     }
   }
 
-  private async resolvePatchTargetForStage(
-    stage: StagedSource<TSource>,
-    assets: InputAsset[],
-  ): Promise<InputAsset | null> {
-    if (!assets.length) {
-      this.clearPatchTarget(stage);
-      return null;
-    }
-    if (assets.length === 1) {
-      const [target] = assets;
-      if (!target) return null;
-      this.assignPatchTarget(stage, target);
-      return target;
-    }
-    if (stage.state.targetInputId) {
-      const existing = assets.find(
-        (asset) => asset.id === stage.state.targetInputId || asset.fileName === stage.state.targetInputId,
-      );
-      if (existing) {
-        this.assignPatchTarget(stage, existing);
-        return existing;
-      }
-    }
-    this.clearPatchTarget(stage);
-    return null;
-  }
-
   private async evaluatePatchReadiness(stage: StagedSource<TSource>): Promise<boolean> {
-    const previousStatus = stage.state.status;
-    stage.state.warnings = stage.state.warnings.filter(
-      (warning) => !PATCH_TARGET_SELECTION_ERROR_CODES.has(String(warning.code || "")),
-    );
-    if (stage.state.status === "loading" && !stage.preparedPatchFile && !stage.state.candidates.length) return false;
-    if (!stage.state.selectedCandidateId) {
-      this.clearPatchTarget(stage);
-      stage.state.status = "needsSelection";
-      return previousStatus !== stage.state.status;
-    }
-    if (!stage.preparedPatchFile) await this.prepareSelectedSource(stage);
-    if (!stage.parsedPatch) await this.parsePatch(stage);
-    const assets = this.getPatchableInputAssets();
-    if (!(assets.length && stage.parsedPatch)) {
-      this.clearPatchTarget(stage);
-      stage.state.status = "needsSelection";
-      return previousStatus !== stage.state.status;
-    }
-    try {
-      const target = await this.resolvePatchTargetForStage(stage, assets);
-      stage.state.status = target ? "ready" : "needsSelection";
-      const preflight = target ? this.createPatchChecksumPreflight(stage, target) : undefined;
-      stage.state.checksumPreflight = preflight;
-      if (target && preflight) await this.validatePatchTarget(stage, target, preflight);
-      else stage.state.patchValidation = undefined;
-      if (!target) {
-        this.pushWarning(
-          stage,
-          new RomWeaverError("AMBIGUOUS_SELECTION", `${stage.state.fileName || "Patch"} target selection is required`),
-        );
-      }
-    } catch (error) {
-      const normalized = toRomWeaverError(error);
-      if (normalized.code === "AMBIGUOUS_SELECTION" || normalized.code === "PATCH_TARGET_MISMATCH") {
-        this.clearPatchTarget(stage);
-        stage.state.status = "needsSelection";
-        this.pushWarning(stage, normalized);
-      } else {
-        throw normalized;
-      }
-    }
-    return previousStatus !== stage.state.status;
+    return evaluateApplyPatchReadiness(stage, {
+      getPatchableInputAssets: () => this.getPatchableInputAssets(),
+      parsePatch: (patchStage) => this.parsePatch(patchStage),
+      prepareSelectedSource: (patchStage) => this.prepareSelectedSource(patchStage),
+      pushWarning: (patchStage, error) => this.pushWarning(patchStage, error),
+      validatePatchTarget: (patchStage, target, preflight) => this.validatePatchTarget(patchStage, target, preflight),
+    });
   }
 
   private async refreshPatchReadiness() {
@@ -1674,20 +1402,11 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   }
 
   private recomputeOutputState() {
-    if (!this.manualOutputFormat)
-      this.outputFormat = resolveAutomaticFormat(this.inputSession as InputSession<unknown> | undefined, this.settings);
-    if (!this.manualOutputName) this.outputName = this.buildAutomaticOutputName();
-  }
-
-  private buildAutomaticOutputName() {
-    const input = this.getInput();
-    if (!input?.fileName) return this.outputName;
-    const inputName = input.fileName;
-    const inputBase = getFileNameWithoutExtension(inputName) || "patched";
-    const patchNames = this.patches
-      .map((patch, index) => getFileNameWithoutExtension(this.resolvePatchOutputName(patch, index)))
-      .filter(Boolean);
-    return buildPatchedOutputBaseName(inputBase, patchNames);
+    recomputeApplyOutputState(this.outputState, this.settings, {
+      input: this.getInput(),
+      inputSession: this.inputSession as InputSession<unknown> | undefined,
+      patchOutputNames: this.patches.map((patch, index) => this.resolvePatchOutputName(patch, index)),
+    });
   }
 
   private resolvePatchOutputName(patch: StagedSource<TSource>, index: number): string {
@@ -1714,25 +1433,6 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     return patch.state.fileName || patch.outputLabel || `patch ${index + 1}`;
   }
 
-  private getExecutionOutputName() {
-    const outputName = this.outputName || this.settings.output?.outputName || "";
-    if (this.manualOutputName || !outputName) return outputName;
-    if (this.outputFormat === "none") {
-      const extension = getCompressionExtension(this.outputFormat, this.getInput()?.fileName, this.settings);
-      return extension ? appendFileNameExtension(outputName, extension) : outputName;
-    }
-    const outputExtension = getFileNameExtension(stripFileNameQuery(outputName));
-    const compressionExtension = getCompressionExtension(
-      this.outputFormat,
-      this.getInput()?.fileName,
-      this.settings,
-    ).toLowerCase();
-    if (outputExtension && compressionExtension && outputExtension === compressionExtension) {
-      return getFileNameWithoutExtension(outputName) || outputName;
-    }
-    return outputName;
-  }
-
   private createExecutionOptions(onProgress?: ApplyWorkflowOptions["onProgress"]): ApplyWorkflowOptions {
     const output = this.settings.output || {};
     return {
@@ -1744,8 +1444,9 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       onProgress,
       output: {
         ...cloneValue(output),
-        compression: this.outputFormat,
-        outputName: this.getExecutionOutputName() || output.outputName,
+        compression: this.outputState.outputFormat,
+        outputName:
+          getApplyExecutionOutputName(this.outputState, this.settings, this.getInput()?.fileName) || output.outputName,
       },
       validation: cloneValue(this.settings.validation || {}),
       workers: cloneValue(this.settings.workers || {}),

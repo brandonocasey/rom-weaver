@@ -696,7 +696,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         if (input?.checksums) handlers.onChecksumReady?.(input);
         setApplyReady(
           !getWorkflowReadinessError(input, patches) &&
-            (snapshot.patches.length ? patches.length === snapshot.patches.length : patches.length > 0),
+            (!snapshot.patches.length || patches.length === snapshot.patches.length),
         );
         emitApplyWorkflowTrace(snapshot.options, "prepareWorkflow finish", {
           hasChecksums: !!input?.checksums,

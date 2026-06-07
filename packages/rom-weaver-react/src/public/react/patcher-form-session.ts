@@ -28,6 +28,11 @@ import {
 } from "./apply-session-inputs.ts";
 import { getTraceSourceSummaries, getTraceSourceSummary, logUiError } from "./apply-session-logging.ts";
 import { createStageSettingsKey, getLegacyCompressionWorkerThreads } from "./apply-session-settings.ts";
+import {
+  hasSameRecordValues,
+  useStableSourceKeys,
+  useStageGenerationMachine,
+} from "./apply-session-staging-state-machine.ts";
 import { useLocalPatcherSessionState } from "./apply-session-state.ts";
 import type {
   ApplyExecutionTimingTracker,
@@ -82,13 +87,6 @@ const createSettingsIdentityKey = (settings: ApplyPatchFormSettings) =>
 
 const isSpecialOutputCompression = (compression: CompressionFormat | string | null | undefined) =>
   compression === "chd" || compression === "rvz" || compression === "z3ds";
-
-const hasSameRecordValues = <T>(left: Record<string, T>, right: Record<string, T>) => {
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  if (leftKeys.length !== rightKeys.length) return false;
-  return leftKeys.every((key) => left[key] === right[key]);
-};
 
 const isWorkflowDisposedError = (error: unknown) => getErrorCode(error) === "WORKFLOW_DISPOSED";
 
@@ -177,13 +175,15 @@ const useLocalApplyPatchFormSession = ({
   });
   const busyRef = useRef(busy);
   const disabledRef = useRef(disabled);
-  const inputStageGenerationRef = useRef(0);
-  const inputProgressGenerationRef = useRef(0);
+  const inputStageMachine = useStageGenerationMachine();
+  const inputStageGenerationRef = inputStageMachine.stageGenerationRef;
+  const inputProgressGenerationRef = inputStageMachine.progressGenerationRef;
   const inputStageSyncRef = useRef<{ inputs: BinarySource[]; settingsKey: string }>({
     inputs: [],
     settingsKey: "",
   });
-  const patchStageGenerationRef = useRef(0);
+  const patchStageMachine = useStageGenerationMachine();
+  const patchStageGenerationRef = patchStageMachine.stageGenerationRef;
   const patchStageSyncRef = useRef<{
     inputs: BinarySource[];
     patches: BinarySource[];
@@ -193,12 +193,6 @@ const useLocalApplyPatchFormSession = ({
     patches: [],
     settingsKey: "",
   });
-  const inputKeyMapRef = useRef(new WeakMap<object, string>());
-  const inputStableKeyMapRef = useRef(new Map<string, string>());
-  const nextInputKeyRef = useRef(0);
-  const patchKeyMapRef = useRef(new WeakMap<object, string>());
-  const patchStableKeyMapRef = useRef(new Map<string, string>());
-  const nextPatchKeyRef = useRef(0);
   const effectiveInputs = inputs === undefined ? internalInputs : inputs;
   const activePatches = patches === undefined ? internalPatches : patches;
   const activeSettings = settings === undefined ? internalSettings : settings;
@@ -346,56 +340,8 @@ const useLocalApplyPatchFormSession = ({
     setProgress(null);
     clearPendingDownload();
   }, [clearPendingDownload]);
-  const getStableSourceKeys = useCallback(
-    (
-      sources: BinarySource[],
-      keyMapRef: typeof inputKeyMapRef,
-      stableKeyMapRef: typeof inputStableKeyMapRef,
-      nextKeyRef: typeof nextInputKeyRef,
-      prefix: "input" | "patch",
-    ) =>
-      getBinarySourceListStableIds(sources).map((stableId, index) => {
-        const sourceObject = sources[index] as object | undefined;
-        let key =
-          (sourceObject ? keyMapRef.current.get(sourceObject) : undefined) || stableKeyMapRef.current.get(stableId);
-        if (!key) {
-          nextKeyRef.current += 1;
-          key = `${prefix}-${nextKeyRef.current}`;
-          stableKeyMapRef.current.set(stableId, key);
-        }
-        if (sourceObject) keyMapRef.current.set(sourceObject, key);
-        return key;
-      }),
-    [],
-  );
-  const inputKeys = useMemo(
-    () => getStableSourceKeys(effectiveInputs, inputKeyMapRef, inputStableKeyMapRef, nextInputKeyRef, "input"),
-    [effectiveInputs, getStableSourceKeys],
-  );
-  const patchKeys = useMemo(
-    () => getStableSourceKeys(activePatches, patchKeyMapRef, patchStableKeyMapRef, nextPatchKeyRef, "patch"),
-    [activePatches, getStableSourceKeys],
-  );
-  const getInputKey = useCallback(
-    (input: BinarySource, sources: BinarySource[] = effectiveInputs) => {
-      const index = sources.indexOf(input);
-      if (sources === effectiveInputs) return index >= 0 ? inputKeys[index] || "" : "";
-      return index >= 0
-        ? getStableSourceKeys(sources, inputKeyMapRef, inputStableKeyMapRef, nextInputKeyRef, "input")[index] || ""
-        : "";
-    },
-    [effectiveInputs, getStableSourceKeys, inputKeys],
-  );
-  const getPatchKey = useCallback(
-    (patch: BinarySource, sources: BinarySource[] = activePatches) => {
-      const index = sources.indexOf(patch);
-      if (sources === activePatches) return index >= 0 ? patchKeys[index] || "" : "";
-      return index >= 0
-        ? getStableSourceKeys(sources, patchKeyMapRef, patchStableKeyMapRef, nextPatchKeyRef, "patch")[index] || ""
-        : "";
-    },
-    [activePatches, getStableSourceKeys, patchKeys],
-  );
+  const { getKey: getInputKey } = useStableSourceKeys(effectiveInputs, "input");
+  const { getKey: getPatchKey } = useStableSourceKeys(activePatches, "patch");
   const generatedOutputName = getGeneratedOutputName(effectiveInputs[0], activePatches, activeSettings.output || {});
   const requestedOutputName = outputNameEdited ? getRequestedOutputName(outputName) : undefined;
   const currentResolvedOutputName =
@@ -925,13 +871,12 @@ const useLocalApplyPatchFormSession = ({
     (nextInputs: BinarySource[]) => {
       setChecksumOverrideChecked(false);
       invalidateCompletedOutputState();
-      inputStageGenerationRef.current += 1;
-      inputProgressGenerationRef.current += 1;
+      const { generation, progressGeneration } = inputStageMachine.nextRunGeneration();
       emitSessionTrace("input list updated", {
-        generation: inputStageGenerationRef.current,
+        generation,
         nextCount: nextInputs.length,
         previousCount: effectiveInputs.length,
-        progressGeneration: inputProgressGenerationRef.current,
+        progressGeneration,
         sources: getTraceSourceSummaries(nextInputs, "Input"),
       });
       if (inputs === undefined) setInternalInputs(nextInputs);
@@ -966,13 +911,14 @@ const useLocalApplyPatchFormSession = ({
           }),
         );
       });
-      return inputStageGenerationRef.current;
+      return generation;
     },
     [
       effectiveInputs.length,
       clearDismissibleErrors,
       emitSessionTrace,
       getInputKey,
+      inputStageMachine,
       invalidateCompletedOutputState,
       inputs,
       onInputsChange,
@@ -986,7 +932,7 @@ const useLocalApplyPatchFormSession = ({
         silent?: boolean;
       } = {},
     ) => {
-      const generation = ++patchStageGenerationRef.current;
+      const generation = patchStageMachine.nextStageGeneration();
       if (!(snapshot.patches.length && stagePatches)) {
         setPatchStaging(false);
         setPatchProgress(null);
@@ -1057,12 +1003,11 @@ const useLocalApplyPatchFormSession = ({
           }
         });
     },
-    [getPatchKey, onError, setSectionErrorMessage, stagePatches],
+    [getPatchKey, onError, patchStageMachine, setSectionErrorMessage, stagePatches],
   );
   const syncRomInput = useCallback(
     (snapshot: ApplyWorkflowStageSnapshot, previousInputs: BinarySource[] = []) => {
-      const generation = ++inputStageGenerationRef.current;
-      const progressGeneration = ++inputProgressGenerationRef.current;
+      const { generation, progressGeneration } = inputStageMachine.nextRunGeneration();
       const retainedInputKeys = new Set(previousInputs.map((input) => getInputKey(input, previousInputs)));
       emitSessionTrace("input staging sync started", {
         generation,
@@ -1367,6 +1312,7 @@ const useLocalApplyPatchFormSession = ({
       getInputKey,
       getPatchKey,
       getStableInputInfo,
+      inputStageMachine,
       mergeRomInput,
       onError,
       setSectionErrorMessage,
@@ -1386,7 +1332,7 @@ const useLocalApplyPatchFormSession = ({
         inputs: [],
         settingsKey: stageSettingsKey,
       };
-      inputStageGenerationRef.current += 1;
+      inputStageMachine.invalidateStage();
       setInputStaging(false);
       setRomInputs([]);
       if (!shouldClearStagedInput) return;
@@ -1416,7 +1362,16 @@ const useLocalApplyPatchFormSession = ({
       settingsKey: stageSettingsKey,
     };
     syncRomInput(createStageSnapshot(), previousInputs);
-  }, [createStageSnapshot, effectiveInputs, emitSessionTrace, onError, stageInput, stageSettingsKey, syncRomInput]);
+  }, [
+    createStageSnapshot,
+    effectiveInputs,
+    emitSessionTrace,
+    inputStageMachine,
+    onError,
+    stageInput,
+    stageSettingsKey,
+    syncRomInput,
+  ]);
 
   useEffect(() => {
     if (!stagePatches) return;
@@ -1431,7 +1386,7 @@ const useLocalApplyPatchFormSession = ({
         patches: [],
         settingsKey: stageSettingsKey,
       };
-      patchStageGenerationRef.current += 1;
+      patchStageMachine.invalidateStage();
       setPatchStaging(false);
       setPatchProgress(null);
       return;
@@ -1443,7 +1398,15 @@ const useLocalApplyPatchFormSession = ({
     };
     if (inputsChanged && !patchesChanged && !settingsChanged) return;
     syncPatchFiles(createStageSnapshot());
-  }, [activePatches, createStageSnapshot, effectiveInputs, stagePatches, stageSettingsKey, syncPatchFiles]);
+  }, [
+    activePatches,
+    createStageSnapshot,
+    effectiveInputs,
+    patchStageMachine,
+    stagePatches,
+    stageSettingsKey,
+    syncPatchFiles,
+  ]);
 
   const localUiStoreController = useLiveStoreController(localUiState);
   const localStackStoreController = useLiveStoreController(localStackState);
@@ -1480,7 +1443,7 @@ const useLocalApplyPatchFormSession = ({
       getState: localUiStoreController.getState,
       providePatchInputFiles: (fileList: FileList | BinarySource[] | null) => {
         const nextPatches = Array.from(fileList || []) as BinarySource[];
-        patchStageGenerationRef.current += 1;
+        patchStageMachine.invalidateStage();
         setPatchProgress(null);
         setPatchProgressByKey({});
         setPatchStaging(false);
@@ -1565,6 +1528,7 @@ const useLocalApplyPatchFormSession = ({
       failurePlacement,
       localUiStoreController,
       outputErrorMessage,
+      patchStageMachine,
       romInputs,
       setChecksumOverrideChecked,
       setErrorMessage,
