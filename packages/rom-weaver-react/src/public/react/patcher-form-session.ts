@@ -721,6 +721,7 @@ const useLocalApplyPatchFormSession = ({
     [
       activePatches.length,
       applyQueued,
+      activeSettings,
       applyTimingText,
       busy,
       canQueueApply,
@@ -740,6 +741,7 @@ const useLocalApplyPatchFormSession = ({
       outputNameEdited,
       progress,
       selectedOutputOptionLabel,
+      z3dsLabelSource,
     ],
   );
   const localNoticeState = useMemo<NoticeState>(

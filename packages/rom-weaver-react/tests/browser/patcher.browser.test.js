@@ -1664,6 +1664,45 @@ test("download-ready apply button does not duplicate ratio percent signs", async
   expect(document.getElementById("rom-weaver-button-apply")?.textContent || "").not.toContain("%%");
 });
 
+test("apply output codec options refresh after per-job edits", async () => {
+  const Harness = () => {
+    const { localNoticeController, localOutputController, localStackController, localUiController } =
+      useLocalApplyPatchFormSession({
+        applyPatches: vi.fn(async () => createMockApplyResult()),
+        applyReady: true,
+        defaultSettings: {
+          output: {
+            compression: "zip",
+          },
+        },
+        downloadOutput: () => undefined,
+        inputs: [],
+        patches: [],
+        stageInput: async () => [],
+        stagePatches: async () => [],
+      });
+    return createElement(ApplyWorkflowFormView, {
+      controllers: {
+        dialog: inertDialogController,
+        notice: localNoticeController,
+        output: localOutputController,
+        patchStack: localStackController,
+        ui: localUiController,
+      },
+    });
+  };
+
+  mount(createElement(Harness));
+
+  await expect.poll(() => document.querySelector("details.outopts summary")?.textContent || "").toContain("deflate:9");
+  document.querySelector("details.outopts summary")?.click();
+  await expect.poll(() => document.querySelector('input[aria-label="ZIP codec"]')).not.toBeNull();
+  setFormControlValue(document.querySelector('input[aria-label="ZIP codec"]'), "zstd");
+
+  await expect.poll(() => document.querySelector('input[aria-label="ZIP codec"]')?.value || "").toBe("zstd");
+  await expect.poll(() => document.querySelector("details.outopts summary")?.textContent || "").toContain("zstd:22");
+});
+
 test("clearing a selected archive input requires selection again when re-added", async () => {
   mount(createElement(ApplyPatchForm));
 
