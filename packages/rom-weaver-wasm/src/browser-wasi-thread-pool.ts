@@ -187,11 +187,56 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
     return slot;
   };
 
-  const ensureSize = async (size) => {
+  const replaceShell = (index, reason = null, trace = null) => {
+    const previous = workers[index];
+    if (previous) {
+      previous.terminated = true;
+      try {
+        previous.worker?.terminate();
+      } catch {
+        // ignored
+      }
+      if (reason) rejectShell(previous, reason);
+    }
+    trace?.(
+      `[browser-opfs] thread pool replacing worker=${index}`
+      + (reason ? ` ${formatErrorForTrace(reason)}` : ''),
+    );
+    const replacement = createShell(index);
+    workers[index] = replacement;
+    return replacement;
+  };
+
+  const ensureSize = async (size, trace = null) => {
     if (disposed) throw new Error('browser wasi thread worker pool is disposed');
     const targetSize = Math.min(Math.max(0, size), MAX_BROWSER_THREAD_POOL_SIZE);
     while (workers.length < targetSize) workers.push(createShell(workers.length));
-    await Promise.all(workers.slice(0, targetSize).map((slot) => slot.ready));
+    let replacementCount = 0;
+    const maxReplacementCount = Math.max(targetSize, 1) * 2;
+    while (true) {
+      for (let index = 0; index < targetSize; index += 1) {
+        const shell = workers[index];
+        if (!shell || shell.terminated) replaceShell(index, null, trace);
+      }
+      const slots = workers.slice(0, targetSize);
+      const results = await Promise.allSettled(slots.map((slot) => slot.ready));
+      const rejected = results
+        .map((result, index) => ({ index, result }))
+        .filter(({ result }) => result.status === 'rejected');
+      if (rejected.length === 0) return;
+      if (replacementCount + rejected.length > maxReplacementCount) {
+        const reason = rejected[0]?.result.status === 'rejected' ? rejected[0].result.reason : null;
+        throw reason || new Error('browser wasi thread worker pool could not replace failed workers');
+      }
+      for (const { index, result } of rejected) {
+        if (result.status !== 'rejected') continue;
+        const shell = slots[index];
+        if (workers[index] !== shell) continue;
+        if (shell.currentCommand) throw result.reason;
+        replaceShell(index, result.reason, trace);
+        replacementCount += 1;
+      }
+    }
   };
 
   const selectAvailableShells = async (poolSize, trace, commandId) => {
@@ -199,6 +244,10 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
     while (true) {
       const available = workers.filter((shell) => !shell.terminated && !shell.currentCommand);
       if (available.length >= poolSize) return available.slice(0, poolSize);
+      if (workers.slice(0, poolSize).some((shell) => !shell || shell.terminated)) {
+        await ensureSize(poolSize, trace);
+        continue;
+      }
       if (Date.now() >= deadline) {
         const busyShell = workers.find((shell) => !shell.terminated && shell.currentCommand);
         if (busyShell) throw new Error(`browser wasi thread worker ${busyShell.index} is already busy`);
@@ -276,7 +325,7 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
         trace?.(`[browser-opfs] thread pool command shutdown done id=${commandId} ms=${(monotonicNowMs() - shutdownStartMs).toFixed(1)}`);
       },
     };
-    command.ready = ensureSize(poolSize).then(async () => {
+    command.ready = ensureSize(poolSize, trace).then(async () => {
       const ensureMs = monotonicNowMs() - commandStartMs;
       if (threadWorkerUrl && resolveThreadWorkerUrl(threadWorkerUrl) !== resolvedThreadWorkerUrl) {
         throw new Error(

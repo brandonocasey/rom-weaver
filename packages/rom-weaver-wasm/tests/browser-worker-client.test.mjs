@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createBrowserWasiThreadWorkerPool } from '../src/browser-wasi-thread-pool.ts';
 import { createRomWeaverBrowserOpfs } from '../src/rom-weaver-browser-opfs-api.ts';
 import {
   BrowserRomWeaverWorkerClient,
@@ -218,6 +219,77 @@ class CloneFailingInitWorker {
   }
 }
 
+class FlakyPoolShellWorker {
+  static created = [];
+  static failedFirstShell = false;
+
+  constructor() {
+    this.index = FlakyPoolShellWorker.created.length;
+    this.listeners = new Map();
+    this.messages = [];
+    this.terminated = false;
+    FlakyPoolShellWorker.created.push(this);
+  }
+
+  postMessage(message) {
+    this.messages.push(message);
+    if (message?.mode === 'pool-shell') {
+      queueMicrotask(() => {
+        if (this.terminated) return;
+        if (!FlakyPoolShellWorker.failedFirstShell) {
+          FlakyPoolShellWorker.failedFirstShell = true;
+          this.dispatchError(new Error('synthetic shell-ready failure'));
+          return;
+        }
+        this.dispatchMessage({ type: 'shell-ready' });
+      });
+      return;
+    }
+    if (message?.mode === 'pool-command') {
+      queueMicrotask(() => {
+        if (this.terminated) return;
+        this.dispatchMessage({ type: 'ready', commandId: message.commandId });
+        queueMicrotask(() => {
+          if (!this.terminated) this.dispatchMessage({ type: 'command-done', commandId: message.commandId });
+        });
+      });
+      return;
+    }
+    if (message?.mode === 'shutdown') this.terminate();
+  }
+
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) || new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type, listener) {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  dispatchMessage(data) {
+    for (const listener of this.listeners.get('message') || []) {
+      listener({ data });
+    }
+  }
+
+  dispatchError(error) {
+    const event = {
+      error,
+      message: error.message,
+      preventDefault() {},
+    };
+    for (const listener of this.listeners.get('error') || []) {
+      listener(event);
+    }
+  }
+
+  terminate() {
+    this.terminated = true;
+  }
+}
+
 async function runMatrix(matrixRunner, worker, options) {
   await matrixRunner({
     runJson: runJsonFromWorker(worker),
@@ -274,6 +346,45 @@ async function runCompressExtractChecksumSequence({
 }
 
 describe('rom-weaver-wasm browser runner parity', () => {
+  it('thread-worker pool replaces shells that fail before becoming ready', async () => {
+    FlakyPoolShellWorker.created = [];
+    FlakyPoolShellWorker.failedFirstShell = false;
+    vi.stubGlobal('Worker', FlakyPoolShellWorker);
+
+    const traceLines = [];
+    const pool = createBrowserWasiThreadWorkerPool({
+      initialSize: 0,
+      threadWorkerUrl: 'synthetic-thread-worker.js',
+    });
+    try {
+      const command = pool.createCommand({
+        debugWasi: false,
+        envList: [],
+        poolSize: 3,
+        runtime: {},
+        streamBroadcastChannelName: '',
+        streamRequestId: null,
+        threadIdState: new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+        trace: (line) => traceLines.push(line),
+        wasiArgs: [],
+        wasmMemory: new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }),
+        wasmModule: await WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
+      });
+
+      await command.ready;
+
+      expect(command.slots).toHaveLength(3);
+      expect(FlakyPoolShellWorker.created).toHaveLength(4);
+      expect(FlakyPoolShellWorker.created[0]?.terminated).toBe(true);
+      expect(traceLines.some((line) => line.includes('thread pool replacing worker=0'))).toBe(true);
+
+      await command.shutdown();
+    } finally {
+      await pool.dispose().catch(() => undefined);
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('makes OPFS sync writes readable after close without an explicit flush', async () => {
     const workerSource = `
       self.onmessage = async () => {
