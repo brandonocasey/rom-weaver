@@ -9,6 +9,7 @@ import Terminal from "lucide-react/dist/esm/icons/terminal.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { createLogger } from "../logging.ts";
 import { useTheme } from "../theme.ts";
 
 /**
@@ -16,6 +17,8 @@ import { useTheme } from "../theme.ts";
  * settings), the workflow tab list, the footer, and the update/wake-lock
  * banner. Composed by the redesigned webapp root.
  */
+
+const logger = createLogger("shell");
 
 const join = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(" ");
 
@@ -102,7 +105,7 @@ const ConsoleLogCopyButton = ({ onCopyConsoleLogs }: { onCopyConsoleLogs: () => 
             window.setTimeout(() => setState("idle"), 1800);
           })
           .catch((error) => {
-            console.error("Failed to copy console logs", error);
+            logger.error("Failed to copy console logs", { error });
             setState("failed");
             window.setTimeout(() => setState("idle"), 2400);
           });

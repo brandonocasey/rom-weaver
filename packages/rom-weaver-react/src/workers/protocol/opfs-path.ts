@@ -1,4 +1,15 @@
+import { emitTraceLog } from "../../lib/logging.ts";
+import type { LogRecord } from "../../types/logging.ts";
+
 const OPFS_VERSION_DIRECTORY = "v4";
+
+// Per-call trace gating: a caller with an active run's log level / onLog sink threads it through so the
+// rare not-found-retry trace emits via the shared logger (gated by the actual log level setting) instead
+// of an unconditional console line. Shared low-level callers without a context simply emit nothing.
+type OpfsPathTraceContext = {
+  logLevel?: string;
+  onLog?: (record: Pick<LogRecord, "details" | "level" | "message" | "namespace" | "timestamp">) => void;
+};
 
 const LEADING_SLASHES_REGEX = /^\/+/;
 const NOT_FOUND_ERROR_REGEX = /not\s+found|object\s+can\s+not\s+be\s+found/i;
@@ -12,11 +23,16 @@ const PATH_SEPARATOR_REGEX = /[\\/]+/;
 const STORAGE_ROOT_CACHE = new WeakMap<object, Promise<FileSystemDirectoryHandle>>();
 const DIRECTORY_HANDLE_CACHE = new Map<string, Promise<FileSystemDirectoryHandle>>();
 
-const emitOpfsPathTrace = (message: string, details?: Record<string, unknown>) => {
-  if (typeof console === "undefined") return;
-  const log = typeof console.debug === "function" ? console.debug : console.log;
-  log.call(console, `${new Date().toISOString()} [rom-weaver trace] opfs-path: ${message}`, details || {});
-};
+const emitOpfsPathTrace = (
+  trace: OpfsPathTraceContext | undefined,
+  message: string,
+  details?: Record<string, unknown>,
+) =>
+  emitTraceLog(
+    { logLevel: trace?.logLevel, namespace: "runtime:opfs-path", onLog: trace?.onLog },
+    message,
+    details || {},
+  );
 
 const normalizeOpfsPathParts = (filePath: string): string[] => {
   const raw = String(filePath || "");
@@ -105,7 +121,11 @@ const isNotFoundError = (error: unknown) =>
 
 const getManagedOpfsFileHandle = async (
   filePath: string,
-  options: { create?: boolean; navigatorObject?: Pick<Navigator, "storage"> | null } = {},
+  options: {
+    create?: boolean;
+    navigatorObject?: Pick<Navigator, "storage"> | null;
+    trace?: OpfsPathTraceContext;
+  } = {},
 ): Promise<FileSystemFileHandle | null> => {
   const create = options.create === true;
   const parts = normalizeOpfsPathParts(filePath);
@@ -125,7 +145,7 @@ const getManagedOpfsFileHandle = async (
     if (isNotFoundError(error)) {
       // A cached directory handle may point at a tree that was removed and recreated. Drop the
       // caches and retry once from a fresh root before treating this as a genuine miss.
-      emitOpfsPathTrace("not-found, retrying from fresh root", { create, filePath });
+      emitOpfsPathTrace(options.trace, "not-found, retrying from fresh root", { create, filePath });
       resetOpfsHandleCaches(options.navigatorObject);
       try {
         return await locate();

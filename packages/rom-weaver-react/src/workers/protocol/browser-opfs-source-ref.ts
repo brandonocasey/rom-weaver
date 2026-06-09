@@ -151,9 +151,12 @@ const createVirtualInputPath = (options: BrowserOpfsSourceRefOptions, fileName: 
   return allocateVirtualInputPath(mountPoint, normalizedFileName);
 };
 
-const getOpfsPathSize = async (filePath: string): Promise<number | undefined> => {
+const getOpfsPathSize = async (
+  filePath: string,
+  trace?: BrowserOpfsSourceTraceContext,
+): Promise<number | undefined> => {
   try {
-    const handle = await getManagedOpfsFileHandle(filePath, { navigatorObject: navigator });
+    const handle = await getManagedOpfsFileHandle(filePath, { navigatorObject: navigator, trace });
     const file = await handle?.getFile();
     return typeof file?.size === "number" ? file.size : undefined;
   } catch (_error) {
@@ -194,7 +197,7 @@ const createBrowserOpfsSourceRef = async (
       fileName,
       filePath,
       kind: "path",
-      size: sizeHint ?? (await getOpfsPathSize(filePath)),
+      size: sizeHint ?? (await getOpfsPathSize(filePath, options.trace)),
       storageKind: "opfs",
     };
   }
@@ -303,6 +306,7 @@ const createBrowserOpfsSourceRef = async (
     unregister = registerBrowserVirtualFile({
       path: virtualPath,
       source: virtualSource,
+      trace: options.trace,
     });
   } catch (error) {
     releaseVirtualInputPath(virtualPath);

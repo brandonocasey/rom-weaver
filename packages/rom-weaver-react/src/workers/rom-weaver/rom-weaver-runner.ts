@@ -11,6 +11,7 @@ import browserWasmUrl from "rom-weaver-wasm/rom-weaver-app.wasm?url";
 import { createBrowserWorkerClient } from "rom-weaver-wasm/workers/browser-client";
 import browserRunnerWorkerUrl from "rom-weaver-wasm/workers/browser-runner-worker?worker&url";
 import browserThreadWorkerUrl from "rom-weaver-wasm/workers/browser-wasi-thread-worker?worker&url";
+import { createLogger } from "../../lib/logging.ts";
 import { getDefaultBrowserThreadCount } from "../../platform/shared/compression-options.ts";
 import { type BrowserVirtualFile, getActiveBrowserVirtualFiles } from "../protocol/browser-virtual-files.ts";
 import { isBrowserRuntime } from "../shared/runtime-env.ts";
@@ -86,15 +87,12 @@ let cachedBrowserWasmModule: { module: WebAssembly.Module; wasmUrl: string } | n
 const nowMs = () =>
   typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 
-// Console-debug trace for the wasm module cache (#4), so the cache's behaviour is visible in trace
-// captures. Matches the `[rom-weaver trace] <namespace>: ...` console pattern used by warmup/virtual
-// files (these init-path helpers have no run options/onTraceNonJsonLine channel). A "cache hit" line on
-// the second-and-later worker (re)creation is the proof the precompiled module is being reused.
-const emitWasmCacheTrace = (message: string, details?: Record<string, unknown>) => {
-  if (typeof console === "undefined") return;
-  const log = typeof console.debug === "function" ? console.debug : console.log;
-  log.call(console, `${new Date().toISOString()} [rom-weaver trace] rom-weaver-runner: ${message}`, details || {});
-};
+// Trace for the wasm module cache (#4), so the cache's behaviour is visible in trace captures. The cache
+// runs on the page/main thread where configureLogger has applied the user's log level setting, so it logs
+// through the shared logger (gated by that setting). A "cache hit" line on the second-and-later worker
+// (re)creation is the proof the precompiled module is being reused.
+const logger = createLogger("rom-weaver-runner");
+const emitWasmCacheTrace = (message: string, details?: Record<string, unknown>) => logger.trace(message, details);
 
 const compileBrowserWasmModule = async (wasmUrl: string): Promise<WebAssembly.Module> => {
   const response = await fetch(wasmUrl);

@@ -1,3 +1,4 @@
+import { createLogger } from "../../lib/logging.ts";
 import { getManagedOpfsDirectory } from "../../workers/protocol/opfs-path.ts";
 import { recycleWarmRomWeaverRunner } from "../../workers/rom-weaver/rom-weaver-runner.ts";
 import { browserRuntime } from "./workflow-runtime.ts";
@@ -25,11 +26,9 @@ const WARMUP_CHD_FILE_NAME = "rom-weaver-warmup.chd";
 
 let warmupExtractionStarted = false;
 
-const emitWarmupTrace = (message: string, details?: Record<string, unknown>) => {
-  if (typeof console === "undefined") return;
-  const log = typeof console.debug === "function" ? console.debug : console.log;
-  log.call(console, `${new Date().toISOString()} [rom-weaver trace] browser-runtime-warmup: ${message}`, details || {});
-};
+// Warmup runs on the page/main thread where configureLogger has applied the user's log level setting,
+// so it logs through the shared logger directly (gated by that setting) rather than the console.
+const logger = createLogger("browser-runtime-warmup");
 
 const decodeBase64ToBytes = (value: string): Uint8Array<ArrayBuffer> => {
   const binary = atob(value);
@@ -85,7 +84,7 @@ const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
   if (!file) return;
   await sweepWarmupArtifacts();
   const source = { fileName: file.name, source: file };
-  emitWarmupTrace("warmup extraction start");
+  logger.trace("warmup extraction start");
   try {
     const listed = await compression.list?.({ format: "chd", options: {}, source });
     const entries = (listed?.entries || [])
@@ -93,9 +92,9 @@ const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
       .filter((entry): entry is string => typeof entry === "string" && !!entry);
     const result = await compression.extract({ entries, format: "chd", options: {}, source });
     await cleanupWarmupOutputs(result?.outputs || []);
-    emitWarmupTrace("warmup extraction done", { entryCount: entries.length });
+    logger.trace("warmup extraction done", { entryCount: entries.length });
   } catch (error) {
-    emitWarmupTrace("warmup extraction skipped", {
+    logger.trace("warmup extraction skipped", {
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -103,7 +102,7 @@ const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
   // the user's first real op starts clean and never pays an OOM-triggered worker recycle on the critical
   // path. Self-guards (no-op if disabled or a run is active). Best-effort, like the warmup itself.
   await recycleWarmRomWeaverRunner().catch((error) => {
-    emitWarmupTrace("warmup runner recycle skipped", {
+    logger.trace("warmup runner recycle skipped", {
       message: error instanceof Error ? error.message : String(error),
     });
   });

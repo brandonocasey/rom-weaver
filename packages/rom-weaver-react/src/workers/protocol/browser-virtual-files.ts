@@ -12,8 +12,18 @@ import {
   VIRTUAL_FILE_CONTROL_STATUS_INDEX as CONTROL_STATUS_INDEX,
   VIRTUAL_FILE_STATUS_OK as CONTROL_STATUS_OK,
 } from "rom-weaver-wasm/browser-virtual-file-protocol";
+import { emitTraceLog } from "../../lib/logging.ts";
+import type { LogRecord } from "../../types/logging.ts";
 
 type BrowserVirtualFileSource = Blob | Uint8Array | ArrayBuffer;
+
+// Per-call trace gating: callers thread the active run's log level and onLog sink through so virtual
+// file registration emits through the shared logger (gated by the actual log level setting) instead of
+// spamming the console unconditionally. Shape mirrors the source-ref trace context it is forwarded from.
+type BrowserVirtualFileTraceContext = {
+  logLevel?: string;
+  onLog?: (record: Pick<LogRecord, "details" | "level" | "message" | "namespace" | "timestamp">) => void;
+};
 
 type BrowserVirtualFileSlot = {
   controlBuffer: SharedArrayBuffer;
@@ -73,11 +83,16 @@ const getVirtualSourceKind = (source: BrowserVirtualFileSource) => {
 const canUseDirectVirtualFileSource = (source: BrowserVirtualFileSource) =>
   typeof Blob !== "undefined" && source instanceof Blob;
 
-const emitVirtualFileTrace = (message: string, details?: Record<string, unknown>) => {
-  if (typeof console === "undefined") return;
-  const log = typeof console.debug === "function" ? console.debug : console.log;
-  log.call(console, `${new Date().toISOString()} [rom-weaver trace] browser-virtual-files: ${message}`, details || {});
-};
+const emitVirtualFileTrace = (
+  trace: BrowserVirtualFileTraceContext | undefined,
+  message: string,
+  details?: Record<string, unknown>,
+) =>
+  emitTraceLog(
+    { logLevel: trace?.logLevel, namespace: "runtime:browser-virtual-files", onLog: trace?.onLog },
+    message,
+    details || {},
+  );
 
 const clampInteger = (value: number, minimum: number, maximum: number) =>
   Math.max(minimum, Math.min(maximum, Math.trunc(value)));
@@ -109,13 +124,15 @@ const getAtomicsWaitAsync = (): AtomicsWaitAsync => {
 const registerBrowserVirtualFile = ({
   path,
   source,
+  trace,
 }: {
   path: string;
   source: BrowserVirtualFileSource;
+  trace?: BrowserVirtualFileTraceContext;
 }): (() => void) => {
   const sourceSize = getVirtualSourceSize(source);
   const sourceKind = getVirtualSourceKind(source);
-  emitVirtualFileTrace("register requested", {
+  emitVirtualFileTrace(trace, "register requested", {
     crossOriginIsolated: globalThis.crossOriginIsolated === true,
     hasAtomicsWaitAsync: typeof (Atomics as AtomicsWithWaitAsync).waitAsync === "function",
     hasSharedArrayBuffer: typeof SharedArrayBuffer === "function",
@@ -129,13 +146,13 @@ const registerBrowserVirtualFile = ({
       source,
     };
     activeVirtualFiles.set(path, file);
-    emitVirtualFileTrace("registered direct virtual file", {
+    emitVirtualFileTrace(trace, "registered direct virtual file", {
       path,
       sourceKind,
       sourceSize,
     });
     return () => {
-      emitVirtualFileTrace("unregistered direct virtual file", {
+      emitVirtualFileTrace(trace, "unregistered direct virtual file", {
         path,
         sourceKind,
         sourceSize,
@@ -144,7 +161,7 @@ const registerBrowserVirtualFile = ({
     };
   }
   if (typeof SharedArrayBuffer !== "function") {
-    emitVirtualFileTrace("virtual input registration failed", {
+    emitVirtualFileTrace(trace, "virtual input registration failed", {
       path,
       reason: "missing-sharedarraybuffer",
       sourceKind,
@@ -156,7 +173,7 @@ const registerBrowserVirtualFile = ({
   try {
     waitAsync = getAtomicsWaitAsync();
   } catch (error) {
-    emitVirtualFileTrace("virtual input registration failed", {
+    emitVirtualFileTrace(trace, "virtual input registration failed", {
       path,
       reason: "missing-atomics-waitasync",
       sourceKind,
@@ -179,7 +196,7 @@ const registerBrowserVirtualFile = ({
       slots,
     },
   };
-  emitVirtualFileTrace("registering shared proxy virtual file", {
+  emitVirtualFileTrace(trace, "registering shared proxy virtual file", {
     chunkSize,
     id,
     path,
@@ -199,7 +216,7 @@ const registerBrowserVirtualFile = ({
       const control = new Int32Array(slot.controlBuffer);
       Atomics.notify(control, CONTROL_STATE_INDEX, 1);
     }
-    emitVirtualFileTrace("unregistered shared proxy virtual file", {
+    emitVirtualFileTrace(trace, "unregistered shared proxy virtual file", {
       id,
       path,
       sourceKind,

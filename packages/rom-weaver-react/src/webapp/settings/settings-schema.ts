@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import { getCompressionCodecLevelMax, getCompressionCodecLevelMin } from "../../lib/compression/codec-fields.ts";
+import { createLogger } from "../../lib/logging.ts";
 import {
   getChdCodecsForMode,
   normalizeArchiveCompressionLevelForFormat,
@@ -36,6 +37,8 @@ import {
   SETTINGS_VALID_CHD_OUTPUT_MODES,
   SETTINGS_VALID_OUTPUT_COMPRESSION,
 } from "./settings-metadata.ts";
+
+const logger = createLogger("settings");
 
 const SETTINGS_STORAGE_VERSION = 5;
 
@@ -389,7 +392,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
 const resetStoredSettings = (storageObject: StorageLike, reason: string) => {
-  console.warn(`Resetting stored settings: ${reason}`);
+  logger.warn("Resetting stored settings", { reason });
   storageObject?.removeItem?.(LOCAL_STORAGE_SETTINGS_ID);
 };
 

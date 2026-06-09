@@ -1,5 +1,8 @@
+import { createLogger } from "../../lib/logging.ts";
 import { getBinarySourceFileName, getBinarySourceSize } from "./input-session-helpers.ts";
 import type { BinarySource } from "./patcher-form.ts";
+
+const logger = createLogger("ui");
 
 const getTraceSourceKind = (source: unknown) => {
   if (typeof File !== "undefined" && source instanceof File) return "file";
@@ -47,11 +50,7 @@ const getErrorLogDetails = (error: Error): Record<string, unknown> => {
 };
 
 const logUiError = (context: string, error: Error) => {
-  try {
-    console.error(`[RomWeaver UI] ${context}: ${error.message}`, getErrorLogDetails(error), error);
-  } catch (_logError) {
-    // Ignore console failures; the UI still surfaces the normalized message.
-  }
+  logger.error(context, getErrorLogDetails(error));
 };
 
 export { getErrorLogDetails, getTraceSourceKind, getTraceSourceSummaries, getTraceSourceSummary, logUiError };
