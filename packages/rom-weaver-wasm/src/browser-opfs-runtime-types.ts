@@ -87,6 +87,8 @@ export type ThreadPoolShell = {
   rejectReady: ((error: unknown) => void) | null;
   resolveReady: (() => void) | null;
   terminated: boolean;
+  /** Trace sink captured at creation so async ready/failure handlers can log this shell's lifecycle. */
+  trace: ((message: string) => void) | null;
   worker: Worker | null;
 };
 

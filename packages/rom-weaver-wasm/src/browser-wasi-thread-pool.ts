@@ -36,6 +36,9 @@ const DEFAULT_BROWSER_THREAD_POOL_SIZE = 4;
 export const MAX_BROWSER_THREAD_POOL_SIZE = 64;
 const BROWSER_THREAD_POOL_HEADROOM = 4;
 const THREAD_WORKER_READY_TIMEOUT_MS = 5000;
+/** Upper bound on module-worker script loads started concurrently while growing the pool, so a
+ * burst of `new Worker()` calls cannot exceed what the host (e.g. the dev server) can serve. */
+const SHELL_CREATE_BATCH_SIZE = 4;
 const THREAD_WORKER_BUSY_RETRY_INTERVAL_MS = 25;
 const THREAD_WORKER_BUSY_RETRY_TIMEOUT_MS = 30000;
 const DEFAULT_SHARED_MEMORY_INITIAL_PAGES = 256;
@@ -84,6 +87,11 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
   };
 
   const failShell = (shell, error) => {
+    if (shell.terminated) return;
+    shell.trace?.(
+      `[browser-opfs] thread pool shell failed index=${shell.index}`
+      + ` online=${shell.online} hadCommand=${Boolean(shell.currentCommand)} ${formatErrorForTrace(error)}`,
+    );
     shell.terminated = true;
     try {
       shell.worker?.terminate();
@@ -103,6 +111,7 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
 
   const handleShellMessage = (shell, message) => {
     if (message.type === 'shell-ready') {
+      shell.trace?.(`[browser-opfs] thread pool shell online index=${shell.index}`);
       shell.online = true;
       shell.resolveReady?.();
       shell.resolveReady = null;
@@ -142,7 +151,7 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
     }
   };
 
-  const createShell = (index) => {
+  const createShell = (index, trace = null) => {
     const slot: ThreadPoolShell = {
       index,
       worker: null,
@@ -153,7 +162,9 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
       resolveReady: null,
       rejectReady: null,
       terminated: false,
+      trace,
     };
+    trace?.(`[browser-opfs] thread pool shell create index=${index} worker=${basenameForTrace(resolvedThreadWorkerUrl)}`);
     slot.ready = new Promise<void>((resolveReady, rejectReady) => {
       slot.resolveReady = () => resolveReady();
       slot.rejectReady = rejectReady;
@@ -162,6 +173,9 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
       slot.readyTimer = null;
     });
     slot.readyTimer = setTimeout(() => {
+      trace?.(
+        `[browser-opfs] thread pool shell ready timeout index=${slot.index} after ${THREAD_WORKER_READY_TIMEOUT_MS}ms`,
+      );
       failShell(slot, new Error(
         `browser wasi thread worker ${slot.index} did not become ready within ${THREAD_WORKER_READY_TIMEOUT_MS}ms`
         + ` (workerUrl=${resolvedThreadWorkerUrl})`,
@@ -202,7 +216,7 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
       `[browser-opfs] thread pool replacing worker=${index}`
       + (reason ? ` ${formatErrorForTrace(reason)}` : ''),
     );
-    const replacement = createShell(index);
+    const replacement = createShell(index, trace);
     workers[index] = replacement;
     return replacement;
   };
@@ -210,32 +224,69 @@ export function createBrowserWasiThreadWorkerPool({ initialSize, threadWorkerUrl
   const ensureSize = async (size, trace = null) => {
     if (disposed) throw new Error('browser wasi thread worker pool is disposed');
     const targetSize = Math.min(Math.max(0, size), MAX_BROWSER_THREAD_POOL_SIZE);
-    while (workers.length < targetSize) workers.push(createShell(workers.length));
     let replacementCount = 0;
+    let lastFailure: unknown = null;
     const maxReplacementCount = Math.max(targetSize, 1) * 2;
+    const onlineCount = () => workers.slice(0, targetSize).filter((slot) => slot?.online && !slot.terminated).length;
+    trace?.(
+      `[browser-opfs] thread pool ensureSize start target=${targetSize} existing=${workers.length}`
+      + ` online=${onlineCount()} batchSize=${SHELL_CREATE_BATCH_SIZE} maxReplacements=${maxReplacementCount}`,
+    );
+    let pass = 0;
+    // Bring shells online in bounded batches. Starting every missing shell at once fires a burst of
+    // simultaneous module-worker script loads; under a limited connection pool (notably the dev
+    // server) the loads past the first several fail their fetch — surfacing as an empty-message
+    // worker `error`, not a code crash — which previously aborted the whole run. Limiting how many
+    // loads are in flight at a time keeps each batch within what the host can serve, and the
+    // replacement budget below still bounds retries so a genuine failure can't loop forever.
     while (true) {
-      for (let index = 0; index < targetSize; index += 1) {
+      pass += 1;
+      const batch: ThreadPoolShell[] = [];
+      const created: number[] = [];
+      const replaced: number[] = [];
+      for (let index = 0; index < targetSize && batch.length < SHELL_CREATE_BATCH_SIZE; index += 1) {
         const shell = workers[index];
-        if (!shell || shell.terminated) replaceShell(index, null, trace);
+        if (shell && !shell.terminated) continue;
+        if (shell) {
+          if (shell.currentCommand) {
+            throw lastFailure || new Error('browser wasi thread worker failed while running a command');
+          }
+          if (replacementCount >= maxReplacementCount) {
+            trace?.(
+              `[browser-opfs] thread pool ensureSize giving up target=${targetSize} online=${onlineCount()}`
+              + ` replacements=${replacementCount}/${maxReplacementCount} ${formatErrorForTrace(lastFailure)}`,
+            );
+            throw lastFailure || new Error('browser wasi thread worker pool could not replace failed workers');
+          }
+          replaceShell(index, lastFailure as Error | null, trace);
+          replacementCount += 1;
+          replaced.push(index);
+        } else {
+          workers[index] = createShell(index, trace);
+          created.push(index);
+        }
+        batch.push(workers[index]);
       }
-      const slots = workers.slice(0, targetSize);
-      const results = await Promise.allSettled(slots.map((slot) => slot.ready));
-      const rejected = results
-        .map((result, index) => ({ index, result }))
-        .filter(({ result }) => result.status === 'rejected');
-      if (rejected.length === 0) return;
-      if (replacementCount + rejected.length > maxReplacementCount) {
-        const reason = rejected[0]?.result.status === 'rejected' ? rejected[0].result.reason : null;
-        throw reason || new Error('browser wasi thread worker pool could not replace failed workers');
+      if (batch.length === 0) {
+        trace?.(`[browser-opfs] thread pool ensureSize ready target=${targetSize} online=${onlineCount()} passes=${pass - 1}`);
+        return;
       }
-      for (const { index, result } of rejected) {
-        if (result.status !== 'rejected') continue;
-        const shell = slots[index];
-        if (workers[index] !== shell) continue;
-        if (shell.currentCommand) throw result.reason;
-        replaceShell(index, result.reason, trace);
-        replacementCount += 1;
+      trace?.(
+        `[browser-opfs] thread pool ensureSize pass=${pass} starting=${batch.length}`
+        + ` created=[${created.join(',')}] replaced=[${replaced.join(',')}] replacements=${replacementCount}/${maxReplacementCount}`,
+      );
+      const results = await Promise.allSettled(batch.map((slot) => slot.ready));
+      let failedThisPass = 0;
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          failedThisPass += 1;
+          lastFailure = result.reason;
+        }
       }
+      trace?.(
+        `[browser-opfs] thread pool ensureSize pass=${pass} settled ok=${batch.length - failedThisPass}`
+        + ` failed=${failedThisPass} online=${onlineCount()}/${targetSize}`,
+      );
     }
   };
 
