@@ -56,6 +56,89 @@ let browserThreadedRunnerPromise: Promise<RomWeaverRunner> | null = null;
 let browserThreadedRunnerStale = false;
 let activeRunnerRunCount = 0;
 
+// --- pre-extract-gap experiments (perf/pre-extract-gap) -----------------------------------------
+// The wasm heap only ever grows. The page-load warmup (and the 8-thread pool init) leaves the shared
+// worker's heap near the cap, so the first real op OOMs and forces a worker recycle ON the critical
+// path (~2.5s observed: dispatch a `list`/`extract`, OOM, then tear down the wedged worker + stand up
+// a replacement before the extract can run). These three toggles attack that; flip any to false to
+// A/B test its contribution. (#4 — caching the compiled WebAssembly.Module — is intentionally NOT
+// implemented: the post-recycle instantiate measured ~25ms, i.e. the browser already caches the
+// compiled module, so recompile is not the cost; the recycle teardown is.)
+//
+const PRE_EXTRACT_GAP = {
+  // #4: compile the wasm module once on the main/page thread, cache it, and hand the precompiled
+  //     WebAssembly.Module to every (re)created runner worker so worker recycles skip the fetch+compile.
+  //     The module is reusable across instances and is already transferred to thread workers, so the
+  //     thread pool benefits too. (Compile is moved off the worker onto the page thread, paid once.)
+  cacheCompiledWasmModule: true,
+  // #2: when a run OOMs, hard-terminate the exhausted worker immediately instead of waiting for the next
+  //     dispatch to *gracefully* dispose it (graceful dispose of a wedged worker can block for seconds;
+  //     terminate() is instant and the browser releases its OPFS handles on worker teardown).
+  hardTerminateStaleOnOom: true,
+  // #1: after warmup, recycle the heap-dirtied worker to a fresh clean-heap one while still idle, so the
+  //     first real op starts clean and never pays an OOM-triggered recycle on the critical path.
+  recycleRunnerAfterWarmup: true,
+};
+
+// Page-thread cache of the compiled wasm module (#4), keyed by wasm URL so a changed asset recompiles.
+let cachedBrowserWasmModule: { module: WebAssembly.Module; wasmUrl: string } | null = null;
+
+const nowMs = () =>
+  typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+
+// Console-debug trace for the wasm module cache (#4), so the cache's behaviour is visible in trace
+// captures. Matches the `[rom-weaver trace] <namespace>: ...` console pattern used by warmup/virtual
+// files (these init-path helpers have no run options/onTraceNonJsonLine channel). A "cache hit" line on
+// the second-and-later worker (re)creation is the proof the precompiled module is being reused.
+const emitWasmCacheTrace = (message: string, details?: Record<string, unknown>) => {
+  if (typeof console === "undefined") return;
+  const log = typeof console.debug === "function" ? console.debug : console.log;
+  log.call(console, `${new Date().toISOString()} [rom-weaver trace] rom-weaver-runner: ${message}`, details || {});
+};
+
+const compileBrowserWasmModule = async (wasmUrl: string): Promise<WebAssembly.Module> => {
+  const response = await fetch(wasmUrl);
+  if (!response.ok) {
+    throw new Error(`failed to fetch wasm module from ${wasmUrl}: ${response.status} ${response.statusText}`);
+  }
+  if (typeof WebAssembly.compileStreaming === "function") {
+    try {
+      return await WebAssembly.compileStreaming(response.clone());
+    } catch {
+      // Fall through to non-streaming compile (e.g. when the response MIME type is not application/wasm).
+    }
+  }
+  return WebAssembly.compile(await response.arrayBuffer());
+};
+
+// Returns the cached compiled module for this wasm URL, compiling+caching it on first use. Returns
+// undefined (so init falls back to the worker compiling from wasmUrl) if disabled or compilation fails.
+const getCachedBrowserWasmModule = async (wasmUrl?: string): Promise<WebAssembly.Module | undefined> => {
+  if (!PRE_EXTRACT_GAP.cacheCompiledWasmModule) return undefined;
+  if (!wasmUrl) return undefined;
+  if (cachedBrowserWasmModule?.wasmUrl === wasmUrl) {
+    emitWasmCacheTrace("wasm module cache hit (skipping fetch+compile)", { wasmUrl });
+    return cachedBrowserWasmModule.module;
+  }
+  try {
+    emitWasmCacheTrace("wasm module cache miss; compiling on page thread", { wasmUrl });
+    const startedAt = nowMs();
+    const module = await compileBrowserWasmModule(wasmUrl);
+    cachedBrowserWasmModule = { module, wasmUrl };
+    emitWasmCacheTrace("wasm module compiled and cached", {
+      compileMs: Number((nowMs() - startedAt).toFixed(1)),
+      wasmUrl,
+    });
+    return module;
+  } catch (error) {
+    emitWasmCacheTrace("wasm module compile failed; falling back to worker-side compile", {
+      message: error instanceof Error ? error.message : String(error),
+      wasmUrl,
+    });
+    return undefined;
+  }
+};
+
 const describeVirtualFilesForTrace = (files: BrowserVirtualFile[]) => {
   let directCount = 0;
   let proxyCount = 0;
@@ -141,10 +224,13 @@ const normalizeRunnerDefaultThreads = (workerThreads?: RuntimeValue) => {
 const createBrowserRunnerInitOptions = (
   wasmAsset: BrowserWasmAssetSelection,
   options?: { workerThreads?: RuntimeValue },
+  wasmModule?: WebAssembly.Module,
 ) => {
   const defaultThreads = normalizeRunnerDefaultThreads(options?.workerThreads);
   return {
     runtimeMounts: [WORKER_OPFS_MOUNTPOINT],
+    // Pass the precompiled module when cached (#4); keep wasmUrl as the worker-side compile fallback.
+    ...(wasmModule ? { module: wasmModule } : {}),
     ...(wasmAsset.wasmUrl ? { wasmUrl: wasmAsset.wasmUrl } : {}),
     ...(wasmAsset.threadWorkerUrl ? { threadWorkerUrl: wasmAsset.threadWorkerUrl } : {}),
     ...(defaultThreads ? { defaultThreads } : {}),
@@ -174,7 +260,8 @@ const createBrowserRunner = async (options?: { workerThreads?: RuntimeValue }): 
     resolveInputSelection,
   );
   const wasmAsset = await resolveBrowserWasmAsset();
-  const ready = await client.init(createBrowserRunnerInitOptions(wasmAsset, options));
+  const wasmModule = await getCachedBrowserWasmModule(wasmAsset.wasmUrl);
+  const ready = await client.init(createBrowserRunnerInitOptions(wasmAsset, options, wasmModule));
   const selectedWasmUrl = wasmAsset.wasmUrl ?? ready.wasmUrl ?? "";
   publishRomWeaverWasmDiagnostic({
     context: "rom-weaver browser runner",
@@ -229,6 +316,18 @@ const resetRomWeaverRunner = async (options: { terminate?: boolean } = {}) => {
 const markRomWeaverRunnerStale = () => {
   browserThreadedRunnerStale = true;
   if (activeRunnerRunCount === 0) void resetRomWeaverRunner();
+};
+
+// #1: Drop the current (post-warmup, heap-dirtied) runner and stand up a fresh clean-heap one. Meant
+// to run during idle (right after warmup) so the user's first real op starts on a clean heap and never
+// pays an out-of-memory worker recycle on the critical path. No-op while a run is active. Uses graceful
+// dispose (not terminate) because the warm worker is healthy — its OPFS handles should close cleanly.
+const recycleWarmRomWeaverRunner = async (workerThreads?: RuntimeValue) => {
+  if (!PRE_EXTRACT_GAP.recycleRunnerAfterWarmup) return;
+  if (!isBrowserRuntime()) return;
+  if (activeRunnerRunCount !== 0) return;
+  await resetRomWeaverRunner();
+  await createRomWeaverRunner({ workerThreads });
 };
 
 // The wasm runner's linear memory only ever grows, so the browser surfaces an exhausted heap as a
@@ -339,6 +438,12 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
     if (isRunnerOutOfMemoryError(error)) {
       emitRunnerTraceLine(options, "runJson out-of-memory; flagging worker stale for recycle on next dispatch");
       browserThreadedRunnerStale = true;
+      // #2: eagerly hard-terminate the exhausted worker now (in the background), rather than letting the
+      // next dispatch gracefully dispose it on the critical path. dispatchRun's finally has already
+      // decremented activeRunnerRunCount for this run, so count===0 means no other run is in flight.
+      if (PRE_EXTRACT_GAP.hardTerminateStaleOnOom && activeRunnerRunCount === 0) {
+        void resetRomWeaverRunner({ terminate: true });
+      }
     }
     throw error;
   }
@@ -470,6 +575,7 @@ export {
   getRomWeaverFailureMessage,
   getRomWeaverRunnerMetadata,
   markRomWeaverRunnerStale,
+  recycleWarmRomWeaverRunner,
   resetRomWeaverRunner,
   runRomWeaverJson,
   setInputSelectionHandler,

@@ -1,4 +1,5 @@
 import { getManagedOpfsDirectory } from "../../workers/protocol/opfs-path.ts";
+import { recycleWarmRomWeaverRunner } from "../../workers/rom-weaver/rom-weaver-runner.ts";
 import { browserRuntime } from "./workflow-runtime.ts";
 
 // OPFS scratch pool directory; never swept, it is the warm scratch pool real extractions reuse.
@@ -27,7 +28,7 @@ let warmupExtractionStarted = false;
 const emitWarmupTrace = (message: string, details?: Record<string, unknown>) => {
   if (typeof console === "undefined") return;
   const log = typeof console.debug === "function" ? console.debug : console.log;
-  log.call(console, `[rom-weaver trace] browser-runtime-warmup: ${message}`, details || {});
+  log.call(console, `${new Date().toISOString()} [rom-weaver trace] browser-runtime-warmup: ${message}`, details || {});
 };
 
 const decodeBase64ToBytes = (value: string): Uint8Array<ArrayBuffer> => {
@@ -98,6 +99,14 @@ const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
       message: error instanceof Error ? error.message : String(error),
     });
   }
+  // #1: still inside the idle warmup task, recycle the heap-dirtied worker to a fresh clean-heap one so
+  // the user's first real op starts clean and never pays an OOM-triggered worker recycle on the critical
+  // path. Self-guards (no-op if disabled or a run is active). Best-effort, like the warmup itself.
+  await recycleWarmRomWeaverRunner().catch((error) => {
+    emitWarmupTrace("warmup runner recycle skipped", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  });
 };
 
 // Defers the warmup extraction to browser idle time so it never competes with initial render or the

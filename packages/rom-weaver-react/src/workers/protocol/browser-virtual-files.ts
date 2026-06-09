@@ -70,7 +70,7 @@ const canUseDirectVirtualFileSource = (source: BrowserVirtualFileSource) =>
 const emitVirtualFileTrace = (message: string, details?: Record<string, unknown>) => {
   if (typeof console === "undefined") return;
   const log = typeof console.debug === "function" ? console.debug : console.log;
-  log.call(console, `[rom-weaver trace] browser-virtual-files: ${message}`, details || {});
+  log.call(console, `${new Date().toISOString()} [rom-weaver trace] browser-virtual-files: ${message}`, details || {});
 };
 
 const clampInteger = (value: number, minimum: number, maximum: number) =>

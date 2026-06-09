@@ -15,7 +15,7 @@ const DIRECTORY_HANDLE_CACHE = new Map<string, Promise<FileSystemDirectoryHandle
 const emitOpfsPathTrace = (message: string, details?: Record<string, unknown>) => {
   if (typeof console === "undefined") return;
   const log = typeof console.debug === "function" ? console.debug : console.log;
-  log.call(console, `[rom-weaver trace] opfs-path: ${message}`, details || {});
+  log.call(console, `${new Date().toISOString()} [rom-weaver trace] opfs-path: ${message}`, details || {});
 };
 
 const normalizeOpfsPathParts = (filePath: string): string[] => {

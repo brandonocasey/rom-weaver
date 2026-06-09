@@ -143,9 +143,13 @@ const getDefaultConsoleSink = (): LogSink => {
     const method = console[CONSOLE_METHOD_BY_LEVEL[record.level]] || console.log;
     const details = record.details && Object.keys(record.details).length ? record.details : undefined;
     if (isBrowserConsole) {
+      // Embed the ISO timestamp in the line text (dim) so browser/JS trace lines are self-timed like the
+      // Rust trace lines (`2026-…Z TRACE …`), without relying on the console-capture envelope's metadata.
       method.call(
         console,
-        `%c${record.level.toUpperCase()}%c ${record.namespace}: ${record.message}`,
+        `%c${record.timestamp}%c %c${record.level.toUpperCase()}%c ${record.namespace}: ${record.message}`,
+        "color: #6b7280; font-weight: 400",
+        "color: inherit; font-weight: inherit",
         BROWSER_LEVEL_COLORS[record.level],
         "color: inherit; font-weight: inherit",
         ...(details ? [details] : []),
