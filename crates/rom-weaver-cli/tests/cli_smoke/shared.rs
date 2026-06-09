@@ -1,6 +1,5 @@
 // Re-exported so sibling test modules can `use super::shared::*;` and recover the
 // exact crate-root scope they relied on under the former `include!` layout.
-pub(crate) use std::collections::BTreeSet;
 pub(crate) use std::fs::{self, File};
 pub(crate) use std::io::{Seek, Write};
 pub(crate) use std::path::{Path, PathBuf};

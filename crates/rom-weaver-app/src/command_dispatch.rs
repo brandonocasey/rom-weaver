@@ -28,7 +28,6 @@ impl CliApp {
             Commands::Checksum(args) => self.run_checksum(args),
             Commands::Compress(args) => self.run_compress(args),
             Commands::Trim(args) => self.run_trim(args),
-            Commands::BatchHeaderFixer(args) => self.run_batch_header_fixer(args),
             Commands::Patch(command) => match command {
                 PatchCommands::Apply(args) => self.run_patch_apply(args),
                 PatchCommands::Validate(args) => self.run_patch_validate(args),
@@ -46,7 +45,6 @@ impl CliApp {
             Commands::Checksum(_) => "checksum",
             Commands::Compress(_) => "compress",
             Commands::Trim(_) => "trim",
-            Commands::BatchHeaderFixer(_) => "batch-header-fixer",
             Commands::Patch(PatchCommands::Apply(_)) => "patch-apply",
             Commands::Patch(PatchCommands::Validate(_)) => "patch-validate",
             Commands::Patch(PatchCommands::CreateCandidates(_)) => "patch-create-candidates",

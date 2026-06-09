@@ -16,7 +16,6 @@ import type {
 export type RomWeaverDefaultThreads = number | string | false | null | undefined;
 export type RomWeaverEnv = Record<string, string>;
 export type {
-  BatchHeaderFixerCommand,
   ChecksumCommand,
   Commands,
   CompressCommand,

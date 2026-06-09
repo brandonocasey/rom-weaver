@@ -74,7 +74,6 @@ pub enum Commands {
     Checksum(ChecksumCommand),
     Compress(CompressCommand),
     Trim(TrimCommand),
-    BatchHeaderFixer(BatchHeaderFixerCommand),
     #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
     Patch(PatchCommands),
 }
@@ -446,32 +445,6 @@ const NDS_DOWNLOAD_PLAY_CERT_MAGIC: [u8; 2] = [0x61, 0x63];
 const NDS_DOWNLOAD_PLAY_CERT_SIZE_BYTES: u64 = 0x88;
 const TRIM_BINARY_SCAN_CHUNK_BYTES: usize = 128 * 1024;
 const XISO_TRIM_TEMP_SUFFIX: &str = "rom-weaver-trim-xiso.tmp";
-const HEADER_FIXER_SUPPORTED_EXTENSIONS: &[&str] = &[
-    "a78", "lnx", "nes", "fds", "smc", "sfc", "gb", "gbc", "gba", "gen", "md", "sms", "gg", "bin",
-    "z64", "n64", "v64", "nds", "dsi", "srl", "pce", "tg16", "vb", "vboy", "ngp", "ngc", "mx1",
-    "mx2", "j64", "jag", "col", "cv", "sv", "int",
-];
-const BATCH_HEADER_FIX_SYSTEM_PROFILES: [&str; 19] = [
-    "snes",
-    "nes",
-    "fds",
-    "game-boy",
-    "gba",
-    "sega-genesis",
-    "sms-gg",
-    "n64",
-    "atari-7800",
-    "atari-lynx",
-    "pce-tg16",
-    "virtual-boy",
-    "neo-geo-pocket",
-    "msx",
-    "nds",
-    "atari-jaguar",
-    "colecovision",
-    "watara-supervision",
-    "intellivision",
-];
 
 type XisoTrimSourceDevice = XdvdfsOffsetWrapper<BufReader<File>, io::Error>;
 type XisoTrimSourceFilesystem = XdvdfsFilesystem<io::Error, XisoTrimSourceDevice>;
@@ -545,12 +518,6 @@ struct TrimCollectOptions<'a> {
     no_extract: bool,
     in_place: bool,
     context: &'a OperationContext,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct BatchHeaderFixOutcome {
-    repaired_profiles: Vec<&'static str>,
-    matched_without_changes: Vec<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -781,9 +748,9 @@ use patch_filename_checksum::{embed_checksum_in_filename, parse_filename_require
 
 mod command_args;
 pub use command_args::{
-    BatchHeaderFixerCommand, ChecksumCommand, CompressCommand, ExtractCommand, ListCommand,
-    PatchApplyCommand, PatchCreateCandidatesCommand, PatchCreateCommand, PatchValidateCommand,
-    ProbeCommand, TrimCommand,
+    ChecksumCommand, CompressCommand, ExtractCommand, ListCommand, PatchApplyCommand,
+    PatchCreateCandidatesCommand, PatchCreateCommand, PatchValidateCommand, ProbeCommand,
+    TrimCommand,
 };
 
 mod compression;
@@ -805,9 +772,6 @@ use trim_execution::*;
 
 #[path = "revert_footer.rs"]
 mod revert_footer;
-
-#[path = "header_fix_batch.rs"]
-mod header_fix_batch;
 
 #[path = "probe_details.rs"]
 mod probe_details;
@@ -846,3 +810,6 @@ impl ProgressSink for ProgressFilterReporter {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod header_repair_tests;

@@ -69,7 +69,6 @@ export function createRomWeaverCommand<TType extends RomWeaverCommandLabel>(
     case 'checksum':
     case 'compress':
     case 'trim':
-    case 'batch-header-fixer':
       return { args, type } as RomWeaverCommand;
     case 'patch-apply':
       return { args: { args, type: 'apply' }, type: 'patch' } as RomWeaverCommand;
@@ -124,7 +123,6 @@ export function normalizeRomWeaverCommand(command: RomWeaverCommand): RomWeaverC
     case 'checksum':
     case 'compress':
     case 'trim':
-    case 'batch-header-fixer':
       return { args, type } as RomWeaverCommand;
     default:
       return assertNever(type);
@@ -164,7 +162,6 @@ export function readRomWeaverCommandBranch(command: RomWeaverCommand): RomWeaver
     case 'checksum':
     case 'compress':
     case 'trim':
-    case 'batch-header-fixer':
       return {
         args: command.args,
         type: command.type,
@@ -202,7 +199,6 @@ export function collectRomWeaverRunInputPaths(
       pushPathValues(paths, command.args.input);
       break;
     case 'trim':
-    case 'batch-header-fixer':
       pushPathValues(paths, command.args.source);
       break;
     case 'patch':
@@ -266,7 +262,6 @@ export function romWeaverCommandSupportsThreads(command: RomWeaverCommand): bool
     case 'checksum':
     case 'compress':
     case 'trim':
-    case 'batch-header-fixer':
       return true;
     case 'patch':
       switch (command.args.type) {
@@ -365,7 +360,6 @@ function replaceRomWeaverCommandArgs(
     case 'checksum':
     case 'compress':
     case 'trim':
-    case 'batch-header-fixer':
       return {
         ...command,
         args,

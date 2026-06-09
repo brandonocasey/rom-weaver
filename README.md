@@ -111,7 +111,6 @@ Integration notes:
 - `checksum`
 - `compress`
 - `trim`
-- `batch-header-fixer`
 - `patch apply`
 - `patch create`
 - `patch validate`
@@ -285,28 +284,6 @@ Known header detection is built into probe/checksum/patch apply flows, including
 - NDS
 - Neo Geo Pocket
 - MSX
-
-`batch-header-fixer` supports these profile groups:
-
-- `snes`
-- `nes`
-- `fds`
-- `game-boy`
-- `gba`
-- `sega-genesis`
-- `sms-gg`
-- `n64`
-- `atari-7800`
-- `atari-lynx`
-- `pce-tg16`
-- `virtual-boy`
-- `neo-geo-pocket`
-- `msx`
-- `nds`
-- `atari-jaguar`
-- `colecovision`
-- `watara-supervision`
-- `intellivision`
 
 ## Patch-Apply Workflow Features
 

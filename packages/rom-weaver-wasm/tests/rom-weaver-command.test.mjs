@@ -20,7 +20,6 @@ describe('rom-weaver command boundary helpers', () => {
       'checksum',
       'compress',
       'trim',
-      'batch-header-fixer',
       'patch',
     ]);
     expect(KNOWN_PATCH_COMMAND_TYPES).toEqual([

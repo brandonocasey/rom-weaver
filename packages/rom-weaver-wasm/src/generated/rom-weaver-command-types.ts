@@ -8,7 +8,6 @@ export const KNOWN_COMMAND_TYPES = [
   "checksum",
   "compress",
   "trim",
-  "batch-header-fixer",
   "patch"
 ] as const;
 
