@@ -42,6 +42,7 @@ import {
   useCreateSettings,
   useRomWeaverAssetBaseUrl,
 } from "./settings-context.tsx";
+import { routeSingleRom } from "./unified-drop-routing.ts";
 import { getReactBinarySourceFileName, toBrowserPublicBinarySource } from "./workflow-adapters.ts";
 import {
   createReactWorkflowId,
@@ -369,6 +370,12 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     setProgress(null);
   };
 
+  // Single-bucket unified routing: keep the first dropped ROM, ignore patches
+  // and any extra files (Trim has one source). See routeSingleRom.
+  const handleUnifiedDrop = (files: File[]) => {
+    const source = routeSingleRom(files);
+    if (source) updateSource(source);
+  };
   const cancelSourceStaging = () => {
     setTrimQueued(false);
     stagedTrimWorkflowGenerationRef.current += 1;
@@ -788,7 +795,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
           disabled: uploadDisabled,
           hint: source ? undefined : `trim-supported ROMs · ${TRIM_INPUT_HINT}`,
           label: source ? "Replace ROM · drop or browse" : "Select ROM · drop or browse",
-          onFiles: (files) => updateSource(files[0] ?? null),
+          onFiles: handleUnifiedDrop,
         }}
         info={
           <InfoPopover title="ROM input">

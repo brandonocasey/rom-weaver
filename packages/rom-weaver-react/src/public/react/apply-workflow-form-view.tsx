@@ -4,6 +4,7 @@ import { ApplyPatchListStep } from "./apply-patch-list-step.tsx";
 import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./components/ds/compress-panel.tsx";
 import { Notice } from "./components/ds/feedback.tsx";
 import { InfoPopover } from "./components/ds/layout.tsx";
+import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
 import { PatcherPrimaryAction } from "./components/patcher-output-controls.tsx";
@@ -22,6 +23,7 @@ import { inertUiController } from "./patcher-form-session.ts";
 import type { PatchStackItemState } from "./patcher-presentation.ts";
 import { ArchiveDialog as SharedArchiveDialog } from "./patcher-react-shared.tsx";
 import type { NoticeState, PatcherSectionNoticeKey, RomInputRowState } from "./patcher-ui-state.ts";
+import { routeByType } from "./unified-drop-routing.ts";
 import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./workflow-run-hooks.ts";
 
 /**
@@ -147,6 +149,16 @@ function ApplyWorkflowFormView({
   const compressionTypeOptions = createCompressionTypeOptions(outputState.options, "none");
   const showRomDropZone = shouldShowRomDropZone(romInputs);
 
+  // Combined drop surface: ROMs/archives are routed to the ROM bucket, patches
+  // to the patch bucket. An archive dropped while a ROM is already loaded is
+  // treated as a patch container (see routeByType).
+  const handleUnifiedDrop = (files: File[]) => {
+    const { inputs, patches: patchFiles } = routeByType(files, { romPresent: romInputs.length > 0 });
+    if (inputs.length) uiController.provideRomInputFiles?.(inputs);
+    if (patchFiles.length) uiController.providePatchInputFiles?.(patchFiles);
+  };
+  const workflowEmpty = romInputs.length === 0 && patches.length === 0;
+
   if (startup.status === "error") {
     return (
       <main className="panel" id="rom-weaver-container">
@@ -159,6 +171,15 @@ function ApplyWorkflowFormView({
 
   return (
     <main aria-labelledby="tab-patcher" className="panel" id="rom-weaver-container">
+      <UnifiedDropZone
+        accept={fileInputAccept.rom}
+        big={workflowEmpty}
+        hint="Drop ROMs and patches together — archives are extracted and sorted automatically."
+        id="rom-weaver-row-unified-drop"
+        inputId="rom-weaver-input-file-unified"
+        label={workflowEmpty ? "Drop ROMs & patches · or browse" : "Drop more ROMs & patches"}
+        onFiles={handleUnifiedDrop}
+      />
       <WorkflowRomInputStep
         dropZone={
           showRomDropZone

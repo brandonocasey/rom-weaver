@@ -20,9 +20,11 @@ import { useCandidateSelection } from "./candidate-selection.tsx";
 import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./components/ds/compress-panel.tsx";
 import { Notice } from "./components/ds/feedback.tsx";
 import { InfoPopover } from "./components/ds/layout.tsx";
+import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { OutputRunAction, WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
 import { buildCompressPanel } from "./compress-options.ts";
+import { getFileInputAcceptAttributes } from "./file-input-accept";
 import { ROM_INPUT_HINT } from "./input-helper-text.ts";
 import { useInputSelectionHandler } from "./input-selection-handler.ts";
 import { getBinarySourceListStableIds } from "./input-session-helpers.ts";
@@ -37,6 +39,7 @@ import {
   useCreateSettings,
   useRomWeaverAssetBaseUrl,
 } from "./settings-context.tsx";
+import { routeByOrder } from "./unified-drop-routing.ts";
 import {
   getDefaultCreateOutputName,
   getReactBinarySourceFileName,
@@ -420,6 +423,19 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     setProgress(null);
   };
 
+  // Combined drop surface: both sources are ROMs, so files fill Original then
+  // Modified in drop order; patches in a dropped archive are ignored (no patch
+  // bucket on this tab). See routeByOrder.
+  const handleUnifiedDrop = (files: File[]) => {
+    const [originalFile, modifiedFile] = routeByOrder(files, [!!original, !!modified]);
+    if (originalFile) updateOriginal(originalFile);
+    if (modifiedFile) updateModified(modifiedFile);
+  };
+  const swapCreateSources = () => {
+    const previousOriginal = original;
+    updateOriginal(modified);
+    updateModified(previousOriginal);
+  };
   const cancelSourceStaging = (role: "modified" | "original") => {
     setCreateQueued(false);
     resetStagedCreateWorkflow();
@@ -906,8 +922,33 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     );
   };
 
+  const createFileInputAccept = getFileInputAcceptAttributes();
+  const createSourcesEmpty = !(original || modified);
   return (
     <main aria-labelledby="tab-creator" className="panel" id="patch-builder-container">
+      <UnifiedDropZone
+        accept={createFileInputAccept.rom}
+        big={createSourcesEmpty}
+        disabled={uploadDisabled}
+        hint="Drop both ROMs — the first fills Original, the next Modified. Use Swap to reassign."
+        id="patch-builder-row-unified-drop"
+        inputId="patch-builder-input-file-unified"
+        label={createSourcesEmpty ? "Drop original & modified ROMs · or browse" : "Drop another ROM"}
+        onFiles={handleUnifiedDrop}
+      />
+      {createInputsSelected ? (
+        <div className="workflow-step-after-items">
+          <button
+            className="btn ghost"
+            disabled={uploadDisabled}
+            id="patch-builder-button-swap-sources"
+            onClick={swapCreateSources}
+            type="button"
+          >
+            Swap original / modified
+          </button>
+        </div>
+      ) : null}
       {renderSourceStep({
         checksumProgress: getSourceChecksumProgress("original"),
         emptyLabel: "Select original ROM · drop or browse",
