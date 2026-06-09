@@ -23,6 +23,24 @@ impl RvzContainerHandler {
             .min(default_buffer_size as u64) as usize
     }
 
+    /// Reads from `reader` into `buffer` until it is full or the reader is exhausted, returning the
+    /// number of bytes filled. The disc reader returns short reads (~1.3 MiB), so writing each one
+    /// directly lands every `write_all` just under the host file shim's direct-write threshold,
+    /// forcing a full-size staging-buffer copy on the OPFS/wasm side. Coalescing the short reads into
+    /// one large buffer here lets each downstream write clear that threshold and skip the copy —
+    /// without adding a copy of our own, since each read writes straight into `buffer` at its offset.
+    fn fill_extract_buffer<R: Read>(reader: &mut R, buffer: &mut [u8]) -> Result<usize> {
+        let mut filled = 0;
+        while filled < buffer.len() {
+            let read = reader.read(&mut buffer[filled..])?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        Ok(filled)
+    }
+
     fn maybe_emit_extract_progress(
         context: &OperationContext,
         total_bytes: u64,
@@ -138,7 +156,7 @@ impl RvzContainerHandler {
         if first_bytes_read > 0 && checksum.is_some() {
             loop {
                 let mut buffer = vec![0_u8; buffer_size];
-                let bytes_read = reader.read(&mut buffer)?;
+                let bytes_read = Self::fill_extract_buffer(reader, &mut buffer)?;
                 if bytes_read == 0 {
                     break;
                 }
@@ -160,7 +178,7 @@ impl RvzContainerHandler {
         } else if first_bytes_read > 0 {
             let mut buffer = vec![0_u8; buffer_size];
             loop {
-                let bytes_read = reader.read(&mut buffer)?;
+                let bytes_read = Self::fill_extract_buffer(reader, &mut buffer)?;
                 if bytes_read == 0 {
                     break;
                 }
