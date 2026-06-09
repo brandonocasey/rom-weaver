@@ -727,6 +727,7 @@ mod compress_trim_batch;
 mod patch_apply;
 #[path = "patch_commands.rs"]
 mod patch_commands;
+mod patch_create;
 mod patch_validate;
 pub use patch_commands::{PatchCreateFormatPolicyMetadata, patch_create_format_policy_metadata};
 
