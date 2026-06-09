@@ -538,31 +538,11 @@ impl Z3dsContainerHandler {
         self.extract_chunk_from_reader(payload_reader, seek_table, task)
     }
 
-    fn decode_extract_tasks_ordered<Decode, WriteChunk>(
-        tasks: &[Z3dsExtractTask],
-        effective_threads: usize,
-        decode: Decode,
-        mut write_chunk: WriteChunk,
-    ) -> Result<()>
-    where
-        Decode: Fn(Z3dsExtractTask) -> Result<Z3dsDecodedExtractChunk> + Sync,
-        WriteChunk: FnMut(Z3dsDecodedExtractChunk, u64) -> Result<()>,
-    {
-        ordered_streaming_compress(
-            tasks,
-            effective_threads,
-            OrderedStreamingMessages {
-                worker_closed: "z3ds extract workers ended before all chunks were consumed",
-                result_closed: "z3ds extract pipeline ended before all chunks were produced",
-            },
-            |_, task| Ok(task.clone()),
-            || (),
-            |_, _, task| {
-                let task_len = task.len;
-                decode(task).map(|chunk| (task_len, chunk))
-            },
-            |_, (task_len, chunk)| write_chunk(chunk, task_len),
-        )
+    fn extract_pipeline_messages() -> OrderedStreamingMessages {
+        OrderedStreamingMessages {
+            worker_closed: "z3ds extract workers ended before all chunks were consumed",
+            result_closed: "z3ds extract pipeline ended before all chunks were produced",
+        }
     }
 
     fn build_create_tasks(&self, total_len: u64) -> Result<Vec<Z3dsCreateTask>> {
@@ -828,140 +808,100 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
 
         let execution = context.plan_threads(ThreadCapability::parallel(Some(tasks.len().max(1))));
         let extract_progress_label = format!("extracting `{}`", Z3DS.name);
-        let extract_progress_bytes = Arc::new(AtomicU64::new(0));
-        let extract_progress_bucket = Arc::new(AtomicU8::new(0));
         // Hash the decompressed output as it is written so a requested `--checksum` is computed
         // during extract (overlapping the work) instead of forcing the caller into a second full
         // read of the output, matching the libarchive/chd/rvz extract paths.
-        let mut extract_checksum = create_extract_checksum(context)?;
+        let mut extract_writer = ExtractChunkWriter::new(
+            context,
+            &execution,
+            Z3DS.name,
+            extract_progress_label,
+            header.uncompressed_size,
+            &output_path,
+            request.overwrite,
+        )?;
+        let source = request.source.clone();
 
-        {
-            let output_file = create_extract_output_file(&output_path, request.overwrite)?;
-            let mut ordered_writer = OrderedChunkWriter::new(
-                BufWriter::new(output_file),
-                bounded_items_for_threads(execution.effective_threads),
-            )?;
-            let source = request.source.clone();
-
-            let mut write_chunk = |chunk: Z3dsDecodedExtractChunk, task_len: u64| -> Result<()> {
-                let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
-                    RomWeaverError::Validation("z3ds extract chunk length overflowed".into())
-                })?;
-                if chunk_len != task_len {
-                    return Err(RomWeaverError::Validation(format!(
-                        "z3ds extract chunk {} wrote {} bytes but expected {}",
-                        chunk.index, chunk_len, task_len
-                    )));
-                }
-                let chunk_index = u64::try_from(chunk.index).map_err(|_| {
-                    RomWeaverError::Validation("z3ds extract chunk index overflowed".into())
-                })?;
-                // `write_chunk` is invoked in strict ascending index order, so updating here hashes
-                // the output bytes in their final on-disk order.
-                if let Some(checksum) = extract_checksum.as_mut() {
-                    checksum.update(&chunk.data)?;
-                }
-                ordered_writer.write_chunk(chunk_index, chunk.data)?;
-                if header.uncompressed_size > 0 {
-                    let completed = extract_progress_bytes
-                        .fetch_add(chunk_len, Ordering::Relaxed)
-                        .saturating_add(chunk_len)
-                        .min(header.uncompressed_size);
-                    maybe_emit_container_byte_progress(
-                        context,
-                        completed,
-                        header.uncompressed_size,
-                        ContainerByteProgress {
-                            command: "extract",
-                            format: Z3DS.name,
-                            stage: "extract",
-                            label: &extract_progress_label,
-                            thread_execution: Some(&execution),
-                            emitted_progress_bucket: extract_progress_bucket.as_ref(),
-                        },
-                    );
-                }
-                Ok(())
-            };
-
-            let decode_result: Result<()> =
-                if execution.used_parallelism && container_reads_source_on_main_thread() {
-                    // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
-                    // runner thread, so the compressed payload range is read here into a single shared
-                    // buffer. Worker threads then decompress from that in-memory buffer (never the
-                    // file). The payload buffer already begins at `payload_start`, so each reader uses
-                    // start 0. Bytes written are identical to the native path.
-                    let payload_len = usize::try_from(header.compressed_size).map_err(|_| {
-                        RomWeaverError::Validation(
-                            "z3ds compressed payload exceeded addressable memory".into(),
-                        )
-                    })?;
-                    let mut payload = vec![0_u8; payload_len];
-                    {
-                        let mut payload_file = BufReader::new(File::open(&source)?);
-                        payload_file.seek(SeekFrom::Start(payload_start))?;
-                        payload_file.read_exact(&mut payload)?;
-                    }
-                    let payload = payload.as_slice();
-
-                    Self::decode_extract_tasks_ordered(
-                        &tasks,
-                        execution.effective_threads,
-                        |task| {
-                            let reader = Z3dsPayloadReader::new(
-                                io::Cursor::new(payload),
-                                0,
-                                header.compressed_size,
-                            )?;
-                            self.extract_chunk_from_reader(reader, &seek_table, &task)
-                        },
-                        &mut write_chunk,
+        let decode_result: Result<()> =
+            if execution.used_parallelism && container_reads_source_on_main_thread() {
+                // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
+                // runner thread, so the compressed payload range is read here into a single shared
+                // buffer. Worker threads then decompress from that in-memory buffer (never the
+                // file). The payload buffer already begins at `payload_start`, so each reader uses
+                // start 0. Bytes written are identical to the native path.
+                let payload_len = usize::try_from(header.compressed_size).map_err(|_| {
+                    RomWeaverError::Validation(
+                        "z3ds compressed payload exceeded addressable memory".into(),
                     )
-                } else if execution.used_parallelism {
-                    Self::decode_extract_tasks_ordered(
-                        &tasks,
-                        execution.effective_threads,
-                        |task| {
-                            self.extract_chunk_task(
-                                &source,
-                                payload_start,
-                                header.compressed_size,
-                                &seek_table,
-                                &task,
-                            )
-                        },
-                        &mut write_chunk,
-                    )
-                } else {
-                    for task in &tasks {
-                        let chunk = self.extract_chunk_task(
+                })?;
+                let mut payload = vec![0_u8; payload_len];
+                {
+                    let mut payload_file = BufReader::new(File::open(&source)?);
+                    payload_file.seek(SeekFrom::Start(payload_start))?;
+                    payload_file.read_exact(&mut payload)?;
+                }
+                let payload = payload.as_slice();
+
+                decode_tasks_ordered(
+                    &tasks,
+                    execution.effective_threads,
+                    Self::extract_pipeline_messages(),
+                    |task: &Z3dsExtractTask| task.len,
+                    |task| {
+                        let reader = Z3dsPayloadReader::new(
+                            io::Cursor::new(payload),
+                            0,
+                            header.compressed_size,
+                        )?;
+                        self.extract_chunk_from_reader(reader, &seek_table, &task)
+                    },
+                    |chunk: Z3dsDecodedExtractChunk, task_len| {
+                        extract_writer.write(chunk.index, chunk.data, task_len)
+                    },
+                )
+            } else if execution.used_parallelism {
+                decode_tasks_ordered(
+                    &tasks,
+                    execution.effective_threads,
+                    Self::extract_pipeline_messages(),
+                    |task: &Z3dsExtractTask| task.len,
+                    |task| {
+                        self.extract_chunk_task(
                             &source,
                             payload_start,
                             header.compressed_size,
                             &seek_table,
-                            task,
-                        )?;
-                        write_chunk(chunk, task.len)?;
-                    }
-                    Ok(())
-                };
-            if let Err(error) = decode_result {
+                            &task,
+                        )
+                    },
+                    |chunk: Z3dsDecodedExtractChunk, task_len| {
+                        extract_writer.write(chunk.index, chunk.data, task_len)
+                    },
+                )
+            } else {
+                for task in &tasks {
+                    let chunk = self.extract_chunk_task(
+                        &source,
+                        payload_start,
+                        header.compressed_size,
+                        &seek_table,
+                        task,
+                    )?;
+                    extract_writer.write(chunk.index, chunk.data, task.len)?;
+                }
+                Ok(())
+            };
+        if let Err(error) = decode_result {
+            let _ = fs::remove_file(&output_path);
+            return Err(error);
+        }
+        let output_checksums = match extract_writer.finish(&output_path) {
+            Ok(checksums) => checksums,
+            Err(error) => {
                 let _ = fs::remove_file(&output_path);
                 return Err(error);
             }
-            if let Err(error) = ordered_writer.finish() {
-                let _ = fs::remove_file(&output_path);
-                return Err(error);
-            }
-        }
-
-        let mut output_checksums = Vec::new();
-        if let Some(checksum) = extract_checksum {
-            output_checksums.push(ExtractedFileChecksum {
-                path: output_path.clone(),
-                values: checksum.finalize()?,
-            });
-        }
+        };
 
         let report = OperationReport::succeeded(
             OperationFamily::Container,

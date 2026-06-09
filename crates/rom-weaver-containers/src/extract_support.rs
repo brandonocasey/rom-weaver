@@ -1,9 +1,9 @@
 use std::{
     collections::BTreeMap,
-    fs,
-    io::{Read, Write},
+    fs::{self, File},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::AtomicU8,
+    sync::atomic::{AtomicU8, AtomicU64, Ordering},
     sync::mpsc,
     thread,
 };
@@ -12,8 +12,10 @@ use rayon::prelude::*;
 use rom_weaver_checksum::StreamingChecksum;
 use rom_weaver_core::{
     ContainerByteProgress, OperationContext, OperationFamily, OperationReport, OperationStatus,
-    ProgressEvent, Result, RomWeaverError, SharedThreadPool, ThreadExecution,
+    OrderedChunkWriter, OrderedStreamingMessages, ProgressEvent, Result, RomWeaverError,
+    SharedThreadPool, ThreadExecution, bounded_items_for_threads, create_extract_output_file,
     emit_container_running_progress, maybe_emit_container_byte_progress,
+    ordered_streaming_compress,
 };
 use serde_json::{Map, Value, json};
 
@@ -200,6 +202,155 @@ fn build_extract_checksum_emitted_file_detail(
     entry.insert("size_bytes".to_string(), json!(metadata.len()));
     entry.insert("checksums".to_string(), json!(checksums));
     Some(Value::Object(entry))
+}
+
+/// Run an ordered, threaded extract over `tasks`, decoding each task on a worker thread and handing
+/// finished chunks to `write_chunk` in strict ascending task order.
+///
+/// This is the task-based decode wrapper shared by the seekable single-file extract handlers (cso,
+/// z3ds): every one of them clones a task onto a worker, decodes it, and streams the decoded chunk
+/// back in order alongside the task's expected length. The only per-format inputs are the channel
+/// error messages, how to read a task's expected length, and the decode itself; pairing the chunk
+/// with `task_len` lets `write_chunk` validate the decoded size without re-deriving it.
+pub(crate) fn decode_tasks_ordered<TTask, TChunk, TaskLen, Decode, WriteChunk>(
+    tasks: &[TTask],
+    effective_threads: usize,
+    messages: OrderedStreamingMessages,
+    task_len: TaskLen,
+    decode: Decode,
+    mut write_chunk: WriteChunk,
+) -> Result<()>
+where
+    TTask: Clone + Send,
+    TChunk: Send,
+    TaskLen: Fn(&TTask) -> u64 + Sync,
+    Decode: Fn(TTask) -> Result<TChunk> + Sync,
+    WriteChunk: FnMut(TChunk, u64) -> Result<()>,
+{
+    ordered_streaming_compress(
+        tasks,
+        effective_threads,
+        messages,
+        |_, task: &TTask| Ok(task.clone()),
+        || (),
+        |_, _, task: TTask| {
+            let len = task_len(&task);
+            decode(task).map(|chunk| (len, chunk))
+        },
+        |_, (len, chunk)| write_chunk(chunk, len),
+    )
+}
+
+/// Ordered, checksum-and-progress aware sink for decoded extract chunks.
+///
+/// Wraps the write half shared by the seekable single-file extract handlers (cso, z3ds): each
+/// decoded chunk is validated against its task's expected length, folded into the optional extract
+/// checksum, written to the [`OrderedChunkWriter`] in ascending index order, and counted toward the
+/// byte-progress stream. Hashing the bytes here — in their final on-disk order — computes a
+/// requested `--checksum` during extract instead of forcing a second full read of the output.
+pub(crate) struct ExtractChunkWriter<'a> {
+    context: &'a OperationContext,
+    execution: &'a ThreadExecution,
+    format: &'static str,
+    label: String,
+    total_bytes: u64,
+    writer: OrderedChunkWriter<BufWriter<File>>,
+    checksum: Option<StreamingChecksum>,
+    progress_bytes: AtomicU64,
+    progress_bucket: AtomicU8,
+}
+
+impl<'a> ExtractChunkWriter<'a> {
+    pub(crate) fn new(
+        context: &'a OperationContext,
+        execution: &'a ThreadExecution,
+        format: &'static str,
+        label: String,
+        total_bytes: u64,
+        output_path: &Path,
+        overwrite: bool,
+    ) -> Result<Self> {
+        let writer = OrderedChunkWriter::new(
+            BufWriter::new(create_extract_output_file(output_path, overwrite)?),
+            bounded_items_for_threads(execution.effective_threads),
+        )?;
+        let checksum = create_extract_checksum(context)?;
+        Ok(Self {
+            context,
+            execution,
+            format,
+            label,
+            total_bytes,
+            writer,
+            checksum,
+            progress_bytes: AtomicU64::new(0),
+            progress_bucket: AtomicU8::new(0),
+        })
+    }
+
+    /// Write one decoded chunk. `chunk_index` is the task index (used for ordered writes) and
+    /// `expected_len` is the task's expected decoded length; a mismatch is a hard error.
+    pub(crate) fn write(
+        &mut self,
+        chunk_index: usize,
+        data: Vec<u8>,
+        expected_len: u64,
+    ) -> Result<()> {
+        let chunk_len = u64::try_from(data.len()).map_err(|_| {
+            RomWeaverError::Validation(format!("{} extract chunk length overflowed", self.format))
+        })?;
+        if chunk_len != expected_len {
+            return Err(RomWeaverError::Validation(format!(
+                "{} extract chunk {} wrote {} bytes but expected {}",
+                self.format, chunk_index, chunk_len, expected_len
+            )));
+        }
+        let ordered_index = u64::try_from(chunk_index).map_err(|_| {
+            RomWeaverError::Validation(format!("{} extract chunk index overflowed", self.format))
+        })?;
+        // `write` is invoked in strict ascending index order, so hashing here folds the output bytes
+        // into the checksum in their final on-disk order. Update before the value is moved into the
+        // ordered writer below.
+        if let Some(checksum) = self.checksum.as_mut() {
+            checksum.update(&data)?;
+        }
+        self.writer.write_chunk(ordered_index, data)?;
+        if self.total_bytes > 0 {
+            let completed = self
+                .progress_bytes
+                .fetch_add(chunk_len, Ordering::Relaxed)
+                .saturating_add(chunk_len)
+                .min(self.total_bytes);
+            maybe_emit_container_byte_progress(
+                self.context,
+                completed,
+                self.total_bytes,
+                ContainerByteProgress {
+                    command: "extract",
+                    format: self.format,
+                    stage: "extract",
+                    label: &self.label,
+                    thread_execution: Some(self.execution),
+                    emitted_progress_bucket: &self.progress_bucket,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Flush the ordered writer and finalize the extract checksum, returning the per-file checksum
+    /// entry (empty when no `--checksum` was requested) for `output_path`.
+    pub(crate) fn finish(self, output_path: &Path) -> Result<Vec<ExtractedFileChecksum>> {
+        self.writer.finish()?;
+        let mut checksums = Vec::new();
+        if let Some(checksum) = self.checksum {
+            checksums.push(ExtractedFileChecksum {
+                path: output_path.to_path_buf(),
+                values: checksum.finalize()?,
+            });
+        }
+        Ok(checksums)
+    }
 }
 
 pub(crate) fn write_decoded_chunks_from_workers<TTask, TChunk, Decode, WriteChunk>(

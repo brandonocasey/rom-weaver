@@ -289,31 +289,11 @@ impl CsoContainerHandler {
         })
     }
 
-    fn decode_extract_tasks_ordered<Decode, WriteChunk>(
-        tasks: &[CsoExtractTask],
-        effective_threads: usize,
-        decode: Decode,
-        mut write_chunk: WriteChunk,
-    ) -> Result<()>
-    where
-        Decode: Fn(CsoExtractTask) -> Result<CsoDecodedExtractChunk> + Sync,
-        WriteChunk: FnMut(CsoDecodedExtractChunk, u64) -> Result<()>,
-    {
-        ordered_streaming_compress(
-            tasks,
-            effective_threads,
-            OrderedStreamingMessages {
-                worker_closed: "cso extract workers ended before all chunks were consumed",
-                result_closed: "cso extract pipeline ended before all chunks were produced",
-            },
-            |_, task| Ok(task.clone()),
-            || (),
-            |_, _, task| {
-                let task_len = task.len;
-                decode(task).map(|chunk| (task_len, chunk))
-            },
-            |_, (task_len, chunk)| write_chunk(chunk, task_len),
-        )
+    fn extract_pipeline_messages() -> OrderedStreamingMessages {
+        OrderedStreamingMessages {
+            worker_closed: "cso extract workers ended before all chunks were consumed",
+            result_closed: "cso extract pipeline ended before all chunks were produced",
+        }
     }
 }
 
@@ -390,61 +370,23 @@ impl ContainerHandlerOperations for CsoContainerHandler {
         let extract_capability = ThreadCapability::parallel(Some(tasks.len().max(1)));
         let execution = context.plan_threads(extract_capability);
         let extract_progress_label = format!("extracting `{}`", self.descriptor.name);
-        let extract_progress_bytes = Arc::new(AtomicU64::new(0));
-        let extract_progress_bucket = Arc::new(AtomicU8::new(0));
-        // Hash the decompressed output as it is written so a requested `--checksum` is computed
-        // during extract instead of forcing the caller into a second full read of the output,
-        // matching the libarchive/chd/rvz extract paths.
-        let mut extract_checksum = create_extract_checksum(context)?;
 
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut ordered_writer = OrderedChunkWriter::new(
-            BufWriter::new(create_extract_output_file(&output_path, request.overwrite)?),
-            bounded_items_for_threads(execution.effective_threads),
+        // Hash the decompressed output as it is written so a requested `--checksum` is computed
+        // during extract instead of forcing the caller into a second full read of the output,
+        // matching the libarchive/chd/rvz extract paths.
+        let mut extract_writer = ExtractChunkWriter::new(
+            context,
+            &execution,
+            self.descriptor.name,
+            extract_progress_label,
+            logical_bytes,
+            &output_path,
+            request.overwrite,
         )?;
         let source = request.source.clone();
-        let mut write_chunk = |chunk: CsoDecodedExtractChunk, task_len: u64| -> Result<()> {
-            let chunk_len = u64::try_from(chunk.data.len()).map_err(|_| {
-                RomWeaverError::Validation("cso extract chunk length overflowed".into())
-            })?;
-            if chunk_len != task_len {
-                return Err(RomWeaverError::Validation(format!(
-                    "cso extract chunk {} wrote {} bytes but expected {}",
-                    chunk.index, chunk_len, task_len
-                )));
-            }
-            let chunk_index = u64::try_from(chunk.index).map_err(|_| {
-                RomWeaverError::Validation("cso extract chunk index overflowed".into())
-            })?;
-            // `write_chunk` is invoked in strict ascending index order, so updating here hashes the
-            // output bytes in their final on-disk order.
-            if let Some(checksum) = extract_checksum.as_mut() {
-                checksum.update(&chunk.data)?;
-            }
-            ordered_writer.write_chunk(chunk_index, chunk.data)?;
-            if logical_bytes > 0 {
-                let completed = extract_progress_bytes
-                    .fetch_add(chunk_len, Ordering::Relaxed)
-                    .saturating_add(chunk_len)
-                    .min(logical_bytes);
-                maybe_emit_container_byte_progress(
-                    context,
-                    completed,
-                    logical_bytes,
-                    ContainerByteProgress {
-                        command: "extract",
-                        format: self.descriptor.name,
-                        stage: "extract",
-                        label: &extract_progress_label,
-                        thread_execution: Some(&execution),
-                        emitted_progress_bucket: extract_progress_bucket.as_ref(),
-                    },
-                );
-            }
-            Ok(())
-        };
         let decode_result = if execution.used_parallelism && container_reads_source_on_main_thread()
         {
             // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
@@ -458,43 +400,46 @@ impl ContainerHandlerOperations for CsoContainerHandler {
                     source.display()
                 ))
             })?);
-            Self::decode_extract_tasks_ordered(
+            decode_tasks_ordered(
                 &tasks,
                 execution.effective_threads,
+                Self::extract_pipeline_messages(),
+                |task: &CsoExtractTask| task.len,
                 |task| {
                     self.decode_extract_task_from_buffer(&source, Arc::clone(&source_bytes), &task)
                 },
-                &mut write_chunk,
+                |chunk: CsoDecodedExtractChunk, task_len| {
+                    extract_writer.write(chunk.index, chunk.data, task_len)
+                },
             )
         } else if execution.used_parallelism {
-            Self::decode_extract_tasks_ordered(
+            decode_tasks_ordered(
                 &tasks,
                 execution.effective_threads,
+                Self::extract_pipeline_messages(),
+                |task: &CsoExtractTask| task.len,
                 |task| self.decode_extract_task(&source, &task),
-                &mut write_chunk,
+                |chunk: CsoDecodedExtractChunk, task_len| {
+                    extract_writer.write(chunk.index, chunk.data, task_len)
+                },
             )
         } else {
             tasks.iter().try_for_each(|task| {
                 let chunk = self.decode_extract_task(&source, task)?;
-                write_chunk(chunk, task.len)
+                extract_writer.write(chunk.index, chunk.data, task.len)
             })
         };
         if let Err(error) = decode_result {
             let _ = fs::remove_file(&output_path);
             return Err(error);
         }
-        if let Err(error) = ordered_writer.finish() {
-            let _ = fs::remove_file(&output_path);
-            return Err(error);
-        }
-
-        let mut output_checksums = Vec::new();
-        if let Some(checksum) = extract_checksum {
-            output_checksums.push(ExtractedFileChecksum {
-                path: output_path.clone(),
-                values: checksum.finalize()?,
-            });
-        }
+        let output_checksums = match extract_writer.finish(&output_path) {
+            Ok(checksums) => checksums,
+            Err(error) => {
+                let _ = fs::remove_file(&output_path);
+                return Err(error);
+            }
+        };
 
         let report = OperationReport::succeeded(
             OperationFamily::Container,
