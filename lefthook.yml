@@ -9,6 +9,14 @@ pre-commit:
       run: cargo run -p rom-weaver-typegen -- --check
     wasm-threaded-check:
       run: 'RUSTFLAGS="${RUSTFLAGS:-} -D warnings" scripts/wasm/with-wasi-env.sh cargo check -p rom-weaver-containers --target wasm32-wasip1-threads --lib'
+    react-lint:
+      run: npm --prefix packages/rom-weaver-react run lint:code
+    react-types:
+      run: npm --prefix packages/rom-weaver-react run lint:types
+    wasm-lint:
+      run: npm --prefix packages/rom-weaver-wasm run lint:code
+    wasm-types:
+      run: npm --prefix packages/rom-weaver-wasm run check:types
     whitespace:
       run: git diff --cached --check
     thread-guard-regressions:
