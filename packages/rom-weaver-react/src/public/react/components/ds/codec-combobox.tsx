@@ -60,6 +60,39 @@ const getActiveToken = (value: string, cursor: number | null | undefined, multip
 };
 
 const getLevelSuffix = (token: string): string => token.match(/:(\d*)$/)?.[0] || "";
+const normalizeSuggestionValue = (value: string): string =>
+  value
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+    .join(",");
+
+const getSelectedSuggestionIndex = (
+  value: string,
+  cursor: number | null | undefined,
+  multiple: boolean,
+  suggestionOptions: readonly CompressionCodecOption[],
+): number => {
+  const normalizedValue = normalizeSuggestionValue(value);
+  const activeCodec = getActiveToken(value, cursor, multiple).query;
+  return suggestionOptions.findIndex((option) => {
+    const optionValue = normalizeSuggestionValue(option.value);
+    if (!optionValue) return false;
+    if (option.replaceValue && normalizedValue === optionValue) return true;
+    if (!multiple && normalizedValue === optionValue) return true;
+    return activeCodec === optionValue;
+  });
+};
+
+const getActiveSuggestionIndex = (
+  value: string,
+  cursor: number | null | undefined,
+  multiple: boolean,
+  suggestionOptions: readonly CompressionCodecOption[],
+): number => {
+  const selectedIndex = getSelectedSuggestionIndex(value, cursor, multiple, suggestionOptions);
+  return selectedIndex === -1 ? 0 : selectedIndex;
+};
 
 const applyCodecSelection = (
   value: string,
@@ -121,10 +154,14 @@ const CodecCombobox = ({
     if (!query) return [...suggestionOptions];
     return suggestionOptions.filter((option) => getSuggestionSearchText(option).includes(query));
   }, [activeToken.query, filtering, suggestionOptions]);
+  const selectedSuggestionIndex = useMemo(
+    () => getSelectedSuggestionIndex(value, cursor, multiple, filteredSuggestions),
+    [cursor, filteredSuggestions, multiple, value],
+  );
 
   useEffect(() => {
-    setActiveIndex(0);
-  }, [activeToken.query, suggestionOptions]);
+    setActiveIndex(selectedSuggestionIndex === -1 ? 0 : selectedSuggestionIndex);
+  }, [activeToken.query, filteredSuggestions, selectedSuggestionIndex]);
 
   const updateDropdownFrame = (measuredHeight?: number) => {
     const rect = inputRef.current?.getBoundingClientRect();
@@ -355,13 +392,17 @@ const CodecCombobox = ({
           updateDropdownFrame();
         }}
         onClick={(event) => {
-          setCursor(event.currentTarget.selectionStart ?? value.length);
+          const nextCursor = event.currentTarget.selectionStart ?? value.length;
+          setCursor(nextCursor);
           setFiltering(false);
+          setActiveIndex(getActiveSuggestionIndex(value, nextCursor, multiple, suggestionOptions));
           updateDropdownFrame();
         }}
         onFocus={(event) => {
-          setCursor(event.currentTarget.selectionStart ?? value.length);
+          const nextCursor = event.currentTarget.selectionStart ?? value.length;
+          setCursor(nextCursor);
           setFiltering(false);
+          setActiveIndex(getActiveSuggestionIndex(value, nextCursor, multiple, suggestionOptions));
           setOpen(true);
           focusInputIntoView();
         }}

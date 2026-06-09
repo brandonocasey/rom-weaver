@@ -15,6 +15,10 @@ let rootElement = null;
 
 const optionTexts = () =>
   Array.from(document.querySelectorAll(".codec-combobox-option")).map((option) => option.textContent || "");
+const selectedOptionTexts = () =>
+  Array.from(document.querySelectorAll('.codec-combobox-option[aria-selected="true"]')).map(
+    (option) => option.textContent || "",
+  );
 
 function Harness({ fieldKey, initialValue = "", label, multiple = false }) {
   const [value, setValue] = useState(initialValue);
@@ -136,6 +140,28 @@ test("chd codec combobox lists zstd and lzma presets before individual codecs", 
     "huff",
     "flac",
   ]);
+});
+
+test("chd codec combobox shows matching presets as selected", async () => {
+  mountCombobox({
+    fieldKey: "chdCreateCdCodecs",
+    initialValue: "cdlz,cdzl,cdfl",
+    label: "CD Codecs",
+    multiple: true,
+  });
+
+  await page.getByRole("combobox", { name: "CD Codecs" }).click();
+  await expect.poll(selectedOptionTexts).toEqual(["lzma preset: cdlz,cdzl,cdfl"]);
+
+  mountCombobox({
+    fieldKey: "chdCreateDvdCodecs",
+    initialValue: "zstd,zlib,huff,flac",
+    label: "DVD Codecs",
+    multiple: true,
+  });
+
+  await page.getByRole("combobox", { name: "DVD Codecs" }).click();
+  await expect.poll(selectedOptionTexts).toEqual(["zstd preset: zstd,zlib,huff,flac"]);
 });
 
 test("codec combobox replaces the active token in multi-codec lists", async () => {
