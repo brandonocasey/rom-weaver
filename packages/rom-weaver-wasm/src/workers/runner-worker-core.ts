@@ -18,7 +18,6 @@ import {
   SELECT_REQUEST_PENDING,
   SELECT_REQUEST_READY_INDEX,
   SELECT_REQUEST_RESULT_INDEX,
-  SELECT_REQUEST_TIMEOUT_MS,
 } from './worker-protocol.ts';
 import type {
   RomWeaverWorkerInitOptions,
@@ -129,20 +128,29 @@ export function createRunnerWorkerMessageQueue({ postMessage, initRunner }: Runn
           // while the main thread resolves the choice via the worker client's selection handler.
           // Returns the chosen 0-based index, or -1 to cancel (also on timeout / no handler).
           hostSelect(request: string): number {
+            postTraceLine(
+              requestId,
+              `[runner-worker] hostSelect prompting user to pick an entry ${summarizeSelectRequest(request)}`,
+            );
             const control = new Int32Array(
               new SharedArrayBuffer(SELECT_REQUEST_CONTROL_LENGTH * Int32Array.BYTES_PER_ELEMENT),
             );
             Atomics.store(control, SELECT_REQUEST_READY_INDEX, SELECT_REQUEST_PENDING);
             Atomics.store(control, SELECT_REQUEST_RESULT_INDEX, SELECT_REQUEST_CANCEL_INDEX);
             postMessage({ type: 'selectRequest', requestId, request, control: control.buffer });
-            const waited = Atomics.wait(
-              control,
-              SELECT_REQUEST_READY_INDEX,
-              SELECT_REQUEST_PENDING,
-              SELECT_REQUEST_TIMEOUT_MS,
+            postTraceLine(
+              requestId,
+              '[runner-worker] hostSelect posted selectRequest, blocking worker until the user responds',
             );
-            if (waited === 'timed-out') return SELECT_REQUEST_CANCEL_INDEX;
-            return Atomics.load(control, SELECT_REQUEST_RESULT_INDEX);
+            // No timeout — block until the main thread resolves the selection. The user may take an
+            // arbitrarily long time to pick (or dismiss, which resolves to the cancel index).
+            Atomics.wait(control, SELECT_REQUEST_READY_INDEX, SELECT_REQUEST_PENDING);
+            const selectedIndex = Atomics.load(control, SELECT_REQUEST_RESULT_INDEX);
+            postTraceLine(
+              requestId,
+              `[runner-worker] hostSelect woke with selectedIndex=${selectedIndex}${selectedIndex < 0 ? ' (cancelled)' : ''}`,
+            );
+            return selectedIndex;
           },
           onEvent(event: RomWeaverRunJsonEvent) {
             postMessage({ type: 'event', requestId, event });
@@ -228,6 +236,18 @@ function readRequestId(message: unknown) {
 function readRunPayload(message: unknown) {
   if (!message || typeof message !== 'object') return undefined;
   return (message as AnyRecord).request;
+}
+
+function summarizeSelectRequest(request: unknown) {
+  if (typeof request !== 'string') return 'request=invalid';
+  try {
+    const parsed = JSON.parse(request);
+    const heading = typeof parsed?.heading === 'string' ? parsed.heading : '';
+    const candidateCount = Array.isArray(parsed?.candidates) ? parsed.candidates.length : 0;
+    return `heading="${heading}" candidates=${candidateCount}`;
+  } catch {
+    return `request=unparsable bytes=${request.length}`;
+  }
 }
 
 function summarizeQueueMessage(message: unknown) {

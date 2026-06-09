@@ -238,15 +238,20 @@ export class RomWeaverWorkerClientCore {
         // registered selection handler (or cancel) and wake it with Atomics.notify.
         const control = new Int32Array(message.control as ArrayBufferLike);
         const respond = (index: number) => {
-          Atomics.store(
-            control,
-            SELECT_REQUEST_RESULT_INDEX,
-            Number.isInteger(index) ? index : SELECT_REQUEST_CANCEL_INDEX,
+          const resolvedIndex = Number.isInteger(index) ? index : SELECT_REQUEST_CANCEL_INDEX;
+          emitPendingTrace(
+            pending,
+            `[worker-client] selectRequest responding requestId=${requestId} selectedIndex=${resolvedIndex}${resolvedIndex < 0 ? ' (cancelled)' : ''}`,
           );
+          Atomics.store(control, SELECT_REQUEST_RESULT_INDEX, resolvedIndex);
           Atomics.store(control, SELECT_REQUEST_READY_INDEX, SELECT_REQUEST_READY);
           Atomics.notify(control, SELECT_REQUEST_READY_INDEX);
         };
         const handler = this._onSelect;
+        emitPendingTrace(
+          pending,
+          `[worker-client] selectRequest received requestId=${requestId} ${summarizeSelectRequest(message.request)} handler=${typeof handler === 'function' ? 'present' : 'missing'}`,
+        );
         if (typeof handler !== 'function') {
           respond(SELECT_REQUEST_CANCEL_INDEX);
           return;
@@ -254,7 +259,13 @@ export class RomWeaverWorkerClientCore {
         Promise.resolve()
           .then(() => handler(message.request))
           .then((index) => respond(typeof index === 'number' ? index : SELECT_REQUEST_CANCEL_INDEX))
-          .catch(() => respond(SELECT_REQUEST_CANCEL_INDEX));
+          .catch(() => {
+            emitPendingTrace(
+              pending,
+              `[worker-client] selectRequest handler rejected requestId=${requestId} — cancelling`,
+            );
+            respond(SELECT_REQUEST_CANCEL_INDEX);
+          });
         return;
       }
       case 'error':
@@ -542,6 +553,18 @@ function summarizeWorkerResult(result: unknown): string {
     parts.push(`traceNonJsonLines=${record.traceNonJsonLines.length}`);
   }
   return parts.length > 0 ? parts.join(' ') : 'result=object';
+}
+
+function summarizeSelectRequest(request: unknown): string {
+  if (typeof request !== 'string') return 'request=invalid';
+  try {
+    const parsed = JSON.parse(request) as TraceRecord;
+    const heading = typeof parsed?.heading === 'string' ? parsed.heading : '';
+    const candidateCount = Array.isArray(parsed?.candidates) ? parsed.candidates.length : 0;
+    return `heading="${heading}" candidates=${candidateCount}`;
+  } catch {
+    return `request=unparsable bytes=${request.length}`;
+  }
 }
 
 function summarizeSerializedError(error: unknown): string {

@@ -143,13 +143,8 @@ export const SELECT_REQUEST_READY_INDEX = 0;
 export const SELECT_REQUEST_RESULT_INDEX = 1;
 export const SELECT_REQUEST_PENDING = 0;
 export const SELECT_REQUEST_READY = 1;
-/** Sentinel result index meaning "no selection" — cancelled, timed out, or no handler registered. */
+/** Sentinel result index meaning "no selection" — cancelled or no handler registered. */
 export const SELECT_REQUEST_CANCEL_INDEX = -1;
-/**
- * Upper bound the runner worker stays blocked waiting for the main thread to resolve a selection
- * prompt. On expiry the host selection callback cancels so an unanswered prompt can never deadlock.
- */
-export const SELECT_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type RomWeaverWorkerResponse =
   | RomWeaverWorkerReadyMessage
