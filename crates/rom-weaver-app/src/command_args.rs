@@ -1,0 +1,914 @@
+use super::*;
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_max_compression_level() -> CompressionLevelProfile {
+    CompressionLevelProfile::Max
+}
+
+fn default_xdelta_secondary() -> String {
+    // No in-patch secondary compression by default (this also matches xdelta3, which only compresses
+    // when you pass `-S`). The patch's literal sections are frequently already-compressed disc assets
+    // where LZMA burns tens of seconds for a few percent, and the patch is typically re-compressed
+    // downstream anyway. Callers wanting a self-contained compressed patch can pass `lzma`.
+    XdeltaSecondaryMode::None.to_string()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct ProbeCommand {
+    pub source: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "select",
+            help = "Select an extracted probe payload by exact name, prefix, or glob (repeatable)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub select: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "rom-filter",
+            help = "Keep ROM-like payload candidates during automatic extraction"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-filter",
+            help = "Keep patch-like payload candidates during automatic extraction"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable container auto-extract and probe the source bytes directly"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_extract: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable default ignore filtering during probe container payload resolution"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_ignore: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct ListCommand {
+    pub source: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "select",
+            help = "Select a nested container by exact name, prefix, or glob before listing entries (repeatable)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub select: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "rom-filter",
+            help = "Keep ROM-like payload candidates during nested list source resolution"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-filter",
+            help = "Keep patch-like payload candidates during nested list source resolution"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable default ignore filtering during nested list container selection"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_ignore: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "For CHD CD listing, report split CUE + per-track BIN entries (`*.trackNN.bin`) instead of a single BIN; ignored for containers that do not support it"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub split_bin: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct ExtractCommand {
+    pub source: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "select",
+            help = "Select extracted entries by exact name, prefix, or glob (repeatable). Examples: --select game.disc02.cue --select 'game.disc0?.bin'"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub select: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "rom-filter",
+            help = "Extract ROM-like entries and nested containers only"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-filter",
+            help = "Extract patch-like entries and nested containers only"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_filter: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub out_dir: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "For CHD CD extraction, force split CUE + per-track BIN output (`*.trackNN.bin`) instead of a single BIN when possible"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub split_bin: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable default common-file ignore filtering during container extraction"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_ignore: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "no-nested-extract",
+            help = "Do not recursively extract nested containers emitted by this extraction"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_nested_extract: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "no-overwrite",
+            help = "Fail extraction if any destination output file already exists"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_overwrite: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "checksum",
+            value_name = "ALGO",
+            help = "Compute an output checksum while extracting; repeat for multiple algorithms"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub checksum: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct ChecksumCommand {
+    pub source: PathBuf,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "algo", required = true))]
+    pub algo: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "select"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub select: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "rom-filter",
+            help = "Keep ROM-like payload candidates during checksum auto-extract"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-filter",
+            help = "Keep patch-like payload candidates during checksum auto-extract"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable container auto-extract and checksum the source bytes directly"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_extract: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable default ignore filtering during checksum container payload resolution"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_ignore: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Remove a detected ROM header before checksum (A78/LNX/NES/FDS/SMC signatures; SNES/PCE copier-size rules)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub strip_header: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable automatic trim-boundary checksum fixes for trim-eligible ROMs"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_trim_fix: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub start: Option<u64>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub length: Option<u64>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct CompressCommand {
+    #[cfg_attr(not(target_arch = "wasm32"), arg(required = true))]
+    pub input: Vec<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Output container format (derived from the output extension when omitted; required when the output has no recognizable extension; overrides the extension with a warning when they disagree)"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub format: Option<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub output: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            action = ArgAction::Append,
+            help = "Compression codec override; supports codec[:level]. Repeat --codec for multiple codecs (for example CHD: --codec cdzs[:19] --codec cdzl --codec cdfl). If :level is omitted, falls back to --level profile."
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub codec: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(
+        long,
+        value_enum,
+        default_value_t = CompressionLevelProfile::Max,
+        help = "Global compression level profile (min|very-low|low|medium|high|very-high|max)"
+    ))]
+    #[serde(default = "default_max_compression_level")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub level: CompressionLevelProfile,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct TrimCommand {
+    #[cfg_attr(not(target_arch = "wasm32"), arg(required = true))]
+    pub source: Vec<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            conflicts_with = "in_place",
+            help = "Destination file for trimmed output (single trim-eligible source only)"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub output: Option<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 'e',
+            long,
+            help = "Output extension for side-by-side output (supports `{ext}` placeholder, for example `trim.{ext}`)"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub extension: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 'i',
+            long = "in-place",
+            alias = "inplace",
+            help = "Trim the source file in place instead of writing a new file"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub in_place: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 's',
+            long = "simulate",
+            alias = "dry-run",
+            help = "Simulate trim operations without writing output files"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub dry_run: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            alias = "untrim",
+            alias = "restore",
+            help = "Revert trimmed files by padding back to the nearest power-of-two size (not supported for xiso or rvz-scrub)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub revert: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(
+        long = "no-recursive",
+        action = ArgAction::SetFalse,
+        default_value_t = true,
+        help = "Do not recursively scan subdirectories when input sources include folders"
+    ))]
+    #[serde(default = "default_true")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub recursive: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(
+        long = "no-rom-filter",
+        action = ArgAction::SetFalse,
+        default_value_t = true,
+        help = "Disable the default ROM-only filter applied to archive payloads before trimming"
+    ))]
+    #[serde(default = "default_true")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable archive auto-extract; only trim direct file inputs"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_extract: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "revert-marker",
+            alias = "reversible",
+            help = "Embed a small footer in the trimmed output so it can later be reverted to a byte-identical original"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub revert_marker: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct BatchHeaderFixerCommand {
+    #[cfg_attr(not(target_arch = "wasm32"), arg(required = true))]
+    pub source: Vec<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            conflicts_with = "in_place",
+            help = "Destination file for fixed output (single header-fix source only)"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub output: Option<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 'e',
+            long,
+            help = "Output extension for side-by-side output (supports `{ext}` placeholder, for example `fixed.{ext}`)"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub extension: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 'i',
+            long = "in-place",
+            alias = "inplace",
+            help = "Fix headers in place instead of writing a new file"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub in_place: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 's',
+            long = "simulate",
+            alias = "dry-run",
+            help = "Simulate header fixing without writing output files"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub dry_run: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(
+        long = "no-recursive",
+        action = ArgAction::SetFalse,
+        default_value_t = true,
+        help = "Do not recursively scan subdirectories when input sources include folders"
+    ))]
+    #[serde(default = "default_true")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub recursive: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct PatchApplyCommand {
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub input: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "select",
+            help = "Container payload selection pattern(s) used while auto-extracting patch apply input and patch files"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub select: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "rom-filter",
+            help = "Keep ROM-like payload candidates while resolving the patch input archive"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-filter",
+            help = "Keep patch-like payload candidates while resolving patch archives"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable container auto-extract and patch the raw input and patch bytes directly"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_extract: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable default ignore filtering during patch apply container payload resolution"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_ignore: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch",
+            help = "Patch file(s) to apply in order; repeat --patch for each step. If omitted, patch apply discovers RetroArch-style sidecar patches inside the input archive."
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patches: Vec<PathBuf>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub output: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Write raw patched bytes without the default patch-output compression step"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_compress: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "compress-format",
+            help = "Patch-output compression container format (derived from the output extension when omitted; required when the output has no recognizable extension; overrides the extension with a warning when they disagree). Use --no-compress to write raw patched bytes."
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub compress_format: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "compress-codec",
+            action = ArgAction::Append,
+            help = "Patch-output compression codec override; supports codec[:level]. Repeat --compress-codec for multiple codecs (for example CHD: --compress-codec cdzs[:19] --compress-codec cdzl --compress-codec cdfl). If :level is omitted, falls back to --compress-level profile."
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub compress_codec: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(
+        long = "compress-level",
+        value_enum,
+        default_value_t = CompressionLevelProfile::Max,
+        help = "Global patch-output compression level profile (min|very-low|low|medium|high|very-high|max)"
+    ))]
+    #[serde(default = "default_max_compression_level")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub compress_level: CompressionLevelProfile,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "checksum-cache",
+            value_name = "ALGO=HEX",
+            help = "Provide trusted effective patch input checksum values for validation without recomputing; repeat for multiple algorithms (for example: --checksum-cache crc32=1234abcd)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub checksum_cache: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "validate-with-checksum",
+            value_name = "ALGO=HEX",
+            help = "Validate effective patch input checksum before apply; repeat for multiple algorithms (for example: --validate-with-checksum crc32=1234abcd)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub validate_with_checksums: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Remove a detected ROM header before patch apply (A78/LNX/NES/FDS/SMC signatures; SNES/PCE copier-size rules)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub strip_header: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Add header bytes after patch apply (reuses stripped header bytes when available; defaults to 512-byte copier header)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub add_header: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Repair supported ROM headers/checksums after patch apply (SNES/NES/GB/GBA/MD/SMS/N64/NDS and related profiles; auto-detect)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub repair_checksum: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Skip patch-provided checksum validation during patch apply and permit recoverable patch-format validation issues"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub ignore_checksum_validation: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "validate-output-checksum",
+            value_name = "ALGO=HEX",
+            help = "Validate the patched output checksum after apply; repeat for multiple algorithms (for example: --validate-output-checksum sha1=...)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub validate_with_output_checksums: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "ppf-undo-aware",
+            help = "For PPF patches that carry undo data, reconstruct the original validation region so an already-patched ROM can be safely re-applied (no-op for a clean ROM)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub ppf_undo_aware: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct PatchValidateCommand {
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub input: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "select",
+            help = "Container payload selection pattern(s) used while auto-extracting patch validate input and patch files"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub select: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "rom-filter",
+            help = "Keep ROM-like payload candidates while resolving the patch validation input archive"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-filter",
+            help = "Keep patch-like payload candidates while resolving patch archives"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_filter: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable container auto-extract and validate the raw input and patch bytes directly"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_extract: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable default ignore filtering during patch validate container payload resolution"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_ignore: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch",
+            required = true,
+            help = "Patch file(s) to validate in order; repeat --patch for each step"
+        )
+    )]
+    pub patches: Vec<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "checksum-cache",
+            value_name = "ALGO=HEX",
+            help = "Provide trusted effective patch input checksum values for validation without recomputing; repeat for multiple algorithms (for example: --checksum-cache crc32=1234abcd)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub checksum_cache: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "validate-with-checksum",
+            value_name = "ALGO=HEX",
+            help = "Validate effective patch input checksum before dry-run apply; repeat for multiple algorithms (for example: --validate-with-checksum crc32=1234abcd)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub validate_with_checksums: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "validate-with-size",
+            value_name = "BYTES",
+            help = "Validate exact effective patch input size before dry-run apply"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub validate_with_size: Option<u64>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "validate-with-min-size",
+            value_name = "BYTES",
+            help = "Validate minimum effective patch input size before dry-run apply"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub validate_with_min_size: Option<u64>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Remove a detected ROM header before patch validation (A78/LNX/NES/FDS/SMC signatures; SNES/PCE copier-size rules)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub strip_header: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Skip patch-provided checksum validation during patch validation and permit recoverable patch-format validation issues"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub ignore_checksum_validation: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct PatchCreateCommand {
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub original: PathBuf,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub modified: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Patch format (derived from the output extension when omitted; required when the output has no recognizable patch extension)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub format: Option<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub output: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Skip strict patch validation during patch create when supported, including checksum emission and compatibility checks"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub ignore_checksum_validation: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "xdelta-secondary",
+            default_value = "none",
+            value_parser = ["auto", "lzma", "djw", "fgk", "none"],
+            help = "xdelta secondary compression mode during patch create (default none = no in-patch compression, matching xdelta3 without -S; lzma adds LZMA like xdelta -S lzma; djw/fgk are xdelta3's huffman coders; auto compares djw/lzma/fgk and keeps the smallest)"
+        )
+    )]
+    #[serde(default = "default_xdelta_secondary")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub xdelta_secondary: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct PatchCreateCandidatesCommand {
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub original: PathBuf,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub modified: PathBuf,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
