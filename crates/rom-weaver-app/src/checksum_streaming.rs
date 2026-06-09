@@ -17,7 +17,6 @@ pub(super) struct ChecksumStreamOptions<'a> {
     pub(super) kind_filter: ArchiveEntryKindFilter,
     pub(super) no_extract: bool,
     pub(super) no_ignore: bool,
-    pub(super) strip_header: bool,
     pub(super) no_trim_fix: bool,
     pub(super) start: Option<u64>,
     pub(super) length: Option<u64>,
@@ -36,7 +35,6 @@ impl CliApp {
             select,
             kind_filter,
             no_extract,
-            strip_header,
             no_trim_fix,
             start,
             length,
@@ -44,7 +42,6 @@ impl CliApp {
         } = *options;
         if self.interactive_selection_enabled
             || no_extract
-            || strip_header
             || !no_trim_fix
             || !select.is_empty()
             || start.is_some()
@@ -87,13 +84,18 @@ impl CliApp {
             return Ok(None);
         }
 
-        Ok(Some(OperationReport::succeeded(
-            OperationFamily::Checksum,
-            Some(self.checksum.name().to_string()),
-            "checksum",
-            format!("sha1={raw_sha1}; checksum source resolved via chd raw_sha1 fast path"),
-            Some(100.0),
-            thread_execution,
+        let mut checksums = BTreeMap::new();
+        checksums.insert("sha1".to_string(), raw_sha1.clone());
+        Ok(Some(Self::attach_checksum_details(
+            OperationReport::succeeded(
+                OperationFamily::Checksum,
+                Some(self.checksum.name().to_string()),
+                "checksum",
+                format!("sha1={raw_sha1}; checksum source resolved via chd raw_sha1 fast path"),
+                Some(100.0),
+                thread_execution,
+            ),
+            checksums,
         )))
     }
 
@@ -139,12 +141,11 @@ impl CliApp {
             kind_filter,
             no_extract,
             no_ignore,
-            strip_header,
             no_trim_fix,
             start,
             length,
         } = *options;
-        if no_extract || strip_header || !select.is_empty() || start.is_some() || length.is_some() {
+        if no_extract || !select.is_empty() || start.is_some() || length.is_some() {
             return Ok(None);
         }
 
@@ -269,13 +270,16 @@ impl CliApp {
         label.push_str(&format!(
             "; checksum source streamed from {tar_format} container entry `{candidate_name}`"
         ));
-        Ok(OperationReport::succeeded(
-            OperationFamily::Checksum,
-            Some(self.checksum.name().to_string()),
-            "checksum",
-            label,
-            Some(100.0),
-            Some(values.execution),
+        Ok(Self::attach_checksum_details(
+            OperationReport::succeeded(
+                OperationFamily::Checksum,
+                Some(self.checksum.name().to_string()),
+                "checksum",
+                label,
+                Some(100.0),
+                Some(values.execution),
+            ),
+            values.values,
         ))
     }
 
@@ -338,12 +342,11 @@ impl CliApp {
             kind_filter,
             no_extract,
             no_trim_fix,
-            strip_header,
             start,
             length,
             ..
         } = *options;
-        if no_extract || strip_header || !select.is_empty() || start.is_some() || length.is_some() {
+        if no_extract || !select.is_empty() || start.is_some() || length.is_some() {
             return None;
         }
 
@@ -442,13 +445,16 @@ impl CliApp {
         label.push_str(&format!(
             "; checksum source streamed from {stream_format} container"
         ));
-        Ok(OperationReport::succeeded(
-            OperationFamily::Checksum,
-            Some(self.checksum.name().to_string()),
-            "checksum",
-            label,
-            Some(100.0),
-            Some(values.execution),
+        Ok(Self::attach_checksum_details(
+            OperationReport::succeeded(
+                OperationFamily::Checksum,
+                Some(self.checksum.name().to_string()),
+                "checksum",
+                label,
+                Some(100.0),
+                Some(values.execution),
+            ),
+            values.values,
         ))
     }
 

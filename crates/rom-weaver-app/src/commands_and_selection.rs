@@ -838,7 +838,6 @@ impl CliApp {
             patch_filter = args.patch_filter,
             no_extract = args.no_extract,
             no_ignore = args.no_ignore,
-            strip_header = args.strip_header,
             no_trim_fix = args.no_trim_fix,
             start = ?args.start,
             length = ?args.length,
@@ -853,7 +852,6 @@ impl CliApp {
             patch_filter,
             no_extract,
             no_ignore,
-            strip_header,
             no_trim_fix,
             start,
             length,
@@ -897,7 +895,6 @@ impl CliApp {
             kind_filter,
             no_extract,
             no_ignore,
-            strip_header,
             no_trim_fix,
             start,
             length,
@@ -983,7 +980,7 @@ impl CliApp {
                 temp_prefix: "checksum-extract",
             },
             AutoExtractResolutionFlags {
-                no_extract: no_extract || strip_header,
+                no_extract,
                 no_ignore,
                 kind_filter,
             },
@@ -1021,60 +1018,11 @@ impl CliApp {
         );
 
         let mut temp_paths = Vec::new();
-        let mut stripped_header_match = None;
-        let mut stripped_header_offset = 0_u64;
         let mut trimmed_plan = None;
         let user_requested_range = start.is_some() || length.is_some();
         let mut start = start;
         let mut length = length;
         let should_auto_trim_fix = !no_trim_fix && !user_requested_range;
-        if strip_header {
-            self.emit_running(
-                OperationLabel {
-                    command: "checksum",
-                    family: OperationFamily::Checksum,
-                    format: Some(self.checksum.name()),
-                },
-                "prepare",
-                "stripping ROM header before checksum",
-                None,
-                thread_execution.clone(),
-            );
-            match Self::detect_strippable_rom_header(&resolved_source) {
-                Ok(header_match) => {
-                    stripped_header_offset =
-                        u64::try_from(header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES))
-                            .unwrap_or(ROM_HEADER_BYTES as u64);
-                    stripped_header_match = Some(header_match);
-                    let translated_start = start.unwrap_or(0).checked_add(stripped_header_offset);
-                    let Some(translated_start) = translated_start else {
-                        return self.finish(
-                            "checksum",
-                            OperationReport::failed(
-                                OperationFamily::Checksum,
-                                Some(self.checksum.name().to_string()),
-                                "validate",
-                                "checksum range start overflows after header stripping",
-                                thread_execution,
-                            ),
-                        );
-                    };
-                    start = Some(translated_start);
-                }
-                Err(error) => {
-                    return self.finish(
-                        "checksum",
-                        OperationReport::failed(
-                            OperationFamily::Checksum,
-                            Some(self.checksum.name().to_string()),
-                            "validate",
-                            error.to_string(),
-                            thread_execution,
-                        ),
-                    );
-                }
-            }
-        }
         let checksum_source = resolved_source.clone();
         if should_auto_trim_fix {
             self.emit_running(
@@ -1088,10 +1036,8 @@ impl CliApp {
                 None,
                 thread_execution.clone(),
             );
-            if let Ok(plan) =
-                self.read_checksum_trim_plan_with_offset(&checksum_source, stripped_header_offset)
-            {
-                start = Some(stripped_header_offset);
+            if let Ok(plan) = self.read_checksum_trim_plan_with_offset(&checksum_source, 0) {
+                start = Some(0);
                 length = Some(plan.trimmed_size);
                 trimmed_plan = Some(plan);
             }
@@ -1106,67 +1052,71 @@ impl CliApp {
             start,
             length,
         };
-        let header_only_translated_range = strip_header
-            && !user_requested_range
-            && !should_auto_trim_fix
-            && stripped_header_offset > 0
-            && request.start == Some(stripped_header_offset)
-            && request.length.is_none();
-        let checksum_stage = if (request.start.is_some() || request.length.is_some())
-            && !header_only_translated_range
-        {
+        let checksum_stage = if request.start.is_some() || request.length.is_some() {
             "checksum-range"
         } else {
             "checksum"
         };
         let checksum_algorithm_count = request.algorithms.len();
-        let mut report = self
-            .checksum
-            .checksum_report_with_progress(&request, &context, checksum_stage, &mut |progress| {
-                self.emit_running(
-                    OperationLabel {
-                        command: "checksum",
-                        family: OperationFamily::Checksum,
-                        format: Some(self.checksum.name()),
-                    },
-                    "checksum",
-                    format!(
-                        "computing {} checksum algorithm(s)",
-                        checksum_algorithm_count
-                    ),
-                    Some(progress.percent()),
-                    thread_execution.clone(),
-                );
-            })
-            .unwrap_or_else(|error| {
-                OperationReport::failed(
-                    OperationFamily::Checksum,
-                    Some(self.checksum.name().to_string()),
-                    "checksum",
-                    error.to_string(),
-                    Some(
-                        context.plan_threads(ThreadCapability::parallel(Some(
-                            request.algorithms.len(),
-                        ))),
-                    ),
-                )
-            });
+        let variants_enabled = !user_requested_range && trimmed_plan.is_none();
+        let mut report = if variants_enabled {
+            self.run_checksum_variants_with_progress(
+                &request,
+                &context,
+                checksum_stage,
+                &mut |progress| {
+                    self.emit_running(
+                        OperationLabel {
+                            command: "checksum",
+                            family: OperationFamily::Checksum,
+                            format: Some(self.checksum.name()),
+                        },
+                        "checksum",
+                        format!(
+                            "computing {} checksum algorithm(s)",
+                            checksum_algorithm_count
+                        ),
+                        Some(progress.percent()),
+                        thread_execution.clone(),
+                    );
+                },
+            )
+        } else {
+            self.checksum.checksum_report_with_progress(
+                &request,
+                &context,
+                checksum_stage,
+                &mut |progress| {
+                    self.emit_running(
+                        OperationLabel {
+                            command: "checksum",
+                            family: OperationFamily::Checksum,
+                            format: Some(self.checksum.name()),
+                        },
+                        "checksum",
+                        format!(
+                            "computing {} checksum algorithm(s)",
+                            checksum_algorithm_count
+                        ),
+                        Some(progress.percent()),
+                        thread_execution.clone(),
+                    );
+                },
+            )
+        }
+        .unwrap_or_else(|error| {
+            OperationReport::failed(
+                OperationFamily::Checksum,
+                Some(self.checksum.name().to_string()),
+                "checksum",
+                error.to_string(),
+                Some(
+                    context
+                        .plan_threads(ThreadCapability::parallel(Some(request.algorithms.len()))),
+                ),
+            )
+        });
         if report.status == OperationStatus::Succeeded {
-            if strip_header {
-                if let Some(header_match) = stripped_header_match {
-                    report.label = format!(
-                        "{}; input header stripped ({} bytes, {})",
-                        report.label,
-                        header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES),
-                        header_match.profile_name()
-                    );
-                } else {
-                    report.label = format!(
-                        "{}; input header stripped ({} bytes)",
-                        report.label, ROM_HEADER_BYTES
-                    );
-                }
-            }
             if let Some(plan) = trimmed_plan {
                 report.label = format!(
                     "{}; trimmed_input_bytes={} mode={} preserved_download_play_cert={}",

@@ -217,7 +217,8 @@ Behavior highlights:
 - `--no-extract` disables auto-extract
 - `--select` chooses payload(s)
 - `--no-ignore` disables default ignore filters (`.txt`, `.nfo`, `.sfv`, `.md5`, etc.)
-- `--strip-header` and `--no-trim-fix` control compatibility transforms
+- `--no-trim-fix` disables automatic trim-boundary checksum fixes
+- header/checksum compatibility transforms surface as `checksum_variants` (raw, remove-header, fix-header, n64 byte order)
 
 ## Trim Support
 

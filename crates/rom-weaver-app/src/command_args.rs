@@ -279,16 +279,6 @@ pub struct ChecksumCommand {
         not(target_arch = "wasm32"),
         arg(
             long,
-            help = "Remove a detected ROM header before checksum (A78/LNX/NES/FDS/SMC signatures; SNES/PCE copier-size rules)"
-        )
-    )]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub strip_header: bool,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long,
             help = "Disable automatic trim-boundary checksum fixes for trim-eligible ROMs"
         )
     )]
@@ -684,6 +674,16 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            long = "n64-byte-order",
+            value_enum,
+            help = "Transform an N64 input to the requested byte order before patch apply, then restore the original order after output"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub n64_byte_order: Option<N64ByteOrder>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
             long,
             help = "Skip patch-provided checksum validation during patch apply and permit recoverable patch-format validation issues"
         )
@@ -835,6 +835,16 @@ pub struct PatchValidateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub strip_header: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "n64-byte-order",
+            value_enum,
+            help = "Transform an N64 input to the requested byte order before patch validation"
+        )
+    )]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub n64_byte_order: Option<N64ByteOrder>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(

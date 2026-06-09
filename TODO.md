@@ -19,7 +19,7 @@
 - `43ba2f3`: zip, zipx, 7z, and tar-family probe/extract/create handlers landed.
 - `78ae8b9`: z3ds probe/extract/create landed (parallel extract path for large files).
 - `67ef8fb`: rvz probe/extract/create landed.
-- `this commit`: The command surface now uses `probe`, archive entry output moved to standalone `list`, patch-apply gained `--strip-header`/`--add-header`/`--repair-checksum`, and checksum gained `--strip-header`.
+- `this commit`: The command surface now uses `probe`, archive entry output moved to standalone `list`, patch-apply gained `--strip-header`/`--add-header`/`--repair-checksum`, and checksum surfaces header/repair/byte-order compatibility via `checksum_variants` (no `--strip-header` flag).
 - `this commit`: Added backlog rows for NSZ-family decompression support (`.nsz`, `.xcz`, `.ncz`) aligned to the `nicoboss/nsz` reference format behavior.
 
 ## Commands
@@ -28,7 +28,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | CMD-001 | command | probe | done | n/a | n/a | n/a | n/a | n/a | cli-smoke,json-contract | done | Routes probe through container and patch registries with text/JSON reporting; unmatched files now report detected Igir-style ROM headers when present. |
 | CMD-002 | command | extract | n/a | done | n/a | n/a | n/a | context-plumbed | cli-smoke,json-contract | done | Container extraction landed, including recursive nested archive extraction. |
-| CMD-003 | command | checksum | n/a | n/a | n/a | n/a | n/a | context-plumbed | cli-smoke,json-contract,thread-model | done | Native engine now covers `crc32`, `md5`, `sha1`, `sha256`, `blake3`, `crc32c`, `crc16`, and `adler32` with mmap + threaded fanout; CLI `--strip-header` now supports Igir-style ROM header profiles (`.a78`, `.lnx`, `.nes`, `.fds`, `.smc`) with 512-byte fallback compatibility. |
+| CMD-003 | command | checksum | n/a | n/a | n/a | n/a | n/a | context-plumbed | cli-smoke,json-contract,thread-model | done | Native engine now covers `crc32`, `md5`, `sha1`, `sha256`, `blake3`, `crc32c`, `crc16`, and `adler32` with mmap + threaded fanout; emits `checksum_variants` (raw, remove-header, fix-header, n64 byte order) covering Igir-style ROM header profiles (`.a78`, `.lnx`, `.nes`, `.fds`, `.smc`) with 512-byte fallback compatibility. |
 | CMD-004 | command | compress | n/a | n/a | done | n/a | n/a | context-plumbed | cli-smoke,json-contract | done | Container create/compress routing is wired through registered handlers (`--format`, optional `--codec`/`--level`). |
 | CMD-005 | command | patch-apply | n/a | n/a | n/a | done | n/a | context-plumbed | cli-smoke,json-contract | done | Patch apply routes through handler probing, emits thread-aware reports, supports compatibility flags `--strip-header`, `--add-header`, and `--repair-checksum`, auto-resolves container payload inputs by default with `--no-extract`/`--select`/`--no-ignore`, and now compresses output by default (with `--no-compress`, `--compress-format`, and `--compress-codec` controls); `--strip-header` is Igir-style profile-aware for `.a78/.lnx/.nes/.fds/.smc`, while checksum repair remains auto-detected for Sega Genesis/Game Boy targets. |
 | CMD-006 | command | patch-create | n/a | n/a | n/a | n/a | done | context-plumbed | cli-smoke,json-contract | done | Patch create routes by format name through registered handlers. |
