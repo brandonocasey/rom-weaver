@@ -30,6 +30,29 @@ test("buildPatchedOutputBaseName keeps non-prefixed patch names unchanged", () =
   expect(buildPatchedOutputBaseName("Crash Bandicoot (USA)", ["Hard Mode"])).toBe("Crash Bandicoot (USA) - Hard Mode");
 });
 
+test("buildPatchedOutputBaseName appends a trailing bracket label verbatim", () => {
+  expect(buildPatchedOutputBaseName("Crash", ["super awesome [big jump by foo v1.0]"])).toBe(
+    "Crash [big jump by foo v1.0]",
+  );
+});
+
+test("buildPatchedOutputBaseName keeps bracket and plain patch names alongside each other", () => {
+  expect(buildPatchedOutputBaseName("Crash", ["Hard Mode", "super awesome [big jump by foo v1.0]"])).toBe(
+    "Crash - Hard Mode [big jump by foo v1.0]",
+  );
+  expect(buildPatchedOutputBaseName("Crash", ["[color fix]", "[hud rework]"])).toBe("Crash [color fix] [hud rework]");
+});
+
+test("browser output generation appends the patch bracket label to the rom name", () => {
+  expect(
+    getGeneratedOutputName(
+      { fileName: "Crash.chd" },
+      [{ fileName: "super awesome [big jump by foo v1.0].xdelta" }],
+      {},
+    ),
+  ).toBe("Crash [big jump by foo v1.0]");
+});
+
 test("browser output generation prefers provided patch filenames over generated labels", () => {
   expect(
     getGeneratedOutputName(

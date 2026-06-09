@@ -69,7 +69,6 @@ type ApplyWorkflowSyncState = {
   preparationSettingsKey: string;
 };
 
-const PATCH_OUTPUT_LABEL_PATTERN = /\[([^\]]+)\](?:\.[^.]+)?\d*$/;
 const getOutputSourceKey = (inputs: BinarySource[], patches: BinarySource[]) =>
   JSON.stringify({
     inputs: getBinarySourceListStableIds(inputs),
@@ -100,8 +99,8 @@ const getAutomaticApplyOutputName = (
     .map((patch, index) => {
       const patchFileName =
         patch.fileName || getReactBinarySourceFileName(snapshot.patches[index], `patch ${index + 1}`);
-      const outputLabel = patchFileName.match(PATCH_OUTPUT_LABEL_PATTERN)?.[1]?.trim();
-      return getFileNameWithoutExtension(outputLabel || patchFileName);
+      // Keep any trailing `[label]`; `buildPatchedOutputBaseName` extracts and formats it.
+      return getFileNameWithoutExtension(patchFileName);
     })
     .filter(Boolean);
   return buildPatchedOutputBaseName(inputBase, patchNames);
