@@ -255,7 +255,7 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
   assertDirectoryHandle(opfsHandle, 'opfsHandle');
   await verifyWritableOpfsRoot(opfsHandle);
 
-  const { module, wasmUrl } = await resolveBrowserModule({
+  const { module, wasmUrl, wasmByteLength, wasmSha } = await resolveBrowserModule({
     module: options.module,
     wasmUrl: options.wasmUrl,
   });
@@ -325,7 +325,7 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
       const command = readRomWeaverRunRequestCommand(request);
       const trace = createRunTrace(runOptions);
       trace(
-        `[browser-opfs] run start command=${formatCommandForTrace(command)} threaded=${threaded} wasm=${basenameForTrace(wasmUrl)}`,
+        `[browser-opfs] run start command=${formatCommandForTrace(command)} threaded=${threaded} wasm=${basenameForTrace(wasmUrl)} wasmBytes=${wasmByteLength ?? '?'} wasmSha=${wasmSha || '?'}`,
       );
       if (runOptions.invalidateMountCacheBeforeRun) {
         trace('[browser-opfs] invalidate mount cache before run start');
@@ -4108,6 +4108,8 @@ async function resolveBrowserModule({
     return {
       module,
       wasmUrl: normalizeConfiguredWasmUrls(wasmUrl, [null])[0],
+      wasmByteLength: null,
+      wasmSha: '',
     };
   }
 
@@ -4138,16 +4140,37 @@ async function compileBrowserModuleFromUrls(urls) {
   throw lastError ?? new Error('no wasm module URL was configured');
 }
 
+// Reads a wasm response clone and returns its byte length plus a short SHA-256 prefix. Surfaced in the
+// run-start trace so a stale or browser-cached binary is immediately distinguishable from a fresh build
+// (e.g. after a rebuild during dev) without inspecting the network tab. Best-effort: any failure yields
+// an empty identity rather than blocking module load.
+async function describeWasmModuleIdentity(response) {
+  try {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let sha = '';
+    if (globalThis.crypto?.subtle) {
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      sha = Array.from(digest.subarray(0, 4)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+    return { wasmByteLength: bytes.byteLength, wasmSha: sha };
+  } catch (_identityError) {
+    return { wasmByteLength: null, wasmSha: '' };
+  }
+}
+
 async function compileBrowserModuleFromUrl(url) {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`failed to fetch wasm module from ${url}: ${response.status} ${response.statusText}`);
   }
+  // Capture identity from a clone so the streaming compile path below is unaffected.
+  const identity = await describeWasmModuleIdentity(response.clone());
   if (typeof WebAssembly.compileStreaming === 'function') {
     try {
       return {
         module: await WebAssembly.compileStreaming(response.clone()),
         wasmUrl: String(url),
+        ...identity,
       };
     } catch (_streamingError) {
       // Fallback for runtimes/servers that do not satisfy streaming compile constraints.
@@ -4157,6 +4180,7 @@ async function compileBrowserModuleFromUrl(url) {
   return {
     module: await WebAssembly.compile(bytes),
     wasmUrl: String(url),
+    ...identity,
   };
 }
 
