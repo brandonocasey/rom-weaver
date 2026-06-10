@@ -2036,6 +2036,35 @@ test("deleting a selected patch archive requires selection again when re-added",
   await expect.poll(() => !!getCandidateSelectionList(), { timeout: 30000 }).toBe(true);
 });
 
+test("re-uploading the same patch archive can add a second different patch", async () => {
+  mount(createElement(ApplyPatchForm));
+
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-patch")).not.toBeNull();
+
+  // Two distinct File objects with an identical signature (name/size/lastModified), exactly as
+  // the OS file picker produces when the same file is chosen twice.
+  const archiveBytes = await (await fetch("/tests/fixtures/archives/multi-patch.7z")).arrayBuffer();
+  const makePatchArchive = () =>
+    new File([archiveBytes], "multi-patch.7z", { lastModified: 1700000000000, type: "application/x-7z-compressed" });
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), makePatchArchive());
+  await clickPatchCandidateSelectionOption("change.ips");
+
+  await expect.poll(() => getPatchStackRows().length, { timeout: 30000 }).toBe(1);
+
+  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), makePatchArchive());
+  await clickPatchCandidateSelectionOption("alternate.ips");
+
+  await expect.poll(() => getPatchStackRows().length, { timeout: 30000 }).toBe(2);
+  const labels = getPatchStackRows()
+    .map((row) => row.textContent || "")
+    .join("|");
+  expect(labels).toContain("change.ips");
+  expect(labels).toContain("alternate.ips");
+  const errorText = getRuntimeErrorText();
+  expect(errorText, errorText).toBe("");
+});
+
 test("adding an input after a staged patch does not reshow preparing patch progress", async () => {
   const progressEvents = [];
   mount(

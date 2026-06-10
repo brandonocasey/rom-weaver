@@ -69,6 +69,12 @@ const RESERVED_FILE_CHARS_REGEX = /[:*?"<>|]+/g;
 const EDGE_WHITESPACE_OR_UNDERSCORES_REGEX = /^[_\s]+|[_\s]+$/g;
 const TRAILING_SLASHES_REGEX = /\/+$/;
 const allocatedVirtualInputPaths = new Set<string>();
+// Smallest collision suffix still available per normalized file name. This only ever advances, so a
+// freed path is never handed back out: re-staging a same-named source (e.g. uploading the same
+// archive again to pick a different entry) always lands on a brand-new path. Reusing a freed path
+// races a prior instance whose OPFS access handle may still be open, which fails the next
+// createSyncAccessHandle with "Access Handles cannot be created ... another open Access Handle".
+const nextVirtualInputPathSuffix = new Map<string, number>();
 // Inputs at or below this size are copied into OPFS up front; larger inputs stay on the zero-copy
 // virtual-Blob path. See the trade-off note at the use site in createBrowserOpfsSourceRef.
 const STAGE_INPUT_TO_OPFS_MAX_BYTES = 400 * 1024 * 1024;
@@ -131,11 +137,13 @@ const createVisibleCollisionFileName = (fileName: string, suffixIndex: number) =
 
 const allocateVirtualInputPath = (mountPoint: string, fileName: string) => {
   const normalizedMountPoint = String(mountPoint || WORKER_OPFS_MOUNTPOINT).replace(TRAILING_SLASHES_REGEX, "");
-  for (let suffixIndex = 1; suffixIndex < Number.MAX_SAFE_INTEGER; suffixIndex += 1) {
+  const startSuffix = nextVirtualInputPathSuffix.get(fileName) ?? 1;
+  for (let suffixIndex = startSuffix; suffixIndex < Number.MAX_SAFE_INTEGER; suffixIndex += 1) {
     const candidateName = createVisibleCollisionFileName(fileName, suffixIndex);
     const candidatePath = getWorkerStorageBucketPath(normalizedMountPoint, "input", candidateName, candidateName);
     if (allocatedVirtualInputPaths.has(candidatePath)) continue;
     allocatedVirtualInputPaths.add(candidatePath);
+    nextVirtualInputPathSuffix.set(fileName, suffixIndex + 1);
     return candidatePath;
   }
   throw new Error(`Unable to allocate browser input path for ${fileName}`);

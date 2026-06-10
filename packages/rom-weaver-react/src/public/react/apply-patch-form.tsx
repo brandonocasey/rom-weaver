@@ -481,8 +481,15 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
 
   const syncPatchSelectionRefs = useCallback((patches: BinarySource[]) => {
     const patchOrder = getBinarySourceListStableIds(patches).join("|");
-    if (lastPatchOrderRef.current !== patchOrder) {
-      forcePatchWorkflowRefreshRef.current = true;
+    const previousOrder = lastPatchOrderRef.current;
+    if (previousOrder !== patchOrder) {
+      // A pure append leaves the existing patches (and their staged OPFS copies + resolved
+      // selections) untouched, so prepareWorkflow's patchesAppended path can addPatch just the new
+      // tail. Forcing a full refresh there would clearPatches and re-stage everything — re-extracting
+      // unchanged inputs and racing their still-open OPFS handles, which is what made re-uploading the
+      // same archive to pick a second entry fail. Only a rearranged/shrunken prefix needs the refresh.
+      const isAppend = previousOrder !== "" && patchOrder.startsWith(`${previousOrder}|`);
+      if (!isAppend) forcePatchWorkflowRefreshRef.current = true;
       lastPatchOrderRef.current = patchOrder;
     }
   }, []);
