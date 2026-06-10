@@ -93,7 +93,7 @@ test("apply workflow asks before split-bin staging for multi-track CHDs", async 
     );
     expect(groups.map((candidate) => candidate.label)).toEqual([
       `Merged BIN: ${stem}.bin`,
-      `Split BIN tracks: ${stem}.track01.bin + ${stem}.track02.bin`,
+      `Split BIN tracks: ${stem} (Track 1).bin + ${stem} (Track 2).bin`,
     ]);
     expect(groups.every((candidate) => candidate.selectable)).toBe(true);
 
@@ -101,7 +101,7 @@ test("apply workflow asks before split-bin staging for multi-track CHDs", async 
     expect(input?.status).toBe("ready");
     expect(input?.fileName).toBe(`${stem}.bin`);
     // The cue rides on the bin rows via `cueText`; it is not a resolved input of its own.
-    expect(input?.resolvedInputs?.map((entry) => entry.fileName)).toEqual([`${stem}.bin`, `${stem}.track02.bin`]);
+    expect(input?.resolvedInputs?.map((entry) => entry.fileName)).toEqual([`${stem}.bin`, `${stem} (Track 2).bin`]);
     expect(input?.resolvedInputs?.every((entry) => entry.cueText?.includes("FILE "))).toBe(true);
   } finally {
     await workflow.dispose();
@@ -139,7 +139,7 @@ test("apply workflow keeps merged BIN when the CHD split prompt is declined", as
     );
     expect(groups.map((candidate) => candidate.label)).toEqual([
       `Merged BIN: ${stem}.bin`,
-      `Split BIN tracks: ${stem}.track01.bin + ${stem}.track02.bin`,
+      `Split BIN tracks: ${stem} (Track 1).bin + ${stem} (Track 2).bin`,
     ]);
 
     const input = workflow.getInput();

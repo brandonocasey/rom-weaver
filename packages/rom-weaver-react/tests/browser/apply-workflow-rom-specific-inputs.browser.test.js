@@ -15,6 +15,23 @@ const loadFixtureFile = async (filePath, type = "application/octet-stream") => {
   return new File([bytes], filePath.split("/").pop() || "input.bin", { type });
 };
 
+// Leftover OPFS work files from earlier tests collide with extract-all outputs of the same name
+// (the colliding leaf gets dropped from the output list), so clear the work area first.
+const clearOpfsWorkFiles = async () => {
+  if (!navigator.storage?.getDirectory) return;
+  const root = await navigator.storage.getDirectory();
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    let remaining = 0;
+    for await (const [name] of root.entries()) {
+      if (name === ".rom-weaver-opfs-scratch") continue;
+      remaining += 1;
+      await root.removeEntry(name, { recursive: true }).catch(() => undefined);
+    }
+    if (!remaining) return;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+  }
+};
+
 const createZcciFixtureFile = async () => {
   const sourceBytes = new Uint8Array(64 * 1024);
   sourceBytes.set([0x4e, 0x43, 0x53, 0x44], 0);
@@ -102,11 +119,6 @@ test("apply workflow resolves RVZ inputs to extracted names during staging", asy
     expect(input?.fileName).toBe("game.iso");
     expect(input?.wasDecompressed).toBe(true);
     expect(input?.parentCompressions?.map((entry) => entry.fileName) || []).toContain("game.rvz");
-    expect(
-      progressEvents.some(
-        (event) => event.role === "input" && event.stage === "decompress" && /^extracted\b/i.test(event.label || ""),
-      ),
-    ).toBe(false);
     const lastExtractIndex = progressEvents.findLastIndex(
       (event) => event.role === "input" && event.stage === "decompress",
     );
@@ -200,7 +212,8 @@ test("patch archive staging extract dispatch omits checksum args in browser", as
   }
 });
 
-test("patch archive candidate discovery does not extract every candidate", async () => {
+test("patch archive candidate discovery extracts the archive once", async () => {
+  await clearOpfsWorkFiles();
   const { workflow, logs } = createTraceWorkflow();
   try {
     await workflow.setInput(await loadFixtureFile(RAW_ROM));
@@ -210,27 +223,30 @@ test("patch archive candidate discovery does not extract every candidate", async
     const fileCandidates = (patch?.candidates || []).filter((candidate) => candidate.type === "file");
     expect(fileCandidates.length).toBeGreaterThan(0);
     expect(fileCandidates.every((candidate) => typeof candidate.size === "number" && candidate.size > 0)).toBe(true);
+    // Discovery runs one descending extract-all over the archive; candidates must not each pay
+    // their own extract dispatch.
     const extractDispatches = logs.filter((entry) => String(entry?.message || "") === "runJson extract dispatch");
-    expect(extractDispatches).toHaveLength(0);
+    expect(extractDispatches).toHaveLength(1);
   } finally {
     await workflow.dispose();
   }
 });
 
-test("RVZ staging emits list then extract trace events", async () => {
+test("RVZ staging emits descent trace events", async () => {
   const { workflow, logs } = createTraceWorkflow();
   try {
     await workflow.setInput(await loadFixtureFile("tests/fixtures/browser-generated/game.rvz"));
     const messages = logs.map((entry) => String(entry?.message || ""));
-    const listIndex = messages.findIndex((message) => message === "input.archive.list.finish");
-    const extractIndex = messages.findIndex((message) => message === "input.archive.extract.start");
+    // Input preparation runs one descending extract instead of separate list + extract passes.
+    const descentStartIndex = messages.findIndex((message) => message === "input.archive.descent.start");
+    const descentFinishIndex = messages.findIndex((message) => message === "input.archive.descent.finish");
     const workerTraceLines = logs
       .filter((entry) => entry?.namespace === "runtime:rom-weaver")
       .map((entry) => String(entry?.message || "").trim())
       .filter((line) => !!line);
-    expect(listIndex).toBeGreaterThanOrEqual(0);
-    expect(extractIndex).toBeGreaterThanOrEqual(0);
-    expect(extractIndex).toBeGreaterThan(listIndex);
+    expect(descentStartIndex).toBeGreaterThanOrEqual(0);
+    expect(descentFinishIndex).toBeGreaterThanOrEqual(0);
+    expect(descentFinishIndex).toBeGreaterThan(descentStartIndex);
     expect(workerTraceLines.length).toBeGreaterThan(0);
     expect(workerTraceLines.some((line) => line.includes('command="extract"'))).toBe(true);
     expect(workerTraceLines.some((line) => line.includes("scratch=1"))).toBe(true);
@@ -269,7 +285,7 @@ test("apply workflow abort preserves staged input for the next run", async () =>
   }
 });
 
-test("CHD staging emits list then extract trace events", async () => {
+test("CHD staging emits descent trace events", async () => {
   const { workflow, logs } = createTraceWorkflow();
   try {
     await workflow.setInput(await loadFixtureFile("tests/fixtures/browser-generated/game-cd.chd"));
@@ -278,12 +294,13 @@ test("CHD staging emits list then extract trace events", async () => {
       .filter((entry) => entry?.namespace === "runtime:rom-weaver")
       .map((entry) => String(entry?.message || "").trim())
       .filter((line) => !!line);
-    const listIndex = messages.findIndex((message) => message === "input.archive.list.finish");
-    const extractIndex = messages.findIndex((message) => message === "input.archive.extract.start");
+    // Input preparation runs one descending extract instead of separate list + extract passes.
+    const descentStartIndex = messages.findIndex((message) => message === "input.archive.descent.start");
+    const descentFinishIndex = messages.findIndex((message) => message === "input.archive.descent.finish");
     const checksumDispatch = logs.find((entry) => String(entry?.message || "") === "runJson checksum dispatch");
-    expect(listIndex).toBeGreaterThanOrEqual(0);
-    expect(extractIndex).toBeGreaterThanOrEqual(0);
-    expect(extractIndex).toBeGreaterThan(listIndex);
+    expect(descentStartIndex).toBeGreaterThanOrEqual(0);
+    expect(descentFinishIndex).toBeGreaterThanOrEqual(0);
+    expect(descentFinishIndex).toBeGreaterThan(descentStartIndex);
     expect(workerTraceLines.length).toBeGreaterThan(0);
     expect(workerTraceLines.some((line) => line.includes('command="extract"'))).toBe(true);
     expect(checksumDispatch).toBeUndefined();

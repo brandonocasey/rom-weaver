@@ -1552,6 +1552,14 @@ const archiveContainsRomEntry = async (
   if (PATH_BACKED_COMPRESSION_FORMATS.has(getCompressionFormat(archiveFile))) return true;
   const romEntries = await listCompressionEntries(archiveFile, options, runtime, { romFilter: true }).catch(() => []);
   if (!romEntries.length) return false;
+  // When every candidate is itself a nested container, the listing proves nothing about ROM
+  // content at this level. Route such bundles to the patch flow: its extract-all descends nested
+  // archives (the designed nested-patch-bundle path) and surfaces a clear error when no patch
+  // exists, whereas the ROM flow would dead-end on an ambiguous container pick.
+  const directRomEntries = romEntries.filter(
+    (entry) => !(typeof entry.filename === "string" && isCompressionEntryFileName(entry.filename)),
+  );
+  if (!directRomEntries.length) return false;
   const romProbe = await probeCompressionRomEntriesForSource(archiveFile, romEntries, options, runtime);
   return !!resolveCompressionRomAutoPickEntryName(archiveFile.fileName, romProbe, "");
 };

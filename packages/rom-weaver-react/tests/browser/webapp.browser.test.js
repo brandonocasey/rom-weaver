@@ -160,11 +160,10 @@ afterEach(() => {
 test("WebappRoot mounts the full workflow shell and stages archive inputs", async () => {
   mountWebappRoot();
 
-  const romInput = page.getByLabelText(/Select ROM/i);
+  // The unified drop surface is the only input now; its label flips once the workflow has files.
+  const romInput = page.getByLabelText(/Drop ROMs or patches/i);
 
   await expect.element(romInput).toBeInTheDocument();
-  await expect.element(page.getByLabelText(/Select patch/i)).toBeInTheDocument();
-  await expect.element(page.getByRole("button", { name: /apply & download/i })).toBeInTheDocument();
 
   await expect.element(page.getByRole("tablist", { name: "Workflow" })).toBeInTheDocument();
   await expect.element(page.getByRole("tab", { name: /apply/i })).toBeInTheDocument();
@@ -176,13 +175,15 @@ test("WebappRoot mounts the full workflow shell and stages archive inputs", asyn
 
   await waitForInputStackFile("game.bin");
   await expect.element(page.getByText(CRC32_TEXT_REGEX)).toBeInTheDocument();
+  // The output section (and its apply button) renders once the workflow has files.
+  await expect.element(page.getByRole("button", { name: /apply & download/i })).toBeInTheDocument();
 
   await page.getByRole("button", { name: "Clear ROM input" }).click();
   await expect
     .poll(() => document.querySelector("#rom-weaver-list-input-stack")?.textContent || "")
     .not.toContain("game.bin");
 
-  await page.getByLabelText(/Select ROM/i).upload(await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"));
+  await page.getByLabelText(/Drop ROMs or patches/i).upload(await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"));
 
   await selectCandidateIfPrompted("game.bin");
 

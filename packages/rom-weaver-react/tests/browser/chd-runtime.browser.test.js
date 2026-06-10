@@ -215,7 +215,7 @@ test("rom-weaver runtime honors split-bin extraction for multi-track CD CHDs", a
       [`${stem}.cue`],
     );
     expect(splitOutputs.filter((entry) => /\.bin$/i.test(entry.fileName || "")).map((entry) => entry.fileName)).toEqual(
-      [`${stem}.bin`, `${stem}.track02.bin`],
+      [`${stem}.bin`, `${stem} (Track 2).bin`],
     );
     expectCueWithoutChecksumsAndBinsWithChecksums(splitOutputs);
   } finally {
@@ -330,7 +330,7 @@ test("rom-weaver runtime descends CD CHDs with merged default and base primary s
       [`${stem}.cue`],
     );
     expect(splitOutputs.filter((entry) => /\.bin$/i.test(entry.fileName || "")).map((entry) => entry.fileName)).toEqual(
-      [`${stem}.bin`, `${stem}.track02.bin`],
+      [`${stem}.bin`, `${stem} (Track 2).bin`],
     );
     expectCueWithoutChecksumsAndBinsWithChecksums(splitOutputs);
   } finally {

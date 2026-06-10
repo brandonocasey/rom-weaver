@@ -47,7 +47,7 @@ test("browser OPFS source refs use non-CHD selected files directly as virtual WA
   }
 });
 
-test("browser OPFS source refs keep CHD blobs virtual", async () => {
+test("browser OPFS source refs stage small CHD blobs into OPFS", async () => {
   const requestFile = new File([new Uint8Array([9, 8, 7, 6])], "input.chd", {
     type: "application/octet-stream",
   });
@@ -60,49 +60,41 @@ test("browser OPFS source refs keep CHD blobs virtual", async () => {
     mountPoint: "/work",
     pathPrefix: "direct-input",
   });
-  expect(stagedBlob.virtual).toBe(true);
+  // Small inputs are copied into OPFS up front so wasm threads read via sync access handles.
+  expect(stagedBlob.virtual).toBeFalsy();
+  expect(stagedBlob.storageKind).toBe("opfs");
   expect(stagedBlob.filePath).toBe("/work/input.chd");
   expect(stagedBlob.size).toBe(requestFile.size);
-  expect(getActiveBrowserVirtualFiles()).toEqual([
-    expect.objectContaining({
-      path: stagedBlob.filePath,
-      source: requestFile,
-    }),
-  ]);
-  expect(await getManagedOpfsFileHandle(stagedBlob.filePath, { navigatorObject: navigator })).toBeNull();
+  expect(getActiveBrowserVirtualFiles()).toEqual([]);
+  expect(await getManagedOpfsFileHandle(stagedBlob.filePath, { navigatorObject: navigator })).not.toBeNull();
   await stagedBlob.cleanup();
+  expect(await getManagedOpfsFileHandle("/work/input.chd", { navigatorObject: navigator })).toBeNull();
   expect(getActiveBrowserVirtualFiles()).toEqual([]);
 });
 
-test("browser OPFS virtual RVZ staging preserves the original filename leaf", async () => {
+test("browser OPFS RVZ staging preserves the original filename leaf", async () => {
   const sourceName = "Luigi's Mansion (USA).rvz";
   const sourceFile = new File([new Uint8Array([1, 2, 3, 4])], sourceName, {
     type: "application/octet-stream",
   });
   const { createBrowserOpfsSourceRef } = await import("../../src/workers/protocol/browser-opfs-source-ref.ts");
-  const { getActiveBrowserVirtualFiles } = await import("../../src/workers/protocol/browser-virtual-files.ts");
+  const { getManagedOpfsFileHandle } = await import("../../src/workers/protocol/opfs-path.ts");
   const staged = await createBrowserOpfsSourceRef(sourceFile, sourceName, {
     bucket: "input",
     mountPoint: "/work",
     pathPrefix: "rvz-input",
   });
   try {
-    expect(staged.virtual).toBe(true);
     expect(staged.fileName).toBe(sourceName);
     expect(staged.filePath).toBe("/work/Luigi's Mansion (USA).rvz");
-    expect(getActiveBrowserVirtualFiles()).toEqual([
-      expect.objectContaining({
-        path: staged.filePath,
-        source: sourceFile,
-      }),
-    ]);
+    expect(await getManagedOpfsFileHandle(staged.filePath, { navigatorObject: navigator })).not.toBeNull();
   } finally {
     await staged.cleanup();
   }
-  expect(getActiveBrowserVirtualFiles()).toEqual([]);
+  expect(await getManagedOpfsFileHandle("/work/Luigi's Mansion (USA).rvz", { navigatorObject: navigator })).toBeNull();
 });
 
-test("browser OPFS source refs read 7z files directly from the original Blob", async () => {
+test("browser OPFS source refs stage small 7z files into OPFS", async () => {
   const fileName = "input.7z";
   const sourceFile = new File([new Uint8Array([0x37, 0x7a, 0xbc, 0xaf])], fileName, {
     type: "application/x-7z-compressed",
@@ -117,17 +109,15 @@ test("browser OPFS source refs read 7z files directly from the original Blob", a
     pathPrefix: "archive-input",
   });
   try {
-    expect(staged.virtual).toBe(true);
+    expect(staged.virtual).toBeFalsy();
+    expect(staged.storageKind).toBe("opfs");
     expect(staged.filePath).toBe("/work/input.7z");
     expect(staged.size).toBe(sourceFile.size);
-    const activeVirtualFiles = getActiveBrowserVirtualFiles();
-    expect(activeVirtualFiles).toHaveLength(1);
-    expect(activeVirtualFiles[0]?.path).toBe(staged.filePath);
-    expect(activeVirtualFiles[0]?.source).toBe(sourceFile);
-    expect(activeVirtualFiles[0]?.proxy).toBeUndefined();
-    expect(await getManagedOpfsFileHandle(staged.filePath, { navigatorObject: navigator })).toBeNull();
+    expect(getActiveBrowserVirtualFiles()).toEqual([]);
+    expect(await getManagedOpfsFileHandle(staged.filePath, { navigatorObject: navigator })).not.toBeNull();
   } finally {
     await staged.cleanup();
   }
+  expect(await getManagedOpfsFileHandle("/work/input.7z", { navigatorObject: navigator })).toBeNull();
   expect(getActiveBrowserVirtualFiles()).toEqual([]);
 });

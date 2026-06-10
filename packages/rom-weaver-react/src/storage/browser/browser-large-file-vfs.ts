@@ -147,14 +147,28 @@ const createBrowserLargeFileVfs = (options: BrowserLargeFileVfsOptions = {}): La
           ? Math.max(0, Math.min(Math.floor(options.length), target.byteLength - bufferOffset))
           : Math.max(0, target.byteLength - bufferOffset);
       if (!length) return 0;
-      let cached = readCache.get(normalizedPath);
-      if (!cached) {
+      const snapshotEntry = async () => {
         const fileHandle = await resolveFileHandle(normalizedPath, false);
-        if (!fileHandle) return 0;
-        cached = { file: await fileHandle.getFile(), fileHandle };
-        readCache.set(normalizedPath, cached);
+        if (!fileHandle) return null;
+        const entry = { file: await fileHandle.getFile(), fileHandle };
+        readCache.set(normalizedPath, entry);
+        return entry;
+      };
+      let cached = readCache.get(normalizedPath) ?? (await snapshotEntry());
+      if (!cached) return 0;
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(await cached.file.slice(fileOffset, fileOffset + length).arrayBuffer());
+      } catch (error) {
+        // The cached File is a point-in-time snapshot. Writers outside this VFS instance (wasm
+        // worker sync access handles, the OPFS staging worker, direct navigator.storage cleanup)
+        // replace entries without hitting our invalidation hooks, and reading a dead snapshot
+        // throws NotReadableError. Re-resolve the handle and retry once on a fresh snapshot.
+        invalidateReadCache(normalizedPath);
+        cached = await snapshotEntry();
+        if (!cached) throw error;
+        bytes = new Uint8Array(await cached.file.slice(fileOffset, fileOffset + length).arrayBuffer());
       }
-      const bytes = new Uint8Array(await cached.file.slice(fileOffset, fileOffset + length).arrayBuffer());
       target.set(bytes, bufferOffset);
       return bytes.byteLength;
     },

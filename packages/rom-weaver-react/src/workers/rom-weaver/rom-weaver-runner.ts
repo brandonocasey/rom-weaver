@@ -58,6 +58,11 @@ let browserThreadedRunnerStale = false;
 let activeRunnerRunCount = 0;
 let runnerRunQueue: Promise<void> = Promise.resolve();
 
+// Upper bound on waiting for a worker to acknowledge a graceful dispose before terminating it
+// anyway. A worker stuck in a synchronous wait (abandoned selection prompt, wedged op) never
+// replies, and dispose must not hang resets behind it.
+const RUNNER_DISPOSE_GRACE_MS = 2000;
+
 // --- pre-extract-gap experiments (perf/pre-extract-gap) -----------------------------------------
 // The wasm heap only ever grows. The page-load warmup (and the 8-thread pool init) leaves the shared
 // worker's heap near the cap, so the first real op OOMs and forces a worker recycle ON the critical
@@ -297,7 +302,13 @@ const createBrowserRunner = async (options?: { workerThreads?: RuntimeValue }): 
       // Gracefully release the worker's resources (OPFS sync access handles, thread pool) first,
       // then terminate the Worker thread itself. `dispose()` alone leaves the worker — and its wasm
       // linear memory, which only ever grows — alive, so recycling it would leak the grown heap.
-      await client.dispose?.().catch(() => undefined);
+      // The graceful request must be time-bounded: a worker blocked in a synchronous wait (e.g. an
+      // interactive selection prompt that was abandoned mid-flight) never acknowledges dispose, and
+      // an unbounded await here deadlocks every later reset/warmup behind it.
+      const graceful = client.dispose?.().catch(() => undefined);
+      if (graceful) {
+        await Promise.race([graceful, new Promise((resolve) => setTimeout(resolve, RUNNER_DISPOSE_GRACE_MS))]);
+      }
       client.terminate?.();
     },
     ready,

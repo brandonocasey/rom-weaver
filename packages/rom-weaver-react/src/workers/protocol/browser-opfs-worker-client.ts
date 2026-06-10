@@ -60,10 +60,13 @@ const getOpfsWorker = () => {
 };
 
 const requestBrowserOpfsStorage = (request: BrowserOpfsStorageRequest): Promise<BrowserOpfsStorageResponse> => {
-  const worker = getOpfsWorker();
   const requestId = request.requestId || createWorkerRequestId(`opfs-${request.action}`);
   const message = { ...request, requestId };
   return new Promise((resolve, reject) => {
+    // Acquire the worker inside the executor: a synchronous construction failure
+    // (no Worker support, blocked worker URL) must reject so callers' staging
+    // fallbacks engage instead of an unhandled throw.
+    const worker = getOpfsWorker();
     const handleMessage = (event: MessageEvent<BrowserOpfsStorageResponse>) => {
       if (event.data?.requestId !== requestId) return;
       cleanup();

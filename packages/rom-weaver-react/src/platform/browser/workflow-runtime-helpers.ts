@@ -93,7 +93,9 @@ const normalizeRomSpecificListEntries = <TEntry extends ListedOutputEntry>(
     let normalizedLeafName = leafName;
     if (leafName === stagedBaseName) normalizedLeafName = sourceBaseName;
     else if (leafName === stagedStem) normalizedLeafName = sourceStem;
-    else if (leafName.startsWith(`${stagedStem}.`))
+    else if (leafName.startsWith(`${stagedStem}.`) || leafName.startsWith(`${stagedStem} (Track `))
+      // `.`-suffixed (`<stem>.cue`, `<stem>.track02.bin`) and redump-style `<stem> (Track N).bin`
+      // outputs both rebase onto the logical source stem.
       normalizedLeafName = `${sourceStem}${leafName.slice(stagedStem.length)}`;
     else {
       const sourceStemWithExtension = `${sourceStem}.`;

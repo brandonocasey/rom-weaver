@@ -173,6 +173,13 @@ const createBrowserChdRuntime = (
         if (workerInput.filePath !== normalizedCueFilePath) {
           await rewriteCueFileBinaryReference(normalizedCueFilePath, workerInput.filePath);
         }
+      } else if (/\.cue$/i.test(chdInputPath) && stagedImageSources.length === 1) {
+        // The cue is the main input and its track staged separately. Staging can land the track on
+        // a collision-suffixed path (e.g. `disc-2.bin`) that no longer matches the name the cue
+        // references, so point the cue at the staged file or the disc-layout read fails with
+        // "No such file or directory (os error 44)".
+        const stagedImagePath = stagedImageSources[0]?.filePath || "";
+        if (stagedImagePath) await rewriteCueFileBinaryReference(chdInputPath, stagedImagePath);
       }
 
       // When the CHD input is a cue, hydrate every sibling track file it references so worker

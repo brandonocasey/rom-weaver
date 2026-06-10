@@ -136,10 +136,15 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     const session = this.inputSession;
     if (!session?.view) return null;
     const selectedOwner = this.getSelectedInputOwner();
+    // A synthetic session bundles several separately-provided ROMs. Once one is chosen, expose only
+    // it — the unchosen ROMs are discarded ("ask which one" keeps a single input). Until a choice is
+    // made, surface every ready stage so the selection prompt can list them.
     const resolvedInputs = session.synthetic
-      ? session.stages
-          .filter((stage) => stage.state.status === "ready")
-          .flatMap((stage) => cloneResolvedInputStatesForStage(stage, stage === selectedOwner))
+      ? selectedOwner
+        ? cloneResolvedInputStatesForStage(selectedOwner, true)
+        : session.stages
+            .filter((stage) => stage.state.status === "ready")
+            .flatMap((stage) => cloneResolvedInputStatesForStage(stage, false))
       : cloneResolvedInputStatesForStage(session.view, true);
     return cloneInputState(session.view.state, session.view.parentCompressions || [], resolvedInputs);
   }
@@ -1013,7 +1018,16 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   }
 
   private getPreparedInputAssets(): InputAsset[] {
-    return this.inputSession?.view.preparedInputAssets ? [...this.inputSession.view.preparedInputAssets] : [];
+    const session = this.inputSession;
+    if (!session) return [];
+    // A synthetic session bundles several separately-provided ROMs. Apply keeps only the chosen one
+    // ("ask which one"), so once a pick is made expose just that stage's assets — patch targeting,
+    // checksums, and the run all operate on the single selected ROM, not every uploaded file.
+    if (session.synthetic) {
+      const selectedOwner = this.getSelectedInputOwner();
+      if (selectedOwner) return selectedOwner.preparedInputAssets ? [...selectedOwner.preparedInputAssets] : [];
+    }
+    return session.view.preparedInputAssets ? [...session.view.preparedInputAssets] : [];
   }
 
   private getPatchableInputAssets(): InputAsset[] {
@@ -1070,9 +1084,20 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     };
   }
 
+  private getEffectiveInputSources(): TSource[] {
+    const session = this.inputSession;
+    // Synthetic sessions bundle several separately-provided ROMs; apply keeps only the chosen one,
+    // so the run (and its size accounting) sees just that source rather than every uploaded file.
+    if (session?.synthetic) {
+      const selectedOwner = this.getSelectedInputOwner();
+      if (selectedOwner) return [selectedOwner.source];
+    }
+    return this.inputs;
+  }
+
   private createPatchInput(onProgress?: ApplyWorkflowOptions["onProgress"]): PatchInput {
     return {
-      inputs: this.inputs as never,
+      inputs: this.getEffectiveInputSources() as never,
       options: this.createExecutionOptions(onProgress),
       parsedPatches: this.patches.map((patch) => patch.parsedPatch).filter(Boolean) as ParsedPatchLike[],
       patches: this.patches.map((patch) => patch.source) as never,

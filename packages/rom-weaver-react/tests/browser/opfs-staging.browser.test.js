@@ -3,7 +3,10 @@ import { createBrowserOpfsSourceRef } from "../../src/workers/protocol/browser-o
 import { getActiveBrowserVirtualFiles } from "../../src/workers/protocol/browser-virtual-files.ts";
 import { getManagedOpfsFileHandle } from "../../src/workers/protocol/opfs-path.ts";
 
-test("browser OPFS source refs use selected file handles as virtual WASI inputs", async () => {
+// Small inputs (<= the stage-to-OPFS threshold) are copied into OPFS up front so each wasm thread
+// reads through its own sync access handle; only oversized inputs stay on the virtual-Blob path.
+
+test("browser OPFS source refs stage selected file handles into OPFS work paths", async () => {
   const bytes = new Uint8Array([1, 2, 3, 4]);
   const requestFile = new File([bytes], "input.chd", {
     type: "application/octet-stream",
@@ -25,22 +28,18 @@ test("browser OPFS source refs use selected file handles as virtual WASI inputs"
     expect(staged.filePath).toBe("/work/input.chd");
     expect(staged.size).toBe(requestFile.size);
     expect(staged.storageKind).toBe("opfs");
-    expect(staged.virtual).toBe(true);
-    expect(getActiveBrowserVirtualFiles()).toEqual([
-      expect.objectContaining({
-        path: staged.filePath,
-        source: requestFile,
-      }),
-    ]);
-    expect(await getManagedOpfsFileHandle(staged.filePath, { navigatorObject: navigator })).toBeNull();
+    expect(staged.virtual).toBeFalsy();
+    expect(getActiveBrowserVirtualFiles()).toEqual([]);
+    expect(await getManagedOpfsFileHandle(staged.filePath, { navigatorObject: navigator })).not.toBeNull();
   } finally {
     await staged.cleanup();
   }
 
+  expect(await getManagedOpfsFileHandle("/work/input.chd", { navigatorObject: navigator })).toBeNull();
   expect(getActiveBrowserVirtualFiles()).toEqual([]);
 });
 
-test("browser OPFS source refs use file-handle wrappers as virtual WASI inputs", async () => {
+test("browser OPFS source refs stage file-handle wrappers into OPFS work paths", async () => {
   const bytes = new Uint8Array([5, 6, 7, 8]);
   const requestFile = new File([bytes], "wrapped-input.bin", {
     type: "application/octet-stream",
@@ -69,57 +68,43 @@ test("browser OPFS source refs use file-handle wrappers as virtual WASI inputs",
     expect(staged.filePath).toBe("/work/wrapped-input.bin");
     expect(staged.size).toBe(requestFile.size);
     expect(staged.storageKind).toBe("opfs");
-    expect(staged.virtual).toBe(true);
-    expect(getActiveBrowserVirtualFiles()).toEqual([
-      expect.objectContaining({
-        path: staged.filePath,
-        source: requestFile,
-      }),
-    ]);
-    expect(await getManagedOpfsFileHandle(staged.filePath, { navigatorObject: navigator })).toBeNull();
+    expect(staged.virtual).toBeFalsy();
+    expect(getActiveBrowserVirtualFiles()).toEqual([]);
+    expect(await getManagedOpfsFileHandle(staged.filePath, { navigatorObject: navigator })).not.toBeNull();
   } finally {
     await staged.cleanup();
   }
 
+  expect(await getManagedOpfsFileHandle("/work/wrapped-input.bin", { navigatorObject: navigator })).toBeNull();
   expect(getActiveBrowserVirtualFiles()).toEqual([]);
 });
 
-test("browser OPFS source refs use plain Blob inputs as virtual WASI inputs", async () => {
+test("browser OPFS source refs stage plain Blob inputs into OPFS work paths", async () => {
   const requestBlob = new Blob([new Uint8Array([9, 8, 7, 6])], {
     type: "application/octet-stream",
   });
   expect(requestBlob).not.toBeInstanceOf(File);
 
-  const stagedBlob = await createBrowserOpfsSourceRef(requestBlob, "input.chd", {
+  const stagedBlob = await createBrowserOpfsSourceRef(requestBlob, "blob-input.chd", {
     bucket: "input",
     mountPoint: "/work",
     pathPrefix: "direct-input",
   });
   try {
-    expect(stagedBlob.fileName).toBe("input.chd");
-    expect(stagedBlob.filePath).toBe("/work/input.chd");
+    expect(stagedBlob.fileName).toBe("blob-input.chd");
+    expect(stagedBlob.filePath).toBe("/work/blob-input.chd");
     expect(stagedBlob.size).toBe(requestBlob.size);
     expect(stagedBlob.storageKind).toBe("opfs");
-    expect(stagedBlob.virtual).toBe(true);
-    const activeVirtualFiles = getActiveBrowserVirtualFiles();
-    expect(activeVirtualFiles).toHaveLength(1);
-    expect(activeVirtualFiles[0]?.path).toBe(stagedBlob.filePath);
-    expect(activeVirtualFiles[0]?.source).toBeInstanceOf(File);
-    expect(activeVirtualFiles[0]?.source).not.toBe(requestBlob);
-    expect(getActiveBrowserVirtualFiles()).toEqual([
-      expect.objectContaining({
-        path: stagedBlob.filePath,
-        source: expect.objectContaining({
-          name: "input.chd",
-          size: requestBlob.size,
-          type: "application/octet-stream",
-        }),
-      }),
-    ]);
-    expect(await getManagedOpfsFileHandle(stagedBlob.filePath, { navigatorObject: navigator })).toBeNull();
+    expect(stagedBlob.virtual).toBeFalsy();
+    expect(getActiveBrowserVirtualFiles()).toEqual([]);
+    const handle = await getManagedOpfsFileHandle(stagedBlob.filePath, { navigatorObject: navigator });
+    expect(handle).not.toBeNull();
+    const stagedFile = await handle.getFile();
+    expect(stagedFile.size).toBe(requestBlob.size);
   } finally {
     await stagedBlob.cleanup();
   }
+  expect(await getManagedOpfsFileHandle("/work/blob-input.chd", { navigatorObject: navigator })).toBeNull();
   expect(getActiveBrowserVirtualFiles()).toEqual([]);
 });
 
@@ -158,15 +143,14 @@ test("browser OPFS source refs use visible suffixes for duplicate flat work path
   try {
     expect(first.filePath).toBe("/work/game.bin");
     expect(second.filePath).toBe("/work/game-2.bin");
-    expect(
-      getActiveBrowserVirtualFiles()
-        .map((entry) => entry.path)
-        .sort(),
-    ).toEqual(["/work/game-2.bin", "/work/game.bin"]);
+    expect(await getManagedOpfsFileHandle(first.filePath, { navigatorObject: navigator })).not.toBeNull();
+    expect(await getManagedOpfsFileHandle(second.filePath, { navigatorObject: navigator })).not.toBeNull();
   } finally {
     await first.cleanup();
     await second.cleanup();
   }
 
+  expect(await getManagedOpfsFileHandle("/work/game.bin", { navigatorObject: navigator })).toBeNull();
+  expect(await getManagedOpfsFileHandle("/work/game-2.bin", { navigatorObject: navigator })).toBeNull();
   expect(getActiveBrowserVirtualFiles()).toEqual([]);
 });

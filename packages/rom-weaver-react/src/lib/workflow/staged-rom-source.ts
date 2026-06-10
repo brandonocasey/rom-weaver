@@ -440,6 +440,11 @@ class StagedRomSourceController<TSource, TState extends SharedRomSourceState> {
       );
     attemptedSelectionKeys.add(selectionRetryKey);
     this.setSelectedCandidate(owner, selection.id);
+    // Mirror the pick onto the session view. For a synthetic session the owner is a sub-stage, so
+    // setSelectedCandidate only marks the stage — getSelectedOwner/syncSessionView resolve the choice
+    // through view.state.selectedCandidateId. Without this the view stays needsSelection and the
+    // "which ROM?" dialog re-prompts in a loop (broken multi-file input selection).
+    session.view.state.selectedCandidateId = selection.id;
     await this.prepareSelectedSource(owner);
     this.syncSessionView(session);
     if (session.view.state.status === "needsSelection" && !session.view.state.selectedCandidateId)

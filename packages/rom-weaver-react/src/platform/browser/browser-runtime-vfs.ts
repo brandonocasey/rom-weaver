@@ -14,6 +14,7 @@ type CreateBrowserRuntimeVfsIoOptions = {
 
 type StagedBrowserSource = Awaited<ReturnType<typeof createBrowserOpfsSourceRef>>;
 type CachedStagedSource = {
+  cleanedUp?: boolean;
   cleanupTimer?: ReturnType<typeof setTimeout>;
   cleanupWhenIdle?: boolean;
   refCount: number;
@@ -40,6 +41,11 @@ const createBrowserRuntimeVfsIo = ({
   vfs,
 }: CreateBrowserRuntimeVfsIoOptions): RuntimeWorkerIo => {
   const stagedSourceCache = new WeakMap<object, CachedStagedSource>();
+  // Sources released while a staging pass was still in flight: releaseSources misses the cache for
+  // those (the entry is only cached after staging completes), and the cancelled consumer never
+  // calls its wrapped cleanup, stranding the staged OPFS copy. Track the release so the in-flight
+  // pass cleans up after itself when it lands; a later re-stage of the same source clears the mark.
+  const releasedStagingSources = new WeakSet<object>();
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   const getStagedSourceCacheKey = (source: unknown) => {
     const directSource = getNamedSource(source as Parameters<typeof getNamedSource>[0]);
@@ -49,6 +55,10 @@ const createBrowserRuntimeVfsIo = ({
     return candidate;
   };
   const cleanupCachedStagedSource = async (key: object, cached: CachedStagedSource) => {
+    // Releasing twice must not double-release the underlying staged copy: the source-ref cleanup
+    // decrements a content-keyed registry, and a second call could hit a NEW same-key entry.
+    if (cached.cleanedUp) return;
+    cached.cleanedUp = true;
     if (cached.cleanupTimer) {
       clearTimeout(cached.cleanupTimer);
       cached.cleanupTimer = undefined;
@@ -70,16 +80,13 @@ const createBrowserRuntimeVfsIo = ({
     for (const source of sources) {
       const key = getStagedSourceCacheKey(source);
       if (!key) continue;
+      releasedStagingSources.add(key);
       const cached = stagedSourceCache.get(key);
       if (!cached) continue;
       cached.cleanupWhenIdle = true;
-      if (cached.refCount > 0) {
-        if (cached.cleanupTimer) {
-          clearTimeout(cached.cleanupTimer);
-          cached.cleanupTimer = undefined;
-        }
-        continue;
-      }
+      // Release means the session no longer references this source. A holder that never returned
+      // its ref (a cancelled in-flight pass) would otherwise pin the staged copy forever, so clean
+      // regardless of refCount; per-wrapper released flags keep late cleanup() calls harmless.
       cleanups.push(cleanupCachedStagedSource(key, cached));
     }
     await Promise.all(cleanups);
@@ -154,6 +161,9 @@ const createBrowserRuntimeVfsIo = ({
       scope,
     });
     const cacheKey = getStagedSourceCacheKey(source);
+    // A fresh stage of this source supersedes any earlier release marker (e.g. the same File
+    // re-added after a cancelled candidate selection).
+    if (cacheKey) releasedStagingSources.delete(cacheKey);
     const cached = cacheKey ? stagedSourceCache.get(cacheKey) : undefined;
     if (cached) {
       if (cached.cleanupTimer) {
@@ -179,6 +189,13 @@ const createBrowserRuntimeVfsIo = ({
         refCount: 1,
         staged: resolved,
       };
+      if (releasedStagingSources.has(cacheKey)) {
+        // The source was released while this stage was in flight; its consumer belongs to a
+        // cancelled flow and will never call cleanup, so drop the staged copy now.
+        releasedStagingSources.delete(cacheKey);
+        void cleanupCachedStagedSource(cacheKey, entry);
+        return wrapCachedStagedSource(cacheKey, entry);
+      }
       stagedSourceCache.set(cacheKey, entry);
       emitBrowserRuntimeVfsTrace(trace, "stageSource cached staged source ref", {
         fileName: resolved.fileName,

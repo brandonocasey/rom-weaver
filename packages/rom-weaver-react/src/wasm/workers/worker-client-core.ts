@@ -63,6 +63,7 @@ export class RomWeaverWorkerClientCore {
   protected _pending: Map<number, PendingRequest>;
   protected _disposed: boolean;
   protected _onSelect?: (request: string) => Promise<number> | number;
+  protected _openSelectResponders: Set<(index: number) => void>;
 
   constructor(worker: Worker, transport: WorkerTransport) {
     this.worker = worker;
@@ -70,6 +71,7 @@ export class RomWeaverWorkerClientCore {
     this._nextRequestId = 1;
     this._pending = new Map();
     this._disposed = false;
+    this._openSelectResponders = new Set();
 
     this._onMessage = this._onMessage.bind(this);
     this._onError = this._onError.bind(this);
@@ -222,6 +224,7 @@ export class RomWeaverWorkerClientCore {
         // registered selection handler (or cancel) and wake it with Atomics.notify.
         const control = new Int32Array(message.control as ArrayBufferLike);
         const respond = (index: number) => {
+          if (!this._openSelectResponders.delete(respond)) return;
           const resolvedIndex = Number.isInteger(index) ? index : SELECT_REQUEST_CANCEL_INDEX;
           emitPendingTrace(
             pending,
@@ -231,6 +234,10 @@ export class RomWeaverWorkerClientCore {
           Atomics.store(control, SELECT_REQUEST_READY_INDEX, SELECT_REQUEST_READY);
           Atomics.notify(control, SELECT_REQUEST_READY_INDEX);
         };
+        // Track the open prompt so shutdown can cancel it: the worker thread is blocked on
+        // `control` until someone responds, and an abandoned UI prompt (e.g. its dialog was
+        // unmounted) would otherwise leave the worker wedged in a synchronous wait forever.
+        this._openSelectResponders.add(respond);
         const handler = this._onSelect;
         emitPendingTrace(
           pending,
@@ -301,6 +308,9 @@ export class RomWeaverWorkerClientCore {
   _shutdown(reason = "worker terminated") {
     this._disposed = true;
     this._detachListeners();
+    // Release any worker thread still blocked on an unanswered selection prompt before rejecting
+    // its run, so the wedged synchronous wait cannot outlive the client.
+    for (const respond of [...this._openSelectResponders]) respond(SELECT_REQUEST_CANCEL_INDEX);
     this._rejectAllPending(new Error(reason));
   }
 
