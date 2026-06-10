@@ -1,0 +1,476 @@
+import {
+  getRomSpecificExtractedFileName,
+  ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY,
+} from "../../lib/compression/container-format-registry.ts";
+import { replaceCuePatchFileName } from "../../lib/input/rom-specific-file-utils.ts";
+import { getPathBaseName } from "../../lib/path-utils.ts";
+import {
+  invokeRomWeaverCompressionCreateWorker,
+  invokeRomWeaverExtractWorker,
+  normalizeCodecEntries,
+  runRomWeaverListWorker,
+  selectRomWeaverOutputPath,
+} from "../../lib/runtime/rom-weaver-runtime.ts";
+import type { RomSpecificRuntimeAdapter } from "../../lib/runtime/workflow-runtime-core.ts";
+import {
+  attachRomSpecificOutputMetadata,
+  createCompressionExtractResult,
+} from "../../lib/runtime/workflow-runtime-worker-helpers.ts";
+import type { RuntimeWorkerIo } from "../../types/workflow-runtime-adapter.ts";
+import { parseCueFile } from "../../workers/protocol/cue-file-utils.ts";
+import {
+  EXTRACT_CHECKSUM_ALGORITHMS,
+  type ExtractedFileEntry,
+  emitBrowserWorkflowTrace,
+  findExtractedFile,
+  getFileStem,
+  getListedOutputEntryName,
+  getPathDerivedFileName,
+  getPathDirectory,
+  isCueEntryName,
+  joinPath,
+  normalizeEntryPath,
+  normalizeRomSpecificEntryNameForSource,
+  normalizeRomSpecificListEntries,
+  uniqueNonEmptyStrings,
+} from "./workflow-runtime-helpers.ts";
+import {
+  browserVfs,
+  filterOutputCandidatesAwayFromSource,
+  getBrowserExtractOutputPathCandidates,
+  readTextFromBrowserVfs,
+  removeBrowserVfsOutputPaths,
+  writeTextToBrowserVfs,
+} from "./workflow-runtime-vfs-cleanup.ts";
+
+const CHD_SINGLE_BIN_OUTPUT_REGEX = /\.bin$/i;
+const CHD_CD_SPLIT_BIN_SCRATCH_FILE_POOL_SIZE = 100;
+const CHD_CD_OUTPUT_SCRATCH_FILE_POOL_SIZE = 2;
+const CHD_ROM_SPECIFIC_FORMAT = ROM_SPECIFIC_COMPRESSION_FORMAT_REGISTRY.chd;
+
+const getChdCdOutputFileName = (fileName: string, extension: "bin" | "cue"): string =>
+  `${getFileStem(getPathBaseName(fileName, "input.chd")) || "input"}.${extension}`;
+
+const stripPrimaryChdTrackSuffix = (fileName: string): string => fileName.replace(/ \(Track 0*1\)(?=\.bin$)/i, "");
+
+const getChdCreateFormat = (requestedMode: string): string => {
+  if (requestedMode === "cd" || requestedMode === "chd-cd") return "chd-cd";
+  if (requestedMode === "gd" || requestedMode === "chd-gd") return "chd-gd";
+  if (requestedMode === "dvd" || requestedMode === "chd-dvd") return "chd-dvd";
+  if (requestedMode === "raw" || requestedMode === "chd-raw") return "chd-raw";
+  if (requestedMode === "hd" || requestedMode === "chd-hd") return "chd-hd";
+  if (requestedMode === "av" || requestedMode === "ld" || requestedMode === "chd-av" || requestedMode === "chd-ld") {
+    return "chd-av";
+  }
+  return "chd";
+};
+
+const annotateChdListEntries = <
+  TEntry extends {
+    archiveEntryType?: string;
+    fileName?: string;
+    filename?: string;
+    name?: string;
+  },
+>(
+  entries: TEntry[],
+): TEntry[] =>
+  entries.map((entry) => {
+    const currentType = String(entry.archiveEntryType || "")
+      .trim()
+      .toLowerCase();
+    if (currentType === "cue" || currentType === "track") return entry;
+    const entryName = getListedOutputEntryName(entry);
+    if (!entryName) return entry;
+    const archiveEntryType = isCueEntryName(entryName) ? "cue" : "track";
+    return {
+      ...entry,
+      archiveEntryType,
+    };
+  });
+
+const rewriteCueFileBinaryReference = async (cuePath: string, targetPath: string) => {
+  const contents = await readTextFromBrowserVfs(cuePath);
+  const updatedContents = replaceCuePatchFileName(contents, targetPath);
+  if (updatedContents !== contents) await writeTextToBrowserVfs(cuePath, updatedContents);
+};
+
+const resolveCueSidecarPath = (cuePath: string, referencedName: string): string => {
+  const normalizedName = String(referencedName || "").trim();
+  if (!normalizedName) return "";
+  // Absolute references already point at the staged file.
+  if (normalizedName.startsWith("/") || normalizedName.startsWith("\\")) return normalizedName;
+  return joinPath(getPathDirectory(cuePath), getPathBaseName(normalizedName, normalizedName));
+};
+
+// A cue describes a disc layout that references sibling track files (.bin) by name. The browser WASI
+// runtime only hydrates OPFS files it is told about up front (command inputs + knownInputPaths); worker
+// threads cannot open OPFS handles on demand. Enumerate the cue's referenced tracks so they are hydrated
+// alongside the cue, otherwise the disc-layout read fails with "No such file or directory (os error 44)".
+const collectCueSidecarPaths = async (cuePath: string): Promise<string[]> => {
+  const normalizedCuePath = String(cuePath || "").trim();
+  if (!(normalizedCuePath && /\.cue$/i.test(normalizedCuePath))) return [];
+  const contents = await readTextFromBrowserVfs(normalizedCuePath).catch(() => "");
+  if (!contents) return [];
+  const parsed = parseCueFile(contents);
+  const sidecarPaths: string[] = [];
+  for (const file of parsed.files) {
+    const sidecarPath = resolveCueSidecarPath(normalizedCuePath, file.name);
+    if (!sidecarPath || sidecarPath === normalizedCuePath) continue;
+    const stat = await browserVfs.stat(sidecarPath).catch(() => null);
+    if (stat) sidecarPaths.push(sidecarPath);
+  }
+  return uniqueNonEmptyStrings(sidecarPaths);
+};
+
+const createBrowserChdRuntime = (
+  workerIo: RuntimeWorkerIo,
+): Pick<RomSpecificRuntimeAdapter, "createChd" | "extractChd" | "listChd"> => ({
+  createChd: async ({
+    source,
+    fileName,
+    outputName,
+    imageFiles,
+    mode,
+    sourceMode,
+    cueFilePath,
+    threads,
+    compressionCodecs,
+    logLevel,
+    onLog,
+    onProgress,
+    signal,
+  }) => {
+    const workerInput = await workerIo.stageSource({
+      fallbackFileName: fileName || "input.bin",
+      pathPrefix: CHD_ROM_SPECIFIC_FORMAT.pathPrefix.create,
+      scope: CHD_ROM_SPECIFIC_FORMAT.scope,
+      source,
+      trace: { logLevel, onLog },
+    });
+    const stagedImageSources = imageFiles?.length
+      ? await workerIo.stageSources(
+          imageFiles.map((entry, index) => ({
+            fallbackFileName: entry.fileName || `track-${index + 1}.bin`,
+            pathPrefix: `${CHD_ROM_SPECIFIC_FORMAT.pathPrefix.sidecar}-${index + 1}`,
+            scope: CHD_ROM_SPECIFIC_FORMAT.scope,
+            source: entry.source,
+            trace: { logLevel, onLog },
+          })),
+        )
+      : [];
+
+    try {
+      const stagedInputPaths = [workerInput.filePath, ...stagedImageSources.map((entry) => entry.filePath)];
+      let chdInputPath = workerInput.filePath;
+      const requestedMode = String(sourceMode || mode || "")
+        .trim()
+        .toLowerCase();
+      const normalizedCueFilePath = String(cueFilePath || "").trim();
+      if (normalizedCueFilePath) {
+        if (!stagedInputPaths.includes(normalizedCueFilePath)) stagedInputPaths.push(normalizedCueFilePath);
+        chdInputPath = normalizedCueFilePath;
+        if (workerInput.filePath !== normalizedCueFilePath) {
+          await rewriteCueFileBinaryReference(normalizedCueFilePath, workerInput.filePath);
+        }
+      }
+
+      // When the CHD input is a cue, hydrate every sibling track file it references so worker
+      // threads can read the full disc layout from OPFS.
+      if (/\.cue$/i.test(chdInputPath)) {
+        const cueSidecarPaths = await collectCueSidecarPaths(chdInputPath);
+        for (const sidecarPath of cueSidecarPaths) {
+          if (!stagedInputPaths.includes(sidecarPath)) stagedInputPaths.push(sidecarPath);
+        }
+        emitBrowserWorkflowTrace({ logLevel, onLog }, "chd cue sidecars hydrated", {
+          cuePath: chdInputPath,
+          sidecarPaths: cueSidecarPaths,
+        });
+      }
+
+      const outputFileName = outputName || "output.chd";
+      const outputPath = selectRomWeaverOutputPath(workerInput.filePath, outputFileName, [
+        ...stagedInputPaths,
+        ...(chdInputPath === workerInput.filePath ? [] : [chdInputPath]),
+      ]);
+      await removeBrowserVfsOutputPaths(
+        [outputPath],
+        [...stagedInputPaths, ...(chdInputPath === workerInput.filePath ? [] : [chdInputPath])],
+      );
+      const codecs = normalizeCodecEntries(compressionCodecs);
+      const result = await invokeRomWeaverCompressionCreateWorker(
+        {
+          codecs,
+          format: getChdCreateFormat(requestedMode),
+          inputPaths: [chdInputPath],
+          invalidateMountCacheBeforeRun: true,
+          knownInputPaths: uniqueNonEmptyStrings([...stagedInputPaths, chdInputPath]),
+          logLevel,
+          outputFileName,
+          outputPath,
+          preopenOutputPaths: [outputPath],
+          signal,
+          workerThreads: threads,
+        },
+        onProgress,
+        onLog,
+      );
+      return workerIo.createWorkerOutput(
+        outputName ? { ...result, fileName: outputName } : result,
+        outputName || outputFileName,
+        "CHD compression worker did not return browser output",
+      );
+    } finally {
+      await workerInput.cleanup().catch(() => undefined);
+      await Promise.all(stagedImageSources.map((imageSource) => imageSource.cleanup().catch(() => undefined)));
+    }
+  },
+  extractChd: async ({
+    source,
+    fileName,
+    outputName,
+    mode,
+    splitBin,
+    threads,
+    logLevel,
+    onLog,
+    onProgress,
+    signal,
+  }) => {
+    const workerSource = await workerIo.stageSource({
+      fallbackFileName: fileName,
+      pathPrefix: CHD_ROM_SPECIFIC_FORMAT.pathPrefix.extract,
+      scope: CHD_ROM_SPECIFIC_FORMAT.scope,
+      source,
+      trace: { logLevel, onLog },
+    });
+    try {
+      const outDirPath = getPathDirectory(workerSource.filePath);
+      const stagedSourceFileName = getPathDerivedFileName(workerSource.filePath, workerSource.fileName || fileName);
+      const shouldPreseedSingleBinCdOutputs = mode !== "cd" && CHD_SINGLE_BIN_OUTPUT_REGEX.test(outputName || "");
+      const actualOutputFileName =
+        mode === "cd"
+          ? ""
+          : shouldPreseedSingleBinCdOutputs
+            ? getChdCdOutputFileName(fileName, "bin")
+            : getRomSpecificExtractedFileName("chd", { _chdMode: mode || undefined, fileName });
+      const stagedOutputFileName =
+        mode === "cd"
+          ? ""
+          : shouldPreseedSingleBinCdOutputs
+            ? getChdCdOutputFileName(stagedSourceFileName, "bin")
+            : getRomSpecificExtractedFileName("chd", {
+                _chdMode: mode || undefined,
+                fileName: stagedSourceFileName,
+              });
+      const stagedCueOutputFileName = shouldPreseedSingleBinCdOutputs
+        ? getChdCdOutputFileName(stagedSourceFileName, "cue")
+        : "";
+      const shouldSplitBin = mode === "cd" && splitBin !== false;
+      const directOutputFileName = outputName || actualOutputFileName;
+      const directOutputPath = stagedOutputFileName ? joinPath(outDirPath, stagedOutputFileName) : "";
+      const staleOutputPaths: string[] = [];
+      if (mode === "cd") {
+        const listed = await runRomWeaverListWorker(
+          {
+            logLevel,
+            signal,
+            sourcePath: workerSource.filePath,
+          },
+          undefined,
+          onLog,
+        ).catch(() => null);
+        const stagedSingleBinOutputFileName = getChdCdOutputFileName(stagedSourceFileName, "bin");
+        const cdOutputEntryNames = uniqueNonEmptyStrings([
+          ...(listed?.entries || [])
+            .map((entry) => String(entry?.fileName || entry?.filename || entry?.name || ""))
+            .filter(
+              (entryName) =>
+                !(shouldSplitBin && getPathBaseName(entryName, entryName) === stagedSingleBinOutputFileName),
+            ),
+          getChdCdOutputFileName(stagedSourceFileName, "cue"),
+          ...(shouldSplitBin ? [] : [stagedSingleBinOutputFileName, outputName || ""]),
+        ]);
+        staleOutputPaths.push(
+          ...filterOutputCandidatesAwayFromSource(
+            cdOutputEntryNames.flatMap((entryName) => getBrowserExtractOutputPathCandidates(outDirPath, entryName)),
+            workerSource.filePath,
+          ),
+        );
+      }
+      if (directOutputPath) {
+        const outputPathCandidates = shouldPreseedSingleBinCdOutputs
+          ? [directOutputPath, stagedCueOutputFileName ? joinPath(outDirPath, stagedCueOutputFileName) : ""]
+          : [
+              directOutputPath,
+              actualOutputFileName ? joinPath(outDirPath, actualOutputFileName) : "",
+              outputName ? joinPath(outDirPath, outputName) : "",
+            ];
+        staleOutputPaths.push(...outputPathCandidates);
+      }
+      const preopenOutputPaths = filterOutputCandidatesAwayFromSource(
+        uniqueNonEmptyStrings(staleOutputPaths),
+        workerSource.filePath,
+      );
+      await removeBrowserVfsOutputPaths(preopenOutputPaths, [workerSource.filePath]);
+      const runExtract = () =>
+        invokeRomWeaverExtractWorker(
+          {
+            checksumAlgorithms: [...EXTRACT_CHECKSUM_ALGORITHMS],
+            invalidateMountCacheBeforeRun: !!workerSource.virtual,
+            knownInputPaths: uniqueNonEmptyStrings([workerSource.filePath]),
+            logLevel,
+            outDirPath,
+            preopenOutputPaths,
+            scratchFilePoolSize: directOutputPath
+              ? shouldPreseedSingleBinCdOutputs
+                ? CHD_CD_OUTPUT_SCRATCH_FILE_POOL_SIZE
+                : 1
+              : mode === "cd"
+                ? shouldSplitBin
+                  ? CHD_CD_SPLIT_BIN_SCRATCH_FILE_POOL_SIZE
+                  : CHD_CD_OUTPUT_SCRATCH_FILE_POOL_SIZE
+                : undefined,
+            select: [],
+            signal,
+            sourcePath: workerSource.filePath,
+            splitBin: shouldSplitBin,
+            workerThreads: threads,
+          },
+          onProgress,
+          onLog,
+        );
+      const isChdCueOutput = (entry: ExtractedFileEntry | null | undefined) =>
+        !!entry &&
+        (String(entry.kind || "").toLowerCase() === "cue" || /\.cue$/i.test(entry.fileName || entry.path || ""));
+      const sameExtractedFile = (
+        left: ExtractedFileEntry | null | undefined,
+        right: ExtractedFileEntry | null | undefined,
+      ) =>
+        !!(left && right) &&
+        normalizeEntryPath(left.path || left.fileName) === normalizeEntryPath(right.path || right.fileName);
+      const pushUniqueExtractedFile = (entries: ExtractedFileEntry[], entry: ExtractedFileEntry | null | undefined) => {
+        if (!entry) return;
+        if (entries.some((candidate) => sameExtractedFile(candidate, entry))) return;
+        entries.push(entry);
+      };
+      const selectChdOutputs = (value: Awaited<ReturnType<typeof runExtract>>) => {
+        const cue =
+          value.emittedFiles.find((entry) => entry.kind === "cue") ||
+          value.emittedFiles.find((entry) => /\.cue$/i.test(entry.fileName));
+        const dataFiles = value.emittedFiles.filter((entry) => !isChdCueOutput(entry));
+        const primary =
+          (outputName ? findExtractedFile(value.emittedFiles, outputName) : null) ||
+          (actualOutputFileName ? findExtractedFile(value.emittedFiles, actualOutputFileName) : null) ||
+          (stagedOutputFileName ? findExtractedFile(value.emittedFiles, stagedOutputFileName) : null) ||
+          dataFiles[0] ||
+          (directOutputPath
+            ? {
+                fileName: directOutputFileName || stagedOutputFileName || actualOutputFileName || fileName,
+                path: directOutputPath,
+              }
+            : null) ||
+          value.emittedFiles[0];
+        const outputFiles: ExtractedFileEntry[] = [];
+        pushUniqueExtractedFile(outputFiles, cue);
+        if (!isChdCueOutput(primary)) pushUniqueExtractedFile(outputFiles, primary);
+        for (const entry of dataFiles) pushUniqueExtractedFile(outputFiles, entry);
+        return {
+          cueFile: cue,
+          outputFiles,
+          primaryFile: primary,
+        };
+      };
+      const createChdOutputs = async (
+        cueFile: ReturnType<typeof selectChdOutputs>["cueFile"],
+        outputFiles: ReturnType<typeof selectChdOutputs>["outputFiles"],
+        primaryFile: ReturnType<typeof selectChdOutputs>["primaryFile"],
+      ) => {
+        if (!outputFiles.length) throw new Error("CHD extraction did not emit any output files");
+        const cleanupPaths = uniqueNonEmptyStrings(outputFiles.map((entry) => entry.path));
+        let cleanupDone = false;
+        const cleanupAllOutputs = async () => {
+          if (cleanupDone) return;
+          cleanupDone = true;
+          await Promise.all(cleanupPaths.map((path) => browserVfs.remove(path).catch(() => undefined)));
+        };
+        const outputs = await Promise.all(
+          outputFiles.map(async (entry) => {
+            const isCue = isChdCueOutput(entry);
+            const normalizedFileName = normalizeRomSpecificEntryNameForSource(
+              entry.fileName,
+              stagedSourceFileName,
+              fileName,
+            );
+            const isPrimaryDataOutput = !isCue && sameExtractedFile(entry, primaryFile);
+            const primaryOutputName =
+              isPrimaryDataOutput && outputName
+                ? stripPrimaryChdTrackSuffix(outputName)
+                : isPrimaryDataOutput && shouldSplitBin
+                  ? stripPrimaryChdTrackSuffix(normalizedFileName || entry.fileName || "")
+                  : "";
+            const fileNameForOutput =
+              primaryOutputName ||
+              (isPrimaryDataOutput && !shouldSplitBin && outputName
+                ? outputName
+                : normalizedFileName || entry.fileName || directOutputFileName || fileName);
+            const output = await workerIo.createWorkerOutput(
+              {
+                checksums: isCue ? undefined : entry.checksums,
+                cleanup: cleanupAllOutputs,
+                fileName: fileNameForOutput,
+                filePath: entry.path,
+                size: entry.sizeBytes,
+              },
+              fileNameForOutput,
+              "CHD extraction worker did not return browser output",
+            );
+            return isCue ? output : attachRomSpecificOutputMetadata(output, { chdCuePath: cueFile?.path });
+          }),
+        );
+        return createCompressionExtractResult(outputs);
+      };
+
+      const extracted = await runExtract();
+      const selected = selectChdOutputs(extracted);
+      return await createChdOutputs(selected.cueFile, selected.outputFiles, selected.primaryFile);
+    } finally {
+      await workerSource.cleanup().catch(() => undefined);
+    }
+  },
+  listChd: async ({ source, fileName, logLevel, onLog, onProgress, signal, splitBin }) => {
+    const workerSource = await workerIo.stageSource({
+      fallbackFileName: fileName,
+      pathPrefix: CHD_ROM_SPECIFIC_FORMAT.pathPrefix.extract,
+      scope: CHD_ROM_SPECIFIC_FORMAT.scope,
+      source,
+      trace: { logLevel, onLog },
+    });
+    try {
+      const result = await runRomWeaverListWorker(
+        {
+          logLevel,
+          signal,
+          sourcePath: workerSource.filePath,
+          splitBin,
+        },
+        onProgress,
+        onLog,
+      );
+      return {
+        chdMediaKind: result.chdMediaKind,
+        entries: annotateChdListEntries(
+          normalizeRomSpecificListEntries(
+            result.entries,
+            getPathDerivedFileName(workerSource.filePath, workerSource.fileName || fileName),
+            fileName,
+          ),
+        ),
+      };
+    } finally {
+      await workerSource.cleanup().catch(() => undefined);
+    }
+  },
+});
+
+export { createBrowserChdRuntime, stripPrimaryChdTrackSuffix };
