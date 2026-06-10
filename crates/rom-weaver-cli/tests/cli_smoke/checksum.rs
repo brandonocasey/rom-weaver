@@ -950,6 +950,9 @@ fn checksum_headered_roms_include_remove_header_variant() {
         ("headered.nes", with_nes_header(&payload), 16_u64),
         ("headered.smc", with_header(&payload), 512_u64),
         ("headered.pce", with_header(&payload), 512_u64),
+        ("headered.a78", with_a78_header(&payload), 128_u64),
+        ("headered.lnx", with_lnx_header(&payload), 64_u64),
+        ("headered.fds", with_fds_header(&payload), 16_u64),
     ];
     fs::write(temp.child("plain.bin").path(), &payload).expect("plain fixture");
     let expected_sha1 = checksum_value(temp.child("plain.bin").path(), "sha1");
@@ -1480,6 +1483,36 @@ fn checksum_auto_trim_fix_ignores_non_trim_eligible_extensions() {
         label_digest_value(auto_label, "crc32"),
         label_digest_value(no_fix_label, "crc32")
     );
+}
+
+#[test]
+fn checksum_game_boy_rom_has_only_raw_variant() {
+    // Game Boy has no copier header (no remove-header variant) and its header
+    // checksum repair is not wired into the streaming variant engine (no
+    // fix-header variant), so only `raw` is emitted.
+    let temp = setup_temp_dir();
+    let rom = build_test_game_boy_rom(0x4000);
+    fs::write(temp.child("game.gb").path(), &rom).expect("gb fixture");
+
+    let output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "checksum",
+            temp.child("game.gb").path().to_str().expect("path"),
+            "--algo",
+            "sha1",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    let ids = checksum_variant_ids(&json);
+    assert_eq!(ids, vec!["raw"], "Game Boy should only have raw variant");
 }
 
 // ---- relocated from shared.rs (single-module helpers) ----

@@ -570,6 +570,46 @@ pub(crate) fn with_nes_header(bytes: &[u8]) -> Vec<u8> {
     headered
 }
 
+pub(crate) fn with_a78_header(bytes: &[u8]) -> Vec<u8> {
+    let mut headered = vec![0u8; 128];
+    headered[1..10].copy_from_slice(b"ATARI7800");
+    headered.extend_from_slice(bytes);
+    headered
+}
+
+pub(crate) fn with_lnx_header(bytes: &[u8]) -> Vec<u8> {
+    let mut headered = vec![0u8; 64];
+    headered[..4].copy_from_slice(b"LYNX");
+    headered.extend_from_slice(bytes);
+    headered
+}
+
+pub(crate) fn with_fds_header(bytes: &[u8]) -> Vec<u8> {
+    let mut headered = vec![0u8; 16];
+    headered[..3].copy_from_slice(b"FDS");
+    headered.extend_from_slice(bytes);
+    headered
+}
+
+pub(crate) fn build_test_game_boy_rom(payload_len: usize) -> Vec<u8> {
+    const GAME_BOY_LOGO: [u8; 48] = [
+        0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00,
+        0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD,
+        0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB,
+        0xB9, 0x33, 0x3E,
+    ];
+    let rom_len = payload_len.max(0x200);
+    let mut bytes = vec![0u8; rom_len];
+    bytes[0x104..0x134].copy_from_slice(&GAME_BOY_LOGO);
+    for (index, value) in bytes[0x134..=0x14C].iter_mut().enumerate() {
+        *value = (index as u8).wrapping_mul(7).wrapping_add(0x11);
+    }
+    for (index, value) in bytes[0x150..].iter_mut().enumerate() {
+        *value = (index as u8).wrapping_mul(3).wrapping_add(0x42);
+    }
+    bytes
+}
+
 pub(crate) fn gba_header_checksum(bytes: &[u8]) -> u8 {
     let mut checksum = 0_i32;
     for value in &bytes[0xA0..=0xBC] {
