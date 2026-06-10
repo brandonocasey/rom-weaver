@@ -6,6 +6,7 @@ import type {
 import type { InputAsset } from "../lib/input/input-assets.ts";
 import type { VfsOutputRef } from "../storage/vfs/types.ts";
 import type { ParsedPatchLike, PatchFileInstance } from "../workers/protocol/patch-engine.ts";
+import type { ChecksumVariant } from "./checksum.ts";
 import type { LogLevel, LogRecord } from "./logging.ts";
 import type { RuntimeTiming } from "./output.ts";
 import type { CandidateSelectionRequest } from "./selection.ts";
@@ -129,6 +130,7 @@ type TrimResult = {
 
 type PublicOutput = VfsOutputRef & {
   checksums?: Record<string, string>;
+  checksumVariants?: ChecksumVariant[];
   chdCuePath?: string;
   cleanup?: () => Promise<void> | void;
   timing?: RuntimeTiming | null;

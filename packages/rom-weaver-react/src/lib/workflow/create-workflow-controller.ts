@@ -1,5 +1,6 @@
 import { ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY } from "rom-weaver-wasm/format-metadata";
 
+import type { ChecksumVariant } from "../../types/checksum.ts";
 import type { CreateWorkflowParentCompression, CreateWorkflowSourceState } from "../../types/create-workflow.ts";
 import type { WorkflowProgress } from "../../types/progress.ts";
 import type { CreateResult, SelectedInputInfo } from "../../types/public.ts";
@@ -34,11 +35,13 @@ import {
 } from "./staged-rom-source.ts";
 import {
   calculateStandardInputChecksumsForFile,
+  cloneChecksumVariants,
   getAssetDecompressionTimeMs,
   getAssetParentCompressions,
   getAssetSourceSize,
   getInputAssetChecksums,
   getPatchFilePrecomputedChecksums,
+  getPatchFilePrecomputedChecksumVariants,
   getPrimaryInputAsset,
   isChecksummableInputAsset,
   type StandardWorkflowChecksums,
@@ -63,6 +66,7 @@ type InternalSourceState = {
   chdMode?: string;
   checksums?: CreateWorkflowChecksums;
   checksumTimeMs?: number;
+  checksumVariants?: ChecksumVariant[];
   decompressionTimeMs?: number;
   wasDecompressed?: boolean;
   warnings: WorkflowWarning[];
@@ -83,6 +87,7 @@ const cloneSourceState = (state: InternalSourceState | null | undefined) =>
         chdMode: state.chdMode,
         checksums: state.checksums ? cloneValue(state.checksums) : undefined,
         checksumTimeMs: state.checksumTimeMs,
+        checksumVariants: cloneChecksumVariants(state.checksumVariants),
         decompressionTimeMs: state.decompressionTimeMs,
         fileName: state.fileName,
         id: state.id,
@@ -365,6 +370,7 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
         const precomputed = getPatchFilePrecomputedChecksums(asset.file);
         if (precomputed) {
           asset.checksums = precomputed;
+          asset.checksumVariants = getPatchFilePrecomputedChecksumVariants(asset.file);
           asset.checksumTimeMs = 0;
           continue;
         }
@@ -393,6 +399,7 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
           workflow: "create",
         });
         asset.checksums = checksumResult.checksums;
+        asset.checksumVariants = checksumResult.variants;
         asset.romProbe = checksumResult.romProbe;
         asset.checksumTimeMs = Date.now() - checksumStartedAt;
       }
@@ -400,6 +407,7 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
       const primaryChecksums = getInputAssetChecksums(primaryAsset);
       if (primaryChecksums) {
         stage.state.checksums = primaryChecksums;
+        stage.state.checksumVariants = cloneChecksumVariants(primaryAsset?.checksumVariants);
         stage.state.checksumTimeMs = primaryAsset?.checksumTimeMs;
       }
     }

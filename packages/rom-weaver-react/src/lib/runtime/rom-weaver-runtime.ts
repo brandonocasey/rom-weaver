@@ -15,7 +15,7 @@ import {
   formatBrowserStorageEstimateState,
   getBrowserStorageEstimateState,
 } from "../../storage/browser/browser-storage-estimate.ts";
-import type { ChecksumResult, ChecksumRomProbe } from "../../types/checksum.ts";
+import type { ChecksumMap, ChecksumResult, ChecksumRomProbe, ChecksumVariant } from "../../types/checksum.ts";
 import type { LogLevel } from "../../types/logging.ts";
 import type { CompressionListResult } from "../../types/workflow-runtime.ts";
 import type {
@@ -625,6 +625,7 @@ const getEmittedFileDetails = (
 
 type RomWeaverEmittedFile = {
   checksums?: Record<string, string>;
+  checksumVariants?: ChecksumVariant[];
   fileName: string;
   kind?: string;
   path: string;
@@ -657,6 +658,7 @@ const getEmittedFiles = (result: RomWeaverRunJsonResult): RomWeaverEmittedFile[]
       typeof entry.file_name === "string" && entry.file_name ? entry.file_name : getPathBaseName(path, "output.bin");
     output.push({
       checksums: normalizeEmittedFileChecksums(entry.checksums),
+      checksumVariants: parseChecksumVariants(entry),
       fileName,
       kind: typeof entry.kind === "string" && entry.kind ? entry.kind : undefined,
       path,
@@ -1228,6 +1230,15 @@ const normalizePatchValidationChecksumEntries = (value: unknown): string[] => {
   return entries;
 };
 
+const normalizeN64ByteOrder = (value: unknown): "big-endian" | "little-endian" | "byte-swapped" | undefined => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized === "big-endian" || normalized === "little-endian" || normalized === "byte-swapped"
+    ? normalized
+    : undefined;
+};
+
 const getPatchValidationRequirements = (options: RuntimePatchValidateWorkerInput["options"]) => {
   const optionRecord = asRecord(options);
   const requirementsValue = optionRecord?.validationRequirements;
@@ -1252,6 +1263,7 @@ const invokeRomWeaverPatchValidateWorker = async (
   const checksumCache = normalizePatchValidationChecksumEntries(
     optionRecord?.checksumCache ?? optionRecord?.checksum_cache,
   );
+  const n64ByteOrder = normalizeN64ByteOrder(optionRecord?.n64ByteOrder ?? optionRecord?.n64_byte_order);
   const validateWithSize = toOptionalInt(requirements?.sourceSize ?? requirements?.source_size);
   const validateWithMinSize = toOptionalInt(requirements?.minimumSourceSize ?? requirements?.minimum_source_size);
   const removeHeader = Boolean((input.options as { removeHeader?: unknown } | undefined)?.removeHeader);
@@ -1272,6 +1284,7 @@ const invokeRomWeaverPatchValidateWorker = async (
     ...(checksumCache.length ? { checksum_cache: checksumCache } : {}),
     ignore_checksum_validation: ignoreChecksumValidation,
     input: input.romFilePath,
+    ...(n64ByteOrder ? { n64_byte_order: n64ByteOrder } : {}),
     no_extract: true,
     patch_filter: true,
     patches: input.patchFiles.map((patch) => patch.patchFilePath),
@@ -1289,6 +1302,7 @@ const invokeRomWeaverPatchValidateWorker = async (
     forceSingleThreadReason,
     hasBpsPatch,
     hasXdeltaPatch,
+    n64ByteOrder,
     patchCount: input.patchFiles.length,
     requestedThreadArg,
     romFilePath: input.romFilePath,
@@ -1348,6 +1362,7 @@ const invokeRomWeaverPatchApplyWorker = async (
   const removeHeader = Boolean((input.options as { removeHeader?: unknown } | undefined)?.removeHeader);
   const addHeader = Boolean((input.options as { addHeader?: unknown } | undefined)?.addHeader);
   const repairChecksum = Boolean((input.options as { fixChecksum?: unknown } | undefined)?.fixChecksum);
+  const n64ByteOrder = normalizeN64ByteOrder(applyOptionRecord?.n64ByteOrder ?? applyOptionRecord?.n64_byte_order);
   const ignoreChecksumValidation =
     (input.options as { requireInputChecksumMatch?: unknown } | undefined)?.requireInputChecksumMatch !== true;
   const validateWithChecksums = normalizePatchValidationChecksumEntries(
@@ -1368,6 +1383,7 @@ const invokeRomWeaverPatchApplyWorker = async (
     add_header: addHeader,
     ignore_checksum_validation: ignoreChecksumValidation,
     input: input.romFilePath,
+    ...(n64ByteOrder ? { n64_byte_order: n64ByteOrder } : {}),
     no_compress: true,
     output: outputPath,
     patch_filter: true,
@@ -1387,6 +1403,7 @@ const invokeRomWeaverPatchApplyWorker = async (
     forceSingleThreadReason,
     hasBpsPatch,
     hasXdeltaPatch,
+    n64ByteOrder,
     outputPath,
     patchCount: input.patchFiles.length,
     requestedThreadArg,
@@ -1700,6 +1717,62 @@ const parseChecksumLabel = (label: string): Partial<ChecksumResult> => {
   return out;
 };
 
+const readChecksumMap = (value: unknown): ChecksumMap | undefined => {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const checksums: ChecksumMap = {};
+  for (const [algorithm, checksum] of Object.entries(record)) {
+    const normalizedAlgorithm = String(algorithm || "")
+      .trim()
+      .toLowerCase();
+    const normalizedChecksum =
+      typeof checksum === "string"
+        ? checksum.trim().toLowerCase()
+        : typeof checksum === "number" || typeof checksum === "bigint"
+          ? checksum.toString(16).toLowerCase()
+          : "";
+    if (normalizedAlgorithm && /^[0-9a-f]+$/i.test(normalizedChecksum)) {
+      checksums[normalizedAlgorithm] = normalizedChecksum;
+    }
+  }
+  return Object.keys(checksums).length ? checksums : undefined;
+};
+
+const parseChecksumDetails = (details: unknown): Partial<ChecksumResult> => {
+  const checksums = readChecksumMap(asRecord(details)?.checksums);
+  if (!checksums) return {};
+  const out: Partial<ChecksumResult> = {};
+  for (const [algorithm, value] of Object.entries(checksums)) {
+    normalizeChecksumResult(out, algorithm, value);
+  }
+  return out;
+};
+
+const cloneRuntimeRecord = (value: unknown): Record<string, unknown> | undefined => {
+  const record = asRecord(value);
+  return record ? { ...record } : undefined;
+};
+
+const parseChecksumVariants = (details: unknown): ChecksumVariant[] | undefined => {
+  const rows = asRecord(details)?.checksum_variants;
+  if (!Array.isArray(rows)) return undefined;
+  const variants: ChecksumVariant[] = [];
+  for (const row of rows) {
+    const record = asRecord(row);
+    const checksums = readChecksumMap(record?.checksums);
+    const id = typeof record?.id === "string" ? record.id.trim() : "";
+    if (!(record && id && checksums)) continue;
+    variants.push({
+      applyCompatibility: cloneRuntimeRecord(record.applyCompatibility),
+      checksums,
+      id,
+      label: typeof record.label === "string" && record.label.trim() ? record.label.trim() : id,
+      transforms: cloneRuntimeRecord(record.transforms),
+    });
+  }
+  return variants.length ? variants : undefined;
+};
+
 const parseChecksumRomProbeLabel = (label: string): ChecksumRomProbe => {
   const trimmedInputBytes = label.match(/\btrimmed_input_bytes=(\d+)\b/)?.[1];
   const mode = label.match(/\bmode=([^;\s]+)\b/)?.[1];
@@ -1773,7 +1846,12 @@ const runRomWeaverChecksumWorker = async (
 
   const terminal = getLastEvent(result);
   const label = terminal ? getRomWeaverRunEventLabel(terminal) : "";
-  const checksums = parseChecksumLabel(label);
+  const details = terminal ? getRomWeaverRunEventDetails(terminal) : undefined;
+  const checksums = {
+    ...parseChecksumLabel(label),
+    ...parseChecksumDetails(details),
+  };
+  const variants = parseChecksumVariants(details);
   return {
     checksums: {
       crc32: checksums.crc32 || 0,
@@ -1781,6 +1859,7 @@ const runRomWeaverChecksumWorker = async (
       romProbe: parseChecksumRomProbeLabel(label),
       sha1: checksums.sha1 || "",
       ...(checksums.adler32 === undefined ? {} : { adler32: checksums.adler32 }),
+      ...(variants ? { variants } : {}),
     } as ChecksumResult,
   };
 };

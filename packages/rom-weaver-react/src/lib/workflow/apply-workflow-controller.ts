@@ -68,11 +68,13 @@ import { StagedRomSourceController } from "./staged-rom-source.ts";
 import {
   calculateStandardInputChecksumsForFile,
   cloneChecksumRomProbe,
+  cloneChecksumVariants,
   getAssetDecompressionTimeMs,
   getAssetParentCompressions,
   getAssetSourceSize,
   getInputAssetChecksums,
   getPatchFilePrecomputedChecksums,
+  getPatchFilePrecomputedChecksumVariants,
   getPrimaryInputAsset,
   isChecksummableInputAsset,
 } from "./staged-source-checksums.ts";
@@ -103,6 +105,7 @@ const cloneInputState = (
         chdMode: state.chdMode,
         checksums: state.checksums ? cloneValue(state.checksums) : undefined,
         checksumTimeMs: state.checksumTimeMs,
+        checksumVariants: cloneChecksumVariants(state.checksumVariants),
         decompressionTimeMs: state.decompressionTimeMs,
         fileName: (() => {
           if (!(state.status === "needsSelection" && !state.selectedCandidateId)) return state.fileName;
@@ -124,6 +127,7 @@ const cloneInputState = (
         resolvedInputs: resolvedInputs?.map((entry) => ({
           ...entry,
           checksums: entry.checksums ? cloneValue(entry.checksums) : undefined,
+          checksumVariants: cloneChecksumVariants(entry.checksumVariants),
           parentCompressions: entry.parentCompressions.map((parent) => ({
             ...parent,
           })),
@@ -173,6 +177,7 @@ const cloneResolvedInputState = (
   chdMode: state.chdMode,
   checksums: state.checksums ? cloneValue(state.checksums) : undefined,
   checksumTimeMs: state.checksumTimeMs,
+  checksumVariants: cloneChecksumVariants(state.checksumVariants),
   decompressionTimeMs: state.decompressionTimeMs,
   fileName: state.fileName,
   groupId: (() => {
@@ -211,6 +216,7 @@ const cloneResolvedInputAssetState = (
           : undefined,
     checksums: checksums ? cloneValue(checksums) : undefined,
     checksumTimeMs: asset.checksumTimeMs,
+    checksumVariants: cloneChecksumVariants(asset.checksumVariants),
     cueText: asset.disc?.cueText ?? asset.file._chdCueText,
     decompressionTimeMs: getAssetDecompressionTimeMs(asset),
     fileName: asset.fileName,
@@ -1042,6 +1048,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     stage.state.candidates = [];
     for (const request of requests) this.addCandidateRequest(stage, request);
     stage.state.checksums = undefined;
+    stage.state.checksumVariants = undefined;
     stage.state.checksumTimeMs = undefined;
     stage.state.decompressionTimeMs = undefined;
     stage.state.selectedCandidateId = undefined;
@@ -1249,6 +1256,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
         const precomputed = getPatchFilePrecomputedChecksums(asset.file);
         if (precomputed) {
           asset.checksums = precomputed;
+          asset.checksumVariants = getPatchFilePrecomputedChecksumVariants(asset.file);
           asset.checksumTimeMs = 0;
           continue;
         }
@@ -1277,6 +1285,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
           workflow: "apply",
         });
         asset.checksums = checksumResult.checksums;
+        asset.checksumVariants = checksumResult.variants;
         asset.romProbe = checksumResult.romProbe;
         asset.checksumTimeMs = Date.now() - checksumStartedAt;
       }
@@ -1284,6 +1293,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       const primaryChecksums = getInputAssetChecksums(primaryAsset);
       if (primaryChecksums) {
         stage.state.checksums = primaryChecksums;
+        stage.state.checksumVariants = cloneChecksumVariants(primaryAsset?.checksumVariants);
         stage.state.checksumTimeMs = primaryAsset?.checksumTimeMs;
         stage.state.romProbe = cloneChecksumRomProbe(primaryAsset?.romProbe);
       }

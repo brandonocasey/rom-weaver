@@ -855,6 +855,7 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
             return workerIo.createWorkerOutput(
               {
                 checksums: entry.checksums,
+                checksumVariants: entry.checksumVariants,
                 cleanup: () => cleanupExtractedFiles([entry.path]),
                 fileName,
                 filePath: entry.path,

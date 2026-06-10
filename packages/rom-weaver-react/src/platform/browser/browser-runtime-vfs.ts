@@ -246,12 +246,14 @@ const createBrowserRuntimeVfsIo = ({
           await Promise.resolve(result.cleanup?.()).catch(() => undefined);
           await vfs.remove(filePath).catch(() => undefined);
         };
-        return createRuntimeOutputFromVfs(vfs, filePath, fileName, {
+        const output = await createRuntimeOutputFromVfs(vfs, filePath, fileName, {
           checksums: result.checksums,
           cleanup,
           size: result.outputRef?.size || result.size,
           timing: result.timing,
         });
+        if (result.checksumVariants?.length) output.checksumVariants = result.checksumVariants;
+        return output;
       }
       throw new Error(failureMessage || "Worker did not return browser output");
     },

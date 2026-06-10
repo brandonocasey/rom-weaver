@@ -1,4 +1,4 @@
-import type { ChecksumRomProbe } from "../../types/checksum.ts";
+import type { ChecksumRomProbe, ChecksumVariant } from "../../types/checksum.ts";
 import type { LogLevel } from "../../types/logging.ts";
 import type { WorkflowKind, WorkflowProgress, WorkflowProgressRole } from "../../types/progress.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
@@ -91,6 +91,21 @@ const cloneChecksumRomProbe = (romProbe: ChecksumRomProbe | undefined): Checksum
       }
     : undefined;
 
+const cloneChecksumVariants = (variants: ChecksumVariant[] | undefined): ChecksumVariant[] | undefined =>
+  variants?.map((variant) => ({
+    ...variant,
+    applyCompatibility: variant.applyCompatibility ? { ...variant.applyCompatibility } : undefined,
+    checksums: { ...variant.checksums },
+    transforms: variant.transforms ? { ...variant.transforms } : undefined,
+  }));
+
+const getPatchFilePrecomputedChecksumVariants = (
+  file: PatchFileInstance | undefined,
+): ChecksumVariant[] | undefined => {
+  const variants = (file as (PatchFileInstance & { checksumVariants?: unknown }) | undefined)?.checksumVariants;
+  return Array.isArray(variants) ? cloneChecksumVariants(variants as ChecksumVariant[]) : undefined;
+};
+
 const createChecksumProgressDetails = (state: StandardChecksumState) => ({
   decompressionTimeMs: state.decompressionTimeMs,
   fileName: state.fileName,
@@ -112,7 +127,11 @@ const calculateStandardInputChecksumsForFile = async ({
   runtime,
   state,
   workflow,
-}: StandardChecksumOptions): Promise<{ checksums: StandardWorkflowChecksums; romProbe?: ChecksumRomProbe }> => {
+}: StandardChecksumOptions): Promise<{
+  checksums: StandardWorkflowChecksums;
+  romProbe?: ChecksumRomProbe;
+  variants?: ChecksumVariant[];
+}> => {
   if (!runtime.checksum.calculate) return { checksums: {} as StandardWorkflowChecksums };
   const details = createChecksumProgressDetails(state);
   const id = `${progressId || state.id}:checksum`;
@@ -150,6 +169,7 @@ const calculateStandardInputChecksumsForFile = async ({
       sha1: result.sha1 || "",
     },
     romProbe: cloneChecksumRomProbe(result.romProbe),
+    variants: cloneChecksumVariants(result.variants),
   };
 };
 
@@ -157,11 +177,13 @@ export type { StandardWorkflowChecksums };
 export {
   calculateStandardInputChecksumsForFile,
   cloneChecksumRomProbe,
+  cloneChecksumVariants,
   getAssetDecompressionTimeMs,
   getAssetParentCompressions,
   getAssetSourceSize,
   getInputAssetChecksums,
   getPatchFilePrecomputedChecksums,
+  getPatchFilePrecomputedChecksumVariants,
   getPrimaryInputAsset,
   isChecksummableInputAsset,
 };

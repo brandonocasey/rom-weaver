@@ -6,7 +6,7 @@ import type {
   ThreadBudget,
 } from "rom-weaver-wasm";
 import type { LargeFileVfs } from "../storage/vfs/types.ts";
-import type { ChecksumResult } from "./checksum.ts";
+import type { ChecksumResult, ChecksumVariant } from "./checksum.ts";
 import type { LogLevel, LogRecord } from "./logging.ts";
 import type { OutputStorageKind } from "./output.ts";
 import type { JsonObject, JsonValue } from "./runtime.ts";
@@ -75,6 +75,7 @@ type RuntimeWorkerOutput = {
   applySummary?: JsonObject;
   blob?: Blob;
   checksums?: Record<string, string>;
+  checksumVariants?: ChecksumVariant[];
   cleanup?: () => Promise<void> | void;
   file?: Blob;
   fileName?: string;
@@ -218,6 +219,7 @@ type RuntimePatchApplyOptions = Partial<Omit<PatchApplyCommand, "input" | "outpu
   addHeader?: PatchApplyCommand["add_header"];
   appendOutputSuffix?: boolean;
   fixChecksum?: PatchApplyCommand["repair_checksum"];
+  n64ByteOrder?: PatchApplyCommand["n64_byte_order"];
   outputExtension?: string | null | undefined;
   outputName?: string | null | undefined;
   ppfUndoAware?: PatchApplyCommand["ppf_undo_aware"];
@@ -232,6 +234,7 @@ type RuntimePatchApplyOptions = Partial<Omit<PatchApplyCommand, "input" | "outpu
 type RuntimePatchValidateOptions = Partial<Omit<PatchValidateCommand, "input" | "patches">> & {
   checksumCache?: RuntimeChecksumCacheInput;
   ignoreChecksumValidation?: PatchValidateCommand["ignore_checksum_validation"];
+  n64ByteOrder?: PatchValidateCommand["n64_byte_order"];
   removeHeader?: PatchValidateCommand["strip_header"];
   validateWithChecksums?: PatchValidateCommand["validate_with_checksums"];
   validationRequirements?: RuntimePatchValidationRequirement | RuntimePatchValidationRequirement[];

@@ -62,6 +62,9 @@ const createPatchFileFromPublicOutput = async (
     : null;
   const attachOutputMetadata = <TFile extends PatchFileInstance>(file: TFile): TFile => {
     if (output.checksums) (file as TFile & { checksums?: Record<string, string> }).checksums = output.checksums;
+    if (output.checksumVariants?.length)
+      (file as TFile & { checksumVariants?: PublicOutput["checksumVariants"] }).checksumVariants =
+        output.checksumVariants;
     if (output.chdCuePath) file._chdCuePath = output.chdCuePath;
     if (output.timing) (file as TFile & { _runtimeTiming?: PublicOutput["timing"] })._runtimeTiming = output.timing;
     return file;
