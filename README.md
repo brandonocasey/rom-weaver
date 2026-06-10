@@ -10,6 +10,37 @@
 - apply and create many ROM patch formats
 - batch-fix supported ROM headers/checksums
 
+## Setup
+
+Toolchain versions and build tasks are managed with [mise](https://mise.jdx.dev).
+Install it (`brew install mise`, or see the mise docs), then from the repo root:
+
+```bash
+mise install        # rust, node, wasm-opt (binaryen), ripgrep — pinned in .mise.toml
+mise trust          # trust this repo's mise config (first time only)
+```
+
+Two build dependencies are not pinnable through mise and must be installed
+separately:
+
+- **WASI SDK** (for the WebAssembly build). Install [wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases)
+  to `/opt/wasi-sdk`, `/opt/homebrew/opt/wasi-sdk`, or `~/.local/toolchains/wasi-sdk-<ver>`
+  — or set `WASI_SDK_PATH` to wherever it lives. `mise run build-wasm` finds it
+  automatically (see `scripts/wasm/detect-wasi-sdk.sh`).
+- **brotli** (compresses the wasm artifact): `brew install brotli` (or your OS
+  package manager).
+
+Then install the JS workspaces and git hooks:
+
+```bash
+npm ci --prefix packages/rom-weaver-wasm
+npm ci --prefix packages/rom-weaver-react
+npm install         # root: installs lefthook + runs `lefthook install`
+```
+
+Run `mise tasks` to list available tasks, or `mise run ci` for the full local
+quality gate (matches CI).
+
 ## Build And Run
 
 ```bash
@@ -17,30 +48,32 @@ cargo build -p rom-weaver-cli
 cargo run -p rom-weaver-cli -- --help
 ```
 
-WASM artifacts + JS wrappers:
+WASM artifacts + JS wrappers (via [mise](https://mise.jdx.dev) tasks):
 
 ```bash
-scripts/build-wasm-cli.sh
+mise run build-wasm
 ```
 
 The WASM artifact keeps the `rom-weaver-cli.wasm` package ABI, but the binary is
 only a CLI/argv/reporter shim over the shared `rom-weaver-app` command
 orchestration crate.
 
-Ad-hoc WASI target checks/builds (uses LLVM + WASI sysroot wiring):
+The threaded WASI toolchain wiring (WASI SDK discovery, `CC`/`CFLAGS`, the static
+rustflags in `.cargo/config.toml`) is supplied by `mise`'s environment, so ad-hoc
+target checks just work under `mise`:
 
 ```bash
-scripts/wasm/with-wasi-env.sh cargo check -p rom-weaver-containers --target wasm32-wasip1
-scripts/wasm/with-wasi-env.sh cargo check -p rom-weaver-containers --target wasm32-wasip1-threads
+mise run wasm-check   # cargo check the threaded containers lib
+mise exec -- cargo check -p rom-weaver-containers --target wasm32-wasip1
 ```
 
-By default this writes artifacts to `packages/rom-weaver-wasm` (generated files are gitignored).
-Pass an explicit output directory as the first argument to override.
-
-To explicitly sync those artifacts into `packages/rom-weaver-wasm`:
+By default `build-wasm` writes artifacts to `packages/rom-weaver-wasm` (generated
+files are gitignored). Set `ROM_WEAVER_WASM_OUT_DIR` to write elsewhere; when the
+output directory differs from the package, the artifacts are synced into
+`packages/rom-weaver-wasm` automatically:
 
 ```bash
-SYNC_WASM_PACKAGE=1 scripts/build-wasm-cli.sh /path/to/wasm-artifacts
+ROM_WEAVER_WASM_OUT_DIR=/path/to/wasm-artifacts mise run build-wasm
 ```
 
 See [`packages/rom-weaver-wasm/README.md`](packages/rom-weaver-wasm/README.md) for browser OPFS usage.
