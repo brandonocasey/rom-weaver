@@ -452,7 +452,10 @@ fn checksum_auto_extract_tar_stream_uses_streamed_hashing() {
     fs::write(temp.child("game.bin").path(), &payload).expect("payload fixture");
 
     let archive = temp.child("game.tar.gz");
-    write_tar_gz_fixture(&[(temp.child("game.bin").path(), "game.bin")], archive.path());
+    write_tar_gz_fixture(
+        &[(temp.child("game.bin").path(), "game.bin")],
+        archive.path(),
+    );
 
     let expected_payload = checksum_value(temp.child("game.bin").path(), "sha1");
     let output = Command::cargo_bin("rom-weaver")

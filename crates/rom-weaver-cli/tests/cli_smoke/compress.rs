@@ -43,7 +43,9 @@ fn assert_no_compressed_write_progress(events: &[Value], format: &str) {
                 && event["status"] == "running"
                 && event["format"] == format
                 && event["stage"] == "write"
-                && event["details"]["compressedBytesWritten"].as_u64().is_some()
+                && event["details"]["compressedBytesWritten"]
+                    .as_u64()
+                    .is_some()
         }),
         "expected {format} compression byte telemetry to stay out of progress events"
     );
@@ -77,10 +79,12 @@ fn assert_compress_extract_only_rejection(format: &str, output_name: &str) {
     assert_eq!(json["format"], format);
     assert_eq!(json["stage"], "validate");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("extract-only"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("extract-only")
+    );
     assert!(!output_path.path().exists());
 }
 
@@ -282,10 +286,12 @@ fn extract_xiso_invalid_source_emits_running_progress() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "xiso");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("is not an Xbox XDVDFS image"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("is not an Xbox XDVDFS image")
+    );
 }
 
 #[test]
@@ -315,10 +321,12 @@ fn compress_rejects_unregistered_output_format() {
     assert_eq!(json["command"], "compress");
     assert_eq!(json["family"], "container");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("requested output format is not registered"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested output format is not registered")
+    );
 }
 
 #[test]
@@ -538,10 +546,12 @@ fn compress_without_format_rejects_extensionless_output() {
     let json = parse_single_json_line(&output);
     assert_eq!(json["command"], "compress");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("output has no file extension"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("output has no file extension")
+    );
     assert!(!output_path.path().exists());
 }
 
@@ -569,10 +579,12 @@ fn compress_without_format_rejects_extract_only_output_extension() {
     let json = parse_single_json_line(&output);
     assert_eq!(json["command"], "compress");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("extract-only"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("extract-only")
+    );
     assert!(!output_path.path().exists());
 }
 
@@ -608,10 +620,12 @@ fn compress_rejects_auto_format_keyword() {
     assert_eq!(json["command"], "compress");
     assert_eq!(json["family"], "container");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("requested output format is not registered"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested output format is not registered")
+    );
 }
 
 #[test]
@@ -671,10 +685,12 @@ fn compress_rejects_wua_output_format() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "wua");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("requested output format is not registered"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested output format is not registered")
+    );
 }
 
 #[test]
@@ -708,10 +724,12 @@ fn compress_rejects_invalid_codec_level_value() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("not a valid integer"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("not a valid integer")
+    );
 }
 
 #[test]
@@ -929,7 +947,6 @@ fn archive_container_formats_round_trip() {
         run_archive_round_trip(format, archive_name, codec);
     }
 }
-
 
 #[test]
 fn extract_zst_reports_parallel_decode_threads() {
@@ -1295,10 +1312,12 @@ fn extract_recursively_handles_nested_containers() {
     assert_eq!(extract_json["family"], "container");
     assert_eq!(extract_json["format"], "7z");
     assert_eq!(extract_json["status"], "succeeded");
-    assert!(extract_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("recursively extracted 2 nested container(s)"));
+    assert!(
+        extract_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("recursively extracted 2 nested container(s)")
+    );
 
     assert_eq!(
         fs::read(out_dir.child("inner/disc/disc.bin").path()).expect("nested extract payload"),
@@ -1412,7 +1431,10 @@ fn extract_nested_checksum_reports_only_leaf_with_step_events() {
         .iter()
         .filter(|event| event["status"] == "succeeded" || event["status"] == "failed")
         .count();
-    assert_eq!(terminal_count, 1, "exactly one terminal finish for the command");
+    assert_eq!(
+        terminal_count, 1,
+        "exactly one terminal finish for the command"
+    );
 }
 
 #[test]
@@ -1471,10 +1493,12 @@ fn extract_nested_scan_ignores_existing_output_archives() {
     let extract_json = parse_single_json_line(&extract_output);
     assert_eq!(extract_json["command"], "extract");
     assert_eq!(extract_json["status"], "succeeded");
-    assert!(!extract_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("recursively extracted"));
+    assert!(
+        !extract_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("recursively extracted")
+    );
     assert_eq!(
         fs::read(out_dir.child("fresh.bin").path()).expect("fresh extract"),
         b"fresh payload"

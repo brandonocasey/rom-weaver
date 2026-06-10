@@ -21,11 +21,13 @@ fn rvz_probe_reports_succeeded() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "rvz");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .to_ascii_lowercase()
-        .contains("compression"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .to_ascii_lowercase()
+            .contains("compression")
+    );
 }
 
 #[test]
@@ -145,10 +147,12 @@ fn rvz_compress_rejects_non_zstd_codec() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "rvz");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("supported codec is zstd"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("supported codec is zstd")
+    );
 }
 
 #[test]
@@ -223,10 +227,12 @@ fn rvz_extract_supports_single_output_selection() {
     let missing_json = parse_single_json_line(&missing_output);
     assert_eq!(missing_json["format"], "rvz");
     assert_eq!(missing_json["status"], "failed");
-    assert!(missing_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("requested selections were not found"));
+    assert!(
+        missing_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested selections were not found")
+    );
 }
 
 #[test]
@@ -275,10 +281,12 @@ fn z3ds_compress_probe_and_extract_round_trip() {
     assert_eq!(probe_json["family"], "container");
     assert_eq!(probe_json["format"], "z3ds");
     assert_eq!(probe_json["status"], "succeeded");
-    assert!(probe_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("underlying_magic"));
+    assert!(
+        probe_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("underlying_magic")
+    );
 
     let out_dir = temp.child("extract");
     let extract_output = command_stdout(
@@ -469,10 +477,12 @@ fn z3ds_extract_supports_single_output_selection() {
     let missing_json = parse_single_json_line(&missing_output);
     assert_eq!(missing_json["format"], "z3ds");
     assert_eq!(missing_json["status"], "failed");
-    assert!(missing_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("requested selections were not found"));
+    assert!(
+        missing_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested selections were not found")
+    );
 }
 
 #[test]
@@ -537,9 +547,11 @@ fn z3ds_extract_rejects_invalid_header() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "z3ds");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("missing Z3DS magic"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("missing Z3DS magic")
+    );
 }
 /* jscpd:ignore-end */

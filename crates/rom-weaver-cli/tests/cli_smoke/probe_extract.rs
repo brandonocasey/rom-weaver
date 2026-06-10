@@ -56,15 +56,14 @@ fn probe_reports_known_container_as_supported() {
         json["details"]["container"]["recommended_compress_format"],
         "7z"
     );
-    assert_eq!(
-        json["details"]["container"]["reason"],
-        "fallback-7z-lzma2"
-    );
+    assert_eq!(json["details"]["container"]["reason"], "fallback-7z-lzma2");
     assert!(json["details"]["container"]["entry_count"].is_null());
-    assert!(!json["label"]
-        .as_str()
-        .expect("label")
-        .contains("recommended_compress_format"));
+    assert!(
+        !json["label"]
+            .as_str()
+            .expect("label")
+            .contains("recommended_compress_format")
+    );
 }
 
 #[test]
@@ -88,11 +87,7 @@ fn list_reports_selectable_zip_entries() {
         .code(0);
 
     let json = run_single_json_event(
-        &[
-            "list",
-            archive.path().to_str().expect("path"),
-            "--json",
-        ],
+        &["list", archive.path().to_str().expect("path"), "--json"],
         0,
     );
     assert_eq!(json["command"], "list");
@@ -105,14 +100,13 @@ fn list_reports_selectable_zip_entries() {
         json["details"]["container"]["recommended_compress_format"],
         "7z"
     );
-    assert_eq!(
-        json["details"]["container"]["reason"],
-        "fallback-7z-lzma2"
+    assert_eq!(json["details"]["container"]["reason"], "fallback-7z-lzma2");
+    assert!(
+        !json["label"]
+            .as_str()
+            .expect("label")
+            .contains("selectable entries")
     );
-    assert!(!json["label"]
-        .as_str()
-        .expect("label")
-        .contains("selectable entries"));
 }
 
 #[test]
@@ -231,10 +225,12 @@ fn probe_no_extract_reports_container_bytes() {
     assert_eq!(json["family"], "container");
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "succeeded");
-    assert!(!json["label"]
-        .as_str()
-        .expect("label")
-        .contains("probe source resolved via"));
+    assert!(
+        !json["label"]
+            .as_str()
+            .expect("label")
+            .contains("probe source resolved via")
+    );
 }
 
 #[test]
@@ -290,10 +286,12 @@ fn list_with_select_reports_selected_nested_container_entries() {
     assert_eq!(json["status"], "succeeded");
     assert_eq!(json["details"]["container"]["entry_count"], 1);
     assert_eq!(json["details"]["container"]["entries"][0], "sample.bin");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("list source resolved via 1 container extract step(s)"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("list source resolved via 1 container extract step(s)")
+    );
 }
 
 #[test]
@@ -446,10 +444,12 @@ fn probe_auto_extract_patch_filter_selects_patch_payload() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "BPS");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("probe source resolved via 1 container extract step(s)"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("probe source resolved via 1 container extract step(s)")
+    );
 }
 
 #[test]
@@ -777,10 +777,12 @@ fn probe_reports_gba_header_profile() {
     assert_eq!(json["family"], "command");
     assert_eq!(json["format"], "rom-header");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("detected ROM header Game Boy Advance"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("detected ROM header Game Boy Advance")
+    );
 }
 
 #[test]
@@ -809,10 +811,12 @@ fn list_rejects_patch_inputs() {
     assert_eq!(json["command"], "list");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("only supported for container formats"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("only supported for container formats")
+    );
 }
 
 #[test]
@@ -825,11 +829,7 @@ fn list_reports_pbp_multi_disc_selectable_outputs() {
     fs::write(source.path(), pbp).expect("pbp fixture");
 
     let json = run_single_json_event(
-        &[
-            "list",
-            source.path().to_str().expect("path"),
-            "--json",
-        ],
+        &["list", source.path().to_str().expect("path"), "--json"],
         0,
     );
     assert_eq!(json["command"], "list");
@@ -899,10 +899,12 @@ fn extract_ignores_common_sidecars_unless_no_ignore() {
     let default_json = parse_single_json_line(&default_output);
     assert_eq!(default_json["command"], "extract");
     assert_eq!(default_json["status"], "succeeded");
-    assert!(default_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("1 file(s)"));
+    assert!(
+        default_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("1 file(s)")
+    );
     assert!(default_out.child("game.bin").path().exists());
     assert!(!default_out.child("notes.txt").path().exists());
     assert!(!default_out.child("meta.json").path().exists());
@@ -1084,7 +1086,10 @@ fn extract_checksum_emits_requested_output_digests() {
 
     let emitted = emitted_file_entry(json, "disc.iso");
     assert_eq!(emitted["checksums"]["crc32"], "7464f267");
-    assert_eq!(emitted["checksums"]["md5"], "47144f4d72878e5b7802e5f736afab21");
+    assert_eq!(
+        emitted["checksums"]["md5"],
+        "47144f4d72878e5b7802e5f736afab21"
+    );
     assert_eq!(
         emitted["checksums"]["sha1"],
         "5ac04f8f0d78f0a446e07ced19af260a36bf3a28"
@@ -1291,10 +1296,12 @@ fn extract_select_glob_reports_missing_match() {
     );
     assert_eq!(json["format"], "zip");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("requested selections were not found"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested selections were not found")
+    );
 }
 
 #[test]
@@ -1355,10 +1362,12 @@ fn extract_pbp_select_missing_target_reports_not_found() {
     );
     assert_eq!(json["format"], "pbp");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("requested selections were not found"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("requested selections were not found")
+    );
 }
 
 #[test]

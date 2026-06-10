@@ -33,7 +33,8 @@ fn patch_apply_succeeds_for_valid_ips_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -119,10 +120,12 @@ fn patch_apply_validates_output_checksum() {
         .clone();
     let ok_json = parse_single_json_line(&ok_output);
     assert_eq!(ok_json["status"], "succeeded");
-    assert!(ok_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("output checksum(s) verified"));
+    assert!(
+        ok_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("output checksum(s) verified")
+    );
 
     // A wrong output checksum fails the apply.
     let bad_output = Command::cargo_bin("rom-weaver")
@@ -148,10 +151,12 @@ fn patch_apply_validates_output_checksum() {
         .clone();
     let bad_json = parse_single_json_line(&bad_output);
     assert_eq!(bad_json["status"], "failed");
-    assert!(bad_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("output checksum mismatch for crc32"));
+    assert!(
+        bad_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("output checksum mismatch for crc32")
+    );
 }
 
 #[test]
@@ -181,7 +186,10 @@ fn patch_apply_can_ignore_recoverable_ips_validation() {
             "--patch",
             temp.child("update.ips").path().to_str().expect("path"),
             "--output",
-            temp.child("strict-output.bin").path().to_str().expect("path"),
+            temp.child("strict-output.bin")
+                .path()
+                .to_str()
+                .expect("path"),
             "--no-compress",
             "--json",
         ])
@@ -194,10 +202,12 @@ fn patch_apply_can_ignore_recoverable_ips_validation() {
     assert_eq!(strict_json["command"], "patch-apply");
     assert_eq!(strict_json["format"], "IPS");
     assert_eq!(strict_json["status"], "failed");
-    assert!(strict_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("invalid zero-length IPS RLE record"));
+    assert!(
+        strict_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("invalid zero-length IPS RLE record")
+    );
 
     let ignored_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
@@ -209,7 +219,10 @@ fn patch_apply_can_ignore_recoverable_ips_validation() {
             "--patch",
             temp.child("update.ips").path().to_str().expect("path"),
             "--output",
-            temp.child("ignored-output.bin").path().to_str().expect("path"),
+            temp.child("ignored-output.bin")
+                .path()
+                .to_str()
+                .expect("path"),
             "--ignore-checksum-validation",
             "--no-compress",
             "--json",
@@ -223,10 +236,12 @@ fn patch_apply_can_ignore_recoverable_ips_validation() {
     assert_eq!(ignored_json["command"], "patch-apply");
     assert_eq!(ignored_json["format"], "IPS");
     assert_eq!(ignored_json["status"], "succeeded");
-    assert!(ignored_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("warning=ignored zero-length IPS RLE record at offset 0"));
+    assert!(
+        ignored_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("warning=ignored zero-length IPS RLE record at offset 0")
+    );
     assert_eq!(
         fs::read(temp.child("ignored-output.bin").path()).expect("output"),
         b"abcdefgh"
@@ -273,10 +288,12 @@ fn patch_apply_warns_when_ips_does_not_change_output() {
     assert_eq!(json["command"], "patch-apply");
     assert_eq!(json["format"], "IPS");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("warning=IPS patch did not change output"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("warning=IPS patch did not change output")
+    );
     assert_eq!(
         fs::read(temp.child("output.bin").path()).expect("output"),
         b"abcdefgh"
@@ -292,7 +309,8 @@ fn patch_apply_reports_pds_as_explicitly_unsupported() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -313,10 +331,12 @@ fn patch_apply_reports_pds_as_explicitly_unsupported() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "PDS");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("explicitly not supported"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("explicitly not supported")
+    );
 }
 
 #[test]
@@ -333,7 +353,8 @@ fn patch_apply_compresses_with_explicit_format_and_appends_extension() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -352,7 +373,8 @@ fn patch_apply_compresses_with_explicit_format_and_appends_extension() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -427,7 +449,8 @@ fn patch_apply_z3ds_compression_uses_matching_container_suffix() {
         Command::cargo_bin("rom-weaver")
             .expect("binary")
             .args([
-                "patch", "create",
+                "patch",
+                "create",
                 "--original",
                 original.path().to_str().expect("path"),
                 "--modified",
@@ -444,7 +467,8 @@ fn patch_apply_z3ds_compression_uses_matching_container_suffix() {
         let apply_output = Command::cargo_bin("rom-weaver")
             .expect("binary")
             .args([
-                "patch", "apply",
+                "patch",
+                "apply",
                 "--input",
                 original.path().to_str().expect("path"),
                 "--patch",
@@ -490,7 +514,8 @@ fn patch_apply_infers_zip_from_output_extension() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -521,7 +546,8 @@ fn patch_apply_infers_zip_from_output_extension() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             input_zip.path().to_str().expect("path"),
             "--patch",
@@ -566,7 +592,9 @@ fn patch_apply_infers_zip_from_output_extension() {
     );
 }
 
-fn make_bps_patch_fixture(temp: &assert_fs::TempDir) -> (assert_fs::fixture::ChildPath, assert_fs::fixture::ChildPath) {
+fn make_bps_patch_fixture(
+    temp: &assert_fs::TempDir,
+) -> (assert_fs::fixture::ChildPath, assert_fs::fixture::ChildPath) {
     let original = temp.child("old.bin");
     let modified = temp.child("new.bin");
     let patch = temp.child("update.bps");
@@ -575,7 +603,8 @@ fn make_bps_patch_fixture(temp: &assert_fs::TempDir) -> (assert_fs::fixture::Chi
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -600,7 +629,8 @@ fn patch_apply_rejects_extensionless_output_without_format() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -633,7 +663,8 @@ fn patch_apply_compress_format_overrides_mismatched_extension_with_warning() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -670,7 +701,8 @@ fn patch_apply_rejects_extract_only_output_extension() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -687,10 +719,12 @@ fn patch_apply_rejects_extract_only_output_extension() {
     let apply_json = parse_single_json_line(&apply_output);
     assert_eq!(apply_json["command"], "patch-apply");
     assert_eq!(apply_json["status"], "failed");
-    assert!(apply_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("extract-only"));
+    assert!(
+        apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("extract-only")
+    );
 }
 
 #[test]
@@ -707,7 +741,8 @@ fn patch_apply_accepts_explicit_compress_format_and_codec() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -724,7 +759,8 @@ fn patch_apply_accepts_explicit_compress_format_and_codec() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -773,7 +809,8 @@ fn patch_apply_rejects_no_compress_with_compress_flags() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -790,7 +827,8 @@ fn patch_apply_rejects_no_compress_with_compress_flags() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -810,10 +848,12 @@ fn patch_apply_rejects_no_compress_with_compress_flags() {
     let apply_json = parse_single_json_line(&apply_output);
     assert_eq!(apply_json["command"], "patch-apply");
     assert_eq!(apply_json["status"], "failed");
-    assert!(apply_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("--no-compress cannot be combined with --compress-format"));
+    assert!(
+        apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("--no-compress cannot be combined with --compress-format")
+    );
 }
 
 #[test]
@@ -834,7 +874,8 @@ fn patch_apply_applies_multiple_patches_in_order() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             intermediate.path().to_str().expect("path"),
             "--modified",
@@ -851,7 +892,8 @@ fn patch_apply_applies_multiple_patches_in_order() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             input.path().to_str().expect("path"),
             "--patch",
@@ -885,10 +927,12 @@ fn patch_apply_applies_multiple_patches_in_order() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "IPS");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("applied 2 patches sequentially"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("applied 2 patches sequentially")
+    );
     assert_eq!(
         fs::read(output.path()).expect("output"),
         fs::read(expected.path()).expect("expected")
@@ -916,7 +960,8 @@ fn patch_apply_succeeds_for_valid_ips32_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -970,7 +1015,8 @@ fn patch_apply_succeeds_for_ips32_patch_with_ips_extension() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -1013,7 +1059,8 @@ fn patch_create_succeeds_for_ips_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1044,7 +1091,8 @@ fn patch_create_succeeds_for_ips_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -1106,10 +1154,12 @@ fn patch_create_warns_for_identical_ips_inputs() {
     assert_eq!(json["command"], "patch-create");
     assert_eq!(json["format"], "IPS");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("warning=IPS patch will not change output"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("warning=IPS patch will not change output")
+    );
     assert_eq!(fs::read(patch.path()).expect("patch"), b"PATCHEOF");
 }
 
@@ -1190,8 +1240,14 @@ fn patch_create_candidates_default_to_xdelta_for_special_compression_inputs() {
     assert_eq!(json["status"], "succeeded");
     let candidates = &json["details"]["patch_create_format_candidates"];
     assert_eq!(candidates["default"], "xdelta");
-    assert_eq!(candidates["source_values"]["original"]["special_compression"], true);
-    assert_eq!(candidates["source_values"]["modified"]["special_compression"], false);
+    assert_eq!(
+        candidates["source_values"]["original"]["special_compression"],
+        true
+    );
+    assert_eq!(
+        candidates["source_values"]["modified"]["special_compression"],
+        false
+    );
 }
 
 #[test]
@@ -1226,7 +1282,10 @@ fn patch_create_candidates_default_to_xdelta_for_archives_above_64_mib() {
     assert_eq!(json["status"], "succeeded");
     let candidates = &json["details"]["patch_create_format_candidates"];
     assert_eq!(candidates["default"], "xdelta");
-    assert_eq!(candidates["limits"]["archive_default_size_bytes"], 64 * 1024 * 1024);
+    assert_eq!(
+        candidates["limits"]["archive_default_size_bytes"],
+        64 * 1024 * 1024
+    );
     assert_eq!(candidates["source_values"]["original"]["archive"], true);
     assert_eq!(candidates["source_values"]["original"]["size"], len);
 }
@@ -1396,10 +1455,12 @@ fn patch_create_rejects_non_xdelta_ppf_formats_above_256_mib() {
     assert_eq!(json["command"], "patch-create");
     assert_eq!(json["format"], "BPS");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("above 268.44 MB"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("above 268.44 MB")
+    );
 }
 
 #[test]
@@ -1437,10 +1498,12 @@ fn patch_create_rejects_classic_ips_at_size_limit_even_when_validation_ignored()
     assert_eq!(strict_json["command"], "patch-create");
     assert_eq!(strict_json["format"], "IPS");
     assert_eq!(strict_json["status"], "failed");
-    assert!(strict_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("at or above 16.78 MB"));
+    assert!(
+        strict_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("at or above 16.78 MB")
+    );
 
     let ignored_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
@@ -1468,10 +1531,12 @@ fn patch_create_rejects_classic_ips_at_size_limit_even_when_validation_ignored()
     assert_eq!(ignored_json["command"], "patch-create");
     assert_eq!(ignored_json["format"], "IPS");
     assert_eq!(ignored_json["status"], "failed");
-    assert!(ignored_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("at or above 16.78 MB"));
+    assert!(
+        ignored_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("at or above 16.78 MB")
+    );
 }
 
 #[test]
@@ -1485,7 +1550,8 @@ fn patch_create_reports_pds_as_explicitly_unsupported() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1507,10 +1573,12 @@ fn patch_create_reports_pds_as_explicitly_unsupported() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "pds");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("explicitly not supported"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("explicitly not supported")
+    );
 }
 
 #[test]
@@ -1525,7 +1593,8 @@ fn patch_create_rejects_ips32_at_large_size() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1549,10 +1618,12 @@ fn patch_create_rejects_ips32_at_large_size() {
     assert_eq!(create_json["family"], "patch");
     assert_eq!(create_json["format"], "IPS32");
     assert_eq!(create_json["status"], "failed");
-    assert!(create_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("at or above 16.78 MB"));
+    assert!(
+        create_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("at or above 16.78 MB")
+    );
 }
 
 #[test]
@@ -1581,7 +1652,8 @@ fn patch_apply_succeeds_for_valid_ebp_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -1627,7 +1699,8 @@ fn patch_create_succeeds_for_ebp_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1663,7 +1736,8 @@ fn patch_create_succeeds_for_ebp_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -1711,7 +1785,8 @@ fn patch_apply_supports_strip_and_add_header_flags() {
     let stripped_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -1743,7 +1818,8 @@ fn patch_apply_supports_strip_and_add_header_flags() {
     let headered_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -1795,7 +1871,8 @@ fn patch_apply_supports_nes_header_strip_and_add_flags() {
     let stripped_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.nes").path().to_str().expect("path"),
             "--patch",
@@ -1819,10 +1896,12 @@ fn patch_apply_supports_nes_header_strip_and_add_flags() {
     assert_eq!(stripped_json["command"], "patch-apply");
     assert_eq!(stripped_json["family"], "patch");
     assert_eq!(stripped_json["status"], "succeeded");
-    assert!(stripped_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("input header stripped (16 bytes, No-Intro_NES.xml)"));
+    assert!(
+        stripped_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("input header stripped (16 bytes, No-Intro_NES.xml)")
+    );
     assert_eq!(
         fs::read(temp.child("output-stripped.nes").path()).expect("output"),
         b"Zbcdefgh".to_vec()
@@ -1831,7 +1910,8 @@ fn patch_apply_supports_nes_header_strip_and_add_flags() {
     let headered_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.nes").path().to_str().expect("path"),
             "--patch",
@@ -1883,7 +1963,8 @@ fn patch_apply_repair_checksum_repairs_genesis_header() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -1904,10 +1985,12 @@ fn patch_apply_repair_checksum_repairs_genesis_header() {
     assert_eq!(json["command"], "patch-apply");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("repaired checksum (sega-genesis)"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("repaired checksum (sega-genesis)")
+    );
 
     let output_bytes = fs::read(temp.child("output.bin").path()).expect("output");
     let expected = sega_genesis_checksum(&output_bytes);
@@ -1936,7 +2019,8 @@ fn patch_apply_repair_checksum_repairs_gba_header() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.gba").path().to_str().expect("path"),
             "--patch",
@@ -1957,10 +2041,12 @@ fn patch_apply_repair_checksum_repairs_gba_header() {
     assert_eq!(json["command"], "patch-apply");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("repaired checksum (gba)"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("repaired checksum (gba)")
+    );
 
     let output_bytes = fs::read(temp.child("output.gba").path()).expect("output");
     assert_eq!(output_bytes[0x1BD], gba_header_checksum(&output_bytes));
@@ -1989,7 +2075,8 @@ fn patch_apply_repair_checksum_repairs_nds_header_crc() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.nds").path().to_str().expect("path"),
             "--patch",
@@ -2044,7 +2131,8 @@ fn patch_apply_repair_checksum_warns_for_unsupported_targets() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -2065,10 +2153,12 @@ fn patch_apply_repair_checksum_warns_for_unsupported_targets() {
     assert_eq!(json["command"], "patch-apply");
     assert_eq!(json["family"], "patch");
     assert_eq!(json["status"], "succeeded");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("warning=no supported header repair profile matched; output left unchanged"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("warning=no supported header repair profile matched; output left unchanged")
+    );
 }
 
 #[test]
@@ -2084,7 +2174,8 @@ fn patch_apply_succeeds_for_valid_solid_patch() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2101,7 +2192,8 @@ fn patch_apply_succeeds_for_valid_solid_patch() {
     let output_bytes = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -2147,7 +2239,8 @@ fn patch_create_succeeds_for_solid_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2178,7 +2271,8 @@ fn patch_create_succeeds_for_solid_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -2218,7 +2312,8 @@ fn patch_create_treats_vcdiff_as_xdelta_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2249,7 +2344,8 @@ fn patch_create_treats_vcdiff_as_xdelta_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -2288,7 +2384,8 @@ fn patch_create_succeeds_for_bps_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2319,7 +2416,8 @@ fn patch_create_succeeds_for_bps_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -2359,7 +2457,8 @@ fn patch_apply_auto_extracts_single_payload_by_default() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2390,7 +2489,8 @@ fn patch_apply_auto_extracts_single_payload_by_default() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             archive.path().to_str().expect("path"),
             "--patch",
@@ -2411,10 +2511,12 @@ fn patch_apply_auto_extracts_single_payload_by_default() {
     assert_eq!(apply_json["family"], "patch");
     assert_eq!(apply_json["format"], "BPS");
     assert_eq!(apply_json["status"], "succeeded");
-    assert!(apply_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("patch apply input source resolved via 1 container extract step(s)"));
+    assert!(
+        apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("patch apply input source resolved via 1 container extract step(s)")
+    );
     assert_eq!(
         fs::read(output.path()).expect("output"),
         fs::read(modified.path()).expect("modified")
@@ -2502,7 +2604,8 @@ fn patch_apply_no_extract_uses_raw_container_bytes() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2533,7 +2636,8 @@ fn patch_apply_no_extract_uses_raw_container_bytes() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             archive.path().to_str().expect("path"),
             "--patch",
@@ -2555,10 +2659,12 @@ fn patch_apply_no_extract_uses_raw_container_bytes() {
     assert_eq!(apply_json["family"], "patch");
     assert_eq!(apply_json["format"], "BPS");
     assert_eq!(apply_json["status"], "failed");
-    assert!(!apply_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("patch apply input source resolved via"));
+    assert!(
+        !apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("patch apply input source resolved via")
+    );
 }
 
 #[test]
@@ -2577,7 +2683,8 @@ fn patch_apply_auto_extract_ambiguity_requires_select() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             alpha.path().to_str().expect("path"),
             "--modified",
@@ -2609,7 +2716,8 @@ fn patch_apply_auto_extract_ambiguity_requires_select() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             archive.path().to_str().expect("path"),
             "--patch",
@@ -2656,7 +2764,8 @@ fn patch_apply_auto_extract_pbp_multi_disc_requires_select() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             patch_source.path().to_str().expect("path"),
             "--modified",
@@ -2674,7 +2783,8 @@ fn patch_apply_auto_extract_pbp_multi_disc_requires_select() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             source.path().to_str().expect("path"),
             "--patch",
@@ -2715,7 +2825,8 @@ fn patch_apply_auto_extract_select_resolves_ambiguity() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             alpha.path().to_str().expect("path"),
             "--modified",
@@ -2747,7 +2858,8 @@ fn patch_apply_auto_extract_select_resolves_ambiguity() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             archive.path().to_str().expect("path"),
             "--patch",
@@ -2770,10 +2882,12 @@ fn patch_apply_auto_extract_select_resolves_ambiguity() {
     assert_eq!(apply_json["family"], "patch");
     assert_eq!(apply_json["format"], "BPS");
     assert_eq!(apply_json["status"], "succeeded");
-    assert!(apply_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("patch apply input source resolved via 1 container extract step(s)"));
+    assert!(
+        apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("patch apply input source resolved via 1 container extract step(s)")
+    );
     assert_eq!(
         fs::read(output.path()).expect("output"),
         fs::read(alpha_modified.path()).expect("alpha modified")
@@ -2796,7 +2910,8 @@ fn patch_apply_auto_extract_filters_input_and_patch_roles() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2843,7 +2958,8 @@ fn patch_apply_auto_extract_filters_input_and_patch_roles() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             input_archive.path().to_str().expect("path"),
             "--patch",
@@ -2892,7 +3008,8 @@ fn patch_apply_auto_extract_patch_archive_ambiguity_requires_select() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2909,7 +3026,8 @@ fn patch_apply_auto_extract_patch_archive_ambiguity_requires_select() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -2941,7 +3059,8 @@ fn patch_apply_auto_extract_patch_archive_ambiguity_requires_select() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -2985,7 +3104,8 @@ fn patch_apply_auto_extract_patch_archive_select_resolves_ambiguity() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3002,7 +3122,8 @@ fn patch_apply_auto_extract_patch_archive_select_resolves_ambiguity() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3034,7 +3155,8 @@ fn patch_apply_auto_extract_patch_archive_select_resolves_ambiguity() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3057,10 +3179,12 @@ fn patch_apply_auto_extract_patch_archive_select_resolves_ambiguity() {
     assert_eq!(apply_json["family"], "patch");
     assert_eq!(apply_json["format"], "BPS");
     assert_eq!(apply_json["status"], "succeeded");
-    assert!(apply_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("patch apply patch source resolved via 1 container extract step(s)"));
+    assert!(
+        apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("patch apply patch source resolved via 1 container extract step(s)")
+    );
     assert_eq!(
         fs::read(output.path()).expect("output"),
         fs::read(modified_a.path()).expect("modified")
@@ -3085,7 +3209,8 @@ fn patch_apply_auto_extract_ignores_sidecars_unless_no_ignore() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3118,7 +3243,8 @@ fn patch_apply_auto_extract_ignores_sidecars_unless_no_ignore() {
     let default_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             archive.path().to_str().expect("path"),
             "--patch",
@@ -3144,7 +3270,8 @@ fn patch_apply_auto_extract_ignores_sidecars_unless_no_ignore() {
     let no_ignore_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             archive.path().to_str().expect("path"),
             "--patch",
@@ -3183,7 +3310,8 @@ fn patch_apply_can_ignore_checksum_validation_for_bps() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3200,7 +3328,8 @@ fn patch_apply_can_ignore_checksum_validation_for_bps() {
     let strict_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             mismatched_input.path().to_str().expect("path"),
             "--patch",
@@ -3221,15 +3350,18 @@ fn patch_apply_can_ignore_checksum_validation_for_bps() {
     assert_eq!(strict_json["family"], "patch");
     assert_eq!(strict_json["format"], "BPS");
     assert_eq!(strict_json["status"], "failed");
-    assert!(strict_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("Input checksum invalid"));
+    assert!(
+        strict_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("Input checksum invalid")
+    );
 
     let ignored_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             mismatched_input.path().to_str().expect("path"),
             "--patch",
@@ -3251,10 +3383,12 @@ fn patch_apply_can_ignore_checksum_validation_for_bps() {
     assert_eq!(ignored_json["family"], "patch");
     assert_eq!(ignored_json["format"], "BPS");
     assert_eq!(ignored_json["status"], "succeeded");
-    assert!(ignored_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("checksum validation skipped"));
+    assert!(
+        ignored_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("checksum validation skipped")
+    );
 }
 
 #[test]
@@ -3270,7 +3404,8 @@ fn patch_apply_accepts_multiple_validate_with_checksum_values() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3290,7 +3425,8 @@ fn patch_apply_accepts_multiple_validate_with_checksum_values() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3338,7 +3474,8 @@ fn patch_apply_fails_on_mismatched_validate_with_checksum_value() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3355,7 +3492,8 @@ fn patch_apply_fails_on_mismatched_validate_with_checksum_value() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3377,10 +3515,12 @@ fn patch_apply_fails_on_mismatched_validate_with_checksum_value() {
     assert_eq!(apply_json["command"], "patch-apply");
     assert_eq!(apply_json["family"], "patch");
     assert_eq!(apply_json["status"], "failed");
-    assert!(apply_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("input checksum mismatch for crc32"));
+    assert!(
+        apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("input checksum mismatch for crc32")
+    );
 }
 
 #[test]
@@ -3396,7 +3536,8 @@ fn patch_apply_uses_checksum_cache_hint_for_validation() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3413,7 +3554,8 @@ fn patch_apply_uses_checksum_cache_hint_for_validation() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3459,7 +3601,8 @@ fn probe_patch_reports_expected_checksums_for_bps() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3508,7 +3651,8 @@ fn probe_patch_reports_structured_summary_for_ups() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3566,7 +3710,8 @@ fn patch_create_succeeds_for_bdf_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3600,7 +3745,8 @@ fn patch_create_succeeds_for_bdf_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3681,7 +3827,8 @@ fn patch_create_succeeds_for_ups_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3712,7 +3859,8 @@ fn patch_create_succeeds_for_ups_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3752,7 +3900,8 @@ fn patch_create_succeeds_for_rup_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3783,7 +3932,8 @@ fn patch_create_succeeds_for_rup_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3811,7 +3961,8 @@ fn patch_create_succeeds_for_rup_and_round_trips() {
     let reverse_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             output.path().to_str().expect("path"),
             "--patch",
@@ -3850,7 +4001,8 @@ fn patch_create_succeeds_for_ppf_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3881,7 +4033,8 @@ fn patch_create_succeeds_for_ppf_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3929,7 +4082,8 @@ fn patch_create_succeeds_for_aps_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -3960,7 +4114,8 @@ fn patch_create_succeeds_for_aps_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -3996,7 +4151,8 @@ fn patch_create_succeeds_for_mod_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -4027,7 +4183,8 @@ fn patch_create_succeeds_for_mod_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -4077,7 +4234,8 @@ fn patch_create_succeeds_for_dldi_and_round_trips() {
     let seed_apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -4106,7 +4264,8 @@ fn patch_create_succeeds_for_dldi_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -4137,7 +4296,8 @@ fn patch_create_succeeds_for_dldi_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -4184,7 +4344,8 @@ fn patch_apply_warns_and_succeeds_for_oversized_dldi_driver() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -4241,7 +4402,8 @@ fn patch_apply_reports_unsupported_for_misaligned_dldi_slot() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             input.path().to_str().expect("path"),
             "--patch",
@@ -4281,7 +4443,8 @@ fn patch_create_succeeds_for_dps_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -4325,7 +4488,8 @@ fn patch_create_succeeds_for_dps_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -4367,7 +4531,8 @@ fn patch_apply_can_ignore_checksum_validation_for_dps() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -4384,7 +4549,8 @@ fn patch_apply_can_ignore_checksum_validation_for_dps() {
     let strict_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             mismatched_input.path().to_str().expect("path"),
             "--patch",
@@ -4404,15 +4570,18 @@ fn patch_apply_can_ignore_checksum_validation_for_dps() {
     assert_eq!(strict_json["family"], "patch");
     assert_eq!(strict_json["format"], "DPS");
     assert_eq!(strict_json["status"], "failed");
-    assert!(strict_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("source size mismatch"));
+    assert!(
+        strict_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("source size mismatch")
+    );
 
     let ignored_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             mismatched_input.path().to_str().expect("path"),
             "--patch",
@@ -4433,10 +4602,12 @@ fn patch_apply_can_ignore_checksum_validation_for_dps() {
     assert_eq!(ignored_json["family"], "patch");
     assert_eq!(ignored_json["format"], "DPS");
     assert_eq!(ignored_json["status"], "succeeded");
-    assert!(ignored_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("checksum validation skipped"));
+    assert!(
+        ignored_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("checksum validation skipped")
+    );
     assert_eq!(
         fs::read(output.path()).expect("output"),
         fs::read(modified.path()).expect("modified")
@@ -4456,7 +4627,8 @@ fn patch_create_succeeds_for_gdiff_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -4491,7 +4663,8 @@ fn patch_create_succeeds_for_gdiff_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -4535,7 +4708,8 @@ fn patch_create_reports_unsupported_for_hdiffpatch() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -4559,10 +4733,12 @@ fn patch_create_reports_unsupported_for_hdiffpatch() {
     assert_eq!(create_json["family"], "patch");
     assert_eq!(create_json["format"], "HDiffPatch/HPatchZ");
     assert_eq!(create_json["status"], "unsupported");
-    assert!(create_json["label"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("patch creation is disabled"));
+    assert!(
+        create_json["label"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("patch creation is disabled")
+    );
 }
 
 #[test]
@@ -4582,7 +4758,8 @@ fn patch_apply_hdiffpatch_reports_parallel_execution_for_multi_chunk_patch() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             input.path().to_str().expect("path"),
             "--patch",
@@ -4631,7 +4808,8 @@ fn patch_apply_hpatchz_sf20_reports_parallel_execution_for_multi_step_payload() 
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             input.path().to_str().expect("path"),
             "--patch",
@@ -4680,7 +4858,8 @@ fn patch_apply_hpatchz_sf20_reports_parallel_fallback_for_single_step_payload() 
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             input.path().to_str().expect("path"),
             "--patch",
@@ -4706,10 +4885,12 @@ fn patch_apply_hpatchz_sf20_reports_parallel_fallback_for_single_step_payload() 
     assert_eq!(apply_json["effective_threads"], 1);
     assert_eq!(apply_json["used_parallelism"], false);
     assert_eq!(apply_json["thread_fallback"], true);
-    assert!(apply_json["thread_fallback_reason"]
-        .as_str()
-        .expect("thread fallback reason")
-        .contains("no independent step-level parallel work"));
+    assert!(
+        apply_json["thread_fallback_reason"]
+            .as_str()
+            .expect("thread fallback reason")
+            .contains("no independent step-level parallel work")
+    );
     assert_eq!(apply_json["status"], "succeeded");
     assert_eq!(fs::read(output.path()).expect("output"), source);
 }
@@ -4726,7 +4907,8 @@ fn patch_apply_hdiff19_directory_patch_reports_unsupported() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             input.path().to_str().expect("path"),
             "--patch",
@@ -4749,10 +4931,12 @@ fn patch_apply_hdiff19_directory_patch_reports_unsupported() {
     assert_eq!(apply_json["family"], "patch");
     assert_eq!(apply_json["format"], "HDiffPatch/HPatchZ");
     assert_eq!(apply_json["status"], "unsupported");
-    assert!(apply_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("directory patches (HDIFF19) are not supported"));
+    assert!(
+        apply_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("directory patches (HDIFF19) are not supported")
+    );
 }
 
 #[test]
@@ -4772,7 +4956,8 @@ fn patch_apply_succeeds_for_valid_gdiff_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -4820,7 +5005,8 @@ fn patch_apply_succeeds_for_valid_ffp_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -4868,7 +5054,8 @@ fn patch_create_succeeds_for_pat_and_round_trips() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -4902,7 +5089,8 @@ fn patch_create_succeeds_for_pat_and_round_trips() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -4942,7 +5130,8 @@ fn patch_create_succeeds_for_xdelta_with_secondary_when_helpful() {
     let create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -4969,7 +5158,11 @@ fn patch_create_succeeds_for_xdelta_with_secondary_when_helpful() {
     assert_eq!(create_json["format"], "xdelta");
     assert_eq!(create_json["requested_threads"], 8);
     assert!(
-        (1..=8).contains(&create_json["effective_threads"].as_u64().expect("effective_threads"))
+        (1..=8).contains(
+            &create_json["effective_threads"]
+                .as_u64()
+                .expect("effective_threads")
+        )
     );
     assert_eq!(create_json["used_parallelism"], true);
     assert_eq!(create_json["status"], "succeeded");
@@ -4985,7 +5178,8 @@ fn patch_create_succeeds_for_xdelta_with_secondary_when_helpful() {
     let apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -5132,7 +5326,8 @@ fn probe_succeeds_for_valid_dps_patch() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -5330,7 +5525,8 @@ fn probe_succeeds_for_valid_solid_patch() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -5384,7 +5580,8 @@ fn patch_apply_succeeds_for_valid_xdelta_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -5439,7 +5636,8 @@ fn patch_apply_can_ignore_checksum_validation_for_xdelta() {
     let strict_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -5460,15 +5658,18 @@ fn patch_apply_can_ignore_checksum_validation_for_xdelta() {
     assert_eq!(strict_json["family"], "patch");
     assert_eq!(strict_json["format"], "xdelta");
     assert_eq!(strict_json["status"], "failed");
-    assert!(strict_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("checksum mismatch"));
+    assert!(
+        strict_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("checksum mismatch")
+    );
 
     let ignored_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -5490,10 +5691,12 @@ fn patch_apply_can_ignore_checksum_validation_for_xdelta() {
     assert_eq!(ignored_json["family"], "patch");
     assert_eq!(ignored_json["format"], "xdelta");
     assert_eq!(ignored_json["status"], "succeeded");
-    assert!(ignored_json["label"]
-        .as_str()
-        .expect("label")
-        .contains("checksum validation skipped"));
+    assert!(
+        ignored_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("checksum validation skipped")
+    );
     assert_eq!(
         fs::read(temp.child("output.bin").path()).expect("output"),
         expected
@@ -5523,7 +5726,8 @@ fn patch_validate_detects_xdelta_window_checksum_mismatch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "validate",
+            "patch",
+            "validate",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -5541,10 +5745,12 @@ fn patch_validate_detects_xdelta_window_checksum_mismatch() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "xdelta");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("checksum mismatch"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("checksum mismatch")
+    );
 }
 
 #[test]
@@ -5559,7 +5765,8 @@ fn patch_validate_succeeds_with_source_values() {
     Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -5574,11 +5781,15 @@ fn patch_validate_succeeds_with_source_values() {
         .code(0);
 
     let input_crc32 = checksum_value(original.path(), "crc32");
-    let input_size = fs::metadata(original.path()).expect("metadata").len().to_string();
+    let input_size = fs::metadata(original.path())
+        .expect("metadata")
+        .len()
+        .to_string();
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "validate",
+            "patch",
+            "validate",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
@@ -5668,7 +5879,8 @@ fn patch_validate_succeeds_for_native_validate_formats() {
         let output = Command::cargo_bin("rom-weaver")
             .expect("binary")
             .args([
-                "patch", "validate",
+                "patch",
+                "validate",
                 "--input",
                 temp.child(input_name).path().to_str().expect("path"),
                 "--patch",
@@ -5689,10 +5901,12 @@ fn patch_validate_succeeds_for_native_validate_formats() {
         assert_eq!(json["format"], expected_format);
         assert_eq!(json["status"], "succeeded");
         assert_eq!(json["details"]["patch_validation"]["status"], "passed");
-        assert!(json["label"]
-            .as_str()
-            .expect("label")
-            .contains("patch validation passed"));
+        assert!(
+            json["label"]
+                .as_str()
+                .expect("label")
+                .contains("patch validation passed")
+        );
     }
 }
 
@@ -5717,7 +5931,8 @@ fn patch_validate_rejects_apsgba_checksum_mismatch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "validate",
+            "patch",
+            "validate",
             "--input",
             temp.child("wrong-input.gba").path().to_str().expect("path"),
             "--patch",
@@ -5735,10 +5950,12 @@ fn patch_validate_rejects_apsgba_checksum_mismatch() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "APSGBA");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("Source checksum invalid"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("Source checksum invalid")
+    );
 }
 
 #[test]
@@ -5750,7 +5967,8 @@ fn patch_apply_succeeds_for_valid_bps_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -5804,7 +6022,8 @@ fn patch_apply_succeeds_for_valid_ppf_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -5857,7 +6076,8 @@ fn patch_apply_succeeds_for_valid_aps_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.gba").path().to_str().expect("path"),
             "--patch",
@@ -5903,7 +6123,8 @@ fn patch_apply_succeeds_for_valid_mod_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -5964,7 +6185,8 @@ fn patch_apply_uses_parallel_threads_for_large_ips_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -6025,7 +6247,8 @@ fn patch_apply_falls_back_to_single_thread_when_pool_build_fails() {
         .expect("binary")
         .env("ROM_WEAVER_TEST_THREAD_POOL_FAIL", "multi")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -6052,10 +6275,12 @@ fn patch_apply_falls_back_to_single_thread_when_pool_build_fails() {
     assert_eq!(json["thread_mode"], "fixed");
     assert_eq!(json["used_parallelism"], false);
     assert_eq!(json["thread_fallback"], true);
-    assert!(json["thread_fallback_reason"]
-        .as_str()
-        .expect("thread fallback reason")
-        .contains("forced thread pool build failure (multi)"));
+    assert!(
+        json["thread_fallback_reason"]
+            .as_str()
+            .expect("thread fallback reason")
+            .contains("forced thread pool build failure (multi)")
+    );
     assert_eq!(json["status"], "succeeded");
 
     let output_bytes = fs::read(temp.child("output.bin").path()).expect("output");
@@ -6081,7 +6306,8 @@ fn patch_apply_succeeds_for_secondary_xdelta_patch_with_parallel_threads() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -6150,7 +6376,8 @@ fn patch_apply_uses_parallel_threads_for_multi_window_xdelta_patch() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             temp.child("input.bin").path().to_str().expect("path"),
             "--patch",
@@ -6264,10 +6491,12 @@ fn probe_reports_pds_as_explicitly_unsupported() {
     assert_eq!(json["family"], "patch");
     assert_eq!(json["format"], "PDS");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("explicitly not supported"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("explicitly not supported")
+    );
 }
 
 #[test]
@@ -6283,7 +6512,8 @@ fn patch_create_infers_format_from_output_extension() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -6316,7 +6546,8 @@ fn patch_create_rejects_extensionless_output_without_format() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -6333,10 +6564,12 @@ fn patch_create_rejects_extensionless_output_without_format() {
     let json = parse_single_json_line(&output);
     assert_eq!(json["command"], "patch-create");
     assert_eq!(json["status"], "failed");
-    assert!(json["label"]
-        .as_str()
-        .expect("label")
-        .contains("output has no file extension"));
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("output has no file extension")
+    );
     assert!(!patch.path().exists());
 }
 
@@ -6353,7 +6586,8 @@ fn patch_create_format_flag_overrides_mismatched_extension_with_warning() {
     let output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",

@@ -1506,7 +1506,12 @@ fn trim_in_place_rom_only_archive_repacks() {
 
     let terminal = parse_single_json_line(&output);
     assert_eq!(terminal["status"], "succeeded");
-    assert!(terminal["label"].as_str().expect("label").contains("processed=1"));
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("processed=1")
+    );
 
     // The repacked archive contains the trimmed ROM.
     Command::cargo_bin("rom-weaver")
@@ -1588,8 +1593,5 @@ fn trim_without_revert_marker_writes_no_footer() {
         .assert()
         .code(0);
     // Opt-in: without --revert-marker the trim is a clean truncation with no footer appended.
-    assert_eq!(
-        fs::read(trimmed.path()).expect("trimmed gba").len(),
-        0x3456
-    );
+    assert_eq!(fs::read(trimmed.path()).expect("trimmed gba").len(), 0x3456);
 }

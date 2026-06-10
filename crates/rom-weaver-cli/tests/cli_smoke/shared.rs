@@ -125,9 +125,7 @@ fn assert_running_percent_event(events: &[Value], command: &str, format: &str) {
 fn assert_running_event(events: &[Value], command: &str, format: &str) {
     assert!(
         events.iter().any(|event| {
-            event["command"] == command
-                && event["status"] == "running"
-                && event["format"] == format
+            event["command"] == command && event["status"] == "running" && event["format"] == format
         }),
         "expected {command} ({format}) to emit running progress"
     );
@@ -182,7 +180,9 @@ fn assert_emitted_file(json: &Value, expected_path: &std::path::Path, expected_k
         entry["size_bytes"],
         fs::metadata(expected_path).expect("file metadata").len()
     );
-    if let Some(kind) = expected_kind { assert_eq!(entry["kind"], kind) }
+    if let Some(kind) = expected_kind {
+        assert_eq!(entry["kind"], kind)
+    }
 }
 
 fn label_digest_value<'a>(label: &'a str, key: &str) -> Option<&'a str> {
@@ -391,7 +391,9 @@ fn write_gcz_fixture_from_iso(iso_path: &Path, gcz_path: &Path) {
     output
         .write_all(&[0x01, 0xC0, 0x0B, 0xB1])
         .expect("write gcz magic");
-    output.write_all(&0_u32.to_le_bytes()).expect("write gcz disc type");
+    output
+        .write_all(&0_u32.to_le_bytes())
+        .expect("write gcz disc type");
     output
         .write_all(&compressed_size.to_le_bytes())
         .expect("write gcz compressed size");
@@ -1527,7 +1529,10 @@ fn non_json_default_suppresses_running_progress_without_tty() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     // Default human output renders the result table on stdout...
-    assert!(stdout.contains("CRC32"), "expected checksum result on stdout, got: {stdout}");
+    assert!(
+        stdout.contains("CRC32"),
+        "expected checksum result on stdout, got: {stdout}"
+    );
     // ...and suppresses running progress without a tty or --progress.
     assert!(
         !stderr.contains('%'),
@@ -1562,7 +1567,10 @@ fn progress_flag_enables_running_progress_without_json() {
         "expected --progress to emit running progress on stderr, got: {stderr}"
     );
     // ...while the final result still renders on stdout.
-    assert!(stdout.contains("CRC32"), "expected checksum result on stdout, got: {stdout}");
+    assert!(
+        stdout.contains("CRC32"),
+        "expected checksum result on stdout, got: {stdout}"
+    );
 }
 
 #[test]
@@ -1640,7 +1648,10 @@ fn extract_progress_text_reports_elapsed_and_files() {
         "expected extract progress on stderr, got: {stderr}"
     );
     // ...and the summary table on stdout lists the extracted file and count.
-    assert!(stdout.contains("sample.bin"), "expected extracted file in summary, got: {stdout}");
+    assert!(
+        stdout.contains("sample.bin"),
+        "expected extracted file in summary, got: {stdout}"
+    );
     assert!(
         stdout.contains("1 file(s) written"),
         "expected file count in summary, got: {stdout}"
@@ -1762,7 +1773,8 @@ fn terminal_progress_percent_uses_100_scale_for_core_commands() {
     let patch_create_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "create",
+            "patch",
+            "create",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1789,7 +1801,8 @@ fn terminal_progress_percent_uses_100_scale_for_core_commands() {
     let patch_apply_output = Command::cargo_bin("rom-weaver")
         .expect("binary")
         .args([
-            "patch", "apply",
+            "patch",
+            "apply",
             "--input",
             original.path().to_str().expect("path"),
             "--patch",
