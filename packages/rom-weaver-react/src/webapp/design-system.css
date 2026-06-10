@@ -118,22 +118,80 @@
 
 /* drop affordance */
 .rw-app .drop {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  min-height: var(--rw-ctl); width: 100%; padding: 7px 12px;
-  border: 1px dashed var(--rw-line-strong); border-radius: 6px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 60px; width: 100%; padding: 12px 16px;
+  border: 1px solid color-mix(in oklab, var(--rw-accent) 16%, var(--rw-line-strong)); border-radius: 8px;
   background: var(--rw-inset); color: var(--rw-ink-soft); font-size: 0.896552rem; cursor: pointer;
-  transition: border-color .12s, background .12s, color .12s;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .16);
+  transition: border-color .14s, background .14s, color .14s, box-shadow .14s;
 }
-.rw-app .drop:hover { border-color: var(--rw-accent); color: var(--rw-ink); background: color-mix(in oklab, var(--rw-accent) 8%, var(--rw-inset)); }
-.rw-app .drop.big { min-height: 88px; }
-.rw-app .drop .main { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; }
-.rw-app .drop .main svg { width: 16px; height: 16px; opacity: .85; }
-.rw-app .drop .hint { font-size: 0.758621rem; color: var(--rw-ink-mut); }
-.rw-app .drop.dragging { border-color: var(--rw-accent); border-style: solid; background: color-mix(in oklab, var(--rw-accent) 15%, var(--rw-inset)); color: var(--rw-ink); }
-.rw-app .drop.dragging svg { color: var(--rw-accent); opacity: 1; }
-.rw-app .drop.reading { border-style: solid; border-color: var(--rw-line-strong); color: var(--rw-ink); cursor: progress; }
-.rw-app .unified-drop { display: flex; flex-direction: column; }
-.rw-app .unified-drop-actions { display: flex; justify-content: center; margin-top: 7px; }
+.rw-app .drop:hover {
+  border-color: color-mix(in oklab, var(--rw-accent) 55%, var(--rw-line-strong));
+  background: color-mix(in oklab, var(--rw-accent) 7%, var(--rw-inset)); color: var(--rw-ink);
+}
+.rw-app .drop .main { display: inline-flex; align-items: center; gap: 9px; font-weight: 650; color: var(--rw-ink); }
+.rw-app .drop .main svg { width: 16px; height: 16px; color: var(--rw-ink-mut); transition: color .14s, background .14s; }
+.rw-app .drop:hover .main svg { color: var(--rw-accent); }
+.rw-app .drop .hint { font-size: 0.74rem; color: var(--rw-ink-mut); }
+/* empty-state hero */
+.rw-app .drop.big {
+  min-height: min(300px, 42vh); gap: 13px; padding: 32px 24px;
+  background:
+    radial-gradient(125% 78% at 50% 0%, color-mix(in oklab, var(--rw-accent) 9%, transparent), transparent 62%),
+    var(--rw-inset);
+}
+.rw-app .drop.big .main { flex-direction: column; gap: 15px; font-size: 1.15rem; font-weight: 700; }
+.rw-app .drop.big .main svg {
+  width: 26px; height: 26px; box-sizing: content-box; padding: 15px; border-radius: 16px;
+  color: var(--rw-accent); background: color-mix(in oklab, var(--rw-accent) 13%, transparent);
+}
+.rw-app .drop.big:hover .main svg { background: color-mix(in oklab, var(--rw-accent) 20%, transparent); }
+.rw-app .drop.big .hint { font-size: 0.85rem; }
+/* drag + reading feedback */
+.rw-app .drop.dragging {
+  border-color: var(--rw-accent); color: var(--rw-ink);
+  background: color-mix(in oklab, var(--rw-accent) 12%, var(--rw-inset));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--rw-accent) 22%, transparent);
+}
+.rw-app .drop.dragging .main svg, .rw-app .drop.dragging svg { color: var(--rw-accent); }
+.rw-app .drop.reading { border-color: var(--rw-line-strong); color: var(--rw-ink); cursor: progress; }
+/* Once the form has content the inline surface stays understated — a slim bar
+   whose hint stays hidden until you hover it, so it does not compete with the
+   real sections. */
+.rw-app .drop:not(.big) { min-height: 40px; padding: 7px 14px; gap: 2px; }
+/* The inline (non-empty) surface is a slim bar — hug it tightly so it doesn't
+   read as a big empty section above the real content. */
+.rw-app .unified-drop-step:not(.unified-drop-step--hero) .step-body { padding-top: 10px; padding-bottom: 12px; }
+.rw-app .drop:not(.big) .hint {
+  max-height: 0; opacity: 0; overflow: hidden;
+  transition: max-height .2s ease, opacity .18s ease;
+}
+.rw-app .drop:not(.big):hover .hint,
+.rw-app.rw-page-dragging .drop:not(.big) .hint { max-height: 2.2em; opacity: 1; }
+/* Dragging a file anywhere over the page arms every dropzone with a gentle
+   accent pulse, inviting the page-level drop. A direct drag over the box wins. */
+.rw-app.rw-page-dragging .drop {
+  border-color: var(--rw-accent); color: var(--rw-ink);
+  animation: rw-drop-pulse 1.5s ease-in-out infinite;
+}
+.rw-app.rw-page-dragging .drop:not(.big) { background: color-mix(in oklab, var(--rw-accent) 8%, var(--rw-panel-2)); }
+.rw-app.rw-page-dragging .drop .main svg { color: var(--rw-accent); }
+.rw-app.rw-page-dragging .drop.dragging { animation: none; }
+@keyframes rw-drop-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--rw-accent) 0%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--rw-accent) 20%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rw-app.rw-page-dragging .drop {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--rw-accent) 18%, transparent);
+  }
+}
+/* Swap control sits centered on the divider between the Original and Modified
+   cards, masking the section border so it reads as the hinge between them. */
+.rw-app .create-swap-row { display: flex; justify-content: center; height: 0; margin: 0; position: relative; z-index: 1; pointer-events: none; }
+.rw-app .create-swap-btn { pointer-events: auto; transform: translateY(-50%); height: 28px; gap: 6px; padding: 0 13px; font-size: 0.72rem; letter-spacing: .04em; background: var(--rw-panel); }
+.rw-app .create-swap-btn svg { width: 13px; height: 13px; }
 .rw-app .workflow-file-list { position: relative; display: flex; flex-direction: column; gap: 14px; }
 .rw-app .workflow-file-list:not(:empty), .rw-app .workflow-step-after-items:not(:empty) { margin-bottom: 14px; }
 /* inside the list, spacing comes from the flex gap only — override the generic

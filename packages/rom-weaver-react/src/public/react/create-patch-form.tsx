@@ -1,3 +1,4 @@
+import ArrowUpDown from "lucide-react/dist/esm/icons/arrow-up-down.js";
 import Download from "lucide-react/dist/esm/icons/download.js";
 import GitCompare from "lucide-react/dist/esm/icons/git-compare.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -239,7 +240,10 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     [modified],
   );
   const candidateWorkerThreads = props.workerThreads ?? settings.workers?.threads;
-  const patchFormatCandidateKey = `${originalSourceKey}\n${modifiedSourceKey}\n${String(candidateWorkerThreads ?? "")}`;
+  // Canonical (order-independent) key: the available patch formats for a pair of
+  // ROMs do not depend on which is original vs modified, so swapping must not
+  // invalidate the resolved candidates (which would re-extract to re-measure).
+  const patchFormatCandidateKey = `${[originalSourceKey, modifiedSourceKey].sort().join("\n")}\n${String(candidateWorkerThreads ?? "")}`;
   const activePatchFormatCandidates =
     createPatchFormatCandidates?.key === patchFormatCandidateKey ? createPatchFormatCandidates : null;
   const requestedPatchType = props.patchType || internalPatchType;
@@ -358,9 +362,18 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     clearProgressForStage("input");
   }, [clearProgressForStage]);
 
+  const resolvedCandidateKeyRef = useRef("");
   useEffect(() => {
+    if (!(original && modified && originalSourceKey && modifiedSourceKey)) {
+      resolvedCandidateKeyRef.current = "";
+      setCreatePatchFormatCandidates(null);
+      return;
+    }
+    // Same pair already resolved (e.g. after a Swap, the canonical key is
+    // unchanged) — keep the candidates instead of re-extracting to re-measure.
+    if (resolvedCandidateKeyRef.current === patchFormatCandidateKey) return;
+    resolvedCandidateKeyRef.current = patchFormatCandidateKey;
     setCreatePatchFormatCandidates(null);
-    if (!(original && modified && originalSourceKey && modifiedSourceKey)) return;
     const key = patchFormatCandidateKey;
     let cancelled = false;
     void resolveCreatePatchFormatCandidates({
@@ -378,7 +391,9 @@ function CreatePatchForm(props: CreatePatchFormProps) {
         setCreatePatchFormatCandidates({ ...candidates, key });
       })
       .catch(() => {
-        if (!cancelled) setCreatePatchFormatCandidates(null);
+        if (cancelled) return;
+        resolvedCandidateKeyRef.current = "";
+        setCreatePatchFormatCandidates(null);
       });
     return () => {
       cancelled = true;
@@ -426,16 +441,66 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   // Combined drop surface: both sources are ROMs, so files fill Original then
   // Modified in drop order; patches in a dropped archive are ignored (no patch
   // bucket on this tab). See routeByOrder.
+  const handledPageDropIdRef = useRef<number | null>(null);
   const handleUnifiedDrop = (files: File[]) => {
-    const [originalFile, modifiedFile] = routeByOrder(files, [!!original, !!modified]);
+    // When both ROMs arrive together, treat the longer file name as the modified
+    // ROM — hacks/edits usually carry the more descriptive name — so it lands in
+    // the later (modified) slot. Stable sort keeps drop order for equal lengths.
+    const ordered = [...files].sort((a, b) => a.name.length - b.name.length);
+    const [originalFile, modifiedFile] = routeByOrder(ordered, [!!original, !!modified]);
     if (originalFile) updateOriginal(originalFile);
     if (modifiedFile) updateModified(modifiedFile);
   };
   const swapCreateSources = () => {
+    const workflow = stagedCreateWorkflowRef.current;
+    const bothStaged = !!workflow && originalState?.status === "ready" && modifiedState?.status === "ready";
+    if (!bothStaged) {
+      // Sources are still staging — fall back to the re-stage swap.
+      const previousOriginal = original;
+      updateOriginal(modified);
+      updateModified(previousOriginal);
+      return;
+    }
+    // Both ROMs are already extracted: swap the workflow's staged sessions and
+    // the display state in place — no re-extraction. The patch is direction-
+    // specific, so a finished output is invalidated, but the sources are reused.
     const previousOriginal = original;
-    updateOriginal(modified);
-    updateModified(previousOriginal);
+    const previousOriginalState = originalState;
+    void workflow.swap();
+    setCreateQueued(false);
+    disposeActiveOutput();
+    clearCompletedOutput();
+    clearWorkflowMessage();
+    setProgress(null);
+    setOriginalState(modifiedState);
+    setModifiedState(previousOriginalState);
+    if (props.original === undefined) setInternalOriginal(modified);
+    if (props.modified === undefined) setInternalModified(previousOriginal);
+    props.onOriginalChange?.(modified);
+    props.onModifiedChange?.(previousOriginal);
+    // The source keys merely swapped, so tell the staging effect nothing changed.
+    stagedCreateWorkflowSyncRef.current = {
+      modifiedKey: originalSourceKey,
+      originalKey: modifiedSourceKey,
+      settingsKey: stagingSettingsKey,
+    };
   };
+
+  // Forward a page-level drop (dragging anywhere on the page) to the unified
+  // handler so the whole tab is a drop target, not just the dropzone box.
+  useEffect(() => {
+    const pageDrop = props.pageDrop;
+    if (!pageDrop || handledPageDropIdRef.current === pageDrop.id) return;
+    handledPageDropIdRef.current = pageDrop.id;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      handleUnifiedDrop(pageDrop.files);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.pageDrop]);
   const cancelSourceStaging = (role: "modified" | "original") => {
     setCreateQueued(false);
     resetStagedCreateWorkflow();
@@ -914,138 +979,148 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     <main aria-labelledby="tab-creator" className="panel" id="patch-builder-container">
       <UnifiedDropZone
         accept={createFileInputAccept.unifiedRom}
-        archiveHint={`Archives · ${ARCHIVE_INPUT_HINT}`}
+        archiveHint={`archives (${ARCHIVE_INPUT_HINT})`}
         big={createSourcesEmpty}
         disabled={uploadDisabled}
         id="patch-builder-row-unified-drop"
         inputId="patch-builder-input-file-unified"
-        label={createSourcesEmpty ? "Drop original & modified ROMs · or browse" : "Drop another ROM"}
+        label={createSourcesEmpty ? "Select original & modified ROMs" : "Add another ROM"}
         onFiles={handleUnifiedDrop}
-        romHint={`ROMs · ${ROM_INPUT_HINT}`}
+        romHint={`roms (${ROM_INPUT_HINT})`}
       />
-      {createInputsSelected ? (
-        <div className="workflow-step-after-items">
-          <button
-            className="btn ghost"
-            disabled={uploadDisabled}
-            id="patch-builder-button-swap-sources"
-            onClick={swapCreateSources}
-            type="button"
-          >
-            Swap original / modified
-          </button>
-        </div>
-      ) : null}
-      {renderSourceStep({
-        checksumProgress: getSourceChecksumProgress("original"),
-        file: original,
-        fileName: displayedOriginalFileName,
-        num: "01",
-        onClear: () => updateOriginal(null),
-        removeLabel: "Clear original ROM",
-        role: "original",
-        sourceProgress: getSourceProgress("original"),
-        sourceState: originalState,
-        title: "Original ROM",
-      })}
-      {renderSourceStep({
-        checksumProgress: getSourceChecksumProgress("modified"),
-        file: modified,
-        fileName: displayedModifiedFileName,
-        num: "02",
-        onClear: () => updateModified(null),
-        removeLabel: "Clear modified ROM",
-        role: "modified",
-        sourceProgress: getSourceProgress("modified"),
-        sourceState: modifiedState,
-        title: "Modified ROM",
-      })}
-      <WorkflowOutputStep
-        action={
-          <OutputRunAction
-            disabled={actionDisabled}
-            download={completedOutput ? getCompletedDownloadMeta(completedOutput) : undefined}
-            icon={
-              completedOutput ? <Download aria-hidden="true" /> : busy ? undefined : <GitCompare aria-hidden="true" />
+      {createSourcesEmpty ? null : (
+        <>
+          {renderSourceStep({
+            checksumProgress: getSourceChecksumProgress("original"),
+            file: original,
+            fileName: displayedOriginalFileName,
+            num: "01",
+            onClear: () => updateOriginal(null),
+            removeLabel: "Clear original ROM",
+            role: "original",
+            sourceProgress: getSourceProgress("original"),
+            sourceState: originalState,
+            title: "Original ROM",
+          })}
+          {createInputsSelected ? (
+            <div className="create-swap-row">
+              <button
+                className="btn ghost create-swap-btn"
+                disabled={uploadDisabled}
+                id="patch-builder-button-swap-sources"
+                onClick={swapCreateSources}
+                title="Swap original and modified"
+                type="button"
+              >
+                <ArrowUpDown aria-hidden="true" />
+                Swap
+              </button>
+            </div>
+          ) : null}
+          {renderSourceStep({
+            checksumProgress: getSourceChecksumProgress("modified"),
+            file: modified,
+            fileName: displayedModifiedFileName,
+            num: "02",
+            onClear: () => updateModified(null),
+            removeLabel: "Clear modified ROM",
+            role: "modified",
+            sourceProgress: getSourceProgress("modified"),
+            sourceState: modifiedState,
+            title: "Modified ROM",
+          })}
+          <WorkflowOutputStep
+            action={
+              <OutputRunAction
+                disabled={actionDisabled}
+                download={completedOutput ? getCompletedDownloadMeta(completedOutput) : undefined}
+                icon={
+                  completedOutput ? (
+                    <Download aria-hidden="true" />
+                  ) : busy ? undefined : (
+                    <GitCompare aria-hidden="true" />
+                  )
+                }
+                id="patch-builder-button-create"
+                onClick={() => void runCreate()}
+                progress={
+                  createQueued
+                    ? waitingProgressProps
+                      ? {
+                          ...waitingProgressProps,
+                          cancelLabel: "Cancel queued create",
+                          onCancel: cancelCreateOutputProgress,
+                        }
+                      : null
+                    : busy && progressProps && progress?.role !== "input"
+                      ? {
+                          ...progressProps,
+                          cancelLabel: "Cancel patch creation",
+                          onCancel: cancelCreateOutputProgress,
+                        }
+                      : null
+                }
+              >
+                CREATE & DOWNLOAD PATCH
+              </OutputRunAction>
             }
-            id="patch-builder-button-create"
-            onClick={() => void runCreate()}
-            progress={
-              createQueued
-                ? waitingProgressProps
-                  ? {
-                      ...waitingProgressProps,
-                      cancelLabel: "Cancel queued create",
-                      onCancel: cancelCreateOutputProgress,
-                    }
-                  : null
-                : busy && progressProps && progress?.role !== "input"
-                  ? {
-                      ...progressProps,
-                      cancelLabel: "Cancel patch creation",
-                      onCancel: cancelCreateOutputProgress,
-                    }
-                  : null
+            compress={buildOutputCompressionPanel({
+              disabled: outputDisabled,
+              fields: createCompressPanel?.fields,
+              format: getOutputCompressionFormatLabel(createCompression, createCompressionOptions),
+              formatId: "patch-builder-select-output-compression",
+              formatOptions: createCompressionOptions,
+              formatValue: createCompression,
+              onFieldChange: (key, value, updates) => updateSettings({ ...settings, ...(updates || { [key]: value }) }),
+              onFormatChange: (value) =>
+                updateSettings({
+                  ...settings,
+                  output: { ...settings.output, compression: value as "7z" | "none" | "zip" },
+                }),
+              summary: createCompression === "none" ? undefined : createCompressPanel?.summary,
+              timing: compressTimingText || undefined,
+            })}
+            disabled={outputDisabled}
+            fileName={resolvedOutputName}
+            fileNameId="patch-builder-output-file"
+            fileNamePlaceholder="Patch filename"
+            format={patchType}
+            formatId="patch-builder-select-patch-type"
+            formatOptions={patchFormatOptions}
+            info={
+              <InfoPopover title="Output options">
+                <strong>Output</strong>
+                <ul>
+                  <li>Set the filename without an extension — the format selector controls the patch type.</li>
+                  <li>BPS records source &amp; target checksums so applies can be verified.</li>
+                </ul>
+              </InfoPopover>
             }
-          >
-            CREATE & DOWNLOAD PATCH
-          </OutputRunAction>
-        }
-        compress={buildOutputCompressionPanel({
-          disabled: outputDisabled,
-          fields: createCompressPanel?.fields,
-          format: getOutputCompressionFormatLabel(createCompression, createCompressionOptions),
-          formatId: "patch-builder-select-output-compression",
-          formatOptions: createCompressionOptions,
-          formatValue: createCompression,
-          onFieldChange: (key, value, updates) => updateSettings({ ...settings, ...(updates || { [key]: value }) }),
-          onFormatChange: (value) =>
-            updateSettings({
-              ...settings,
-              output: { ...settings.output, compression: value as "7z" | "none" | "zip" },
-            }),
-          summary: createCompression === "none" ? undefined : createCompressPanel?.summary,
-          timing: compressTimingText || undefined,
-        })}
-        disabled={outputDisabled}
-        fileName={resolvedOutputName}
-        fileNameId="patch-builder-output-file"
-        fileNamePlaceholder="Patch filename"
-        format={patchType}
-        formatId="patch-builder-select-patch-type"
-        formatOptions={patchFormatOptions}
-        info={
-          <InfoPopover title="Output options">
-            <strong>Output</strong>
-            <ul>
-              <li>Set the filename without an extension — the format selector controls the patch type.</li>
-              <li>BPS records source &amp; target checksums so applies can be verified.</li>
-            </ul>
-          </InfoPopover>
-        }
-        meta={createTimingText ? <span className="t">{createTimingText}</span> : undefined}
-        notice={
-          message && messagePlacement === "output" ? (
-            <Notice
-              id="patch-builder-row-error-message"
-              level={errorCode === "AMBIGUOUS_SELECTION" ? "warn" : "error"}
-              onDismiss={messageDismissible ? clearWorkflowMessage : undefined}
-            >
-              {message}
-            </Notice>
-          ) : null
-        }
-        num="03"
-        onFileNameChange={(value) => {
-          setOutputName(value);
-          updateSettings({
-            ...settings,
-            output: { ...settings.output, outputName: value.trim() || undefined },
-          });
-        }}
-        onFormatChange={updatePatchType}
-        title="Output"
-      />
+            meta={createTimingText ? <span className="t">{createTimingText}</span> : undefined}
+            notice={
+              message && messagePlacement === "output" ? (
+                <Notice
+                  id="patch-builder-row-error-message"
+                  level={errorCode === "AMBIGUOUS_SELECTION" ? "warn" : "error"}
+                  onDismiss={messageDismissible ? clearWorkflowMessage : undefined}
+                >
+                  {message}
+                </Notice>
+              ) : null
+            }
+            num="03"
+            onFileNameChange={(value) => {
+              setOutputName(value);
+              updateSettings({
+                ...settings,
+                output: { ...settings.output, outputName: value.trim() || undefined },
+              });
+            }}
+            onFormatChange={updatePatchType}
+            title="Output"
+          />
+        </>
+      )}
       {candidateSelectionDialog}
     </main>
   );

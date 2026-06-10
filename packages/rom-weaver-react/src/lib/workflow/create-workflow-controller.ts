@@ -182,6 +182,21 @@ class CreateWorkflowController<TSource, TDestination> extends WorkflowController
     return this.setSource("setModified", "modified", source);
   }
 
+  /**
+   * Swap the original and modified sources without re-staging them. The sessions
+   * already hold the extracted/prepared source, so the swap is a slot exchange —
+   * no decompression or checksum work is repeated. Used by the UI's "Swap"
+   * action so flipping the patch direction stays instant.
+   */
+  async swap(): Promise<void> {
+    return this.mutate("swap", async () => {
+      const original = this.originalSession;
+      this.originalSession = this.modifiedSession;
+      this.modifiedSession = original;
+      if (!this.manualOutputName) this.outputName = this.buildAutomaticOutputName();
+    });
+  }
+
   async setPatchType(patchType: PatchFormat | string): Promise<void> {
     return this.mutate("setPatchType", async () => {
       this.patchType = patchType;

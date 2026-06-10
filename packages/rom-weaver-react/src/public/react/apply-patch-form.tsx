@@ -9,6 +9,7 @@ import { getErrorCode } from "../../presentation/errors.ts";
 import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
 import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime.ts";
+import { probeApplyArchiveHasRom } from "./apply-archive-probe.ts";
 import { createStageSettingsKey } from "./apply-session-settings.ts";
 import type { StagedInputInfo } from "./apply-session-types.ts";
 import { ApplyWorkflowFormView } from "./apply-workflow-form-view.tsx";
@@ -29,6 +30,7 @@ import type {
   InternalApplyPatchFormProps,
 } from "./public-types.ts";
 import { toApplyWorkflowSettings, useApplySettings, useRomWeaverAssetBaseUrl } from "./settings-context.tsx";
+import { routeByTypeProbed } from "./unified-drop-routing.ts";
 import {
   createWorkflowFormError,
   getReactBinarySourceFileName,
@@ -1133,6 +1135,28 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     });
   const resolvedUiController = controllers?.ui || localUiController;
   const resolvedStackController = controllers?.patchStack || localStackController;
+
+  // Forward a page-level drop (dragging anywhere on the page) to the unified
+  // apply routing so the whole tab is a drop target, not just the dropzone box.
+  const handledPageDropIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const pageDrop = props.pageDrop;
+    if (!pageDrop || handledPageDropIdRef.current === pageDrop.id) return;
+    handledPageDropIdRef.current = pageDrop.id;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      // Same classification/routing the in-tab unified drop surface uses.
+      void routeByTypeProbed(pageDrop.files, probeApplyArchiveHasRom).then(({ inputs, patches }) => {
+        if (cancelled) return;
+        if (inputs.length) resolvedUiController.provideRomInputFiles?.(inputs);
+        if (patches.length) resolvedUiController.providePatchInputFiles?.(patches);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.pageDrop, resolvedUiController]);
 
   handleSelectionCancelledRef.current = (request) => {
     const normalizedSourceName = request.sourceName.trim().toLowerCase();

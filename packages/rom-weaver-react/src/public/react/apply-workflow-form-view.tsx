@@ -165,228 +165,232 @@ function ApplyWorkflowFormView({
     <main aria-labelledby="tab-patcher" className="panel" id="rom-weaver-container">
       <UnifiedDropZone
         accept={fileInputAccept.unifiedApply}
-        archiveHint={`Archives · ${ARCHIVE_INPUT_HINT}`}
+        archiveHint={`archives (${ARCHIVE_INPUT_HINT})`}
         big={workflowEmpty}
         id="rom-weaver-row-unified-drop"
         inputId="rom-weaver-input-file-unified"
-        label={workflowEmpty ? "Drop ROMs & patches · or browse" : "Drop more ROMs & patches"}
+        label={workflowEmpty ? "Drop ROMs or patches" : "Add a ROM or patches"}
         onFiles={handleUnifiedDrop}
-        patchHint={`Patches · ${PATCH_INPUT_HINT}`}
-        romHint={`ROMs · ${ROM_INPUT_HINT}`}
+        patchHint={`patches (${PATCH_INPUT_HINT})`}
+        romHint={`roms (${ROM_INPUT_HINT})`}
       />
-      <WorkflowRomInputStep
-        id="rom-weaver-row-file-rom"
-        info={
-          <InfoPopover title="Input handling">
-            <strong>Input handling</strong>
-            <ul>
-              <li>Archives are decompressed; we find the ROM or let you choose.</li>
-              <li>chd, rvz/wia/gcz, and z3ds files are decompressed before patching.</li>
-              <li>Nested archives (7z in rar, chd in 7z, …) are handled recursively.</li>
-              <li>
-                <a href="https://docs.libretro.com/guides/softpatching/" rel="noreferrer" target="_blank">
-                  RetroArch softpatch format
-                </a>{" "}
-                is supported.
-              </li>
-            </ul>
-          </InfoPopover>
-        }
-        items={romInputs.map((romInput, index) => {
-          const state = romVerificationStates.get(romInput.id);
-          const rowProgress =
-            romInput.progress && romInput.info.validationPhase !== "checksum" ? romInput.progress : null;
-          if (rowProgress) {
-            return {
-              id: romInput.id,
-              progress: {
-                cancelLabel: romInputs.length > 1 ? "Cancel ROM input staging" : "Cancel ROM staging",
-                id: `rom-weaver-progress-rom-${index}`,
-                onCancel: () => {
-                  if (romInputs.length === 1 && uiController.clearRomInput) uiController.clearRomInput();
-                  else uiController.removeRomInput?.(romInput.id);
-                },
-                ...toWorkflowFileProgressProps(rowProgress)!,
-              },
-            };
-          }
-          const checksumProgress =
-            romInput.progress && romInput.info.validationPhase === "checksum" ? romInput.progress : null;
-          return {
-            card: {
-              extract: {
-                fileName: romInput.info.fileName,
-                fileSize: romInput.size ?? romInput.sourceSize,
-                legacyFileClassName: "rom-weaver-input-stack-file",
-                parentCompressions: romInput.archivePathEntries,
-                timing: TIMING_LABEL(romInput.decompressionTimeMs),
-              },
-              onRemove: () => {
-                if (romInputs.length === 1 && uiController.clearRomInput) uiController.clearRomInput();
-                else uiController.removeRomInput?.(romInput.id);
-              },
-              panels: {
-                fixes: {
-                  headerSummary: uiState.romInfo.alterHeaderChecked ? "header will be fixed" : "header unchanged",
-                  headerValue: getHeaderFixLabel(uiState.romInfo.alterHeaderChecked),
-                  lead: romInput.info.romInfo ? <p className="pdesc">{romInput.info.romInfo}</p> : undefined,
-                  romInfoText: romInput.info.romInfo,
-                  trim: romInput.info.romProbe?.trim,
-                },
-                info: {
-                  bytes: romInput.size ?? romInput.sourceSize,
-                  checksums: {
-                    crc32: romInput.info.crc32,
-                    md5: romInput.info.md5,
-                    sha1: romInput.info.sha1,
+      {workflowEmpty ? null : (
+        <>
+          <WorkflowRomInputStep
+            id="rom-weaver-row-file-rom"
+            info={
+              <InfoPopover title="Input handling">
+                <strong>Input handling</strong>
+                <ul>
+                  <li>Archives are decompressed; we find the ROM or let you choose.</li>
+                  <li>chd, rvz/wia/gcz, and z3ds files are decompressed before patching.</li>
+                  <li>Nested archives (7z in rar, chd in 7z, …) are handled recursively.</li>
+                  <li>
+                    <a href="https://docs.libretro.com/guides/softpatching/" rel="noreferrer" target="_blank">
+                      RetroArch softpatch format
+                    </a>{" "}
+                    is supported.
+                  </li>
+                </ul>
+              </InfoPopover>
+            }
+            items={romInputs.map((romInput, index) => {
+              const state = romVerificationStates.get(romInput.id);
+              const rowProgress =
+                romInput.progress && romInput.info.validationPhase !== "checksum" ? romInput.progress : null;
+              if (rowProgress) {
+                return {
+                  id: romInput.id,
+                  progress: {
+                    cancelLabel: romInputs.length > 1 ? "Cancel ROM input staging" : "Cancel ROM staging",
+                    id: `rom-weaver-progress-rom-${index}`,
+                    onCancel: () => {
+                      if (romInputs.length === 1 && uiController.clearRomInput) uiController.clearRomInput();
+                      else uiController.removeRomInput?.(romInput.id);
+                    },
+                    ...toWorkflowFileProgressProps(rowProgress)!,
                   },
-                  checksumVariants: romInput.info.checksumVariants,
-                  lead:
-                    !checksumProgress && romInput.info.romInfo ? (
-                      <p className="pdesc">{romInput.info.romInfo}</p>
-                    ) : undefined,
-                  onToggle: () => uiController.toggleRomInputChecksums?.(romInput.id),
-                  open: romInput.info.checksumsExpanded,
-                  progress: toWorkflowChecksumProgressProps(checksumProgress),
-                  timing: CHECKSUM_TIMING_LABEL(romInput.info.checksumTiming),
+                };
+              }
+              const checksumProgress =
+                romInput.progress && romInput.info.validationPhase === "checksum" ? romInput.progress : null;
+              return {
+                card: {
+                  extract: {
+                    fileName: romInput.info.fileName,
+                    fileSize: romInput.size ?? romInput.sourceSize,
+                    legacyFileClassName: "rom-weaver-input-stack-file",
+                    parentCompressions: romInput.archivePathEntries,
+                    timing: TIMING_LABEL(romInput.decompressionTimeMs),
+                  },
+                  onRemove: () => {
+                    if (romInputs.length === 1 && uiController.clearRomInput) uiController.clearRomInput();
+                    else uiController.removeRomInput?.(romInput.id);
+                  },
+                  panels: {
+                    fixes: {
+                      headerSummary: uiState.romInfo.alterHeaderChecked ? "header will be fixed" : "header unchanged",
+                      headerValue: getHeaderFixLabel(uiState.romInfo.alterHeaderChecked),
+                      lead: romInput.info.romInfo ? <p className="pdesc">{romInput.info.romInfo}</p> : undefined,
+                      romInfoText: romInput.info.romInfo,
+                      trim: romInput.info.romProbe?.trim,
+                    },
+                    info: {
+                      bytes: romInput.size ?? romInput.sourceSize,
+                      checksums: {
+                        crc32: romInput.info.crc32,
+                        md5: romInput.info.md5,
+                        sha1: romInput.info.sha1,
+                      },
+                      checksumVariants: romInput.info.checksumVariants,
+                      lead:
+                        !checksumProgress && romInput.info.romInfo ? (
+                          <p className="pdesc">{romInput.info.romInfo}</p>
+                        ) : undefined,
+                      onToggle: () => uiController.toggleRomInputChecksums?.(romInput.id),
+                      open: romInput.info.checksumsExpanded,
+                      progress: toWorkflowChecksumProgressProps(checksumProgress),
+                      timing: CHECKSUM_TIMING_LABEL(romInput.info.checksumTiming),
+                    },
+                    ...(romInput.cueText ? { cue: { cueText: romInput.cueText } } : {}),
+                  },
+                  removeLabel: romInputs.length > 1 ? "Remove ROM input" : "Clear ROM input",
+                  state,
                 },
-                ...(romInput.cueText ? { cue: { cueText: romInput.cueText } } : {}),
-              },
-              removeLabel: romInputs.length > 1 ? "Remove ROM input" : "Clear ROM input",
-              state,
-            },
-            id: romInput.id,
-          };
-        })}
-        listId="rom-weaver-list-input-stack"
-        notice={
-          <>
-            <SectionNotice
-              id="rom-weaver-input-notice-message"
-              onDismiss={dismissSectionNotice("inputNotice")}
-              state={uiState.inputNotice}
-            />
-            <SectionNotice
-              id="rom-weaver-checksum-notice-message"
-              onDismiss={dismissSectionNotice("checksumNotice")}
-              state={uiState.checksumNotice}
-            />
-          </>
-        }
-        num="01"
-        title="ROMs"
-      />
-
-      <ApplyPatchListStep
-        patches={patches}
-        patchInput={uiState.patchInput}
-        patchNotice={uiState.patchNotice}
-        patchStack={controllers.patchStack}
-        ui={uiController}
-      />
-
-      {uiState.patchDetails.description ? (
-        <div className="descblk" id="rom-weaver-row-patch-description">
-          <div className="k">Description</div>
-          <div className="v" id="rom-weaver-patch-description">
-            {uiState.patchDetails.description}
-          </div>
-        </div>
-      ) : null}
-      {uiState.patchDetails.requirementsValue ? (
-        <div className="descblk mono" id="rom-weaver-row-patch-requirements">
-          <div className="k">{uiState.patchDetails.requirementsLabel}</div>
-          <div className="v" id="rom-weaver-patch-requirements-value">
-            {uiState.patchDetails.requirementsValue}
-          </div>
-        </div>
-      ) : null}
-
-      <WorkflowOutputStep
-        action={
-          <>
-            {errorNotice?.visible ? (
-              <Notice
-                id="rom-weaver-row-error-message"
-                level={errorNotice.level === "warning" ? "warn" : "error"}
-                onDismiss={errorNotice.dismissible ? () => noticeController?.dismiss?.() : undefined}
-              >
-                {errorNotice.message}
-              </Notice>
-            ) : null}
-            {uiState.checksumOverride.visible ? (
-              <label className="checkrow warn">
-                <input
-                  checked={uiState.checksumOverride.checked}
-                  disabled={uiState.checksumOverride.disabled}
-                  id="rom-weaver-checkbox-checksum-override"
-                  onChange={(event) => uiController.setChecksumOverride?.(event.currentTarget.checked)}
-                  type="checkbox"
+                id: romInput.id,
+              };
+            })}
+            listId="rom-weaver-list-input-stack"
+            notice={
+              <>
+                <SectionNotice
+                  id="rom-weaver-input-notice-message"
+                  onDismiss={dismissSectionNotice("inputNotice")}
+                  state={uiState.inputNotice}
                 />
-                <span>{uiState.checksumOverride.label}</span>
-              </label>
-            ) : null}
-            {uiState.outputChecksumWarning.visible ? (
-              <div id="rom-weaver-row-output-checksum-warning">
-                <Notice level="warn">{uiState.outputChecksumWarning.message}</Notice>
-                <label className="checkrow warn">
-                  <input
-                    checked={uiState.outputChecksumWarning.checked}
-                    disabled={uiState.outputChecksumWarning.disabled}
-                    id="rom-weaver-checkbox-output-checksum-override"
-                    onChange={(event) => uiController.setOutputChecksumOverride?.(event.currentTarget.checked)}
-                    type="checkbox"
-                  />
-                  <span>{uiState.outputChecksumWarning.label}</span>
-                </label>
-              </div>
-            ) : null}
-            <PatcherPrimaryAction controller={controllers.output} />
-          </>
-        }
-        compress={buildOutputCompressionPanel({
-          disabled: outputState.disabled,
-          fields: outputState.compress?.fields,
-          format: compressHeaderFormat,
-          formatId: "rom-weaver-select-output-format-compress",
-          formatOptions: compressionTypeOptions,
-          formatValue: outputState.compressionFormat,
-          onFieldChange: (key, value, updates) => controllers.output.setOutputCompressOption?.(key, value, updates),
-          onFormatChange: (value) => controllers.output.setOutputCompression(value),
-          summary: outputState.compress?.summary,
-          timing: outputState.compressTiming || undefined,
-        })}
-        disabled={outputState.disabled}
-        fileName={outputState.displayFileName}
-        fileNameId="rom-weaver-input-output-file-name"
-        fileNamePlaceholder="Output filename (no extension)"
-        format={outputState.compressionFormat}
-        formatId="rom-weaver-select-output-format"
-        formatOptions={outputState.options}
-        id="rom-weaver-row-output-file-name"
-        info={
-          <InfoPopover title="Output options">
-            <strong>Output</strong>
-            <ul>
-              <li>Set the filename without an extension — the format selector controls it.</li>
-              <li>Container formats (zip, 7z, chd, rvz) are produced directly.</li>
-              <li>Compression defaults come from Settings › Compression and apply to compressed output.</li>
-            </ul>
-          </InfoPopover>
-        }
-        meta={outputState.applyTiming ? <span className="t">{outputState.applyTiming}</span> : undefined}
-        notice={
-          <SectionNotice
-            id="rom-weaver-output-notice-message"
-            onDismiss={dismissSectionNotice("outputNotice")}
-            state={uiState.outputNotice}
+                <SectionNotice
+                  id="rom-weaver-checksum-notice-message"
+                  onDismiss={dismissSectionNotice("checksumNotice")}
+                  state={uiState.checksumNotice}
+                />
+              </>
+            }
+            num="01"
+            title="ROMs"
           />
-        }
-        num="03"
-        onFileNameChange={(value) => controllers.output.setDisplayFileName(value)}
-        onFormatChange={(value) => controllers.output.setOutputCompression(value)}
-        title="Apply"
-      />
+
+          <ApplyPatchListStep
+            patches={patches}
+            patchInput={uiState.patchInput}
+            patchNotice={uiState.patchNotice}
+            patchStack={controllers.patchStack}
+            ui={uiController}
+          />
+
+          {uiState.patchDetails.description ? (
+            <div className="descblk" id="rom-weaver-row-patch-description">
+              <div className="k">Description</div>
+              <div className="v" id="rom-weaver-patch-description">
+                {uiState.patchDetails.description}
+              </div>
+            </div>
+          ) : null}
+          {uiState.patchDetails.requirementsValue ? (
+            <div className="descblk mono" id="rom-weaver-row-patch-requirements">
+              <div className="k">{uiState.patchDetails.requirementsLabel}</div>
+              <div className="v" id="rom-weaver-patch-requirements-value">
+                {uiState.patchDetails.requirementsValue}
+              </div>
+            </div>
+          ) : null}
+
+          <WorkflowOutputStep
+            action={
+              <>
+                {errorNotice?.visible ? (
+                  <Notice
+                    id="rom-weaver-row-error-message"
+                    level={errorNotice.level === "warning" ? "warn" : "error"}
+                    onDismiss={errorNotice.dismissible ? () => noticeController?.dismiss?.() : undefined}
+                  >
+                    {errorNotice.message}
+                  </Notice>
+                ) : null}
+                {uiState.checksumOverride.visible ? (
+                  <label className="checkrow warn">
+                    <input
+                      checked={uiState.checksumOverride.checked}
+                      disabled={uiState.checksumOverride.disabled}
+                      id="rom-weaver-checkbox-checksum-override"
+                      onChange={(event) => uiController.setChecksumOverride?.(event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                    <span>{uiState.checksumOverride.label}</span>
+                  </label>
+                ) : null}
+                {uiState.outputChecksumWarning.visible ? (
+                  <div id="rom-weaver-row-output-checksum-warning">
+                    <Notice level="warn">{uiState.outputChecksumWarning.message}</Notice>
+                    <label className="checkrow warn">
+                      <input
+                        checked={uiState.outputChecksumWarning.checked}
+                        disabled={uiState.outputChecksumWarning.disabled}
+                        id="rom-weaver-checkbox-output-checksum-override"
+                        onChange={(event) => uiController.setOutputChecksumOverride?.(event.currentTarget.checked)}
+                        type="checkbox"
+                      />
+                      <span>{uiState.outputChecksumWarning.label}</span>
+                    </label>
+                  </div>
+                ) : null}
+                <PatcherPrimaryAction controller={controllers.output} />
+              </>
+            }
+            compress={buildOutputCompressionPanel({
+              disabled: outputState.disabled,
+              fields: outputState.compress?.fields,
+              format: compressHeaderFormat,
+              formatId: "rom-weaver-select-output-format-compress",
+              formatOptions: compressionTypeOptions,
+              formatValue: outputState.compressionFormat,
+              onFieldChange: (key, value, updates) => controllers.output.setOutputCompressOption?.(key, value, updates),
+              onFormatChange: (value) => controllers.output.setOutputCompression(value),
+              summary: outputState.compress?.summary,
+              timing: outputState.compressTiming || undefined,
+            })}
+            disabled={outputState.disabled}
+            fileName={outputState.displayFileName}
+            fileNameId="rom-weaver-input-output-file-name"
+            fileNamePlaceholder="Output filename (no extension)"
+            format={outputState.compressionFormat}
+            formatId="rom-weaver-select-output-format"
+            formatOptions={outputState.options}
+            id="rom-weaver-row-output-file-name"
+            info={
+              <InfoPopover title="Output options">
+                <strong>Output</strong>
+                <ul>
+                  <li>Set the filename without an extension — the format selector controls it.</li>
+                  <li>Container formats (zip, 7z, chd, rvz) are produced directly.</li>
+                  <li>Compression defaults come from Settings › Compression and apply to compressed output.</li>
+                </ul>
+              </InfoPopover>
+            }
+            meta={outputState.applyTiming ? <span className="t">{outputState.applyTiming}</span> : undefined}
+            notice={
+              <SectionNotice
+                id="rom-weaver-output-notice-message"
+                onDismiss={dismissSectionNotice("outputNotice")}
+                state={uiState.outputNotice}
+              />
+            }
+            num="03"
+            onFileNameChange={(value) => controllers.output.setDisplayFileName(value)}
+            onFormatChange={(value) => controllers.output.setOutputCompression(value)}
+            title="Apply"
+          />
+        </>
+      )}
 
       <SharedArchiveDialog controller={controllers.dialog} />
     </main>

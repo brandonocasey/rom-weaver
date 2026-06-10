@@ -144,6 +144,10 @@ class CreateWorkflow extends BrowserWorkflowBase<
     return this.controller.getModified();
   }
 
+  swap(): Promise<void> {
+    return this.controller.swap();
+  }
+
   setPatchType(patchType: NonNullable<CreateSettings["format"]>): Promise<void> {
     return this.controller.setPatchType(patchType);
   }
