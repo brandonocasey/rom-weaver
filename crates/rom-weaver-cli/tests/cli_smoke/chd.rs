@@ -267,6 +267,51 @@ fn chd_compress_and_extract_avhuff_round_trip() {
 }
 
 #[test]
+fn probe_chd_reports_container_without_extracting() {
+    // Probe must treat a disc-image codec (CHD) as terminal by default and report
+    // the CHD container itself, instead of decompressing it to the inner payload.
+    let temp = setup_temp_dir();
+    let source = build_test_chav_stream(4, 32, 16);
+    fs::write(temp.child("video.bin").path(), &source).expect("fixture");
+
+    let chd_path = temp.child("disc.chd");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("video.bin").path().to_str().expect("path"),
+            "--format",
+            "chd",
+            "--output",
+            chd_path.path().to_str().expect("path"),
+            "--codec",
+            "avhuff",
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let json = run_single_json_event(
+        &["probe", chd_path.path().to_str().expect("path"), "--json"],
+        0,
+    );
+    assert_eq!(json["command"], "probe");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "chd");
+    assert_eq!(json["status"], "succeeded");
+    let label = json["label"].as_str().expect("label");
+    assert!(label.contains("codec=avhuff"));
+    assert!(!label.contains("probe source resolved via"));
+    assert_eq!(
+        json["details"]["chd"]["sha1"]
+            .as_str()
+            .expect("sha1 detail")
+            .len(),
+        40
+    );
+}
+
+#[test]
 fn chd_compress_auto_detects_av_stream_without_explicit_codec() {
     // A `chav` A/V stream must be recognized as A/V media and default to the
     // avhuff codec even when the caller does not pass `--codec avhuff`.

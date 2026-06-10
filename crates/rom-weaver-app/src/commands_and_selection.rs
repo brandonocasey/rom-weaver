@@ -116,6 +116,7 @@ impl CliApp {
                     no_extract: false,
                     no_ignore,
                     kind_filter,
+                    stop_on_disc_image_codec: true,
                 },
             )
         } else {
@@ -983,6 +984,7 @@ impl CliApp {
                 no_extract,
                 no_ignore,
                 kind_filter,
+                stop_on_disc_image_codec: false,
             },
         ) {
             Ok(resolved) => resolved,

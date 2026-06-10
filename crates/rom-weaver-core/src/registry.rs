@@ -334,6 +334,12 @@ pub trait ContainerHandlerOperations: Send + Sync {
 
 pub trait ContainerHandler: ContainerHandlerOperations {
     fn capabilities(&self) -> ContainerCapabilities;
+    /// True for disc/ROM image codec containers (CHD, RVZ, Z3DS, CSO, PBP, GCZ,
+    /// WIA, WBFS, TGC, NFS, XISO). Probe treats these as terminal and reports
+    /// their container info instead of decompressing to the inner payload.
+    fn is_single_payload_disc_image(&self) -> bool {
+        false
+    }
 }
 
 pub trait PatchHandler: Send + Sync {
@@ -594,6 +600,10 @@ impl ContainerHandlerOperations for TracingContainerHandler {
 impl ContainerHandler for TracingContainerHandler {
     fn capabilities(&self) -> ContainerCapabilities {
         self.inner.capabilities()
+    }
+
+    fn is_single_payload_disc_image(&self) -> bool {
+        self.inner.is_single_payload_disc_image()
     }
 }
 

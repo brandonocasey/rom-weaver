@@ -126,7 +126,8 @@ Interactive selection fallback is enabled only for non-JSON TTY sessions (stdin 
 
 Probe behavior highlights:
 
-- `probe` auto-resolves payloads from containers by default
+- `probe` auto-resolves payloads from archive containers (zip/7z/rar/tar) by default
+- `probe` reports disc-image codec containers (CHD, RVZ, Z3DS, CSO, PBP, GCZ, WIA, WBFS, …) directly instead of decompressing them
 - `probe --no-extract` probes source bytes directly
 - `probe --select` chooses payload(s)
 - `probe --no-ignore` disables default ignore filters (`.txt`, `.nfo`, `.sfv`, `.md5`, etc.)
