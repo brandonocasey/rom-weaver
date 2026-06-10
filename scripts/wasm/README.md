@@ -7,7 +7,7 @@ This folder contains ESM wrappers for browser execution of `rom-weaver-app.wasm`
 - `rom-weaver-runtime-utils.mjs`: shared wasm import and JSON/trace parsing helpers
 
 The browser OPFS + WASI `/work` runner and the WASI thread worker now live only as TypeScript
-in the `rom-weaver-wasm` package (`packages/rom-weaver-wasm/src/rom-weaver-browser-opfs-api.ts`
+in the react package's wasm layer (`packages/rom-weaver-react/src/wasm/rom-weaver-browser-opfs-api.ts`
 and `src/workers/browser-wasi-thread-worker.ts`); import them from the package rather than from
 forked `.mjs` copies.
 
@@ -22,7 +22,7 @@ forked `.mjs` copies.
 ## Quick Use (Dedicated Worker)
 
 ```js
-import { createRomWeaverBrowserOpfs } from 'rom-weaver-wasm/browser-opfs';
+import { createRomWeaverBrowserOpfs } from './src/wasm/rom-weaver-browser-opfs-api.ts';
 
 const runner = await createRomWeaverBrowserOpfs({
   wasmUrl: '/wasm/rom-weaver-app.wasm',
@@ -55,7 +55,7 @@ console.log(result.exitCode, result.ok);
 For smoke runs that need real browser wasm execution, use:
 
 ```bash
-node scripts/wasm/run-browser-cli.mjs --wasm-module packages/rom-weaver-wasm/rom-weaver-app.wasm -- checksum /path/to/input.bin --algo crc32 --no-extract
+node scripts/wasm/run-browser-cli.mjs --wasm-module packages/rom-weaver-react/src/wasm/rom-weaver-app.wasm -- checksum /path/to/input.bin --algo crc32 --no-extract
 ```
 
 `scripts/bench-command-paths.py` can route `rom-weaver-wasm` cases through this wrapper with:

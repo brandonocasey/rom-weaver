@@ -219,7 +219,7 @@ async function runWasm(runner, args) {
 
 async function createWasmRunner() {
   try {
-    const module = await import('../packages/rom-weaver-wasm/src/rom-weaver-wasi-api.mjs');
+    const module = await import('../packages/rom-weaver-react/src/wasm/rom-weaver-wasi-api.mjs');
     if (typeof module.createRomWeaverWasiRunner !== 'function') {
       throw new Error('createRomWeaverWasiRunner export is missing');
     }
