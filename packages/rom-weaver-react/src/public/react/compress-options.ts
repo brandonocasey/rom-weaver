@@ -25,7 +25,7 @@ import {
   getGeneratedCompressionCodecLevelMax,
   getGeneratedCompressionCodecLevelMin,
 } from "../../lib/compression/compression-metadata.ts";
-import { getChdAutoCreateMode } from "../../lib/input/rom-specific-file-utils.ts";
+import { getChdAutoCreateMode, getDiscKind, getDiscKindLabel } from "../../lib/input/rom-specific-file-utils.ts";
 import { getSettingsLabel } from "../../presentation/settings.ts";
 
 type SettingsLike = Record<string, unknown>;
@@ -319,6 +319,16 @@ const buildCompressPanel = (format: string, settings: SettingsLike, source?: unk
   }
   if (normalized === "chd") {
     const mode = resolveChdPanelMode(settings, source);
+    // GD-ROM media reuses the CD codec set; surface the detected disc type so the
+    // output reflects the GD-vs-CD media the create will actually produce.
+    const discLabel = source
+      ? getDiscKindLabel(
+          getDiscKind({
+            cueText: (source as SourceLike)._chdCueText,
+            fileName: (source as SourceLike).fileName,
+          }),
+        )
+      : null;
     const cd = editableStr(settings, "chdCreateCdCodecs", CHD_CD_DEFAULT_CODECS);
     const dvd = editableStr(settings, "chdCreateDvdCodecs", CHD_DVD_DEFAULT_CODECS);
     const codecKey = mode === "cd" ? "chdCreateCdCodecs" : "chdCreateDvdCodecs";
@@ -346,7 +356,9 @@ const buildCompressPanel = (format: string, settings: SettingsLike, source?: unk
         },
         level,
       ],
-      summary: codecProfileSummary(codecKey, codecSummary, settings),
+      summary: discLabel
+        ? `${discLabel} · ${codecProfileSummary(codecKey, codecSummary, settings)}`
+        : codecProfileSummary(codecKey, codecSummary, settings),
     };
   }
   if (normalized === "z3ds") {

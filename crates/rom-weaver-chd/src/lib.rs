@@ -29,7 +29,9 @@ use zstd::bulk::compress as zstd_compress;
 pub const CHD: FormatDescriptor = FormatDescriptor {
     family: OperationFamily::Container,
     name: "chd",
-    aliases: &["chd-cd", "chd-dvd", "chd-raw", "chd-hd"],
+    aliases: &[
+        "chd-cd", "chd-gd", "chd-dvd", "chd-raw", "chd-hd", "chd-av", "chd-ld",
+    ],
     extensions: &[".chd"],
 };
 

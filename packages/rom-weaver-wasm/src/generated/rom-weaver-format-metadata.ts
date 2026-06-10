@@ -1143,9 +1143,12 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
   {
     "aliases": [
       "chd-cd",
+      "chd-gd",
       "chd-dvd",
       "chd-raw",
-      "chd-hd"
+      "chd-hd",
+      "chd-av",
+      "chd-ld"
     ],
     "capabilities": {
       "create": true,
@@ -1431,9 +1434,12 @@ export const ROM_WEAVER_CONTAINER_FORMAT_ALIASES = {
   "3ds": "z3ds",
   "7zip": "7z",
   "bzip2": "bz2",
+  "chd-av": "chd",
   "chd-cd": "chd",
   "chd-dvd": "chd",
+  "chd-gd": "chd",
   "chd-hd": "chd",
+  "chd-ld": "chd",
   "chd-raw": "chd",
   "ciso": "cso",
   "gzip": "gz",

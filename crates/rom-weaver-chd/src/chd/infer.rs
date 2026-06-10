@@ -44,7 +44,7 @@ impl ChdContainerHandler {
                 input.display()
             ))
         })?;
-        Ok(DiscLayout {
+        let mut layout = DiscLayout {
             kind: DiscKind::CdRom,
             tracks: vec![DiscTrack {
                 number: 1,
@@ -59,7 +59,9 @@ impl ChdContainerHandler {
                 pad_frames: 0,
                 swap_audio_on_read: false,
             }],
-        })
+        };
+        layout.apply_cd_track_padding();
+        Ok(layout)
     }
 
     pub(super) fn is_extension(input: &Path, extension: &str) -> bool {
@@ -432,7 +434,7 @@ impl ChdContainerHandler {
             .and_then(|value| value.to_str())
             .map(|value| value.to_ascii_lowercase());
         match extension.as_deref() {
-            Some("cue") => Ok(ChdCreateKind::Disc(self.parse_cue_file(input)?)),
+            Some("cue") => Ok(ChdCreateKind::Disc(self.parse_disc_input(input)?)),
             Some("gdi") => Ok(ChdCreateKind::Disc(self.parse_gdi_file(input)?)),
             Some("iso")
                 if self.is_cd_sized_iso(input, logical_bytes)
@@ -460,8 +462,23 @@ impl ChdContainerHandler {
                     self.infer_single_track_cd_layout(input, logical_bytes)?,
                 ))
             }
+            // A/V (laserdisc) sources are raw `chav` frame streams; detect them so
+            // the output is compressed as A/V media without requiring the caller to
+            // pass `--codec avhuff` explicitly.
+            _ if self.is_chav_stream(input) => Ok(ChdCreateKind::Av(
+                self.infer_av_profile(input, logical_bytes)?,
+            )),
             _ => Ok(ChdCreateKind::Raw),
         }
+    }
+
+    /// Cheaply detect an A/V `chav` frame stream by its leading magic bytes.
+    pub(super) fn is_chav_stream(&self, input: &Path) -> bool {
+        let Ok(mut file) = File::open(input) else {
+            return false;
+        };
+        let mut magic = [0_u8; 4];
+        file.read_exact(&mut magic).is_ok() && &magic == b"chav"
     }
 
     pub(super) fn parse_create_mode_override(
@@ -475,17 +492,19 @@ impl ChdContainerHandler {
 
         let Some(mode) = normalized.strip_prefix("chd-") else {
             return Err(RomWeaverError::Validation(format!(
-                "unsupported chd format `{format}`; expected `chd` or `chd-<mode>` where mode is cd|dvd|raw|hd"
+                "unsupported chd format `{format}`; expected `chd` or `chd-<mode>` where mode is cd|gd|dvd|raw|hd|av|ld"
             )));
         };
 
         match mode {
             "cd" => Ok(Some(ChdCreateModeOverride::Cd)),
+            "gd" => Ok(Some(ChdCreateModeOverride::Gd)),
             "dvd" => Ok(Some(ChdCreateModeOverride::Dvd)),
             "raw" => Ok(Some(ChdCreateModeOverride::Raw)),
             "hd" => Ok(Some(ChdCreateModeOverride::HardDisk)),
+            "av" | "ld" => Ok(Some(ChdCreateModeOverride::Av)),
             _ => Err(RomWeaverError::Validation(format!(
-                "unsupported chd mode `{mode}` in `{format}`; expected one of: cd, dvd, raw, hd"
+                "unsupported chd mode `{mode}` in `{format}`; expected one of: cd, gd, dvd, raw, hd, av, ld"
             ))),
         }
     }
@@ -506,7 +525,7 @@ impl ChdContainerHandler {
                     Some("cue") => self.parse_cue_file(input)?,
                     Some("gdi") => {
                         return Err(RomWeaverError::Validation(format!(
-                            "chd-cd does not accept gdi input `{}`; use `chd` or `chd-raw` for gd media",
+                            "chd-cd does not accept gdi input `{}`; use `chd` or `chd-gd` for gd media",
                             input.display()
                         )));
                     }
@@ -520,6 +539,32 @@ impl ChdContainerHandler {
                 }
                 Ok(ChdCreateKind::Disc(layout))
             }
+            ChdCreateModeOverride::Gd => {
+                let extension = input
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.to_ascii_lowercase());
+                let layout = match extension.as_deref() {
+                    Some("gdi") => self.parse_gdi_file(input)?,
+                    Some("cue") => {
+                        let layout = self.parse_disc_input(input)?;
+                        if layout.kind != DiscKind::GdRom {
+                            return Err(RomWeaverError::Validation(format!(
+                                "chd-gd input `{}` is not a gd-rom; provide a `.gdi`, a sibling `.gdi`, or a cue with `REM HIGH-DENSITY AREA` markers (or use `chd-cd`)",
+                                input.display()
+                            )));
+                        }
+                        layout
+                    }
+                    _ => {
+                        return Err(RomWeaverError::Validation(format!(
+                            "chd-gd requires a `.gdi` or `.cue` input; `{}` is neither",
+                            input.display()
+                        )));
+                    }
+                };
+                Ok(ChdCreateKind::Disc(layout))
+            }
             ChdCreateModeOverride::Dvd => {
                 self.ensure_multiple_of(logical_bytes, Self::DVD_SECTOR_BYTES, "dvd image")?;
                 Ok(ChdCreateKind::Dvd)
@@ -528,6 +573,17 @@ impl ChdContainerHandler {
             ChdCreateModeOverride::HardDisk => Ok(ChdCreateKind::HardDisk(
                 self.infer_hd_geometry(logical_bytes)?,
             )),
+            ChdCreateModeOverride::Av => {
+                if !self.is_chav_stream(input) {
+                    return Err(RomWeaverError::Validation(format!(
+                        "chd-av/chd-ld requires a `chav` A/V frame stream; `{}` is not one",
+                        input.display()
+                    )));
+                }
+                Ok(ChdCreateKind::Av(
+                    self.infer_av_profile(input, logical_bytes)?,
+                ))
+            }
         }
     }
 

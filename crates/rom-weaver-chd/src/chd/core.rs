@@ -11,6 +11,15 @@ impl ChdContainerHandler {
     pub(super) const FLAC_SAMPLE_RATE_HZ: usize = 44_100;
     pub(super) const CD_SECTOR_DATA_BYTES: usize = 2352;
     pub(super) const CD_SUBCODE_BYTES: usize = 96;
+    // MAME's CHD CD format pads every track's hunk-stream frame count up to a
+    // multiple of this many frames; the per-track metadata keeps the unpadded
+    // data frame count and the extra frames are re-derived on read.
+    pub(super) const CD_TRACK_PADDING: u32 = 4;
+    // GD-ROM discs place their inner program (high-density) area at a fixed
+    // physical start LBA; cue sheets that mark it with `REM HIGH-DENSITY AREA`
+    // are anchored here when synthesizing a GD-ROM layout without an explicit
+    // `.gdi`.
+    pub(super) const GD_HIGH_DENSITY_START_LBA: u32 = 45000;
     pub(super) const ZLIB_LEVEL_MIN: i32 = 1;
     pub(super) const ZLIB_LEVEL_MAX: i32 = 9;
     pub(super) const ZSTD_LEVEL_MIN: i32 = -7;
@@ -414,6 +423,16 @@ impl ChdContainerHandler {
                 ],
                 primary_codec: ChdCodec::LZMA,
             },
+            // A/V media only supports the avhuff codec, so default to it directly.
+            ChdCreateKind::Av(_) => ChdCompressionPlan {
+                codecs: [
+                    ChdCodec::AVHUFF,
+                    ChdCodec::NONE,
+                    ChdCodec::NONE,
+                    ChdCodec::NONE,
+                ],
+                primary_codec: ChdCodec::AVHUFF,
+            },
             _ => ChdCompressionPlan {
                 codecs: [
                     ChdCodec::LZMA,
@@ -482,6 +501,12 @@ impl ChdContainerHandler {
             "unsupported chd codec `{codec_name}`; {}",
             Self::SUPPORTED_CODEC_CLAUSE
         ))
+    }
+
+    /// Whether a codec accepts a numeric `--level`. The level-less codecs
+    /// (store/none, huffman, avhuff) ignore it and reject an explicit value.
+    pub(super) fn codec_accepts_level(codec: ChdCodec) -> bool {
+        !matches!(codec, ChdCodec::NONE | ChdCodec::HUFFMAN | ChdCodec::AVHUFF)
     }
 
     pub(super) fn resolve_compression_level(

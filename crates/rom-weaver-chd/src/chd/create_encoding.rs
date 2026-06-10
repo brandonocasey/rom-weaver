@@ -1794,7 +1794,9 @@ impl ChdContainerHandler {
                                 "TRACK:{} TYPE:{} SUBTYPE:NONE FRAMES:{} PREGAP:{} PGTYPE:{} PGSUB:NONE POSTGAP:{}",
                                 track.number,
                                 track.mode.metadata_label(),
-                                track.frames,
+                                // CD metadata reports the unpadded data frame count; the
+                                // 4-frame track padding lives only in the hunk stream.
+                                track.frames - track.pad_frames,
                                 track.pregap_frames,
                                 pgtype,
                                 track.postgap_frames

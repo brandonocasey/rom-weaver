@@ -88,9 +88,13 @@ const stripPrimaryChdTrackSuffix = (fileName: string): string => fileName.replac
 
 const getChdCreateFormat = (requestedMode: string): string => {
   if (requestedMode === "cd" || requestedMode === "chd-cd") return "chd-cd";
+  if (requestedMode === "gd" || requestedMode === "chd-gd") return "chd-gd";
   if (requestedMode === "dvd" || requestedMode === "chd-dvd") return "chd-dvd";
   if (requestedMode === "raw" || requestedMode === "chd-raw") return "chd-raw";
   if (requestedMode === "hd" || requestedMode === "chd-hd") return "chd-hd";
+  if (requestedMode === "av" || requestedMode === "ld" || requestedMode === "chd-av" || requestedMode === "chd-ld") {
+    return "chd-av";
+  }
   return "chd";
 };
 

@@ -267,6 +267,108 @@ fn chd_compress_and_extract_avhuff_round_trip() {
 }
 
 #[test]
+fn chd_compress_auto_detects_av_stream_without_explicit_codec() {
+    // A `chav` A/V stream must be recognized as A/V media and default to the
+    // avhuff codec even when the caller does not pass `--codec avhuff`.
+    let temp = setup_temp_dir();
+    let source = build_test_chav_stream(4, 32, 16);
+    fs::write(temp.child("video.bin").path(), &source).expect("fixture");
+
+    let chd_path = temp.child("auto.chd");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("video.bin").path().to_str().expect("path"),
+            "--format",
+            "chd",
+            "--output",
+            chd_path.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let probe_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "probe",
+            chd_path.path().to_str().expect("path"),
+            "--no-extract",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let probe_json = parse_single_json_line(&probe_output);
+    let label = probe_json["label"].as_str().expect("label");
+    assert!(label.contains("av chd"), "expected A/V media, got {label}");
+    assert!(label.contains("codec=avhuff"), "expected avhuff codec, got {label}");
+
+    let out_dir = temp.child("extract");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            chd_path.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+    assert_eq!(
+        fs::read(out_dir.child("auto.avi").path()).expect("extract bytes"),
+        source
+    );
+}
+
+#[test]
+fn chd_av_and_ld_overrides_force_av_media() {
+    let temp = setup_temp_dir();
+    let source = build_test_chav_stream(4, 32, 16);
+    fs::write(temp.child("video.bin").path(), &source).expect("fixture");
+
+    for format in ["chd-av", "chd-ld"] {
+        let chd_path = temp.child(format!("{format}.chd"));
+        Command::cargo_bin("rom-weaver")
+            .expect("binary")
+            .args([
+                "compress",
+                temp.child("video.bin").path().to_str().expect("path"),
+                "--format",
+                format,
+                "--output",
+                chd_path.path().to_str().expect("path"),
+                "--json",
+            ])
+            .assert()
+            .code(0);
+
+        let probe_output = Command::cargo_bin("rom-weaver")
+            .expect("binary")
+            .args([
+                "probe",
+                chd_path.path().to_str().expect("path"),
+                "--no-extract",
+                "--json",
+            ])
+            .assert()
+            .code(0)
+            .get_output()
+            .stdout
+            .clone();
+        let label = parse_single_json_line(&probe_output)["label"]
+            .as_str()
+            .expect("label")
+            .to_string();
+        assert!(label.contains("av chd"), "{format}: expected A/V media, got {label}");
+    }
+}
+
+#[test]
 fn chd_compress_and_extract_huff_round_trip() {
     let source = (0..16_384)
         .map(|index| (index % 173) as u8)
@@ -448,6 +550,86 @@ fn chd_compress_and_extract_cd_with_index00_round_trip() {
     assert!(cue.contains("TRACK 02 AUDIO"));
     assert!(cue.contains("INDEX 00 00:00:04"));
     assert!(cue.contains("INDEX 01 00:00:06"));
+}
+
+#[test]
+fn chd_compress_cd_pads_tracks_to_four_frame_boundary() {
+    // A non-final track whose frame count is not a multiple of 4 forces MAME's
+    // implicit CD track padding. Track 1 is 6 frames (pad 2 -> 8); track 2 is 4
+    // frames (pad 0). The hunk stream therefore holds 12 units of 2448 bytes,
+    // even though the per-track FRAMES metadata stays unpadded. Omitting the
+    // padding shifts every later track by the missing frames on a chdman-style
+    // (padded) read; see the Sonic Adventure 2 GD-ROM regression.
+    let temp = setup_temp_dir();
+    let frames = 10_u32;
+    let source = (0..(frames as usize * 2352))
+        .map(|index| (index % 173) as u8)
+        .collect::<Vec<_>>();
+    fs::write(temp.child("disc.bin").path(), &source).expect("fixture");
+    temp.child("disc.cue")
+        .write_str(
+            "FILE \"disc.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    INDEX 01 00:00:06\n",
+        )
+        .expect("cue fixture");
+
+    let chd_path = temp.child("disc.chd");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("disc.cue").path().to_str().expect("path"),
+            "--format",
+            "chd",
+            "--output",
+            chd_path.path().to_str().expect("path"),
+            "--codec",
+            "zstd",
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    // Padded units: (6 + 2) + (4 + 0) = 12 frames of 2448 bytes = 29376 bytes.
+    let probe_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "probe",
+            chd_path.path().to_str().expect("path"),
+            "--no-extract",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let probe_json = parse_single_json_line(&probe_output);
+    assert!(
+        probe_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("29376 bytes"),
+        "expected padded logical size in probe label, got {}",
+        probe_json["label"]
+    );
+
+    let out_dir = temp.child("extract");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            chd_path.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        fs::read(out_dir.child("disc.bin").path()).expect("extract bytes"),
+        source
+    );
 }
 
 #[test]
@@ -811,6 +993,251 @@ fn chd_compress_and_extract_gdi_round_trip() {
     assert!(gdi.contains("2\n"));
     assert!(gdi.contains("1 0 4 2352 disc.track01.bin 0"));
     assert!(gdi.contains("2 4 4 2048 disc.track02.bin 0"));
+}
+
+#[test]
+fn chd_compress_cue_with_sibling_gdi_detects_gdrom() {
+    // A redump-style GD-ROM dump ships a `.cue` next to an authoritative `.gdi`.
+    // Compressing the `.cue` must auto-detect GD-ROM media and frame the disc
+    // from the `.gdi` (here the inner track is contiguous to keep the fixture
+    // small), not silently fall back to a plain CD-ROM.
+    let temp = setup_temp_dir();
+    let track01 = (0..(4 * 2352))
+        .map(|index| (index % 101) as u8)
+        .collect::<Vec<_>>();
+    let track02 = (0..(4 * 2352))
+        .map(|index| (index % 89) as u8)
+        .collect::<Vec<_>>();
+    fs::write(temp.child("track01.bin").path(), &track01).expect("track01");
+    fs::write(temp.child("track02.bin").path(), &track02).expect("track02");
+    temp.child("disc.gdi")
+        .write_str("2\n1 0 4 2352 track01.bin 0\n2 4 4 2352 track02.bin 0\n")
+        .expect("gdi fixture");
+    temp.child("disc.cue")
+        .write_str(
+            "REM SINGLE-DENSITY AREA\nFILE \"track01.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\nREM HIGH-DENSITY AREA\nFILE \"track02.bin\" BINARY\n  TRACK 02 MODE1/2352\n    INDEX 01 00:00:00\n",
+        )
+        .expect("cue fixture");
+
+    let chd_path = temp.child("disc.chd");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("disc.cue").path().to_str().expect("path"),
+            "--format",
+            "chd",
+            "--output",
+            chd_path.path().to_str().expect("path"),
+            "--codec",
+            "zstd",
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let probe_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "probe",
+            chd_path.path().to_str().expect("path"),
+            "--no-extract",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let probe_json = parse_single_json_line(&probe_output);
+    assert!(
+        probe_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("gd chd"),
+        "expected GD-ROM media, got {}",
+        probe_json["label"]
+    );
+
+    let out_dir = temp.child("extract");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            chd_path.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        fs::read(out_dir.child("disc.track01.bin").path()).expect("extract track01"),
+        track01
+    );
+    assert_eq!(
+        fs::read(out_dir.child("disc.track02.bin").path()).expect("extract track02"),
+        track02
+    );
+}
+
+#[test]
+fn chd_compress_cue_density_markers_without_gdi_synthesizes_gdrom() {
+    // Without a sibling `.gdi`, the `REM HIGH-DENSITY AREA` marker alone must
+    // still route to GD-ROM, anchoring the inner area at its standard physical
+    // start LBA (45000) and round-tripping byte-for-byte.
+    let temp = setup_temp_dir();
+    let track01 = (0..(4 * 2352))
+        .map(|index| (index % 101) as u8)
+        .collect::<Vec<_>>();
+    let track02 = (0..(4 * 2352))
+        .map(|index| (index % 89) as u8)
+        .collect::<Vec<_>>();
+    fs::write(temp.child("track01.bin").path(), &track01).expect("track01");
+    fs::write(temp.child("track02.bin").path(), &track02).expect("track02");
+    temp.child("disc.cue")
+        .write_str(
+            "REM SINGLE-DENSITY AREA\nFILE \"track01.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\nREM HIGH-DENSITY AREA\nFILE \"track02.bin\" BINARY\n  TRACK 02 MODE1/2352\n    INDEX 01 00:00:00\n",
+        )
+        .expect("cue fixture");
+
+    let chd_path = temp.child("disc.chd");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("disc.cue").path().to_str().expect("path"),
+            "--format",
+            "chd",
+            "--output",
+            chd_path.path().to_str().expect("path"),
+            "--codec",
+            "zstd",
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let probe_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "probe",
+            chd_path.path().to_str().expect("path"),
+            "--no-extract",
+            "--json",
+        ])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let probe_json = parse_single_json_line(&probe_output);
+    assert!(
+        probe_json["label"]
+            .as_str()
+            .expect("label")
+            .contains("gd chd"),
+        "expected GD-ROM media, got {}",
+        probe_json["label"]
+    );
+    // Inner track anchored at LBA 45000: (45000) + 4 frames = 45004 units * 2448.
+    assert!(
+        probe_json["label"]
+            .as_str()
+            .expect("label")
+            .contains(&format!("{} bytes", 45004_u64 * 2448)),
+        "expected high-density anchor in logical size, got {}",
+        probe_json["label"]
+    );
+
+    let out_dir = temp.child("extract");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "extract",
+            chd_path.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        fs::read(out_dir.child("disc.track01.bin").path()).expect("extract track01"),
+        track01
+    );
+    assert_eq!(
+        fs::read(out_dir.child("disc.track02.bin").path()).expect("extract track02"),
+        track02
+    );
+}
+
+#[test]
+fn chd_gd_override_forces_gdrom_and_rejects_plain_cd() {
+    let temp = setup_temp_dir();
+    let track01 = (0..(4 * 2352))
+        .map(|index| (index % 101) as u8)
+        .collect::<Vec<_>>();
+    let track02 = (0..(4 * 2352))
+        .map(|index| (index % 89) as u8)
+        .collect::<Vec<_>>();
+    fs::write(temp.child("track01.bin").path(), &track01).expect("track01");
+    fs::write(temp.child("track02.bin").path(), &track02).expect("track02");
+
+    // chd-gd forces GD-ROM when the cue carries a high-density signal.
+    temp.child("gd.cue")
+        .write_str(
+            "REM SINGLE-DENSITY AREA\nFILE \"track01.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\nREM HIGH-DENSITY AREA\nFILE \"track02.bin\" BINARY\n  TRACK 02 MODE1/2352\n    INDEX 01 00:00:00\n",
+        )
+        .expect("gd cue");
+    let gd_chd = temp.child("gd.chd");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("gd.cue").path().to_str().expect("path"),
+            "--format",
+            "chd-gd",
+            "--output",
+            gd_chd.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+    let probe_output = Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args(["probe", gd_chd.path().to_str().expect("path"), "--no-extract", "--json"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    assert!(
+        parse_single_json_line(&probe_output)["label"]
+            .as_str()
+            .expect("label")
+            .contains("gd chd")
+    );
+
+    // chd-gd on a plain CD cue (no high-density signal) is rejected.
+    temp.child("cd.cue")
+        .write_str("FILE \"track01.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n")
+        .expect("cd cue");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("cd.cue").path().to_str().expect("path"),
+            "--format",
+            "chd-gd",
+            "--output",
+            temp.child("cd.chd").path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(1);
 }
 
 #[test]

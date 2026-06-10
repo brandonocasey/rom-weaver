@@ -1,7 +1,11 @@
 use super::*;
 
 impl ChdContainerHandler {
-    pub(super) fn parse_cue_file(&self, path: &Path) -> Result<DiscLayout> {
+    /// Resolve a cue sheet into unpadded CD-shaped tracks plus the number of the
+    /// first track that falls inside a GD-ROM high-density area (when the sheet
+    /// carries `REM HIGH-DENSITY AREA` markers). Callers frame the result as a CD
+    /// (with implicit 4-frame padding) or synthesize a GD-ROM layout from it.
+    fn resolve_cue_tracks(&self, path: &Path) -> Result<(Vec<DiscTrack>, Option<u32>)> {
         #[derive(Clone, Debug)]
         struct PendingTrack {
             number: u32,
@@ -29,6 +33,10 @@ impl ChdContainerHandler {
         let mut tracks = Vec::<PendingTrack>::new();
         let mut current_file: Option<PendingFile> = None;
         let mut current_track: Option<usize> = None;
+        // GD-ROM cue sheets mark the inner program area with `REM HIGH-DENSITY
+        // AREA`; remember the first track number that follows the marker.
+        let mut high_density_first: Option<u32> = None;
+        let mut next_track_high_density = false;
 
         let mut raw_line = String::new();
         loop {
@@ -44,7 +52,12 @@ impl ChdContainerHandler {
             let keyword = line[..keyword_end].to_ascii_uppercase();
             let remainder = line[keyword_end..].trim_start();
             match keyword.as_str() {
-                "REM" | "TITLE" | "PERFORMER" | "SONGWRITER" | "FLAGS" | "CATALOG" | "ISRC" => {}
+                "REM" => {
+                    if remainder.to_ascii_uppercase().contains("HIGH-DENSITY AREA") {
+                        next_track_high_density = true;
+                    }
+                }
+                "TITLE" | "PERFORMER" | "SONGWRITER" | "FLAGS" | "CATALOG" | "ISRC" => {}
                 "FILE" => {
                     let (name, rest) = split_token(remainder).ok_or_else(|| {
                         RomWeaverError::Validation(format!(
@@ -124,6 +137,10 @@ impl ChdContainerHandler {
                             path.display(),
                             number
                         )));
+                    }
+                    if next_track_high_density {
+                        high_density_first.get_or_insert(number);
+                        next_track_high_density = false;
                     }
                     tracks.push(PendingTrack {
                         number,
@@ -300,8 +317,102 @@ impl ChdContainerHandler {
             });
         }
 
-        Ok(DiscLayout {
+        Ok((resolved, high_density_first))
+    }
+
+    /// Parse a cue sheet as a plain CD-ROM layout (with MAME's implicit 4-frame
+    /// track padding applied).
+    pub(super) fn parse_cue_file(&self, path: &Path) -> Result<DiscLayout> {
+        let (tracks, _high_density_first) = self.resolve_cue_tracks(path)?;
+        let mut layout = DiscLayout {
             kind: DiscKind::CdRom,
+            tracks,
+        };
+        layout.apply_cd_track_padding();
+        Ok(layout)
+    }
+
+    /// Resolve a disc input for the default `chd` format, auto-detecting GD-ROM
+    /// media. A `.cue` is treated as a GD-ROM when a sibling `.gdi` exists (its
+    /// physical track offsets are authoritative) or when the sheet carries
+    /// `REM HIGH-DENSITY AREA` markers; otherwise it is a plain CD-ROM.
+    pub(super) fn parse_disc_input(&self, path: &Path) -> Result<DiscLayout> {
+        if let Some(gdi_path) = Self::sibling_gdi_path(path) {
+            return self.parse_gdi_file(&gdi_path);
+        }
+        let (tracks, high_density_first) = self.resolve_cue_tracks(path)?;
+        match high_density_first {
+            Some(first) => self.synthesize_gd_from_cue_tracks(tracks, first),
+            None => {
+                let mut layout = DiscLayout {
+                    kind: DiscKind::CdRom,
+                    tracks,
+                };
+                layout.apply_cd_track_padding();
+                Ok(layout)
+            }
+        }
+    }
+
+    /// Return the `.gdi` next to a `.cue` (same stem) when it exists on disk.
+    fn sibling_gdi_path(cue_path: &Path) -> Option<PathBuf> {
+        if !Self::is_extension(cue_path, "cue") {
+            return None;
+        }
+        let gdi_path = cue_path.with_extension("gdi");
+        gdi_path.is_file().then_some(gdi_path)
+    }
+
+    /// Build a GD-ROM layout from cue-resolved tracks by anchoring the
+    /// high-density area at its standard physical start LBA. Track data stays
+    /// contiguous within each density area and the gap between areas becomes
+    /// padding frames, mirroring how `parse_gdi_file` frames an explicit `.gdi`.
+    fn synthesize_gd_from_cue_tracks(
+        &self,
+        tracks: Vec<DiscTrack>,
+        high_density_first: u32,
+    ) -> Result<DiscLayout> {
+        let mut phys_ofs = 0_u32;
+        let mut phys_starts = Vec::with_capacity(tracks.len());
+        for track in &tracks {
+            if track.number == high_density_first {
+                phys_ofs = Self::GD_HIGH_DENSITY_START_LBA;
+            }
+            phys_starts.push(phys_ofs);
+            phys_ofs = phys_ofs.checked_add(track.frames).ok_or_else(|| {
+                RomWeaverError::Validation(
+                    "gd-rom track layout exceeds addressable frames".to_string(),
+                )
+            })?;
+        }
+
+        let mut resolved = Vec::with_capacity(tracks.len());
+        for (index, track) in tracks.into_iter().enumerate() {
+            let phys_start = phys_starts[index];
+            let data_frames = track.frames;
+            let pad_frames = match phys_starts.get(index + 1) {
+                Some(next_start) => next_start
+                    .checked_sub(phys_start.saturating_add(data_frames))
+                    .ok_or_else(|| {
+                        RomWeaverError::Validation(format!(
+                            "gd-rom track {} overlaps the next track",
+                            track.number
+                        ))
+                    })?,
+                None => 0,
+            };
+            resolved.push(DiscTrack {
+                frames: data_frames.saturating_add(pad_frames),
+                pregap_frames: 0,
+                postgap_frames: 0,
+                pregap_has_data: false,
+                pad_frames,
+                ..track
+            });
+        }
+
+        Ok(DiscLayout {
+            kind: DiscKind::GdRom,
             tracks: resolved,
         })
     }
@@ -615,7 +726,12 @@ impl ChdContainerHandler {
             ));
         }
 
-        Ok(DiscLayout { kind, tracks })
+        // CD metadata stores the unpadded data frame count; re-derive the
+        // implicit 4-frame track padding so extraction skips it (GD-ROM keeps
+        // its padding explicitly in the PAD field, so this is a no-op there).
+        let mut layout = DiscLayout { kind, tracks };
+        layout.apply_cd_track_padding();
+        Ok(layout)
     }
 
     pub(super) fn track_output_name(&self, stem: &str, track_number: u32) -> String {

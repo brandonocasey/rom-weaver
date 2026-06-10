@@ -35,6 +35,29 @@ impl DiscLayout {
             })
         })
     }
+
+    /// Apply MAME's CD track padding to a freshly built CD-ROM layout.
+    ///
+    /// Each track's hunk-stream frame count is rounded up to a multiple of
+    /// `CD_TRACK_PADDING`; `frames` becomes the padded total and `pad_frames`
+    /// records the zero-filled remainder. The track metadata still reports the
+    /// unpadded data count (`frames - pad_frames`). GD-ROM carries explicit
+    /// `PAD:` metadata, so this is a no-op for that media.
+    ///
+    /// Assumes each track currently holds its unpadded data frame count with
+    /// `pad_frames == 0`, so it must run exactly once per layout.
+    fn apply_cd_track_padding(&mut self) {
+        if self.kind != DiscKind::CdRom {
+            return;
+        }
+        let padding = ChdContainerHandler::CD_TRACK_PADDING;
+        for track in &mut self.tracks {
+            let data_frames = track.frames;
+            let pad = (padding - data_frames % padding) % padding;
+            track.pad_frames = pad;
+            track.frames = data_frames.saturating_add(pad);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,9 +318,11 @@ enum ChdCreateKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChdCreateModeOverride {
     Cd,
+    Gd,
     Dvd,
     Raw,
     HardDisk,
+    Av,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -59,6 +59,7 @@ const SourceInfoList = ({
   checksums,
   checksumVariants,
   defaultOpen = false,
+  discType,
   lead,
   onToggle,
   open,
@@ -69,6 +70,7 @@ const SourceInfoList = ({
   checksums?: SourceInfoChecksums | null;
   checksumVariants?: ChecksumVariant[];
   defaultOpen?: boolean;
+  discType?: string;
   lead?: ReactNode;
   onToggle?: (open: boolean) => void;
   open?: boolean;
@@ -76,7 +78,7 @@ const SourceInfoList = ({
   timing?: ReactNode;
 }) => {
   const hasBytes = typeof bytes === "number" && Number.isFinite(bytes);
-  if (!(hasBytes || checksums || lead || progress)) return null;
+  if (!(hasBytes || checksums || discType || lead || progress)) return null;
   const byteValue = hasBytes ? String(Math.floor(bytes as number)) : "";
   return (
     <>
@@ -88,6 +90,7 @@ const SourceInfoList = ({
         open={open}
         timing={timing}
       >
+        {discType ? <ChecksumRow copyValue={discType} label="DISC" value={discType} /> : null}
         <ChecksumRow copyValue={byteValue} label="BYTES" value={byteValue} />
         <ChecksumRow label="CRC32" value={checksums?.crc32 || ""} />
         <ChecksumRow label="MD5" value={checksums?.md5 || ""} />

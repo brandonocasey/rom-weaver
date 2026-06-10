@@ -303,8 +303,19 @@ impl ContainerHandlerOperations for ChdContainerHandler {
         compression_plan = self.resolve_compression_plan(request.codec.as_deref(), &create_kind)?;
         compression_plan =
             self.normalize_compression_plan_for_create_kind(&create_kind, compression_plan);
+        // When the codec is auto-selected (no explicit `--codec`) and resolves to a
+        // level-less codec such as avhuff (e.g. an auto-detected A/V stream), the
+        // caller's default level profile does not apply — drop it rather than
+        // rejecting. An explicit `--codec avhuff --level N` still errors.
+        let level_for_codec = if request.codec.is_none()
+            && !Self::codec_accepts_level(compression_plan.primary_codec)
+        {
+            None
+        } else {
+            request.level
+        };
         let compression_level =
-            self.resolve_compression_level(compression_plan.primary_codec, request.level)?;
+            self.resolve_compression_level(compression_plan.primary_codec, level_for_codec)?;
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
         }
