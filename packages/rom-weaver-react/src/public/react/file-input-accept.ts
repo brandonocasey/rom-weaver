@@ -1,4 +1,18 @@
-import { ARCHIVE_FILE_EXTENSIONS, PATCH_FILE_EXTENSION_VARIANTS } from "./file-classification.ts";
+import { ARCHIVE_FILE_EXTENSIONS, PATCH_FILE_EXTENSION_VARIANTS, ROM_FILE_EXTENSIONS } from "./file-classification.ts";
+
+/**
+ * Accept attributes for the unified drop surface's browse/folder pickers. The
+ * extension sets come from {@link file-classification.ts} so the picker and the
+ * drop-time classifier never drift apart. Two variants mirror the CLI filters:
+ *
+ *   - `unifiedApply` — ROMs, patches, and archives (`--rom-filter` +
+ *     `--patch-filter`), used by the Apply tab.
+ *   - `unifiedRom` — ROMs and archives only (`--rom-filter`), used by the
+ *     Create and Trim tabs, which have no patch bucket.
+ *
+ * Mobile Safari ignores extension-only `accept` lists, so it falls back to a
+ * MIME + archive-extension list that still lets any binary ROM/patch through.
+ */
 
 const SAFARI_USER_AGENT_REGEX = /Safari/;
 const CHROME_USER_AGENT_REGEX = /Chrome/;
@@ -10,9 +24,16 @@ type FileInputAcceptEnvironment = {
   platform?: string;
 };
 
-const PATCH_INPUT_ACCEPT = [...PATCH_FILE_EXTENSION_VARIANTS, ...ARCHIVE_FILE_EXTENSIONS]
-  .map((extension) => `.${extension}`)
-  .join(",");
+const unique = <TValue>(values: readonly TValue[]) => [...new Set(values)];
+const toAcceptList = (extensions: readonly string[]) =>
+  unique(extensions.map((extension) => `.${extension}`)).join(",");
+
+const ROM_FILTER_ACCEPT = toAcceptList([...ROM_FILE_EXTENSIONS, ...ARCHIVE_FILE_EXTENSIONS]);
+const ROM_AND_PATCH_FILTER_ACCEPT = toAcceptList([
+  ...ROM_FILE_EXTENSIONS,
+  ...ARCHIVE_FILE_EXTENSIONS,
+  ...PATCH_FILE_EXTENSION_VARIANTS,
+]);
 
 const FILE_ONLY_MIME_TYPES = [
   "application/octet-stream",
@@ -53,14 +74,14 @@ const isMobileSafari = (environment: FileInputAcceptEnvironment) => {
 const getFileInputAcceptAttributes = (environment = getNavigatorAcceptEnvironment()) => {
   if (isMobileSafari(environment)) {
     return {
-      patch: FILE_ONLY_ACCEPT,
-      rom: FILE_ONLY_ACCEPT,
+      unifiedApply: FILE_ONLY_ACCEPT,
+      unifiedRom: FILE_ONLY_ACCEPT,
     };
   }
 
   return {
-    patch: PATCH_INPUT_ACCEPT,
-    rom: undefined,
+    unifiedApply: ROM_AND_PATCH_FILTER_ACCEPT,
+    unifiedRom: ROM_FILTER_ACCEPT,
   };
 };
 

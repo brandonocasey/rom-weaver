@@ -5,12 +5,21 @@ import { getFileInputAcceptAttributes } from "../../src/public/react/file-input-
 const stripLeadingExtensionDot = (extension) => extension.replace(/^\./, "");
 const unique = (values) => [...new Set(values)];
 
-test("patch file input accept list follows generated format metadata", () => {
-  const patchExtensions = ROM_WEAVER_FILE_FILTERS.patchExtensions.map(stripLeadingExtensionDot);
-  const expected = [
-    ...unique([...patchExtensions, ...patchExtensions.map((extension) => `${extension}1`)]),
-    ...ROM_WEAVER_FILE_FILTERS.containerExtensions.map(stripLeadingExtensionDot),
-  ].map((extension) => `.${extension}`);
+const romExtensions = ROM_WEAVER_FILE_FILTERS.romExtensions.map(stripLeadingExtensionDot);
+const containerExtensions = ROM_WEAVER_FILE_FILTERS.containerExtensions.map(stripLeadingExtensionDot);
+const patchExtensions = ROM_WEAVER_FILE_FILTERS.patchExtensions.map(stripLeadingExtensionDot);
+const patchVariants = unique([...patchExtensions, ...patchExtensions.map((extension) => `${extension}1`)]);
 
-  expect(getFileInputAcceptAttributes({ userAgent: "Chrome" }).patch.split(",")).toEqual(expected);
+test("rom-filter accept list covers ROM and archive extensions", () => {
+  const expected = unique([...romExtensions, ...containerExtensions].map((extension) => `.${extension}`));
+
+  expect(getFileInputAcceptAttributes({ userAgent: "Chrome" }).unifiedRom.split(",")).toEqual(expected);
+});
+
+test("rom+patch-filter accept list adds patch extensions", () => {
+  const expected = unique(
+    [...romExtensions, ...containerExtensions, ...patchVariants].map((extension) => `.${extension}`),
+  );
+
+  expect(getFileInputAcceptAttributes({ userAgent: "Chrome" }).unifiedApply.split(",")).toEqual(expected);
 });

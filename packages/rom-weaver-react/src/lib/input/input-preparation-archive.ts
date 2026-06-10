@@ -1535,7 +1535,29 @@ const getPatchLeafParentCompressionsForSelection = (
   candidateId: string,
 ): InputParentCompression[] | undefined => patchLeafFilesByRequest.get(request)?.get(candidateId)?.parentCompressions;
 
+/**
+ * Probe whether an archive/container holds a pickable ROM. The unified Apply
+ * drop surface uses this to route a dropped archive: one with a ROM is a ROM
+ * source (embedded patches are surfaced separately by {@link prepareAutoPatchInputs}),
+ * while one without a ROM is treated as a patch container. Path-backed disc
+ * images (chd/rvz/z3ds) are always ROM sources and never carry sidecar patches.
+ */
+const archiveContainsRomEntry = async (
+  source: SourceRef,
+  options: ApplyWorkflowOptions | undefined,
+  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
+): Promise<boolean> => {
+  const archiveFile = await createPatchFile(source, "input.bin");
+  if (!isCompressionFile(archiveFile)) return false;
+  if (PATH_BACKED_COMPRESSION_FORMATS.has(getCompressionFormat(archiveFile))) return true;
+  const romEntries = await listCompressionEntries(archiveFile, options, runtime, { romFilter: true }).catch(() => []);
+  if (!romEntries.length) return false;
+  const romProbe = await probeCompressionRomEntriesForSource(archiveFile, romEntries, options, runtime);
+  return !!resolveCompressionRomAutoPickEntryName(archiveFile.fileName, romProbe, "");
+};
+
 export {
+  archiveContainsRomEntry,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
   prepareAutoPatchInputs,

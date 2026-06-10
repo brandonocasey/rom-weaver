@@ -4,10 +4,8 @@ import { ChecksumList, ChecksumRow } from "./components/ds/checksum-list.tsx";
 import { ExtractPanel } from "./components/ds/extraction-tree.tsx";
 import { FileProgress, Notice } from "./components/ds/feedback.tsx";
 import { FileCard } from "./components/ds/file-card.tsx";
-import { DropZone, InfoPopover, StepSection } from "./components/ds/layout.tsx";
+import { InfoPopover, StepSection } from "./components/ds/layout.tsx";
 import { useListReorder } from "./components/ds/use-list-reorder.ts";
-import { getFileInputAcceptAttributes } from "./file-input-accept";
-import { PATCH_INPUT_HINT } from "./input-helper-text.ts";
 import type { PatcherStackController, PatcherUiController } from "./patcher-form.ts";
 import type { PatchStackItemState } from "./patcher-presentation.ts";
 import type { NoticeState, PatcherUiState } from "./patcher-ui-state.ts";
@@ -208,7 +206,6 @@ const ApplyPatchListStep = ({
   patchStack: PatcherStackController;
   ui: PatcherUiController;
 }) => {
-  const fileInputAccept = getFileInputAcceptAttributes();
   const total = patches.length;
   // Reordering only makes sense for a multi-patch stack. Dragging is additionally
   // suspended while any patch is staging or the stack is otherwise busy.
@@ -337,14 +334,6 @@ const ApplyPatchListStep = ({
           ))}
         </div>
       ) : null}
-      <DropZone
-        accept={fileInputAccept.patch}
-        big={patches.length === 0}
-        hint={patches.length === 0 ? PATCH_INPUT_HINT : undefined}
-        inputId="rom-weaver-input-file-patch"
-        label={patches.length ? "Add patch · drop or browse" : "Select patch · drop or browse"}
-        onFiles={(files) => ui.providePatchInputFiles?.(files)}
-      />
       <SectionNotice onDismiss={() => ui.dismissNotice?.("patchNotice")} state={patchNotice} />
     </StepSection>
   );

@@ -2,26 +2,35 @@ import { expect, test } from "vitest";
 import {
   collectRomDropFiles,
   routeByOrder,
-  routeByType,
+  routeByTypeProbed,
   routeSingleRom,
 } from "../../src/public/react/unified-drop-routing.ts";
 
 const file = (name) => new File([], name);
 const names = (files) => files.map((entry) => (entry ? entry.name : null));
 
-test("routeByType sorts roms to inputs and patches to patches", () => {
-  const routed = routeByType([file("game.sfc"), file("hack.ips")], { romPresent: false });
+test("routeByTypeProbed sorts roms to inputs and patches to patches", async () => {
+  const routed = await routeByTypeProbed([file("game.sfc"), file("hack.ips")], () => true);
   expect(names(routed.inputs)).toEqual(["game.sfc"]);
   expect(names(routed.patches)).toEqual(["hack.ips"]);
 });
 
-test("routeByType sends an archive to inputs when no rom is present, patches when one is", () => {
-  expect(names(routeByType([file("bundle.zip")], { romPresent: false }).inputs)).toEqual(["bundle.zip"]);
-  expect(names(routeByType([file("bundle.zip")], { romPresent: false }).patches)).toEqual([]);
+test("routeByTypeProbed routes an archive by its probed ROM contents", async () => {
+  const asRom = await routeByTypeProbed([file("bundle.zip")], () => true);
+  expect(names(asRom.inputs)).toEqual(["bundle.zip"]);
+  expect(names(asRom.patches)).toEqual([]);
 
-  const withRom = routeByType([file("bundle.zip")], { romPresent: true });
-  expect(names(withRom.inputs)).toEqual([]);
-  expect(names(withRom.patches)).toEqual(["bundle.zip"]);
+  const asPatch = await routeByTypeProbed([file("bundle.zip")], () => false);
+  expect(names(asPatch.inputs)).toEqual([]);
+  expect(names(asPatch.patches)).toEqual(["bundle.zip"]);
+});
+
+test("routeByTypeProbed defaults a failed archive probe to the rom bucket", async () => {
+  const routed = await routeByTypeProbed([file("bundle.zip")], () => {
+    throw new Error("probe failed");
+  });
+  expect(names(routed.inputs)).toEqual(["bundle.zip"]);
+  expect(names(routed.patches)).toEqual([]);
 });
 
 test("collectRomDropFiles keeps roms and archives but drops patches", () => {

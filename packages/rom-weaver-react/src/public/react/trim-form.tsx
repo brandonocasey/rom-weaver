@@ -25,10 +25,12 @@ import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./
 import { Notice } from "./components/ds/feedback.tsx";
 import { InfoPopover } from "./components/ds/layout.tsx";
 import { ConfirmDialog } from "./components/ds/modal.tsx";
+import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { OutputRunAction, WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
 import { buildCompressPanel } from "./compress-options.ts";
-import { TRIM_INPUT_HINT } from "./input-helper-text.ts";
+import { getFileInputAcceptAttributes } from "./file-input-accept";
+import { ARCHIVE_INPUT_HINT, TRIM_INPUT_HINT } from "./input-helper-text.ts";
 import { useInputSelectionHandler } from "./input-selection-handler.ts";
 import { createCompressionTypeOptions, createTrimOutputOptions } from "./output-view-model.ts";
 import type { BinarySource } from "./patcher-form.ts";
@@ -789,14 +791,19 @@ function TrimPatchForm(props: TrimPatchFormProps) {
 
   return (
     <main aria-labelledby="tab-trim" className="panel" id="trim-builder-container">
+      <UnifiedDropZone
+        accept={getFileInputAcceptAttributes().unifiedRom}
+        archiveHint={`Archives · ${ARCHIVE_INPUT_HINT}`}
+        big={!source}
+        disabled={uploadDisabled}
+        id="trim-builder-row-unified-drop"
+        inputId="trim-builder-input-file-unified"
+        label={source ? "Replace ROM · drop or browse" : "Select ROM · drop or browse"}
+        onFiles={handleUnifiedDrop}
+        romHint={`Trim-supported ROMs · ${TRIM_INPUT_HINT}`}
+      />
       <WorkflowRomInputStep
-        dropZone={{
-          big: !source,
-          disabled: uploadDisabled,
-          hint: source ? undefined : `trim-supported ROMs · ${TRIM_INPUT_HINT}`,
-          label: source ? "Replace ROM · drop or browse" : "Select ROM · drop or browse",
-          onFiles: handleUnifiedDrop,
-        }}
+        id="trim-builder-row-source"
         info={
           <InfoPopover title="ROM input">
             <strong>ROM</strong>

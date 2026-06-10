@@ -26,13 +26,13 @@ test("Mobile Safari file inputs use the file-only accept fallback", () => {
       "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
   });
 
-  expect(accept.patch).toContain("application/octet-stream");
-  expect(accept.patch).toContain(".zip");
-  expect(accept.patch).not.toContain(".ips");
-  expect(accept.rom).toBe(accept.patch);
+  expect(accept.unifiedApply).toContain("application/octet-stream");
+  expect(accept.unifiedApply).toContain(".zip");
+  expect(accept.unifiedApply).not.toContain(".ips");
+  expect(accept.unifiedRom).toBe(accept.unifiedApply);
 });
 
-test("desktop patch file inputs accept xdelta compatibility extensions", () => {
+test("desktop apply file inputs accept xdelta compatibility extensions", () => {
   const accept = getFileInputAcceptAttributes({
     maxTouchPoints: 0,
     platform: "MacIntel",
@@ -40,7 +40,8 @@ test("desktop patch file inputs accept xdelta compatibility extensions", () => {
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
   });
 
-  expect(accept.patch).toContain(".xdelta");
-  expect(accept.patch).toContain(".delta");
-  expect(accept.patch).toContain(".dat");
+  expect(accept.unifiedApply).toContain(".xdelta");
+  expect(accept.unifiedApply).toContain(".delta");
+  expect(accept.unifiedApply).toContain(".dat");
+  expect(accept.unifiedRom).not.toContain(".xdelta");
 });

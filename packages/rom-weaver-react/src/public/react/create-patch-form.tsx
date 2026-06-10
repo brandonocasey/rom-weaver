@@ -25,7 +25,7 @@ import { OutputRunAction, WorkflowOutputStep } from "./components/ds/workflow-ou
 import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
 import { buildCompressPanel } from "./compress-options.ts";
 import { getFileInputAcceptAttributes } from "./file-input-accept";
-import { ROM_INPUT_HINT } from "./input-helper-text.ts";
+import { ARCHIVE_INPUT_HINT, ROM_INPUT_HINT } from "./input-helper-text.ts";
 import { useInputSelectionHandler } from "./input-selection-handler.ts";
 import { getBinarySourceListStableIds } from "./input-session-helpers.ts";
 import { createCreateOutputCompressionOptions, createCreatePatchFormatOptions } from "./output-view-model.ts";
@@ -826,11 +826,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     file,
     fileName,
     sourceState,
-    emptyLabel,
-    hint,
-    replaceLabel,
     removeLabel,
-    onSelect,
     onClear,
     sourceProgress = null,
     checksumProgress = null,
@@ -841,11 +837,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     file: BinarySource | null;
     fileName: string;
     sourceState: CreateDisplaySourceState | null;
-    hint: string;
-    emptyLabel: string;
-    replaceLabel: string;
     removeLabel: string;
-    onSelect: (file: BinarySource | null) => void;
     onClear: () => void;
     sourceProgress?: typeof progressProps;
     checksumProgress?: WorkflowFormProgressState | null;
@@ -869,13 +861,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     ) : null;
     return (
       <WorkflowRomInputStep
-        dropZone={{
-          big: !file,
-          disabled: uploadDisabled,
-          hint: file ? undefined : hint,
-          label: file ? replaceLabel : emptyLabel,
-          onFiles: (files) => onSelect(files[0] ?? null),
-        }}
+        id={`patch-builder-row-${role}`}
         items={
           file
             ? [
@@ -927,14 +913,15 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   return (
     <main aria-labelledby="tab-creator" className="panel" id="patch-builder-container">
       <UnifiedDropZone
-        accept={createFileInputAccept.rom}
+        accept={createFileInputAccept.unifiedRom}
+        archiveHint={`Archives · ${ARCHIVE_INPUT_HINT}`}
         big={createSourcesEmpty}
         disabled={uploadDisabled}
-        hint="Drop both ROMs — the first fills Original, the next Modified. Use Swap to reassign."
         id="patch-builder-row-unified-drop"
         inputId="patch-builder-input-file-unified"
         label={createSourcesEmpty ? "Drop original & modified ROMs · or browse" : "Drop another ROM"}
         onFiles={handleUnifiedDrop}
+        romHint={`ROMs · ${ROM_INPUT_HINT}`}
       />
       {createInputsSelected ? (
         <div className="workflow-step-after-items">
@@ -951,15 +938,11 @@ function CreatePatchForm(props: CreatePatchFormProps) {
       ) : null}
       {renderSourceStep({
         checksumProgress: getSourceChecksumProgress("original"),
-        emptyLabel: "Select original ROM · drop or browse",
         file: original,
         fileName: displayedOriginalFileName,
-        hint: `unmodified original · ${ROM_INPUT_HINT}`,
         num: "01",
         onClear: () => updateOriginal(null),
-        onSelect: updateOriginal,
         removeLabel: "Clear original ROM",
-        replaceLabel: "Replace original ROM · drop or browse",
         role: "original",
         sourceProgress: getSourceProgress("original"),
         sourceState: originalState,
@@ -967,15 +950,11 @@ function CreatePatchForm(props: CreatePatchFormProps) {
       })}
       {renderSourceStep({
         checksumProgress: getSourceChecksumProgress("modified"),
-        emptyLabel: "Select modified ROM · drop or browse",
         file: modified,
         fileName: displayedModifiedFileName,
-        hint: `edited ROM · ${ROM_INPUT_HINT}`,
         num: "02",
         onClear: () => updateModified(null),
-        onSelect: updateModified,
         removeLabel: "Clear modified ROM",
-        replaceLabel: "Replace modified ROM · drop or browse",
         role: "modified",
         sourceProgress: getSourceProgress("modified"),
         sourceState: modifiedState,

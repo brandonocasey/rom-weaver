@@ -346,11 +346,12 @@ test("replacing the modified ROM keeps the prepared original ROM", async () => {
   await expect.poll(() => document.querySelectorAll(".fileprog").length).toBe(0);
 
   workflowMockState.modifiedDeferred = createDeferred();
-  const modifiedInput = Array.from(document.querySelectorAll("input[type='file']")).find(
-    (input) => input.getAttribute("aria-label") === "Replace modified ROM · drop or browse",
-  );
-  expect(modifiedInput).toBeInstanceOf(HTMLInputElement);
-  selectFileInput(modifiedInput, new File([new Uint8Array([0, 1, 2, 5])], "modified-v2.bin"));
+  // With both slots filled, a ROM dropped on the unified surface overflows into
+  // the modified slot (routeByOrder), replacing the modified ROM and keeping the
+  // original.
+  const unifiedInput = document.getElementById("patch-builder-input-file-unified");
+  expect(unifiedInput).toBeInstanceOf(HTMLInputElement);
+  selectFileInput(unifiedInput, new File([new Uint8Array([0, 1, 2, 5])], "modified-v2.bin"));
 
   await expect.poll(() => document.body.textContent || "").toContain("original.bin");
   expect(document.body.textContent || "").not.toContain("Waiting for other actions");

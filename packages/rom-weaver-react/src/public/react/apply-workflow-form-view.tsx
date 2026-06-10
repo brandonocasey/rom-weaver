@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
+import { probeApplyArchiveHasRom } from "./apply-archive-probe.ts";
 import { ApplyPatchListStep } from "./apply-patch-list-step.tsx";
 import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./components/ds/compress-panel.tsx";
 import { Notice } from "./components/ds/feedback.tsx";
@@ -9,7 +10,7 @@ import { WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
 import { PatcherPrimaryAction } from "./components/patcher-output-controls.tsx";
 import { getFileInputAcceptAttributes } from "./file-input-accept";
-import { ROM_INPUT_HINT } from "./input-helper-text.ts";
+import { ARCHIVE_INPUT_HINT, PATCH_INPUT_HINT, ROM_INPUT_HINT } from "./input-helper-text.ts";
 import { createCompressionTypeOptions } from "./output-view-model.ts";
 import type {
   DialogController,
@@ -23,7 +24,7 @@ import { inertUiController } from "./patcher-form-session.ts";
 import type { PatchStackItemState } from "./patcher-presentation.ts";
 import { ArchiveDialog as SharedArchiveDialog } from "./patcher-react-shared.tsx";
 import type { NoticeState, PatcherSectionNoticeKey, RomInputRowState } from "./patcher-ui-state.ts";
-import { routeByType } from "./unified-drop-routing.ts";
+import { routeByTypeProbed } from "./unified-drop-routing.ts";
 import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./workflow-run-hooks.ts";
 
 /**
@@ -35,16 +36,6 @@ import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./
 const TIMING_LABEL = (ms?: number) =>
   typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : "";
 const CHECKSUM_TIMING_LABEL = (timing?: string, prefix = "Checksum") => (timing ? `${prefix} ${timing}` : undefined);
-const DISC_PART_FILE_NAME_REGEX = /\.bin$/i;
-
-const isDiscPartRomInput = (romInput: RomInputRowState) =>
-  romInput.kind === "track" ||
-  !!romInput.groupId ||
-  romInput.splitBinAvailable === true ||
-  DISC_PART_FILE_NAME_REGEX.test(romInput.info.fileName || "");
-
-const shouldShowRomDropZone = (romInputs: RomInputRowState[]) =>
-  romInputs.length === 0 || romInputs.some(isDiscPartRomInput);
 
 const SectionNotice = ({ id, onDismiss, state }: { id?: string; onDismiss?: () => void; state: NoticeState }) => {
   if (!state.visible) return null;
@@ -147,15 +138,16 @@ function ApplyWorkflowFormView({
   const romVerificationStates = buildRomVerificationStates(patches, romInputs);
   const compressHeaderFormat = getOutputCompressionFormatLabel(outputState.compressionFormat, outputState.options);
   const compressionTypeOptions = createCompressionTypeOptions(outputState.options, "none");
-  const showRomDropZone = shouldShowRomDropZone(romInputs);
 
-  // Combined drop surface: ROMs/archives are routed to the ROM bucket, patches
-  // to the patch bucket. An archive dropped while a ROM is already loaded is
-  // treated as a patch container (see routeByType).
+  // Combined drop surface (--rom-filter + --patch-filter): ROMs → the ROM
+  // bucket, patches → the patch bucket, and each archive is probed for a ROM —
+  // a ROM archive is an input (embedded patches are auto-discovered), one
+  // without a ROM is a patch container (see routeByTypeProbed).
   const handleUnifiedDrop = (files: File[]) => {
-    const { inputs, patches: patchFiles } = routeByType(files, { romPresent: romInputs.length > 0 });
-    if (inputs.length) uiController.provideRomInputFiles?.(inputs);
-    if (patchFiles.length) uiController.providePatchInputFiles?.(patchFiles);
+    void routeByTypeProbed(files, probeApplyArchiveHasRom).then(({ inputs, patches: patchFiles }) => {
+      if (inputs.length) uiController.provideRomInputFiles?.(inputs);
+      if (patchFiles.length) uiController.providePatchInputFiles?.(patchFiles);
+    });
   };
   const workflowEmpty = romInputs.length === 0 && patches.length === 0;
 
@@ -172,27 +164,17 @@ function ApplyWorkflowFormView({
   return (
     <main aria-labelledby="tab-patcher" className="panel" id="rom-weaver-container">
       <UnifiedDropZone
-        accept={fileInputAccept.rom}
+        accept={fileInputAccept.unifiedApply}
+        archiveHint={`Archives · ${ARCHIVE_INPUT_HINT}`}
         big={workflowEmpty}
-        hint="Drop ROMs and patches together — archives are extracted and sorted automatically."
         id="rom-weaver-row-unified-drop"
         inputId="rom-weaver-input-file-unified"
         label={workflowEmpty ? "Drop ROMs & patches · or browse" : "Drop more ROMs & patches"}
         onFiles={handleUnifiedDrop}
+        patchHint={`Patches · ${PATCH_INPUT_HINT}`}
+        romHint={`ROMs · ${ROM_INPUT_HINT}`}
       />
       <WorkflowRomInputStep
-        dropZone={
-          showRomDropZone
-            ? {
-                accept: fileInputAccept.rom,
-                big: romInputs.length === 0,
-                hint: romInputs.length === 0 ? ROM_INPUT_HINT : undefined,
-                inputId: "rom-weaver-input-file-rom",
-                label: romInputs.length ? "Add another part for this ROM" : "Select ROM · drop or browse",
-                onFiles: (files) => uiController.provideRomInputFiles?.(files),
-              }
-            : null
-        }
         id="rom-weaver-row-file-rom"
         info={
           <InfoPopover title="Input handling">

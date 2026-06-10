@@ -607,10 +607,10 @@ test("ApplyPatchForm runs a complete patch flow and downloads output", async () 
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_PATCH));
 
   await waitForApplyButtonEnabled();
 
@@ -643,9 +643,9 @@ test("manual output name is used for patchless apply download", async () => {
       }),
     );
 
-    await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+    await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-    selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
+    selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
     setFormControlValue(document.getElementById("rom-weaver-input-output-file-name"), "custom-output");
 
     await waitForApplyButtonEnabled();
@@ -671,10 +671,10 @@ test("removing a patch refreshes generated output name", async () => {
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_PATCH));
 
   await waitForApplyButtonEnabled();
   await expect.poll(getOutputFileNameValue, { timeout: 30000 }).toBe("game - change");
@@ -768,10 +768,10 @@ test("editing output name after download is ready keeps the prepared output", as
       }),
     );
 
-    await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+    await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-    selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-    selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+    selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
+    selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_PATCH));
 
     await waitForApplyButtonEnabled();
     await clickApplyButton();
@@ -810,10 +810,10 @@ test("changing output format invalidates pending download and removes OPFS outpu
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_PATCH));
 
   await waitForApplyButtonEnabled();
   await clickApplyButton();
@@ -847,10 +847,10 @@ test("changing output format reuses prepared archived input on next apply", asyn
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(ONE_ROM_ZIP));
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(ONE_ROM_ZIP));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_PATCH));
 
   await waitForApplyButtonEnabled();
   await clickApplyButton();
@@ -907,11 +907,11 @@ test("changing patch after completion reuses prepared archived input on next app
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(ONE_ROM_ZIP));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(ONE_ROM_ZIP));
   const initialPatch = await loadFixtureFile(RAW_PATCH);
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), initialPatch);
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), initialPatch);
 
   await waitForApplyButtonEnabled();
   await clickApplyButton();
@@ -926,7 +926,7 @@ test("changing patch after completion reuses prepared archived input on next app
     type: "application/octet-stream",
   });
   const logStart = logs.length;
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), replacementPatch);
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), replacementPatch);
   await waitForApplyButtonEnabled();
   await clickApplyButton();
 
@@ -965,10 +965,10 @@ test("compressed outputs clean up intermediate raw OPFS files", async () => {
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_PATCH));
 
   await waitForApplyButtonEnabled();
   await clickApplyButton();
@@ -985,10 +985,10 @@ test("compressed outputs clean up intermediate raw OPFS files", async () => {
 test("candidate selection resolves multi-entry archive inputs", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
   selectFileInput(
-    document.getElementById("rom-weaver-input-file-rom"),
+    document.getElementById("rom-weaver-input-file-unified"),
     await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"),
   );
 
@@ -1006,10 +1006,10 @@ test("clearing ROM input releases extracted OPFS files", async () => {
   await clearOpfsInputDirectory();
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
   selectFileInput(
-    document.getElementById("rom-weaver-input-file-rom"),
+    document.getElementById("rom-weaver-input-file-unified"),
     await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"),
   );
 
@@ -1032,9 +1032,9 @@ test("clearing CHD ROM input does not leave staged OPFS source files", async () 
   await clearOpfsInputDirectory();
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(CHD_INPUT));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(CHD_INPUT));
   await waitForInputStackFileName();
 
   expect(await listOpfsStagedInputSourceFiles("game-cd.chd")).toEqual([]);
@@ -1056,15 +1056,15 @@ test("clearing CHD ROM input does not leave staged OPFS source files", async () 
 test("direct CUE plus BIN upload shows the cue sheet on the bin row", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
-  expect(document.getElementById("rom-weaver-input-file-rom")?.multiple).toBe(false);
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
+  expect(document.getElementById("rom-weaver-input-file-unified")?.multiple).toBe(true);
 
   const rawInput = await loadFixtureFile(RAW_ROM);
   const binFile = new File([await rawInput.arrayBuffer()], "direct-disc.bin", { type: "application/octet-stream" });
   const cueText = 'FILE "direct-disc.bin" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n';
   const cueFile = new File([cueText], "direct-disc.cue", { type: "application/x-cue" });
 
-  selectFileInputs(document.getElementById("rom-weaver-input-file-rom"), [cueFile, binFile]);
+  selectFileInputs(document.getElementById("rom-weaver-input-file-unified"), [cueFile, binFile]);
 
   const getRows = () => getInputStackRows();
   const getRow = (fileName) => getRows().find((row) => row.textContent?.includes(fileName));
@@ -1119,7 +1119,7 @@ test("direct CUE plus BIN upload can output CHD from the CUE source", async () =
       }),
     );
 
-    await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+    await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
     const sectorBytes = 2352;
     const sectorCount = 32;
@@ -1134,7 +1134,7 @@ test("direct CUE plus BIN upload can output CHD from the CUE source", async () =
       { type: "application/x-cue" },
     );
 
-    selectFileInputs(document.getElementById("rom-weaver-input-file-rom"), [cueFile, binFile]);
+    selectFileInputs(document.getElementById("rom-weaver-input-file-unified"), [cueFile, binFile]);
 
     await expect
       .poll(() => getInputStackRows().filter((row) => row.textContent?.includes("direct-disc.bin")).length, {
@@ -1188,7 +1188,7 @@ test("split-bin checkbox is not rendered", async () => {
   expect(document.getElementById("rom-weaver-checkbox-chd-split-bin")).toBeNull();
 });
 
-test("ROM part dropzone hides after a non-disc ROM", async () => {
+test("unified drop stays available after a non-disc ROM", async () => {
   const state = createEmptyPatcherUiState();
   state.romInputs = [createRomInputRowState({ info: { fileName: "game.nds" } })];
   mount(
@@ -1205,10 +1205,12 @@ test("ROM part dropzone hides after a non-disc ROM", async () => {
   await expect
     .poll(() => document.getElementById("rom-weaver-list-input-stack")?.textContent || "")
     .toContain("game.nds");
-  expect(document.getElementById("rom-weaver-input-file-rom")).toBeNull();
+  const unifiedInput = document.getElementById("rom-weaver-input-file-unified");
+  expect(unifiedInput).not.toBeNull();
+  expect(unifiedInput?.multiple).toBe(true);
 });
 
-test("ROM part dropzone stays available for disc-style inputs", async () => {
+test("unified drop accepts additional parts for disc-style inputs", async () => {
   const state = createEmptyPatcherUiState();
   state.romInputs = [
     createRomInputRowState({
@@ -1226,9 +1228,8 @@ test("ROM part dropzone stays available for disc-style inputs", async () => {
     }),
   );
 
-  await expect
-    .poll(() => document.getElementById("rom-weaver-input-file-rom")?.getAttribute("aria-label") || "")
-    .toBe("Add another part for this ROM");
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
+  expect(document.getElementById("rom-weaver-input-file-unified")?.multiple).toBe(true);
 
   const chdState = createEmptyPatcherUiState();
   chdState.romInputs = [
@@ -1248,9 +1249,8 @@ test("ROM part dropzone stays available for disc-style inputs", async () => {
     }),
   );
 
-  await expect
-    .poll(() => document.getElementById("rom-weaver-input-file-rom")?.getAttribute("aria-label") || "")
-    .toBe("Add another part for this ROM");
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
+  expect(document.getElementById("rom-weaver-input-file-unified")?.multiple).toBe(true);
 });
 
 test("queued staging rows show waiting progress", async () => {
@@ -1880,10 +1880,10 @@ test("apply output codec options refresh after per-job edits", async () => {
 test("clearing a selected archive input requires selection again when re-added", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
   const archiveFile = await loadFixtureFile(MULTI_ROM_ZIP, "application/zip");
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), archiveFile);
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), archiveFile);
   await clickCandidateSelectionOption("game.bin");
   await waitForInputStackFileName();
 
@@ -1897,7 +1897,7 @@ test("clearing a selected archive input requires selection again when re-added",
     })
     .toBe(true);
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), archiveFile);
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), archiveFile);
 
   await expect.poll(() => !!getCandidateSelectionList(), { timeout: 30000 }).toBe(true);
 });
@@ -1906,10 +1906,10 @@ test("cancelling input candidate selection removes the pending ROM input", async
   await clearOpfsInputDirectory();
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
   selectFileInput(
-    document.getElementById("rom-weaver-input-file-rom"),
+    document.getElementById("rom-weaver-input-file-unified"),
     await loadFixtureFile(MULTI_ROM_ZIP, "application/zip"),
   );
 
@@ -1940,10 +1940,10 @@ test("cancelling input candidate selection removes the pending ROM input", async
 test("cancelling patch candidate selection removes the pending patch", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-patch")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
   selectFileInput(
-    document.getElementById("rom-weaver-input-file-patch"),
+    document.getElementById("rom-weaver-input-file-unified"),
     await loadFixtureFile(MULTI_PATCH_ZIP, "application/zip"),
   );
 
@@ -1968,13 +1968,13 @@ test("cancelling patch candidate selection removes the pending patch", async () 
 test("input stack shows resolved extracted disc filename after staging", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RVZ_INPUT));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RVZ_INPUT));
   const rvzDisplayedName = await waitForInputStackFileName();
   expect(rvzDisplayedName).toContain("game.iso");
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(CHD_INPUT));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(CHD_INPUT));
   const chdDisplayedName = await waitForInputStackFileName();
   expect(chdDisplayedName).not.toMatch(/\.chd$/i);
   expect(chdDisplayedName).toMatch(/\.(bin|iso)\b/i);
@@ -1984,10 +1984,10 @@ test("input stack shows resolved extracted disc filename after staging", async (
 test("patch row shows extraction progress and extracted patch naming", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-patch")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
   selectFileInput(
-    document.getElementById("rom-weaver-input-file-patch"),
+    document.getElementById("rom-weaver-input-file-unified"),
     await loadFixtureFile(ONE_PATCH_7Z, "application/x-7z-compressed"),
   );
 
@@ -2027,10 +2027,10 @@ test("patch row shows extraction progress and extracted patch naming", async () 
 test("deleting a selected patch archive requires selection again when re-added", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-patch")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
   const patchArchive = await loadFixtureFile(MULTI_PATCH_ZIP, "application/zip");
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), patchArchive);
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), patchArchive);
   await clickPatchCandidateSelectionOption("change.ips");
 
   await expect
@@ -2051,7 +2051,7 @@ test("deleting a selected patch archive requires selection again when re-added",
     })
     .toBe(true);
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), patchArchive);
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), patchArchive);
 
   await expect.poll(() => !!getCandidateSelectionList(), { timeout: 30000 }).toBe(true);
 });
@@ -2159,11 +2159,11 @@ test("adding an input after a staged patch does not reshow preparing patch progr
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-patch")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
   selectFileInput(
-    document.getElementById("rom-weaver-input-file-patch"),
+    document.getElementById("rom-weaver-input-file-unified"),
     await loadFixtureFile(ONE_PATCH_7Z, "application/x-7z-compressed"),
   );
   await clickPatchCandidateSelectionOption("change.ips");
@@ -2178,7 +2178,7 @@ test("adding an input after a staged patch does not reshow preparing patch progr
 
   progressEvents.length = 0;
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
   await waitForApplyButtonEnabled();
 
   const patchPreparingEvents = progressEvents.filter((event) => {
@@ -2200,10 +2200,10 @@ test("cancelling patch candidate selection does not trigger render-phase React w
   try {
     mount(createElement(ApplyPatchForm));
 
-    await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+    await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-    selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-    selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(MULTI_PATCH_ZIP));
+    selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
+    selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(MULTI_PATCH_ZIP));
 
     await expect.poll(() => getCandidateSelectionList()).not.toBeNull();
 
@@ -2238,9 +2238,9 @@ test("cancelling patch candidate selection does not trigger render-phase React w
 test("RVZ rom inputs auto-extract before apply", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RVZ_INPUT));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RVZ_INPUT));
 
   await waitForInputStackFileName();
   await expect.poll(() => getInputStackFileName(), { timeout: 60000 }).toContain("game.iso");
@@ -2249,9 +2249,9 @@ test("RVZ rom inputs auto-extract before apply", async () => {
 test("CHD rom inputs auto-extract before apply", async () => {
   mount(createElement(ApplyPatchForm));
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(CHD_INPUT));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(CHD_INPUT));
 
   await waitForInputStackFileName();
   await expect.poll(() => getInputStackFileName(), { timeout: 60000 }).not.toMatch(/\.chd$/i);
@@ -2269,10 +2269,10 @@ test("RVZ rom inputs can still run full apply workflow", async () => {
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RVZ_INPUT));
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(RAW_PATCH));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RVZ_INPUT));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_PATCH));
 
   await waitForApplyButtonEnabled();
   await clickApplyButton();
@@ -2309,10 +2309,10 @@ test("strict checksum mismatch blocks apply until override is checked", async ()
     }),
   );
 
-  await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+  await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-  selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-  selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(WRONG_INPUT_BPS));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
+  selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(WRONG_INPUT_BPS));
 
   const checksumOverrideCheckbox = await waitForState(() => {
     const checkbox = document.getElementById("rom-weaver-checkbox-checksum-override");
@@ -2355,10 +2355,10 @@ test("source-check patch formats report runtime patch validation success", async
       }),
     );
 
-    await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
+    await expect.poll(() => document.getElementById("rom-weaver-input-file-unified")).not.toBeNull();
 
-    selectFileInput(document.getElementById("rom-weaver-input-file-rom"), await loadFixtureFile(RAW_ROM));
-    selectFileInput(document.getElementById("rom-weaver-input-file-patch"), await loadFixtureFile(patchPath));
+    selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(RAW_ROM));
+    selectFileInput(document.getElementById("rom-weaver-input-file-unified"), await loadFixtureFile(patchPath));
 
     const validation = await waitForState(() => {
       const element = document.querySelector("#rom-weaver-list-patch-stack .file.ok");

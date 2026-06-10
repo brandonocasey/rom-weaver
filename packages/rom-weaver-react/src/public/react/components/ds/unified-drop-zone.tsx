@@ -29,7 +29,12 @@ const setDirectoryInputAttributes = (node: HTMLInputElement | null) => {
 
 type UnifiedDropZoneProps = {
   label: ReactNode;
-  hint?: ReactNode;
+  /** Per-category hint lines. Each renders on its own line; omit to hide. The
+   * patch line is dropped on ROM-only tabs (Create/Trim) by simply not passing
+   * `patchHint`. */
+  romHint?: ReactNode;
+  patchHint?: ReactNode;
+  archiveHint?: ReactNode;
   big?: boolean;
   disabled?: boolean;
   accept?: string;
@@ -38,7 +43,7 @@ type UnifiedDropZoneProps = {
   onFiles: (files: File[]) => void;
 };
 
-const UnifiedDropZone = ({ onFiles, ...dropZoneProps }: UnifiedDropZoneProps) => {
+const UnifiedDropZone = ({ archiveHint, onFiles, patchHint, romHint, ...dropZoneProps }: UnifiedDropZoneProps) => {
   const generatedId = useId();
   const folderInputId = `${dropZoneProps.inputId || generatedId}-folder`;
   const emit = (files: File[]) => {
@@ -48,9 +53,27 @@ const UnifiedDropZone = ({ onFiles, ...dropZoneProps }: UnifiedDropZoneProps) =>
     });
     onFiles(files);
   };
+  const hintLines = [
+    romHint ? (
+      <span className="block" key="rom">
+        {romHint}
+      </span>
+    ) : null,
+    patchHint ? (
+      <span className="block" key="patch">
+        {patchHint}
+      </span>
+    ) : null,
+    archiveHint ? (
+      <span className="block" key="archive">
+        {archiveHint}
+      </span>
+    ) : null,
+  ].filter(Boolean);
+  const hint = hintLines.length ? hintLines : undefined;
   return (
     <div className="unified-drop">
-      <DropZone {...dropZoneProps} multiple onFiles={emit} />
+      <DropZone {...dropZoneProps} hint={hint} multiple onFiles={emit} />
       <div className="unified-drop-actions">
         <label className="btn ghost" htmlFor={folderInputId}>
           Pick a folder

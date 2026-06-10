@@ -16,22 +16,33 @@ type ByTypeRouting = {
   patches: File[];
 };
 
+/** Probe whether a dropped archive holds a ROM (true) or is a patch container (false). */
+type ArchiveRomProbe = (archive: File) => boolean | Promise<boolean>;
+
 /**
- * Apply-tab strategy: ROMs/unknown → inputs, patches → patches. An archive is a
- * patch container when a ROM is already loaded (its contents are most likely the
- * patch), otherwise it is the ROM source to extract.
+ * Apply-tab strategy with true `--rom-filter` + `--patch-filter`: ROMs/unknown →
+ * inputs, patches → patches, and every archive is probed for a ROM. An archive
+ * that contains a ROM is the ROM source (any embedded patches are surfaced by
+ * implicit-patch discovery); one without a ROM is a patch container. A failed
+ * probe defaults to the ROM bucket, matching the legacy "extract as input"
+ * behavior.
  */
-const routeByType = (files: File[], options: { romPresent: boolean }): ByTypeRouting => {
+const routeByTypeProbed = async (files: File[], probeArchiveHasRom: ArchiveRomProbe): Promise<ByTypeRouting> => {
   const { archives, inputs, patches } = classifyDroppedFiles(files);
   const routed: ByTypeRouting = { inputs: [...inputs], patches: [...patches] };
   for (const archive of archives) {
-    if (options.romPresent) routed.patches.push(archive);
-    else routed.inputs.push(archive);
+    let hasRom = true;
+    try {
+      hasRom = await probeArchiveHasRom(archive);
+    } catch (error) {
+      logger.warn("archive ROM probe failed — treating as ROM source", { error, name: archive.name });
+    }
+    if (hasRom) routed.inputs.push(archive);
+    else routed.patches.push(archive);
   }
-  logger.trace("routed unified drop by type", {
+  logger.trace("routed unified drop by probed type", {
     inputCount: routed.inputs.length,
     patchCount: routed.patches.length,
-    romPresent: options.romPresent,
   });
   return routed;
 };
@@ -90,5 +101,5 @@ const routeSingleRom = (files: File[]): File | null => {
   return first;
 };
 
-export type { ByTypeRouting };
-export { collectRomDropFiles, routeByOrder, routeByType, routeSingleRom };
+export type { ArchiveRomProbe, ByTypeRouting };
+export { collectRomDropFiles, routeByOrder, routeByTypeProbed, routeSingleRom };
