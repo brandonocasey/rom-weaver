@@ -137,6 +137,7 @@ type LocalApplyPatchFormSessionOptions = Pick<
   stagePatches?: (
     input: ApplyWorkflowStageSnapshot,
     handlers: {
+      onImplicitPatches?: (patches: BinarySource[], infos: Array<StagedInputInfo | null | undefined>) => void;
       onProgress: (event: ProgressEvent) => void;
     },
   ) => Promise<Array<StagedInputInfo | null | undefined>>;

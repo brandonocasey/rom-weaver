@@ -21,6 +21,8 @@ type InternalSourceState = {
   order: number;
   status: SourceStatus;
   candidates: import("../../types/selection.ts").SelectionCandidate[];
+  /** True when the pending candidate selection allows picking several patches at once. */
+  multiSelect?: boolean;
   selectedCandidateId?: string;
   targetInputId?: string;
   targetInputFileName?: string;

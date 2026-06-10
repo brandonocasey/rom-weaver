@@ -37,7 +37,11 @@ import {
   resolveCompressedInputAssets,
   resolveCompressedInputFile,
 } from "./input-decompression.ts";
-import { prepareAutoPatchInputs } from "./input-preparation-archive.ts";
+import {
+  getPatchLeafFileForSelection,
+  getPatchLeafParentCompressionsForSelection,
+  prepareAutoPatchInputs,
+} from "./input-preparation-archive.ts";
 import { getBaseFileName, normalizeArchiveEntryName } from "./path-utils.ts";
 
 type InputPreparationOptions = ApplyWorkflowOptions | CreateWorkflowOptions | undefined;
@@ -604,6 +608,8 @@ const prepareInputFile = async (
 export type { InputAsset };
 export {
   getBinarySourceSize,
+  getPatchLeafFileForSelection,
+  getPatchLeafParentCompressionsForSelection,
   prepareAutoPatchInputs,
   prepareInput,
   prepareInputAssets,

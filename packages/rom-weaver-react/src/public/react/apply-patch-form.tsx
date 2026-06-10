@@ -204,6 +204,8 @@ const toPatchStageInfo = (
   };
 };
 
+type PatchStageInfo = ReturnType<typeof toPatchStageInfo>;
+
 const getPatchTargetSelectionError = (input: ApplyWorkflowInputState | null, patches: ApplyWorkflowPatchState[]) => {
   if (!input || input.status !== "ready") return null;
   for (const patch of patches) {
@@ -971,6 +973,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     async (
       input: ApplyWorkflowSessionInput,
       handlers: {
+        onImplicitPatches?: (patches: BinarySource[], infos: PatchStageInfo[]) => void;
         onProgress: (event: ProgressEvent) => void;
       },
     ) => {
@@ -989,22 +992,32 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
             promptPatchSelection: true,
           },
         },
-        async ({ input: stagedInput, patches }) => {
+        async ({ input: stagedInput, patches, workflow }) => {
           const inputLabelById = new Map(
             toStagedInputInfos(stagedInput, input.inputs).map((entry) => [entry.id || "", entry.fileName || "Input"]),
           );
-          return patches.map((patch, index) => {
+          const buildInfo = (patch: (typeof patches)[number], index: number, fileName: string): PatchStageInfo => {
             const targetName =
               patch?.targetInputFileName ||
               (patch?.targetInputId ? inputLabelById.get(patch.targetInputId) : undefined) ||
               "None selected";
-            return toPatchStageInfo(
-              patch,
-              originalNames[index] || `Patch ${index + 1}`,
-              index,
-              `Target: ${targetName}`,
+            return toPatchStageInfo(patch, fileName, index, `Target: ${targetName}`);
+          };
+          // A nested patch archive with several patches fans out into N independent leaf sources;
+          // surface them so React grows its patch stack instead of showing only the dropped archive.
+          const fannedPatchSources = workflow.getPatchSources().filter(isReactBinarySource);
+          if (fannedPatchSources.length > input.patches.length && handlers.onImplicitPatches) {
+            const fannedInfos = patches.map((patch, index) =>
+              buildInfo(
+                patch,
+                index,
+                getReactBinarySourceFileName(fannedPatchSources[index] || null, `Patch ${index + 1}`),
+              ),
             );
-          });
+            handlers.onImplicitPatches(fannedPatchSources, fannedInfos);
+            return fannedInfos;
+          }
+          return patches.map((patch, index) => buildInfo(patch, index, originalNames[index] || `Patch ${index + 1}`));
         },
       );
     },

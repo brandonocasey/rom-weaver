@@ -532,6 +532,15 @@
 .rw-modal .selmeta .seldim { flex: none; color: var(--rw-ink-mut); font-size: 0.76rem; }
 .rw-modal .selsize { flex: none; font-family: var(--rw-mono); font-size: 0.78rem; color: var(--rw-ink-soft); }
 .rw-modal .sficon { width: 15px; height: 15px; flex: none; color: var(--rw-ink-mut); align-self: flex-start; margin-top: 1px; }
+.rw-modal .selmain .selname { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rw-modal .selmain .selname .fnm { flex: none; }
+.rw-modal .selpath { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--rw-mono); font-size: 0.72rem; color: var(--rw-ink-mut); }
+.rw-modal .selcheck input[type="checkbox"] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--rw-accent); }
+.rw-modal .seltoolbar { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin-bottom: 9px; }
+.rw-modal .seltoolbar .selall { height: 28px; padding: 0 12px; }
+.rw-modal .selcount { font-size: 0.78rem; color: var(--rw-ink-mut); }
+.rw-modal .selfoot { display: flex; justify-content: flex-end; margin-top: 12px; }
+.rw-modal .selfoot .selconfirm:disabled { opacity: .5; cursor: not-allowed; }
 
 /* settings modal */
 .rw-modal .setcols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; align-items: start; }

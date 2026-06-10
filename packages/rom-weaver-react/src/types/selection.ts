@@ -34,13 +34,17 @@ type SelectionCandidate = SelectionFileCandidate | SelectionGroupCandidate;
 
 type CandidateSelectionRequest = {
   candidates: SelectionCandidate[];
+  /** When true, the host may pick several candidates at once (each becomes its own patch entry). */
+  multiSelect?: boolean;
   role: SelectionRole;
   sourceIndex?: number;
   sourceName: string;
   warnings: string[];
 };
 
-type SelectionChoice = { id: string };
+/** A resolved selection. `id` is always the primary (first) pick; `ids` carries the full ordered set
+ * for a multi-select request. */
+type SelectionChoice = { id: string; ids?: string[] };
 
 type SelectFile = (request: CandidateSelectionRequest) => Promise<SelectionChoice> | SelectionChoice;
 

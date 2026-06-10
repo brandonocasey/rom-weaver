@@ -157,6 +157,9 @@ type CompressionWorkflowOptions = {
   limits?: DecompressionLimits;
   romFilter?: boolean;
   patchFilter?: boolean;
+  /** When false, suppress the host selection prompt for ambiguous containers so a multi-branch
+   * archive auto-extracts every branch instead of pausing for input. */
+  interactiveSelectionEnabled?: boolean;
   logLevel?: LogLevel;
   extractChecksumAlgorithms?: string[];
   onLog?: (record: Pick<LogRecord, "details" | "level" | "message" | "namespace" | "timestamp">) => void;

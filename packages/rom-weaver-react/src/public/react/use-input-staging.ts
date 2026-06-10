@@ -78,7 +78,7 @@ const useInputStaging = (context: InputStagingContext) => {
       const { machines, report, rows, session, stage } = contextRef.current;
       const { patchStageMachine } = machines;
       const patchStageGenerationRef = patchStageMachine.stageGenerationRef;
-      const { getPatchKey } = rows;
+      const { getPatchKey, updatePatches } = rows;
       const { setPatchInfoByKey, setPatchProgress, setPatchProgressByKey, setPatchStaging } = session;
       const { setSectionErrorMessage, onError } = report;
       const { stagePatches } = stage;
@@ -112,6 +112,20 @@ const useInputStaging = (context: InputStagingContext) => {
         });
       }
       void stagePatches(snapshot, {
+        // A nested patch archive can fan out into several leaf patches; grow the React patch stack
+        // to N independent sources so every selected patch shows as its own row (mirrors inputs).
+        onImplicitPatches: (patches, infos = []) => {
+          if (patchStageGenerationRef.current !== generation) return;
+          updatePatches(patches);
+          setPatchInfoByKey(
+            Object.fromEntries(
+              patches.map((patch, index) => [
+                getPatchKey(patch, patches),
+                infos[index] || { fileName: getBinarySourceFileName(patch, `Patch ${index + 1}`) },
+              ]),
+            ),
+          );
+        },
         onProgress: (event) => {
           if (silent) return;
           if (patchStageGenerationRef.current !== generation) return;

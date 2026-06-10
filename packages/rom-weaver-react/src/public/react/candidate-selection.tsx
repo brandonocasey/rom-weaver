@@ -3,7 +3,7 @@ import { createLogger } from "../../lib/logging.ts";
 import { getCandidateDisplayItems } from "../../presentation/formatting/candidates.ts";
 import { createBrowserLocalizer } from "../../presentation/localization/index.ts";
 import { Modal } from "./components/ds/modal.tsx";
-import { type SelectionItem, SelectionTree } from "./components/ds/selection.tsx";
+import { SelectionCheckList, type SelectionItem, SelectionTree } from "./components/ds/selection.tsx";
 import type { CandidateSelectionChoice, CandidateSelectionPrompt } from "./public-types.ts";
 
 const logger = createLogger("candidate-selection");
@@ -32,10 +32,12 @@ function CandidateSelectionDialog({
   state,
   onCancel,
   onSelect,
+  onSelectMany,
 }: {
   state: CandidateSelectionState | null;
   onCancel: () => void;
   onSelect: (id: string) => void;
+  onSelectMany: (ids: string[]) => void;
 }) {
   if (!state) return null;
   const { request } = state;
@@ -44,27 +46,42 @@ function CandidateSelectionDialog({
   const selectableCount = displayItems.filter(({ candidate }) => candidate.selectable).length;
   const items: SelectionItem[] = displayItems.map(({ candidate, sizeLabel, warningLabel }) => {
     const primaryLabel = candidate.type === "file" ? candidate.fileName : candidate.label;
-    const breadcrumbLabel = candidate.breadcrumbs?.join(" > ") || "";
+    const breadcrumbLabel = candidate.breadcrumbs?.join(" › ") || "";
     const uniqueBreadcrumbLabel =
       breadcrumbLabel.trim() && breadcrumbLabel.trim() !== primaryLabel.trim() ? breadcrumbLabel : "";
-    const note = [uniqueBreadcrumbLabel, warningLabel].filter(Boolean).join(" • ");
     return {
+      breadcrumb: uniqueBreadcrumbLabel || undefined,
       id: candidate.id,
       name: primaryLabel,
-      note: note || undefined,
+      note: warningLabel || undefined,
       selectable: candidate.selectable,
       sizeLabel: sizeLabel || undefined,
     };
   });
+  const multiSelect = !!request.multiSelect && selectableCount > 1;
   return (
     <Modal
       onClose={onCancel}
       open
-      subtitle={selectableCount ? "Multiple candidates found, select one" : "No selectable files in this source"}
+      subtitle={
+        selectableCount
+          ? multiSelect
+            ? "Multiple patches found, select one or more"
+            : "Multiple candidates found, select one"
+          : "No selectable files in this source"
+      }
       title={request.sourceName}
       variant="select-modal"
     >
-      <SelectionTree items={items} onSelect={onSelect} />
+      {multiSelect ? (
+        <SelectionCheckList
+          items={items}
+          onSubmit={onSelectMany}
+          submitLabel={(count) => (count === 1 ? "Add 1 patch" : `Add ${count} patches`)}
+        />
+      ) : (
+        <SelectionTree items={items} onSelect={onSelect} />
+      )}
     </Modal>
   );
 }
@@ -113,10 +130,28 @@ const useCandidateSelection = ({ onCancelSelection }: UseCandidateSelectionOptio
     });
     current?.resolve({ id });
   }, []);
+  const chooseCandidates = useCallback((ids: string[]) => {
+    const current = selectionStateRef.current;
+    if (!ids.length) return;
+    selectionStateRef.current = null;
+    setSelectionState(null);
+    logger.trace("candidate selection dialog resolved with multiple choices", {
+      idCount: ids.length,
+      ids,
+      role: current?.request.role,
+      sourceName: current?.request.sourceName,
+    });
+    current?.resolve({ id: ids[0] as string, ids });
+  }, []);
   return {
     cancelSelection,
     candidateSelectionDialog: (
-      <CandidateSelectionDialog onCancel={cancelSelection} onSelect={chooseCandidate} state={selectionState} />
+      <CandidateSelectionDialog
+        onCancel={cancelSelection}
+        onSelect={chooseCandidate}
+        onSelectMany={chooseCandidates}
+        state={selectionState}
+      />
     ),
     selectFile,
   };

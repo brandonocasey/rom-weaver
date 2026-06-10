@@ -23,7 +23,12 @@ import {
   getPatchFileExternalSource,
 } from "../input/binary-service.ts";
 import { getInputPreparationMetrics, type InputAsset, type InputParentCompression } from "../input/input-assets.ts";
-import { prepareAutoPatchInputs, prepareInputFile } from "../input/input-preparation-service.ts";
+import {
+  getPatchLeafFileForSelection,
+  getPatchLeafParentCompressionsForSelection,
+  prepareAutoPatchInputs,
+  prepareInputFile,
+} from "../input/input-preparation-service.ts";
 import { getBaseFileName } from "../input/path-utils.ts";
 import { selectionToArchiveEntry } from "../input/selection.ts";
 import { wrapPublicOutput } from "../output/index.ts";
@@ -264,6 +269,10 @@ const createPatchOutputLabel = (fileName: string | undefined) => {
   return label || undefined;
 };
 
+/** Side-channel chain attached to a fanned-out leaf patch File so a re-stage (which sees only the
+ * raw patch, not its parent archive) can still render the archive-nesting "extract section". */
+type NestedPatchSourceMetadata = { __nestedParentCompressions?: InputParentCompression[] };
+
 const releasePreparedFile = (file?: PatchFileInstance) => {
   const cleanup = file ? getPatchFileCleanup(file) : undefined;
   if (cleanup) void Promise.resolve(cleanup()).catch(() => undefined);
@@ -478,14 +487,21 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     });
   }
 
-  private createImplicitPatchSource(patchFile: PatchFileInstance): TSource {
+  private createImplicitPatchSource(
+    patchFile: PatchFileInstance,
+    parentCompressions?: InputParentCompression[],
+  ): TSource {
     const fileName = patchFile.fileName || "patch.bin";
     if (typeof File !== "undefined") {
       const blob = getPatchFileBlob(patchFile);
-      if (blob) return new File([blob], fileName, { type: "application/octet-stream" }) as TSource;
-      return new File([new Uint8Array(getPatchFileBytes(patchFile))], fileName, {
-        type: "application/octet-stream",
-      }) as TSource;
+      const file = blob
+        ? new File([blob], fileName, { type: "application/octet-stream" })
+        : new File([new Uint8Array(getPatchFileBytes(patchFile))], fileName, { type: "application/octet-stream" });
+      // Carry the archive-nesting chain on the leaf File so a later re-stage (which sees only a raw
+      // patch, no archive) can still show the "extract section" in the patch row.
+      if (parentCompressions?.length)
+        (file as File & NestedPatchSourceMetadata).__nestedParentCompressions = parentCompressions;
+      return file as TSource;
     }
     return patchFile as unknown as TSource;
   }
@@ -1066,6 +1082,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   private createSelectionRequest(state: InternalSourceState): CandidateSelectionRequest {
     return {
       candidates: state.candidates.map(cloneCandidate),
+      ...(state.multiSelect ? { multiSelect: true } : {}),
       role: state.role,
       sourceName: state.fileName || state.id,
       warnings: state.warnings.map((warning) => warning.message),
@@ -1085,13 +1102,93 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
       return false;
     const selection = await this.resolveSelectionRequest(this.createSelectionRequest(stage.state), this.selectFile);
     if (!selection) return false;
-    if (!stage.internalCandidates.has(selection.id))
-      throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${selection.id}`);
+    const selectedIds = Array.isArray(selection.ids) && selection.ids.length ? selection.ids : [selection.id];
+    this.trace("patch.multiselect.resolved", {
+      count: selectedIds.length,
+      hasIdsArray: Array.isArray(selection.ids),
+      selectedIds,
+    });
+    for (const id of selectedIds) {
+      if (!stage.internalCandidates.has(id))
+        throw new RomWeaverError("SELECTION_NOT_FOUND", `Selection candidate was not found: ${id}`);
+    }
+    const [firstId, ...restIds] = selectedIds as [string, ...string[]];
     releasePreparedSource(stage);
-    stage.state.selectedCandidateId = selection.id;
-    stage.selectedArchiveEntry = stage.internalCandidates.get(selection.id)?.archiveEntry;
+    stage.state.multiSelect = false;
+    stage.state.selectedCandidateId = firstId;
+    const firstInternal = stage.internalCandidates.get(firstId);
+    stage.selectedArchiveEntry = firstInternal?.archiveEntry;
+    // Reuse the already-extracted leaf file when the source pre-extracted every branch (patch
+    // multi-select); otherwise fall back to extracting the selected entry in prepareSelectedSource.
+    const firstLeaf =
+      (firstInternal?.request && getPatchLeafFileForSelection(firstInternal.request, firstInternal.candidate.id)) ||
+      undefined;
+    this.trace("patch.multiselect.first", {
+      candidateId: firstInternal?.candidate?.id,
+      leafFound: !!firstLeaf,
+      selectedArchiveEntry: stage.selectedArchiveEntry,
+    });
+    if (firstLeaf) {
+      stage.preparedPatchFile = firstLeaf;
+      // Keep the archive-nesting chain on the first pick too so its row shows the extract section.
+      const firstParentCompressions =
+        (firstInternal?.request &&
+          getPatchLeafParentCompressionsForSelection(firstInternal.request, firstInternal.candidate.id)) ||
+        undefined;
+      if (firstParentCompressions?.length) {
+        stage.parentCompressions = this.normalizeParentCompressions(firstParentCompressions);
+        // Carry the extract elapsed time onto the stage so the row shows it (prepareSelectedSource
+        // reuses stage.state.decompressionTimeMs for the already-extracted leaf).
+        const rootTime = firstParentCompressions[0]?.decompressionTimeMs;
+        if (typeof rootTime === "number") stage.state.decompressionTimeMs = rootTime;
+      }
+      // Replace the archive source with the extracted leaf so a later re-stage resolves a single
+      // patch directly and never re-opens the multi-select dialog (only when several were picked).
+      if (restIds.length) stage.source = this.createImplicitPatchSource(firstLeaf, firstParentCompressions);
+    }
     await this.prepareSelectedSource(stage);
+    // Each additional pick becomes its own patch-stack entry, mirroring implicit-patch discovery.
+    for (const id of restIds) {
+      const internal = stage.internalCandidates.get(id);
+      const leaf = internal?.request && getPatchLeafFileForSelection(internal.request, internal.candidate.id);
+      const parentCompressions =
+        (internal?.request && getPatchLeafParentCompressionsForSelection(internal.request, internal.candidate.id)) ||
+        [];
+      this.trace("patch.multiselect.rest", { candidateId: internal?.candidate?.id, leafFound: !!leaf, publicId: id });
+      if (!leaf) continue;
+      await this.addFannedOutPatch(leaf, parentCompressions);
+    }
     return true;
+  }
+
+  /** Stage one additional already-extracted patch leaf as its own independent patch-stack entry,
+   * preserving its archive-nesting chain so the row keeps its "extract section". */
+  private async addFannedOutPatch(
+    patchFile: PatchFileInstance,
+    parentCompressions: InputParentCompression[],
+  ): Promise<void> {
+    this.trace("patch.multiselect.fanout.add", { fileName: patchFile.fileName, patchCount: this.patches.length });
+    const stage = this.createInitialSource(
+      "patch",
+      this.createImplicitPatchSource(patchFile, parentCompressions),
+      this.patches.length,
+    );
+    stage.preparedPatchFile = patchFile;
+    stage.outputLabel = createPatchOutputLabel(patchFile.fileName) || stage.outputLabel;
+    this.applyPreparedPatchMetadata(stage, {
+      decompressionTimeMs: parentCompressions[0]?.decompressionTimeMs || 0,
+      file: patchFile,
+      parentCompressions,
+      sourceSize: patchFile.fileSize,
+      wasDecompressed: true,
+    });
+    this.addDirectCandidate(stage, "patch", stage.index, stage.state.id);
+    stage.state.selectedCandidateId = stage.state.candidates[0]?.id;
+    if (stage.outputLabel)
+      (stage.preparedPatchFile as PatchFileInstance & { _generatedPatchName?: string })._generatedPatchName =
+        stage.outputLabel;
+    await this.evaluatePatchReadiness(stage);
+    this.patches.push(stage);
   }
 
   private applyPreparedInputMetadata(stage: StagedSource<TSource>) {
@@ -1134,12 +1231,22 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
     stage: StagedSource<TSource>,
     prepared: Awaited<ReturnType<typeof prepareInputFile>>,
   ) {
-    stage.parentCompressions = this.normalizeParentCompressions(prepared.parentCompressions);
+    const carried = (stage.source as Partial<NestedPatchSourceMetadata> | undefined)?.__nestedParentCompressions;
+    // On a re-stage the source is a raw leaf File, so `prepared` has no nesting chain; fall back to
+    // the chain (and its root extract time) carried on the implicit leaf source so the row keeps its
+    // extract section, parent-archive size, and elapsed time across re-stages.
+    const usingCarried = !prepared.parentCompressions?.length && !!carried?.length;
+    stage.parentCompressions = this.normalizeParentCompressions(usingCarried ? carried : prepared.parentCompressions);
     stage.state.fileName = getBaseFileName(prepared.file.fileName || stage.state.fileName || stage.state.id);
     stage.state.size = prepared.file.fileSize;
     stage.state.sourceSize = prepared.sourceSize || prepared.file.fileSize;
-    stage.state.decompressionTimeMs = prepared.wasDecompressed ? prepared.decompressionTimeMs : undefined;
-    stage.state.wasDecompressed = prepared.wasDecompressed;
+    const carriedTime = usingCarried ? carried?.[0]?.decompressionTimeMs : undefined;
+    stage.state.decompressionTimeMs = prepared.wasDecompressed
+      ? prepared.decompressionTimeMs
+      : typeof carriedTime === "number"
+        ? carriedTime
+        : undefined;
+    stage.state.wasDecompressed = prepared.wasDecompressed || (usingCarried && typeof carriedTime === "number");
   }
 
   private normalizeParentCompressions(
@@ -1174,6 +1281,7 @@ class ApplyWorkflowController<TSource, TDestination> extends WorkflowController<
   }
 
   private addCandidateRequest(stage: StagedSource<TSource>, request: CandidateSelectionRequest) {
+    stage.state.multiSelect = !!request.multiSelect;
     const publicIdByCandidateId = new Map(
       request.candidates.map((candidate) => [
         candidate.id,

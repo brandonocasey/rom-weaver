@@ -1,3 +1,4 @@
+import { DEFAULT_VFS_ROOT } from "../../storage/vfs/path.ts";
 import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
 import type {
   CandidateSelectionRequest,
@@ -5,7 +6,7 @@ import type {
   SelectionGroupCandidate,
 } from "../../types/selection.ts";
 import type { SourceObject, SourceRef } from "../../types/source.ts";
-import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
+import type { ApplyWorkflowOptions, CreateWorkflowOptions, PublicOutput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import { createArchiveSourceBlob } from "../archive-utils.ts";
 import { CREATE_ROM_SPECIFIC_COMPRESSION_FORMATS } from "../compression/container-format-registry.ts";
@@ -79,6 +80,7 @@ type ChdCodecMode = "cd" | "dvd";
 type CompressionExtractOverrides = {
   checksumAlgorithms?: string[];
   chdSplitBin?: boolean;
+  interactiveSelectionEnabled?: boolean;
 };
 type CompressionEntryKindFilter = {
   romFilter?: boolean;
@@ -108,6 +110,13 @@ const CHD_MERGED_SELECTION_PREFIX = "rom-weaver:chd-merged:";
 const CHD_SPLIT_SELECTION_PREFIX = "rom-weaver:chd-split:";
 const validatedPatchArchiveEntriesByFile = new WeakMap<PatchFileInstance, ValidatedPatchArchiveEntryCache>();
 const patchArchiveValidationCleanupAttached = new WeakSet<PatchFileInstance>();
+// Each ambiguous patch selection extracts every branch ONCE; the resulting (materialized) leaf files
+// are stashed against the emitted selection request so the controller can reuse the exact extracted
+// file for whichever candidate(s) the user picks — no re-extraction (which would collide on OPFS
+// paths) and correct addressing even for two sibling patches in one branch. Keyed by request, so the
+// stash is GC'd once the controller drops the request (e.g. on re-stage or source removal).
+type RegisteredPatchLeaf = { file: PatchFileInstance; parentCompressions: InputParentCompression[] };
+const patchLeafFilesByRequest = new WeakMap<CandidateSelectionRequest, Map<string, RegisteredPatchLeaf>>();
 
 const describeArchiveFileForTrace = (file: PatchFileInstance) => ({
   fileName: file.fileName || "input.bin",
@@ -421,6 +430,9 @@ const getCompressionRuntimeOptions = (
     ? { extractChecksumAlgorithms: [...overrides.checksumAlgorithms] }
     : {}),
   ...(typeof overrides.chdSplitBin === "boolean" ? { chdSplitBin: overrides.chdSplitBin } : {}),
+  ...(typeof overrides.interactiveSelectionEnabled === "boolean"
+    ? { interactiveSelectionEnabled: overrides.interactiveSelectionEnabled }
+    : {}),
   ...(options?.limits ? { limits: options.limits } : {}),
   ...(kindFilter.romFilter ? { romFilter: true } : {}),
   ...(kindFilter.patchFilter ? { patchFilter: true } : {}),
@@ -505,55 +517,6 @@ const makeChdOutputModeCandidate = ({
   type: "group",
   warnings: [],
 });
-
-const makePatchArchiveCandidate = (entry: ArchiveEntryLike, sourceIndex: number): SelectionFileCandidate => ({
-  fileName: getBaseFileName(entry.filename),
-  id: makeInputId(sourceIndex, entry.filename, normalizeArchiveEntryName),
-  kind: "patch",
-  path: entry.filename,
-  selectable: true,
-  size: entry.size,
-  type: "file",
-});
-
-const listDirectPatchArchiveEntries = async (
-  archiveFile: PatchFileInstance,
-  options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike,
-) => {
-  const entries = await listCompressionEntries(archiveFile, options, runtime, { patchFilter: true });
-  const nestedContainerNames = new Set(filterNestedContainerEntries(entries).map((entry) => entry.filename));
-  return entries.filter((entry) => !nestedContainerNames.has(entry.filename));
-};
-
-const maybeReportPatchArchiveSelection = async ({
-  archiveFile,
-  options,
-  runtime,
-  selectedEntryName,
-  sourceIndex,
-}: {
-  archiveFile: PatchFileInstance;
-  options: InputPreparationOptions;
-  runtime: InputPreparationRuntimeLike;
-  selectedEntryName?: string;
-  sourceIndex: number;
-}) => {
-  if (selectedEntryName || typeof options?.onCandidatesFound !== "function") return;
-  const patchEntries = await listDirectPatchArchiveEntries(archiveFile, options, runtime);
-  if (!patchEntries.length) return;
-  const request: CandidateSelectionRequest = {
-    candidates: patchEntries.map((entry) => makePatchArchiveCandidate(entry, sourceIndex)),
-    role: "patch",
-    sourceIndex,
-    sourceName: archiveFile.fileName || "Patch archive",
-    warnings: [],
-  };
-  options.onCandidatesFound(request);
-  throw new RomWeaverError("AMBIGUOUS_SELECTION", `${request.sourceName} requires patch selection`, {
-    details: { request },
-  });
-};
 
 const resolveChdSplitBinSelection = async ({
   archiveFile,
@@ -1049,6 +1012,176 @@ const resolveCompressionRomAutoPickEntryName = (
   throw new Error(`${archiveFileName || "Archive"} contains multiple input candidates`);
 };
 
+type PatchArchiveLeaf = {
+  candidate: SelectionFileCandidate;
+  file: PatchFileInstance;
+  parentCompressions: InputParentCompression[];
+};
+
+const PATCH_LEAF_ROOT_SEGMENTS = DEFAULT_VFS_ROOT.split("/").filter(Boolean);
+
+/** Compute a leaf's archive-nesting breadcrumbs by stripping the extraction root (`/work`): a direct
+ * patch yields `[]`, a nested patch yields its chain of containing nested-archive directories (named
+ * after each archive, e.g. `["B_disc1"]`, `["C_set", "C_sub"]`). Stripping the fixed root (rather
+ * than the prefix shared across leaves) keeps the nesting visible even when every patch sits under
+ * the same nested archive. */
+const derivePatchLeafBreadcrumbs = (path: string): string[] => {
+  const dirSegments = String(path || "")
+    .split("/")
+    .filter(Boolean)
+    .slice(0, -1);
+  let start = 0;
+  while (start < PATCH_LEAF_ROOT_SEGMENTS.length && dirSegments[start] === PATCH_LEAF_ROOT_SEGMENTS[start]) {
+    start += 1;
+  }
+  return dirSegments.slice(start);
+};
+
+/** Extract EVERY patch across all (nested) branches of a patch archive in one recursive descent with
+ * interactive selection OFF, so an ambiguous multi-branch container fully unpacks instead of
+ * prompting for a single branch. Each valid leaf patch is cached by its unique extracted path so the
+ * re-entrant selection (and the multi-select fan-out) can reuse it without re-extracting — essential
+ * because two sibling patches in one branch cannot be addressed by a primary-container `--select`. */
+const enumeratePatchLeaves = async (
+  archiveFile: PatchFileInstance,
+  options: InputPreparationOptions,
+  runtime: InputPreparationRuntimeLike,
+  sourceIndex: number,
+): Promise<PatchArchiveLeaf[]> => {
+  const resolvedRuntime = await resolveInputPreparationRuntime(runtime);
+  if (!resolvedRuntime.compression.extract) throw new Error("Compression extraction is unavailable");
+  const compressionFormat = getCompressionFormat(archiveFile);
+  await preflightArchiveLimitsForDescent(archiveFile, options, runtime, { patchFilter: true }, []);
+  traceArchivePreparation(options, "input.archive.patch.enumerate.start", {
+    compressionFormat,
+    file: describeArchiveFileForTrace(archiveFile),
+  });
+  const result = await resolvedRuntime.compression.extract({
+    descendSinglePayload: true,
+    entries: [],
+    format: compressionFormat,
+    options: getCompressionRuntimeOptions(options, { interactiveSelectionEnabled: false }, { patchFilter: true }),
+    source: getCompressionRuntimeSource(archiveFile),
+  });
+  const outputs: PublicOutput[] = Array.isArray(result.outputs) ? result.outputs : result.output ? [result.output] : [];
+  const cache = getValidatedPatchArchiveEntryCache(archiveFile);
+  const leaves: PatchArchiveLeaf[] = [];
+  for (let index = 0; index < outputs.length; index += 1) {
+    const output = outputs[index];
+    if (!output) continue;
+    const displayPath = String(output.path || "");
+    const fileName = getBaseFileName(output.fileName || `patch-${index + 1}.bin`);
+    let file = displayPath ? cache.get(displayPath) : undefined;
+    if (!file) {
+      file = await createPatchFileFromPublicOutput(output, fileName, { materializeBlob: true });
+      file.fileName = fileName;
+    }
+    if (isCompressionFile(file) || !(await isValidPatchPatchFile(file))) {
+      if (!(displayPath && cache.has(displayPath)))
+        await Promise.resolve(getPatchFileCleanup(file)?.()).catch(() => undefined);
+      continue;
+    }
+    if (displayPath) {
+      ensureValidatedPatchArchiveEntryCleanup(archiveFile);
+      cache.set(displayPath, file);
+    }
+    // Full archive-nesting path: the source archive, then each nested archive/folder it descends
+    // through (the leaf file name is shown separately as the candidate's primary label).
+    const breadcrumbs = [archiveFile.fileName || "archive", ...derivePatchLeafBreadcrumbs(displayPath)];
+    // Surface the same chain as parentCompressions so a fanned-out patch keeps its "extract section"
+    // (the archive › nested-archive path) in the patch stack row. The runtime only reports a single
+    // extract elapsed time and the leaf size (not per-intermediate-archive sizes), so attach the
+    // elapsed time to the root entry but leave parent sizes unset — synthesizing the whole-archive
+    // size as a single leaf's parent would compute a nonsensical compression ratio (archive ÷ leaf).
+    const extractElapsedMs =
+      typeof output.timing?.elapsedMs === "number" && Number.isFinite(output.timing.elapsedMs)
+        ? output.timing.elapsedMs
+        : undefined;
+    const parentCompressions: InputParentCompression[] = breadcrumbs.map((entryName, depth) => ({
+      depth,
+      fileName: entryName,
+      kind: "archive",
+      ...(depth === 0 && extractElapsedMs !== undefined ? { decompressionTimeMs: extractElapsedMs } : {}),
+    }));
+    leaves.push({
+      candidate: {
+        ...(breadcrumbs.length ? { breadcrumbs } : {}),
+        fileName,
+        id: makeInputId(sourceIndex, displayPath || fileName, normalizeArchiveEntryName),
+        kind: "patch",
+        path: displayPath || fileName,
+        selectable: true,
+        size: output.size,
+        type: "file",
+      },
+      file,
+      parentCompressions,
+    });
+  }
+  traceArchivePreparation(options, "input.archive.patch.enumerate.finish", {
+    compressionFormat,
+    file: describeArchiveFileForTrace(archiveFile),
+    leafCandidateIds: leaves.map((leaf) => leaf.candidate.id),
+    leafCount: leaves.length,
+    leafPaths: leaves.map((leaf) => leaf.candidate.path),
+    outputCount: outputs.length,
+  });
+  return leaves;
+};
+
+/** Resolve one patch leaf from a (possibly nested) patch archive. Returns the cached/extracted leaf
+ * for an explicit selection, auto-picks a lone leaf, prompts (flat multi-select across all branches)
+ * when several exist, and returns `null` when no valid patch is discovered so the caller can fall
+ * back to the generic single-payload descent. */
+const resolvePatchArchiveLeaf = async (
+  archiveFile: PatchFileInstance,
+  options: InputPreparationOptions,
+  runtime: InputPreparationRuntimeLike,
+  selectedArchiveEntry: string | undefined,
+  sourceIndex: number,
+): Promise<PatchFileInstance | null> => {
+  const cache = getValidatedPatchArchiveEntryCache(archiveFile);
+  if (selectedArchiveEntry) {
+    const cached = cache.get(selectedArchiveEntry);
+    if (cached) return cached;
+  }
+  const leaves = await enumeratePatchLeaves(archiveFile, options, runtime, sourceIndex);
+  if (selectedArchiveEntry) {
+    const leaf = leaves.find((entry) => entry.candidate.path === selectedArchiveEntry);
+    if (leaf) return leaf.file;
+    throw new RomWeaverError(
+      "SELECTION_NOT_FOUND",
+      `${archiveFile.fileName || "Patch archive"} has no patch entry "${selectedArchiveEntry}"`,
+    );
+  }
+  if (leaves.length === 0) return null;
+  if (leaves.length === 1) return leaves[0]?.file ?? null;
+  if (typeof options?.onCandidatesFound !== "function") return leaves[0]?.file ?? null;
+  const request: CandidateSelectionRequest = {
+    candidates: leaves.map((entry) => entry.candidate),
+    multiSelect: true,
+    role: "patch",
+    sourceIndex,
+    sourceName: archiveFile.fileName || "Patch archive",
+    warnings: [],
+  };
+  patchLeafFilesByRequest.set(
+    request,
+    new Map(
+      leaves.map((entry) => [entry.candidate.id, { file: entry.file, parentCompressions: entry.parentCompressions }]),
+    ),
+  );
+  traceArchivePreparation(options, "input.archive.patch.register", {
+    candidateIds: leaves.map((entry) => entry.candidate.id),
+    count: leaves.length,
+    sourceName: request.sourceName,
+  });
+  options.onCandidatesFound(request);
+  throw new RomWeaverError("AMBIGUOUS_SELECTION", `${request.sourceName} requires patch selection`, {
+    details: { request },
+  });
+};
+
 /** Resolve a single compressed input/patch FILE with one recursive `extract` (no `list`): the Rust
  * core descends nested containers and resolves a single payload per level via the interactive
  * callback, returning the bottom leaf file. Used by the patch (and rom file-staging) path. */
@@ -1065,13 +1198,11 @@ const resolveArchiveInputFileByDescent = async (
   const compressionFormat = getCompressionFormat(file);
   const kindFilter = role === "patch" ? { patchFilter: true } : { romFilter: true };
   if (role === "patch") {
-    await maybeReportPatchArchiveSelection({
-      archiveFile: file,
-      options,
-      runtime,
-      selectedEntryName: selectedArchiveEntry,
-      sourceIndex,
-    });
+    // Discover EVERY patch across all nested branches and (when ambiguous) prompt with a flat
+    // multi-select list; a discovered leaf is returned directly. Only fall through to the generic
+    // single-payload descent below when no valid patch leaf was found.
+    const patchLeaf = await resolvePatchArchiveLeaf(file, options, runtime, selectedArchiveEntry, sourceIndex);
+    if (patchLeaf) return patchLeaf;
   }
   const chdSelection = await resolveChdSplitBinSelection({
     archiveFile: file,
@@ -1390,4 +1521,24 @@ const prepareAutoPatchInputs = async (
   return patchFiles;
 };
 
-export { prepareAutoPatchInputs, resolveArchiveInput, resolveArchiveInputAssets };
+/** Retrieve the already-extracted leaf patch file for a candidate of an emitted patch-selection
+ * request, so the controller can stage the user's pick(s) without re-extracting. */
+const getPatchLeafFileForSelection = (
+  request: CandidateSelectionRequest,
+  candidateId: string,
+): PatchFileInstance | undefined => patchLeafFilesByRequest.get(request)?.get(candidateId)?.file;
+
+/** Retrieve the archive-nesting chain (source archive › nested archives) for a registered patch
+ * leaf so a fanned-out patch entry keeps its "extract section" in the patch stack row. */
+const getPatchLeafParentCompressionsForSelection = (
+  request: CandidateSelectionRequest,
+  candidateId: string,
+): InputParentCompression[] | undefined => patchLeafFilesByRequest.get(request)?.get(candidateId)?.parentCompressions;
+
+export {
+  getPatchLeafFileForSelection,
+  getPatchLeafParentCompressionsForSelection,
+  prepareAutoPatchInputs,
+  resolveArchiveInput,
+  resolveArchiveInputAssets,
+};

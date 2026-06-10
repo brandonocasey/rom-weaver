@@ -464,6 +464,7 @@ const throwRomWeaverFailureWithBrowserOutputContext = async (
 
 const toRomWeaverOptions = (input: {
   defaultThreads?: number | null;
+  interactiveSelectionEnabled?: boolean;
   invalidateMountCacheBeforeRun?: boolean;
   knownInputPaths?: string[];
   logLevel?: LogLevel | string;
@@ -522,6 +523,8 @@ const toRomWeaverOptions = (input: {
   }
   if (Array.isArray(input.virtualFiles)) options.virtualFiles = input.virtualFiles;
   if (typeof input.virtualOnlyMounts === "boolean") options.virtualOnlyMounts = input.virtualOnlyMounts;
+  if (typeof input.interactiveSelectionEnabled === "boolean")
+    options.interactiveSelectionEnabled = input.interactiveSelectionEnabled;
   return options;
 };
 
@@ -626,6 +629,8 @@ const getEmittedFileDetails = (
 type RomWeaverEmittedFile = {
   checksums?: Record<string, string>;
   checksumVariants?: ChecksumVariant[];
+  /** Elapsed time (ms) of the extract step that produced this file; see Rust `extract_time_ms`. */
+  extractTimeMs?: number;
   fileName: string;
   kind?: string;
   path: string;
@@ -659,6 +664,10 @@ const getEmittedFiles = (result: RomWeaverRunJsonResult): RomWeaverEmittedFile[]
     output.push({
       checksums: normalizeEmittedFileChecksums(entry.checksums),
       checksumVariants: parseChecksumVariants(entry),
+      extractTimeMs:
+        typeof entry.extract_time_ms === "number" && Number.isFinite(entry.extract_time_ms)
+          ? entry.extract_time_ms
+          : undefined,
       fileName,
       kind: typeof entry.kind === "string" && entry.kind ? entry.kind : undefined,
       path,
@@ -1043,10 +1052,14 @@ const invokeRomWeaverExtractWorker = async (
      * (resolving a single payload per level via the interactive callback). Defaults to true, which
      * keeps the legacy single-level extract behaviour for existing per-entry callers. */
     noNestedExtract?: boolean;
+    /** When false, suppress the host selection prompt for ambiguous containers so a multi-branch
+     * archive auto-extracts every branch instead of pausing for input. Defaults to the runner's
+     * interactive behaviour (prompt). */
+    interactiveSelectionEnabled?: boolean;
   },
   onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
   onLog?: (log: WorkflowRuntimeLog) => void,
-): Promise<{ emittedFiles: RomWeaverEmittedFile[] }> => {
+): Promise<{ emittedFiles: RomWeaverEmittedFile[]; timing: ReturnType<typeof getRunResultTiming> }> => {
   const sourcePath = String(input.sourcePath || "").trim();
   if (!sourcePath) throw new Error("Compression extract source path is required");
   const outDirPath = String(input.outDirPath || "").trim();
@@ -1087,6 +1100,9 @@ const invokeRomWeaverExtractWorker = async (
   const result = await runRomWeaverJson(
     command,
     toRomWeaverOptions({
+      ...(typeof input.interactiveSelectionEnabled === "boolean"
+        ? { interactiveSelectionEnabled: input.interactiveSelectionEnabled }
+        : {}),
       invalidateMountCacheBeforeRun: input.invalidateMountCacheBeforeRun,
       knownInputPaths: input.knownInputPaths,
       logLevel: input.logLevel,
@@ -1111,6 +1127,9 @@ const invokeRomWeaverExtractWorker = async (
   }
   return {
     emittedFiles: getEmittedFiles(result),
+    // Run-level elapsed time for the whole extract; the runtime does not report per-file timing, so
+    // callers attach this to each emitted file as its extract time.
+    timing: getRunResultTiming(result),
   };
 };
 

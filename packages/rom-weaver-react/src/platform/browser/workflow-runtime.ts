@@ -284,6 +284,7 @@ const annotateChdListEntries = <
 
 type ExtractedFileEntry = {
   checksums?: Record<string, string>;
+  extractTimeMs?: number;
   fileName: string;
   kind?: string;
   path: string;
@@ -820,6 +821,9 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
         const extracted = await invokeRomWeaverExtractWorker(
           {
             ...(extractChecksumAlgorithms.length ? { checksumAlgorithms: extractChecksumAlgorithms } : {}),
+            ...(typeof workflowInput.options?.interactiveSelectionEnabled === "boolean"
+              ? { interactiveSelectionEnabled: workflowInput.options.interactiveSelectionEnabled }
+              : {}),
             knownInputPaths: [archive.filePath],
             logLevel: workflowInput.options?.logLevel,
             noNestedExtract: false,
@@ -864,6 +868,9 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
                 fileName,
                 filePath: entry.path,
                 size: entry.sizeBytes,
+                // Per-file extract time (the step that produced this leaf); falls back to the whole
+                // extract's elapsed time when the runtime did not report a per-file value.
+                timing: typeof entry.extractTimeMs === "number" ? { elapsedMs: entry.extractTimeMs } : extracted.timing,
               },
               fileName,
               "archive descend extract worker did not return browser output",
