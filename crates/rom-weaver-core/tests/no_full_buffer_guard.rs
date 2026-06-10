@@ -41,9 +41,14 @@ fn migrated_payload_paths_avoid_full_buffer_reads() {
             allowlist_fragments: &[],
         },
         GuardTarget {
-            relative_path: "crates/rom-weaver-app/src/trim_and_probe_details.rs",
+            relative_path: "crates/rom-weaver-app/src/trim_detection.rs",
             forbidden: &["fs::read("],
-            allowlist_fragments: &["let mut bytes = fs::read(source)?;"],
+            allowlist_fragments: &[],
+        },
+        GuardTarget {
+            relative_path: "crates/rom-weaver-app/src/trim_execution.rs",
+            forbidden: &["fs::read("],
+            allowlist_fragments: &[],
         },
         GuardTarget {
             relative_path: "crates/rom-weaver-patches/src/pat.rs",
