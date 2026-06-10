@@ -1028,7 +1028,7 @@ test("clearing CHD ROM input does not leave staged OPFS source files", async () 
     .toBe(0);
 });
 
-test("direct CUE plus BIN upload hides CUE row checksums", async () => {
+test("direct CUE plus BIN upload shows the cue sheet on the bin row", async () => {
   mount(createElement(ApplyPatchForm));
 
   await expect.poll(() => document.getElementById("rom-weaver-input-file-rom")).not.toBeNull();
@@ -1036,11 +1036,8 @@ test("direct CUE plus BIN upload hides CUE row checksums", async () => {
 
   const rawInput = await loadFixtureFile(RAW_ROM);
   const binFile = new File([await rawInput.arrayBuffer()], "direct-disc.bin", { type: "application/octet-stream" });
-  const cueFile = new File(
-    ['FILE "direct-disc.bin" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n'],
-    "direct-disc.cue",
-    { type: "application/x-cue" },
-  );
+  const cueText = 'FILE "direct-disc.bin" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n';
+  const cueFile = new File([cueText], "direct-disc.cue", { type: "application/x-cue" });
 
   selectFileInputs(document.getElementById("rom-weaver-input-file-rom"), [cueFile, binFile]);
 
@@ -1058,17 +1055,22 @@ test("direct CUE plus BIN upload hides CUE row checksums", async () => {
     sha1: getChecksumValue(row, "SHA-1"),
   });
 
+  // The cue is not its own row anymore: only the bin row is shown.
   await expect
-    .poll(() => getRows().filter((row) => row.textContent?.includes("direct-disc.")).length, {
+    .poll(() => getRows().filter((row) => row.textContent?.includes("direct-disc.bin")).length, {
       timeout: 30000,
     })
-    .toBe(2);
+    .toBe(1);
   await expect.poll(() => getChecksums(getRow("direct-disc.bin")).crc32, { timeout: 30000 }).toMatch(/^[0-9a-f]{8}$/i);
 
-  expect(getChecksums(getRow("direct-disc.cue"))).toEqual({ crc32: "", md5: "", sha1: "" });
-  expect(getRow("direct-disc.cue")?.textContent || "").not.toContain("Fixes");
-  expect(getChecksums(getRow("direct-disc.bin")).md5).toMatch(/^[0-9a-f]{32}$/i);
-  expect(getChecksums(getRow("direct-disc.bin")).sha1).toMatch(/^[0-9a-f]{40}$/i);
+  const binRow = getRow("direct-disc.bin");
+  // The bin keeps its checksums; the cue rides alongside as a read-only section.
+  expect(getChecksums(binRow).md5).toMatch(/^[0-9a-f]{32}$/i);
+  expect(getChecksums(binRow).sha1).toMatch(/^[0-9a-f]{40}$/i);
+  const cueSection = binRow?.querySelector(".rw-cue-section");
+  expect(cueSection).not.toBeNull();
+  expect(cueSection?.textContent || "").toContain('FILE "direct-disc.bin" BINARY');
+  expect(binRow?.querySelector(".rw-cue-copy")).not.toBeNull();
 });
 
 test("direct CUE plus BIN upload can output CHD from the CUE source", async () => {
@@ -1110,10 +1112,10 @@ test("direct CUE plus BIN upload can output CHD from the CUE source", async () =
     selectFileInputs(document.getElementById("rom-weaver-input-file-rom"), [cueFile, binFile]);
 
     await expect
-      .poll(() => getInputStackRows().filter((row) => row.textContent?.includes("direct-disc.")).length, {
+      .poll(() => getInputStackRows().filter((row) => row.textContent?.includes("direct-disc.bin")).length, {
         timeout: 30000,
       })
-      .toBe(2);
+      .toBe(1);
     await waitForApplyButtonEnabled();
     await clickApplyButton();
 

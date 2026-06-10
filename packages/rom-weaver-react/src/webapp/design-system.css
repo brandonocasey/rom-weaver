@@ -241,6 +241,12 @@
 .rw-app .cks-match.bad { color: var(--rw-bad); }
 .rw-app .cks-match svg { width: 16px; height: 16px; }
 .rw-app .cks-rows { margin-top: 9px; display: flex; flex-direction: column; gap: 2px; }
+.rw-app .cks.cue .cks-summary .copy { appearance: none; border: 0; background: transparent; cursor: pointer; color: var(--rw-ink-mut); width: 22px; height: 22px; margin-left: auto; display: grid; place-items: center; flex: none; opacity: .55; transition: transform .1s, color .12s, opacity .12s; }
+.rw-app .cks.cue .cks-summary .copy svg { width: 14px; height: 14px; }
+.rw-app .cks.cue:hover .cks-summary .copy { opacity: 1; }
+.rw-app .cks.cue .cks-summary .copy:active { transform: scale(.82); }
+.rw-app .cks.cue .cks-summary .copy.copied { color: var(--rw-ok); opacity: 1; animation: rw-pop .32s ease; }
+.rw-app .cue-text { margin: 9px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto; border-radius: 5px; background: var(--rw-panel-2); font-family: var(--rw-mono); font-size: 0.793103rem; line-height: 1.5; color: var(--rw-ink-soft); white-space: pre; }
 .rw-app .ropts { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 0 2px; }
 .rw-app .ropts .opt { font-size: 0.8rem; }
 .rw-app .popt-row { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px; margin-top: 6px; }

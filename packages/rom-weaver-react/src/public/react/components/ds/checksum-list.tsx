@@ -2,8 +2,8 @@ import Check from "lucide-react/dist/esm/icons/check.js";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.js";
 import Copy from "lucide-react/dist/esm/icons/copy.js";
 import X from "lucide-react/dist/esm/icons/x.js";
-import { type ReactNode, useEffect, useRef, useState } from "react";
-import { createLogger } from "../../../../lib/logging.ts";
+import type { ReactNode } from "react";
+import { useClipboardCopy } from "./use-clipboard-copy.ts";
 
 /**
  * Collapsible checksum / patch-info section. Rows copy to the clipboard on
@@ -11,9 +11,7 @@ import { createLogger } from "../../../../lib/logging.ts";
  * create-output verification so the copy behaviour lives in one place.
  */
 
-const logger = createLogger("checksum-list");
 const join = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(" ");
-const COPIED_RESET_MS = 1100;
 
 /** A single label/value checksum row. Clicking anywhere copies `copyValue`. */
 const ChecksumRow = ({
@@ -27,52 +25,8 @@ const ChecksumRow = ({
   copyValue?: string;
   bad?: boolean;
 }) => {
-  const [copied, setCopied] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  useEffect(() => () => clearTimeout(timeoutRef.current), []);
-
   const text = copyValue ?? (typeof value === "string" ? value : "");
-
-  const markCopied = () => {
-    setCopied(true);
-    clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setCopied(false), COPIED_RESET_MS);
-  };
-
-  // Fallback for non-secure contexts (e.g. a self-signed LAN cert on iOS) where
-  // navigator.clipboard is unavailable — selection + execCommand still copies there.
-  const execCommandCopy = (value: string): boolean => {
-    if (typeof document === "undefined") return false;
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.setAttribute("readonly", "");
-    textarea.style.cssText = "position:fixed;top:-1000px;left:0;opacity:0;";
-    document.body.appendChild(textarea);
-    textarea.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    document.body.removeChild(textarea);
-    return ok;
-  };
-
-  const copy = () => {
-    if (!text) return;
-    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-    if (clipboard?.writeText) {
-      clipboard.writeText(text).then(markCopied, () => {
-        if (execCommandCopy(text)) markCopied();
-        else logger.trace("Checksum copy failed");
-      });
-      return;
-    }
-    if (execCommandCopy(text)) markCopied();
-    else logger.trace("Clipboard unavailable; skipping checksum copy");
-  };
+  const { copied, copy } = useClipboardCopy(text);
 
   return (
     <dl className={join("ck", bad && "bad")} onClick={copy}>

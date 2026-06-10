@@ -31,6 +31,7 @@ type StagedInputInfo = {
   sourceSize?: number;
   chdMode?: string;
   splitBinAvailable?: boolean;
+  cueText?: string;
   wasDecompressed?: boolean;
   validationActualValue?: string;
   validationLabel?: string;

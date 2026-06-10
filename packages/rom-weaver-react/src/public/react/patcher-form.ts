@@ -29,7 +29,6 @@ type PatcherUiController = StoreController<PatcherUiState> & {
   setChecksumOverride?: (checked: boolean) => void;
   setOutputChecksumOverride?: (checked: boolean) => void;
   dismissNotice?: (key: PatcherSectionNoticeKey) => void;
-  downloadCue?: () => void;
 };
 
 type StackPatchItem = PatchStackItemState;

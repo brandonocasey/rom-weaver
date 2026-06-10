@@ -407,6 +407,7 @@ const resolveCueInputAssets = async (
         trackFile,
         groupId,
         reference,
+        { cueText },
       );
       assets.push(asset);
       candidates.push(makeAssetSelectionCandidate(asset));
@@ -516,6 +517,7 @@ const prepareMultipleDirectInputAssets = async (
           trackFile,
           groupId,
           reference,
+          { cueText },
         ),
       );
     }

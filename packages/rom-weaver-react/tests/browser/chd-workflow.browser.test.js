@@ -100,11 +100,9 @@ test("apply workflow asks before split-bin staging for multi-track CHDs", async 
     const input = workflow.getInput();
     expect(input?.status).toBe("ready");
     expect(input?.fileName).toBe(`${stem}.bin`);
-    expect(input?.resolvedInputs?.map((entry) => entry.fileName)).toEqual([
-      `${stem}.bin`,
-      `${stem}.track02.bin`,
-      `${stem}.cue`,
-    ]);
+    // The cue rides on the bin rows via `cueText`; it is not a resolved input of its own.
+    expect(input?.resolvedInputs?.map((entry) => entry.fileName)).toEqual([`${stem}.bin`, `${stem}.track02.bin`]);
+    expect(input?.resolvedInputs?.every((entry) => entry.cueText?.includes("FILE "))).toBe(true);
   } finally {
     await workflow.dispose();
     await cleanup();
@@ -147,7 +145,7 @@ test("apply workflow keeps merged BIN when the CHD split prompt is declined", as
     const input = workflow.getInput();
     expect(input?.status).toBe("ready");
     expect(input?.fileName).toBe(`${stem}.bin`);
-    expect(input?.resolvedInputs?.map((entry) => entry.fileName)).toEqual([`${stem}.bin`, `${stem}.cue`]);
+    expect(input?.resolvedInputs?.map((entry) => entry.fileName)).toEqual([`${stem}.bin`]);
   } finally {
     await workflow.dispose();
     await cleanup();

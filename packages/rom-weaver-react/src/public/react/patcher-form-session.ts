@@ -685,6 +685,7 @@ const useLocalApplyPatchFormSession = ({
             (patch as Partial<RomInputRowState>).archivePathEntries ??
             existing.archivePathEntries,
           chdMode: info.chdMode ?? patch.chdMode ?? existing.chdMode,
+          cueText: info.cueText ?? patch.cueText ?? existing.cueText,
           decompressionTimeMs: info.decompressionTimeMs ?? patch.decompressionTimeMs ?? existing.decompressionTimeMs,
           groupId: info.groupId ?? patch.groupId ?? existing.groupId,
           id: rowId,

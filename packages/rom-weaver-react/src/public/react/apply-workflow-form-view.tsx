@@ -32,10 +32,9 @@ import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./
 const TIMING_LABEL = (ms?: number) =>
   typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : "";
 const CHECKSUM_TIMING_LABEL = (timing?: string, prefix = "Checksum") => (timing ? `${prefix} ${timing}` : undefined);
-const DISC_PART_FILE_NAME_REGEX = /\.(?:bin|cue)$/i;
+const DISC_PART_FILE_NAME_REGEX = /\.bin$/i;
 
 const isDiscPartRomInput = (romInput: RomInputRowState) =>
-  romInput.kind === "cue" ||
   romInput.kind === "track" ||
   !!romInput.groupId ||
   romInput.splitBinAvailable === true ||
@@ -200,8 +199,7 @@ function ApplyWorkflowFormView({
                   progress: toWorkflowChecksumProgressProps(checksumProgress),
                   timing: CHECKSUM_TIMING_LABEL(romInput.info.checksumTiming),
                 },
-                showFixes: romInput.kind !== "cue",
-                showInfo: romInput.kind !== "cue",
+                ...(romInput.cueText ? { cue: { cueText: romInput.cueText } } : {}),
               },
               removeLabel: romInputs.length > 1 ? "Remove ROM input" : "Clear ROM input",
               state,
@@ -293,18 +291,6 @@ function ApplyWorkflowFormView({
               </div>
             ) : null}
             <PatcherPrimaryAction controller={controllers.output} />
-            {uiState.cueDownload.visible ? (
-              <button
-                className="btn ghost"
-                disabled={uiState.cueDownload.disabled}
-                id="rom-weaver-button-download-cue"
-                onClick={() => uiController.downloadCue?.()}
-                title={uiState.cueDownload.title}
-                type="button"
-              >
-                {uiState.cueDownload.label}
-              </button>
-            ) : null}
           </>
         }
         compress={buildOutputCompressionPanel({

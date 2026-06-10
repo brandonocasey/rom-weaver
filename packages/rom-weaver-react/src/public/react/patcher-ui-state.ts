@@ -84,6 +84,7 @@ type RomInputRowState = InputUiState & {
   sourceSize?: number;
   chdMode?: string;
   splitBinAvailable?: boolean;
+  cueText?: string;
   decompressionTimeMs?: number;
   wasDecompressed?: boolean;
 };
@@ -158,12 +159,6 @@ type PatcherUiState = {
     disabled: boolean;
     label: string;
   };
-  cueDownload: {
-    visible: boolean;
-    disabled: boolean;
-    title: string;
-    label: string;
-  };
   sectionTimings: {
     checksum: string;
     input: string;
@@ -181,11 +176,6 @@ type EmbeddedPatchUiState = {
   mode: "" | "single" | "multiple";
   optionalPatches: OptionalPatchItem[];
 };
-
-type PendingCueDownload = {
-  fileName: string;
-  text: string;
-} | null;
 
 type PatcherUiSessionState = PatcherUiState & Pick<DialogState, "open" | "title" | "entries"> & NoticeState;
 
@@ -206,12 +196,6 @@ const createEmptyPatcherUiState = (): PatcherUiState => ({
     checked: false,
     disabled: true,
     label: "Apply anyway despite checksum mismatch",
-    visible: false,
-  },
-  cueDownload: {
-    disabled: true,
-    label: "Download CUE",
-    title: "",
     visible: false,
   },
   outputChecksumWarning: {
@@ -383,7 +367,6 @@ const normalizePatcherUiState = (
   const patchDetails = isRecord(nextState.patchDetails) ? nextState.patchDetails : {};
   const checksumOverride = isRecord(nextState.checksumOverride) ? nextState.checksumOverride : {};
   const outputChecksumWarning = isRecord(nextState.outputChecksumWarning) ? nextState.outputChecksumWarning : {};
-  const cueDownload = isRecord(nextState.cueDownload) ? nextState.cueDownload : {};
   const sectionTimings = isRecord(nextState.sectionTimings) ? nextState.sectionTimings : {};
   const normalizeRomInputInfo = (
     info: JsonValue | object | null | undefined,
@@ -437,6 +420,7 @@ const normalizePatcherUiState = (
     return {
       archivePathEntries,
       chdMode: typeof rowInput.chdMode === "string" ? rowInput.chdMode : undefined,
+      cueText: typeof rowInput.cueText === "string" ? rowInput.cueText : undefined,
       decompressionTimeMs: typeof rowInput.decompressionTimeMs === "number" ? rowInput.decompressionTimeMs : undefined,
       disabled: !!rowInput.disabled,
       groupId: typeof rowInput.groupId === "string" ? rowInput.groupId : "",
@@ -471,12 +455,6 @@ const normalizePatcherUiState = (
       label:
         typeof checksumOverride.label === "string" ? checksumOverride.label : "Apply anyway despite checksum mismatch",
       visible: !!checksumOverride.visible,
-    },
-    cueDownload: {
-      disabled: !!cueDownload.disabled,
-      label: typeof cueDownload.label === "string" ? cueDownload.label : "Download CUE",
-      title: typeof cueDownload.title === "string" ? cueDownload.title : "",
-      visible: !!cueDownload.visible,
     },
     inputNotice: normalizeNoticeState(isRecord(nextState.inputNotice) ? nextState.inputNotice : null),
     outputChecksumWarning: {
@@ -561,24 +539,16 @@ const normalizePatcherUiState = (
 const clonePatcherUiState = ({
   patcherUiState,
   embeddedPatchUiState,
-  pendingCueDownload,
   translate,
 }: {
   patcherUiState: PatcherUiState;
   embeddedPatchUiState: EmbeddedPatchUiState;
-  pendingCueDownload: PendingCueDownload;
   translate: (value: string) => string;
 }) => ({
   checksumNotice: { ...patcherUiState.checksumNotice },
   checksumOverride: {
     ...patcherUiState.checksumOverride,
     label: translate("Apply anyway despite checksum mismatch"),
-  },
-  cueDownload: {
-    ...patcherUiState.cueDownload,
-    label: translate("Download CUE"),
-    title: pendingCueDownload?.fileName || "",
-    visible: !!pendingCueDownload,
   },
   inputNotice: { ...patcherUiState.inputNotice },
   outputChecksumWarning: {
@@ -625,7 +595,6 @@ export type {
   PatcherSectionNoticeKey,
   PatcherUiSessionState,
   PatcherUiState,
-  PendingCueDownload,
   RomInputInfoState,
   RomInputRowState,
   StoreController,

@@ -33,6 +33,7 @@ type ApplyWorkflowResolvedInput = {
   sourceSize?: number;
   chdMode?: string;
   splitBinAvailable?: boolean;
+  cueText?: string;
   decompressionTimeMs?: number;
   wasDecompressed?: boolean;
 };

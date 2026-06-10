@@ -430,22 +430,10 @@ const getCompressionRuntimeOptions = (
   workerThreads: options?.workers?.threads,
 });
 
-const markChdCueSplitBinAvailability = (
-  asset: InputAsset,
-  archiveFile: PatchFileInstance,
-  cueText: string,
-): InputAsset => {
-  if (getCompressionFormat(archiveFile) !== "chd") return asset;
-  const cue = parseCueFile(cueText);
-  if (cue.tracks.length <= 1) return asset;
-  return {
-    ...asset,
-    disc: {
-      ...asset.disc,
-      splitBinAvailable: true,
-    },
-  };
-};
+// A multi-track CHD cue can be extracted as split bins; the split-bin affordance rides on the
+// visible track rows (the cue itself is no longer shown as a row).
+const isChdSplitBinCue = (archiveFile: PatchFileInstance, cueText: string): boolean =>
+  getCompressionFormat(archiveFile) === "chd" && parseCueFile(cueText).tracks.length > 1;
 
 const listCompressionEntries = async (
   file: PatchFileInstance,
@@ -1272,6 +1260,7 @@ const resolveArchiveInputAssetsByDescent = async (
   if (cueFile && files.length > 1) {
     const cueText = decodeUtf8(getPatchFileBytes(cueFile));
     const groupId = makeInputId(sourceIndex, cueFile.fileName, normalizeArchiveEntryName, "-group");
+    const splitBinAvailable = isChdSplitBinCue(archiveFile, cueText);
     assets = files
       .filter((file) => file !== cueFile)
       .map((trackFile) =>
@@ -1281,15 +1270,10 @@ const resolveArchiveInputAssetsByDescent = async (
           trackFile,
           groupId,
           { patchable: true },
+          { cueText, splitBinAvailable },
         ),
       );
-    assets.push(
-      markChdCueSplitBinAvailability(
-        makeCueAsset(`${groupId}-cue`, cueFile.fileName, cueFile, groupId, cueText),
-        archiveFile,
-        cueText,
-      ),
-    );
+    assets.push(makeCueAsset(`${groupId}-cue`, cueFile.fileName, cueFile, groupId, cueText));
   } else {
     assets = files.map((file) =>
       makeRomAsset(makeInputId(sourceIndex, file.fileName, normalizeArchiveEntryName), file),

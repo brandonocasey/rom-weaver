@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CuePanel } from "./cue-panel.tsx";
 import { FixesPanel, type FixesPanelProps } from "./fixes-panel.tsx";
 import { type SourceInfoChecksums, SourceInfoList, type SourceInfoProgress } from "./source-info-list.tsx";
 
@@ -16,14 +17,24 @@ type RomInputInfoPanelProps = {
 type RomInputPanelsProps = {
   fixes?: Omit<FixesPanelProps, "label">;
   info?: RomInputInfoPanelProps;
+  cue?: { cueText: string };
   showFixes?: boolean;
   showInfo?: boolean;
+  showCue?: boolean;
 };
 
-const RomInputPanels = ({ fixes = {}, info = {}, showFixes = true, showInfo = true }: RomInputPanelsProps) => (
+const RomInputPanels = ({
+  fixes = {},
+  info = {},
+  cue,
+  showFixes = true,
+  showInfo = true,
+  showCue = true,
+}: RomInputPanelsProps) => (
   <>
     {showFixes ? <FixesPanel {...fixes} /> : null}
     {showInfo ? <SourceInfoList {...info} /> : null}
+    {showCue && cue?.cueText ? <CuePanel cueText={cue.cueText} /> : null}
   </>
 );
 

@@ -79,9 +79,12 @@ const makeTrackAsset = (
   file: PatchFileInstance,
   groupId: string,
   reference: { trackNumber?: number; mode?: string; patchable?: boolean },
+  disc: { cueText?: string; splitBinAvailable?: boolean } = {},
 ): InputAsset => ({
   disc: {
+    cueText: disc.cueText,
     mode: reference.mode,
+    splitBinAvailable: disc.splitBinAvailable,
     trackNumber: reference.trackNumber,
   },
   file,
