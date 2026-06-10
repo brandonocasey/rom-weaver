@@ -52,7 +52,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tracing::{trace, warn};
 #[cfg(not(target_arch = "wasm32"))]
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{filter::Targets, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 #[cfg(feature = "typescript-types")]
 use ts_rs::TS;
 use xdvdfs::{
@@ -316,22 +316,22 @@ fn init_trace_logging(trace_flag: bool, json_mode: bool) {
             return;
         };
 
-        let env_filter = match EnvFilter::try_new(filter_spec.clone()) {
+        let filter = match filter_spec.parse::<Targets>() {
             Ok(filter) => filter,
             Err(error) => {
-                eprintln!("warning: invalid trace filter `{filter_spec}` ({error}); using `off`");
-                EnvFilter::new("off")
+                eprintln!("warning: invalid trace filter `{filter_spec}` ({error}); using off");
+                Targets::default()
             }
         };
 
         if json_mode {
             let _ = tracing_subscriber::registry()
-                .with(env_filter)
+                .with(filter)
                 .with(fmt::layer().json().with_ansi(false).with_writer(io::stderr))
                 .try_init();
         } else {
             let _ = tracing_subscriber::registry()
-                .with(env_filter)
+                .with(filter)
                 .with(
                     fmt::layer()
                         .with_ansi(false)

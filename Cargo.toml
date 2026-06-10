@@ -55,7 +55,7 @@ suffix_array = "0.5"
 tar = "0.4.44"
 thiserror = "2.0.17"
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.20", features = ["json"] }
 ts-rs = "12.0.1"
 xdvdfs = { version = "0.8.3", default-features = false, features = ["std", "read", "write", "sync"] }
 zeekstd = "0.6.2"
@@ -85,3 +85,4 @@ strip = "symbols"
 akv = { path = "vendor/akv-0.1.0" }
 chd = { path = "vendor/chd-0.3.4" }
 qbsdiff = { path = "vendor/qbsdiff-1.4.4" }
+xdvdfs = { path = "vendor/xdvdfs-0.8.3" }
