@@ -202,16 +202,165 @@ impl RunCommandOptions {
 /// hands it to the JS runner, which blocks the worker until the UI resolves the pick (or a negative
 /// return cancels — also used when no interactive handler is registered). Lives in the `env` import
 /// module the runner already supplies at instantiation.
+/// Pure encode/decode helpers for the browser selection-prompt channel, kept out of the
+/// `wasm32`-gated module so they can be unit-tested on the native target. The wasm prompter owns
+/// only the raw `extern` calls; everything testable (request shape, response decoding, bounds and
+/// cancel handling) lives here. Compiled only where it is exercised — the wasm build (used by the
+/// prompter) or any test build (used by the unit tests) — so it is never dead code on the native
+/// release path.
+#[cfg(any(target_arch = "wasm32", test))]
+mod wasm_host_prompt_protocol {
+    use rom_weaver_core::{PromptCandidate, Selection, SelectionList};
+    use serde_json::json;
+
+    /// Serialize a selection request to the JSON the browser host consumes. `mode` is the
+    /// discriminant (`"single"`/`"many"`) the React layer routes on to pick the single- vs
+    /// multi-select dialog.
+    pub(super) fn serialize_request(
+        mode: &str,
+        heading: &str,
+        candidates: &[PromptCandidate],
+    ) -> String {
+        json!({
+            "mode": mode,
+            "heading": heading,
+            "candidates": candidates
+                .iter()
+                .map(|candidate| json!({ "value": candidate.value, "label": candidate.label, "size": candidate.size }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string()
+    }
+
+    /// Decode the host's single-select reply: a 0-based index in range, or anything else (negative
+    /// sentinel, out-of-range) as a cancel.
+    pub(super) fn decode_single(selected: i32, candidate_count: usize) -> Selection {
+        match usize::try_from(selected) {
+            Ok(index) if index < candidate_count => Selection::Selected(index),
+            _ => Selection::Cancelled,
+        }
+    }
+
+    /// Decode the host's multi-select reply. `written` is the host's return value (negative =
+    /// cancel, otherwise the number of indices it wrote); `out` is the caller-owned buffer the host
+    /// filled. Indices are clamped to what was actually written, bounds-checked against the
+    /// candidate count, deduplicated, and sorted. An empty result decodes to cancel — selecting
+    /// nothing is never a valid outcome.
+    pub(super) fn decode_many(written: i32, out: &[u32], candidate_count: usize) -> SelectionList {
+        let Ok(count) = usize::try_from(written) else {
+            return SelectionList::Cancelled;
+        };
+        let count = count.min(out.len());
+        if count == 0 {
+            return SelectionList::Cancelled;
+        }
+        let mut indexes = out[..count]
+            .iter()
+            .filter_map(|index| usize::try_from(*index).ok())
+            .filter(|index| *index < candidate_count)
+            .collect::<Vec<_>>();
+        indexes.sort_unstable();
+        indexes.dedup();
+        if indexes.is_empty() {
+            SelectionList::Cancelled
+        } else {
+            SelectionList::Selected(indexes)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{decode_many, decode_single, serialize_request};
+        use rom_weaver_core::{PromptCandidate, Selection, SelectionList};
+
+        fn candidates(count: usize) -> Vec<PromptCandidate> {
+            (0..count)
+                .map(|index| PromptCandidate {
+                    value: format!("value-{index}"),
+                    label: format!("label-{index}"),
+                    size: Some(index as u64),
+                })
+                .collect()
+        }
+
+        #[test]
+        fn serializes_mode_heading_and_candidates() {
+            let request = serialize_request("many", "pick", &candidates(2));
+            let parsed: serde_json::Value = serde_json::from_str(&request).unwrap();
+            assert_eq!(parsed["mode"], "many");
+            assert_eq!(parsed["heading"], "pick");
+            assert_eq!(parsed["candidates"].as_array().unwrap().len(), 2);
+            assert_eq!(parsed["candidates"][0]["value"], "value-0");
+            assert_eq!(parsed["candidates"][1]["label"], "label-1");
+            assert_eq!(parsed["candidates"][0]["size"], 0);
+        }
+
+        #[test]
+        fn decode_single_accepts_in_range_and_cancels_otherwise() {
+            assert_eq!(decode_single(0, 3), Selection::Selected(0));
+            assert_eq!(decode_single(2, 3), Selection::Selected(2));
+            assert_eq!(decode_single(-1, 3), Selection::Cancelled);
+            assert_eq!(decode_single(3, 3), Selection::Cancelled);
+        }
+
+        #[test]
+        fn decode_many_returns_sorted_deduped_indexes() {
+            assert_eq!(
+                decode_many(3, &[2, 0, 2], 3),
+                SelectionList::Selected(vec![0, 2])
+            );
+        }
+
+        #[test]
+        fn decode_many_clamps_count_above_written_capacity() {
+            // The host claims more than the buffer holds; only the buffered slots are trusted.
+            assert_eq!(
+                decode_many(5, &[1, 0], 3),
+                SelectionList::Selected(vec![0, 1])
+            );
+        }
+
+        #[test]
+        fn decode_many_drops_out_of_range_indexes() {
+            assert_eq!(decode_many(2, &[1, 9], 3), SelectionList::Selected(vec![1]));
+        }
+
+        #[test]
+        fn decode_many_cancels_on_negative_count() {
+            assert_eq!(decode_many(-1, &[0, 1], 3), SelectionList::Cancelled);
+        }
+
+        #[test]
+        fn decode_many_cancels_on_empty_selection() {
+            assert_eq!(decode_many(0, &[0, 0], 3), SelectionList::Cancelled);
+            // All indices out of range collapse to an empty, hence cancelled, result.
+            assert_eq!(decode_many(2, &[7, 8], 3), SelectionList::Cancelled);
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm_host_prompt {
     use std::sync::Arc;
 
-    use rom_weaver_core::{PromptCandidate, Selection, SelectionPrompter};
-    use serde_json::json;
+    use rom_weaver_core::{PromptCandidate, Selection, SelectionList, SelectionPrompter};
+    use tracing::trace;
+
+    use super::wasm_host_prompt_protocol::{decode_many, decode_single, serialize_request};
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
         fn rom_weaver_host_select(request_ptr: *const u8, request_len: usize) -> i32;
+        /// Multi-select counterpart. The host fills `out_indices` (a caller-owned `u32` buffer of
+        /// `out_capacity` slots) with the chosen 0-based indices and returns the count written, or a
+        /// negative value to cancel. Capacity is bounded by the candidate count so the host can
+        /// never overflow the buffer.
+        fn rom_weaver_host_select_many(
+            request_ptr: *const u8,
+            request_len: usize,
+            out_indices: *mut u32,
+            out_capacity: usize,
+        ) -> i32;
     }
 
     /// Prompter that delegates list selection to the browser host. Confirmation prompts are declined
@@ -220,22 +369,51 @@ mod wasm_host_prompt {
 
     impl SelectionPrompter for WasmHostPrompter {
         fn select(&self, heading: &str, candidates: &[PromptCandidate]) -> Selection {
-            let request = json!({
-                "heading": heading,
-                "candidates": candidates
-                    .iter()
-                    .map(|candidate| json!({ "value": candidate.value, "label": candidate.label, "size": candidate.size }))
-                    .collect::<Vec<_>>(),
-            })
-            .to_string();
+            let request = serialize_request("single", heading, candidates);
             let bytes = request.as_bytes();
+            trace!(
+                heading,
+                candidate_count = candidates.len(),
+                mode = "single",
+                "wasm host select request serialized"
+            );
             // SAFETY: the pointer and length describe a live byte slice for the duration of the
             // call; the host reads it synchronously before returning.
             let selected = unsafe { rom_weaver_host_select(bytes.as_ptr(), bytes.len()) };
-            match usize::try_from(selected) {
-                Ok(index) if index < candidates.len() => Selection::Selected(index),
-                _ => Selection::Cancelled,
+            trace!(selected, "wasm host select returned");
+            decode_single(selected, candidates.len())
+        }
+
+        fn select_many(&self, heading: &str, candidates: &[PromptCandidate]) -> SelectionList {
+            if candidates.is_empty() {
+                return SelectionList::Cancelled;
             }
+            let request = serialize_request("many", heading, candidates);
+            let bytes = request.as_bytes();
+            // The host can return at most one index per candidate, so the candidate count bounds the
+            // output buffer. A pre-zeroed Vec gives the host a stable, owned region to write into.
+            let mut out_indices = vec![0u32; candidates.len()];
+            trace!(
+                heading,
+                candidate_count = candidates.len(),
+                mode = "many",
+                "wasm host select_many request serialized"
+            );
+            // SAFETY: the request slice is live for the call; `out_indices` owns `candidates.len()`
+            // contiguous `u32` slots, exactly the capacity passed to the host, which writes only
+            // within that bound before returning.
+            let written = unsafe {
+                rom_weaver_host_select_many(
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    out_indices.as_mut_ptr(),
+                    out_indices.len(),
+                )
+            };
+            trace!(written, "wasm host select_many returned");
+            let resolved = decode_many(written, &out_indices, candidates.len());
+            trace!(selected = ?resolved, "wasm host select_many resolved indexes");
+            resolved
         }
 
         fn confirm(&self, _heading: &str, _details: &[String]) -> bool {
