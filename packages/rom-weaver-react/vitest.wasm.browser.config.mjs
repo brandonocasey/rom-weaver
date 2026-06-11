@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vitest/config";
+import { coverageBase } from "./vitest.config.base.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 // In a git worktree, node_modules entries are symlinks into the main checkout
@@ -71,6 +72,10 @@ export default defineConfig({
         },
         persistentContext: PERSISTENT_CONTEXT,
       }),
+    },
+    coverage: {
+      ...coverageBase,
+      reportsDirectory: fileURLToPath(new URL("../../dist/coverage/react-wasm", import.meta.url)),
     },
     include: ["tests/wasm/*.test.mjs"],
     isolate: true,

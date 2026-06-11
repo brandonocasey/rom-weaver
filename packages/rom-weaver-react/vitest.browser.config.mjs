@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { playwright } from "@vitest/browser-playwright";
 import { mergeConfig } from "vitest/config";
-import baseConfig from "./vitest.config.base.mjs";
+import baseConfig, { coverageBase } from "./vitest.config.base.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 // In a git worktree, node_modules entries are symlinks into the main checkout
@@ -135,6 +135,10 @@ export default mergeConfig(baseConfig, {
         height: 900,
         width: 1280,
       },
+    },
+    coverage: {
+      ...coverageBase,
+      reportsDirectory: fileURLToPath(new URL("../../dist/coverage/react-browser", import.meta.url)),
     },
     include: ["tests/browser/**/*.browser.test.js"],
   },
