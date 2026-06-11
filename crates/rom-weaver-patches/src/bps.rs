@@ -293,7 +293,10 @@ fn parse_bps_file_with_checksum_validation(
     let mut parser = BpsFileParser::new(BufReader::new(File::open(path)?), footer_offset);
 
     if parser.read_exact(BPS_MAGIC.len())?.as_slice() != BPS_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "BPS_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let source_size = parser.read_varint()?;
@@ -395,7 +398,10 @@ fn parse_bps_bytes_with_checksum_validation(
     let mut parser = BpsParser::new(bytes, footer_offset);
 
     if parser.read_exact(BPS_MAGIC.len())? != BPS_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "BPS_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let source_size = parser.read_varint()?;

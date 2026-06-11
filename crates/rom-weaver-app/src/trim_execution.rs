@@ -392,11 +392,15 @@ impl CliApp {
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        let handler = self.containers.find_by_name("rvz").ok_or_else(|| {
-            RomWeaverError::Unsupported(
-                "rvz handler is not registered; rvz-scrub trim is unavailable".to_string(),
-            )
-        })?;
+        let handler = self
+            .containers
+            .find_by_name("rvz")
+            .ok_or(RomWeaverError::Unsupported(
+                UnsupportedOp::HandlerNotRegistered {
+                    handler: "rvz",
+                    feature: "rvz-scrub trim",
+                },
+            ))?;
         handler
             .create(
                 &ContainerCreateRequest {
@@ -423,11 +427,15 @@ impl CliApp {
         source: &Path,
         context: &OperationContext,
     ) -> Result<u64> {
-        let handler = self.containers.find_by_name("rvz").ok_or_else(|| {
-            RomWeaverError::Unsupported(
-                "rvz handler is not registered; rvz-scrub trim is unavailable".to_string(),
-            )
-        })?;
+        let handler = self
+            .containers
+            .find_by_name("rvz")
+            .ok_or(RomWeaverError::Unsupported(
+                UnsupportedOp::HandlerNotRegistered {
+                    handler: "rvz",
+                    feature: "rvz-scrub trim",
+                },
+            ))?;
         handler
             .create_dry_run_size(
                 &ContainerCreateRequest {

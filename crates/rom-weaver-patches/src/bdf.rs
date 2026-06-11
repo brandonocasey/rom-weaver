@@ -354,7 +354,10 @@ fn read_patch_block(
 fn parse_bsdiff_patch_layout_from_path(path: &Path) -> Result<BsdiffPatchFileLayout> {
     let patch_len = fs::metadata(path)?.len();
     if patch_len < BSDIFF40_HEADER_BYTES as u64 {
-        return Err(RomWeaverError::Validation("not a valid patch".into()));
+        return Err(crate::coded_validation(
+            "BDF_HEADER_INVALID",
+            "not a valid patch",
+        ));
     }
 
     let mut header = [0u8; BSDIFF40_HEADER_BYTES];
@@ -365,7 +368,10 @@ fn parse_bsdiff_patch_layout_from_path(path: &Path) -> Result<BsdiffPatchFileLay
     )?;
     reader.read_exact_at(0, &mut header)?;
     if &header[..8] != BSDIFF40_MAGIC {
-        return Err(RomWeaverError::Validation("not a valid patch".into()));
+        return Err(crate::coded_validation(
+            "BDF_HEADER_INVALID",
+            "not a valid patch",
+        ));
     }
 
     let control_len: u64 = decode_bsdiff_i64(&header[8..16])?

@@ -928,16 +928,22 @@ fn write_ppf3_record(output: &mut impl Write, offset: u64, data: &[u8]) -> Resul
 }
 
 fn detect_version(bytes: &[u8]) -> Result<PpfVersion> {
-    let magic = bytes
-        .get(0..3)
-        .ok_or_else(|| RomWeaverError::Validation("PPF patch header is truncated".into()))?;
+    let magic = bytes.get(0..3).ok_or_else(|| {
+        crate::coded_validation("PPF_HEADER_TRUNCATED", "PPF patch header is truncated")
+    })?;
 
     if magic != b"PPF" {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "PPF_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let version_digits = bytes.get(3..5).ok_or_else(|| {
-        RomWeaverError::Validation("PPF patch version digits are truncated".into())
+        crate::coded_validation(
+            "PPF_VERSION_DIGITS_TRUNCATED",
+            "PPF patch version digits are truncated",
+        )
     })?;
     let version_from_digits = match version_digits {
         b"10" => PpfVersion::V1,

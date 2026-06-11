@@ -45,7 +45,7 @@ use pmsr::PmsrPatchHandler;
 use ppf::PpfPatchHandler;
 use rom_weaver_core::{
     FormatDescriptor, OperationFamily, OperationReport, PatchCapabilities, PatchHandler, Result,
-    RomWeaverError, ThreadExecution,
+    RomWeaverError, ThreadExecution, ValidationCodeError,
 };
 use rom_weaver_xdelta::VcdiffPatchHandler;
 use rup::RupPatchHandler;
@@ -276,6 +276,14 @@ const BSDIFF_SIGNATURE: &[u8] = b"BSDIFF40";
 const HDIFF_SIGNATURE: &[u8] = b"HDIFF";
 const PDS_UNSUPPORTED_REASON: &str =
     "PDS is explicitly unsupported because no surviving ecosystem patches are known";
+/// Build a structured validation error carrying a stable, machine-matchable
+/// `code` plus a human-readable `message`. Prefer this over `Validation(String)`
+/// for genuine format-validation failures (bad magic, malformed header, ...) so
+/// callers can match on `code()` instead of brittle message-string comparisons.
+pub(crate) fn coded_validation(code: &'static str, message: &'static str) -> RomWeaverError {
+    RomWeaverError::ValidationCode(ValidationCodeError::new(code).with_message(message))
+}
+
 pub(crate) fn require_single_patch_file<'a>(
     patches: &'a [PathBuf],
     format_name: &str,

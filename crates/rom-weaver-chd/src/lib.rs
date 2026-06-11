@@ -15,12 +15,12 @@ use flate2::{Compression as GzipCompression, write::DeflateEncoder};
 use rom_weaver_checksum::StreamingChecksum;
 use rom_weaver_codecs::{CanonicalCodec, RequestedCodec, parse_requested_codec};
 use rom_weaver_core::{
-    ContainerByteProgress, ContainerCreateRequest, ContainerExtractRequest,
+    ChdMediaScope, ContainerByteProgress, ContainerCreateRequest, ContainerExtractRequest,
     ContainerHandlerOperations, ContainerListEntry, ContainerProbeRequest, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, OperationStatus, OrderedStreamingMessages,
     ProbeConfidence, Result, RomWeaverError, SelectionMatcher, ThreadCapability, ThreadExecution,
-    create_extract_output_file, file_starts_with, maybe_emit_container_byte_progress,
-    ordered_streaming_compress,
+    UnsupportedOp, create_extract_output_file, file_starts_with,
+    maybe_emit_container_byte_progress, ordered_streaming_compress,
 };
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};

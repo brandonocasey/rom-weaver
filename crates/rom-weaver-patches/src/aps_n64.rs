@@ -312,7 +312,10 @@ fn parse_aps_file(path: &Path) -> Result<ParsedApsPatch> {
     let mut parser = ApsFileParser::new(BufReader::new(File::open(path)?), file_len);
     let prefix = parser.read_exact(APS_N64_PREFIX_SIZE, "APS header")?;
     if !prefix.starts_with(APS_N64_MAGIC) {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "APS_N64_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let header_type = prefix[APS_N64_MAGIC.len()];
@@ -381,7 +384,10 @@ fn parse_aps_bytes(bytes: &[u8]) -> Result<ParsedApsPatch> {
         ));
     }
     if !bytes.starts_with(APS_N64_MAGIC) {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "APS_N64_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let header_type = bytes[APS_N64_MAGIC.len()];

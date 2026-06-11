@@ -48,6 +48,9 @@ const DO_SHUTDOWN: usize = 0x7C;
 const DO_CODE: usize = 0x80;
 const DO_CODE_I32: i32 = DO_CODE as i32;
 const INPUT_NO_DLDI_SLOT_MESSAGE: &str = "input does not contain a patchable DLDI section";
+/// Stable code for the "no patchable DLDI slot" condition so `apply` can detect
+/// it via `ValidationCodeError::code()` instead of matching the display message.
+const DLDI_NO_PATCHABLE_SLOT_CODE: &str = "DLDI_NO_PATCHABLE_SLOT";
 const THREAD_WORK_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct DldiPatchHandler {
@@ -105,14 +108,14 @@ impl PatchHandler for DldiPatchHandler {
         let apply =
             match apply_dldi_patch_to_file(&request.input, &request.output, &patch, input_len) {
                 Ok(apply) => apply,
-                Err(RomWeaverError::Validation(message))
-                    if message == INPUT_NO_DLDI_SLOT_MESSAGE =>
+                Err(RomWeaverError::ValidationCode(code))
+                    if code.code() == DLDI_NO_PATCHABLE_SLOT_CODE =>
                 {
                     return Ok(OperationReport::unsupported(
                         OperationFamily::Patch,
                         Some(self.descriptor.name.to_string()),
                         "apply",
-                        message,
+                        INPUT_NO_DLDI_SLOT_MESSAGE,
                         Some(execution),
                     ));
                 }
@@ -169,13 +172,15 @@ impl PatchHandler for DldiPatchHandler {
         };
 
         let original_slot = original_slot.ok_or_else(|| {
-            RomWeaverError::Validation(
-                "original input does not contain a patchable DLDI section".into(),
+            crate::coded_validation(
+                "DLDI_ORIGINAL_NO_PATCHABLE_SLOT",
+                "original input does not contain a patchable DLDI section",
             )
         })?;
         let modified_slot = modified_slot.ok_or_else(|| {
-            RomWeaverError::Validation(
-                "modified input does not contain a patchable DLDI section".into(),
+            crate::coded_validation(
+                "DLDI_MODIFIED_NO_PATCHABLE_SLOT",
+                "modified input does not contain a patchable DLDI section",
             )
         })?;
 
@@ -275,8 +280,10 @@ fn apply_dldi_patch_to_file(
         DEFAULT_BLOCK_CACHE_SIZE_BYTES,
         DEFAULT_BLOCK_CACHE_MAX_BLOCKS,
     )?;
-    let patch_offset = find_dldi_slot_in_reader(&mut input_reader, input_len)?
-        .ok_or_else(|| RomWeaverError::Validation(INPUT_NO_DLDI_SLOT_MESSAGE.into()))?;
+    let patch_offset =
+        find_dldi_slot_in_reader(&mut input_reader, input_len)?.ok_or_else(|| {
+            crate::coded_validation(DLDI_NO_PATCHABLE_SLOT_CODE, INPUT_NO_DLDI_SLOT_MESSAGE)
+        })?;
     let patch_offset_u64 = u64::try_from(patch_offset)
         .map_err(|_| RomWeaverError::Validation("DLDI slot offset exceeded u64".into()))?;
     let available_len = input_len.saturating_sub(patch_offset_u64);

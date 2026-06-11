@@ -19,7 +19,8 @@ pub use common_files::{
 };
 pub use context::{OperationContext, PatchChecksumValidation, XdeltaSecondaryMode};
 pub use error::{
-    Result, RomWeaverError, ValidationCodeError, ValidationField, ValidationFieldValue,
+    ChdMediaScope, FormatOperationKind, Result, RomWeaverError, UnsupportedOp, ValidationCodeError,
+    ValidationField, ValidationFieldValue,
 };
 pub use formatting::format_human_bytes;
 pub use io::{

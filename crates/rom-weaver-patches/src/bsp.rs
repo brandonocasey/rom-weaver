@@ -9,6 +9,7 @@ use std::{
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationReport, PatchApplyRequest, PatchCapabilities,
     PatchCreateRequest, PatchHandler, Result, RomWeaverError, SharedThreadPool, ThreadCapability,
+    UnsupportedOp,
 };
 
 use crate::shared::threading::parallel_chunked_capability;
@@ -113,7 +114,10 @@ impl PatchHandler for BspPatchHandler {
         _context: &OperationContext,
     ) -> Result<OperationReport> {
         Err(RomWeaverError::Unsupported(
-            "BSP patch creation is not implemented; use an upstream BSP compiler".into(),
+            UnsupportedOp::PatchCreateNotImplemented {
+                format: "BSP",
+                alternative: "an upstream BSP compiler",
+            },
         ))
     }
 

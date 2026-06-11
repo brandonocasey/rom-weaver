@@ -340,9 +340,8 @@ impl ContainerHandlerOperations for ChdContainerHandler {
             let header = if compression_plan.primary_codec == ChdCodec::NONE {
                 if request.parent.is_some() {
                     return Err(RomWeaverError::Unsupported(
-                            "chd create with parent requires at least one compressed codec; `store` mode cannot reference parent hunks"
-                                .to_string(),
-                        ));
+                        UnsupportedOp::ChdParentRequiresCompression,
+                    ));
                 }
                 match &create_kind {
                     ChdCreateKind::Disc(layout) => {
@@ -409,10 +408,13 @@ impl ContainerHandlerOperations for ChdContainerHandler {
             compression_plan.primary_codec,
         );
         let (header, media_kind) = if !should_attempt_rust {
-            Err(RomWeaverError::Unsupported(format!(
-                "chd codec list is invalid for {} media",
-                self.media_label(self.media_kind_from_create_kind(&create_kind))
-            )))
+            Err(RomWeaverError::Unsupported(
+                UnsupportedOp::ChdCodecListInvalid {
+                    media: self
+                        .media_label(self.media_kind_from_create_kind(&create_kind))
+                        .to_string(),
+                },
+            ))
         } else {
             rust_create()
         }?;

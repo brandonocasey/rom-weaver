@@ -155,11 +155,10 @@ impl ZipContainerHandler {
             context.plan_threads(self.create_thread_capability(method, total_bytes, level));
 
         let method_name = self.libarchive_method_name(method).ok_or_else(|| {
-            RomWeaverError::Unsupported(format!(
-                "libarchive does not support {} codec `{}`",
-                self.descriptor.name,
-                self.method_name(method)
-            ))
+            RomWeaverError::Unsupported(UnsupportedOp::LibarchiveCodec {
+                format: self.descriptor.name.to_string(),
+                codec: self.method_name(method).to_string(),
+            })
         })?;
         let logical_bytes = write_archive_with_libarchive(
             request,

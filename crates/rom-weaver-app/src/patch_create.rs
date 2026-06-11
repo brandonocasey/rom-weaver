@@ -527,11 +527,11 @@ impl CliApp {
         );
         let report = match handler.create(&request, &context) {
             Ok(report) => report,
-            Err(RomWeaverError::Unsupported(label)) => OperationReport::unsupported(
+            Err(RomWeaverError::Unsupported(op)) => OperationReport::unsupported(
                 OperationFamily::Patch,
                 Some(handler.descriptor().name.to_string()),
                 "create",
-                label,
+                op.to_string(),
                 Some(context.plan_threads(ThreadCapability::single_threaded())),
             ),
             Err(error) => OperationReport::failed(

@@ -315,7 +315,10 @@ fn parse_apsgba_file(path: &Path) -> Result<ParsedApsGbaPatch> {
     let mut parser = ApsGbaFileParser::new(BufReader::new(File::open(path)?), file_len);
     let header = parser.read_exact(APS_GBA_HEADER_SIZE, "APSGBA header")?;
     if &header[..APS_GBA_MAGIC.len()] != APS_GBA_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "APS_GBA_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let source_size = read_u32_le(&header, 4)?;
@@ -360,7 +363,10 @@ fn parse_apsgba_bytes(bytes: &[u8]) -> Result<ParsedApsGbaPatch> {
         ));
     }
     if &bytes[..APS_GBA_MAGIC.len()] != APS_GBA_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "APS_GBA_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
     if bytes.len() < APS_GBA_HEADER_SIZE + APS_GBA_RECORD_SIZE {
         return Err(RomWeaverError::Validation(

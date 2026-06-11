@@ -271,7 +271,10 @@ fn parse_pmsr_file(path: &Path) -> Result<ParsedPmsrPatch> {
         .as_slice()
         != PMSR_MAGIC
     {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "PMSR_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let record_count = parser.read_u32_be("MOD record count")?;
@@ -313,7 +316,10 @@ fn parse_pmsr_bytes(bytes: &[u8]) -> Result<ParsedPmsrPatch> {
         ));
     }
     if &bytes[..PMSR_MAGIC.len()] != PMSR_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "PMSR_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let mut cursor = PMSR_MAGIC.len();

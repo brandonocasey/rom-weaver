@@ -33,8 +33,8 @@ use rom_weaver_core::{
     PatchApplyRequest, PatchChecksumValidation, PatchCreateRequest, PatchValidateRequest,
     ProgressEvent, ProgressSink, PromptCandidate, Result, RomWeaverError, Selection, SelectionList,
     SelectionMatcher, SelectionPrompter, ThreadBudget, ThreadCapability, ThreadExecution,
-    XdeltaSecondaryMode, is_patch_filter_candidate_name, is_rom_filter_candidate_name,
-    normalize_archive_name, should_ignore_common_container_file,
+    UnsupportedOp, XdeltaSecondaryMode, is_patch_filter_candidate_name,
+    is_rom_filter_candidate_name, normalize_archive_name, should_ignore_common_container_file,
 };
 // The selection-input parser moved to core; the app keeps a thin wrapper only so the existing unit
 // test in `tests.rs` can exercise it through `CliApp`.

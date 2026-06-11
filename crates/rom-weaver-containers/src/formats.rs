@@ -5,6 +5,7 @@ use rom_weaver_core::{
     ContainerCapabilities, ContainerCreateRequest, ContainerExtractRequest, ContainerHandler,
     ContainerHandlerOperations, ContainerListEntry, ContainerProbeRequest, FormatDescriptor,
     OperationFamily, OperationReport, ProbeConfidence, Result, RomWeaverError, ThreadCapability,
+    UnsupportedOp,
 };
 
 use crate::{
@@ -673,7 +674,10 @@ pub fn extract_only_create_validation_message(format_name: &str) -> String {
 }
 
 pub fn extract_only_create_error(format_name: &str) -> RomWeaverError {
-    RomWeaverError::Unsupported(extract_only_create_validation_message(format_name))
+    RomWeaverError::Unsupported(UnsupportedOp::ExtractOnlyCreate {
+        format: format_name.to_string(),
+        supported_create_formats: supported_create_formats_text(),
+    })
 }
 
 pub struct ContainerRegistry {

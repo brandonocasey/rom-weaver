@@ -336,8 +336,9 @@ impl ChdContainerHandler {
 
         if samples.saturating_mul(2) > usize::from(u16::MAX) {
             return Err(RomWeaverError::Unsupported(
-                "avhuff encode currently supports up to 32767 audio samples per channel"
-                    .to_string(),
+                UnsupportedOp::ChdAvhuffSampleLimit {
+                    max_samples_per_channel: 32767,
+                },
             ));
         }
 

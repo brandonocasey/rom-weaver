@@ -15,7 +15,7 @@ use rom_weaver_checksum::md5_file;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
-    Result, RomWeaverError, SharedThreadPool,
+    Result, RomWeaverError, SharedThreadPool, UnsupportedOp,
 };
 
 use crate::checksum_validation_suffix;
@@ -354,7 +354,10 @@ fn parse_rup_file(path: &Path) -> Result<ParsedRupPatch> {
 
     let mut parser = RupFileParser::new(BufReader::new(File::open(path)?), file_len);
     if parser.read_exact(RUP_MAGIC.len())?.as_slice() != RUP_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "RUP_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let _metadata = RupMetadata {
@@ -471,7 +474,10 @@ fn parse_rup_bytes(bytes: &[u8]) -> Result<ParsedRupPatch> {
 
     let mut parser = RupParser::new(bytes);
     if parser.read_exact(RUP_MAGIC.len())? != RUP_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "RUP_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let _metadata = RupMetadata {
@@ -587,8 +593,7 @@ fn select_matching_file_for_input<'a>(
 ) -> Result<RupSelectedFile<'a>> {
     if patch.files.iter().any(|file| !file.file_name.is_empty()) {
         return Err(RomWeaverError::Unsupported(
-            "RUP patches with named file entries are not supported by single-file patch-apply"
-                .into(),
+            UnsupportedOp::RupNamedFileEntries,
         ));
     }
 

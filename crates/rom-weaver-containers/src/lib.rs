@@ -35,9 +35,9 @@ use rom_weaver_core::{
     ContainerHandlerOperations, ContainerListEntry, ContainerProbeRequest, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, OrderedChunkWriter,
     OrderedStreamingMessages, ProbeConfidence, Result, RomWeaverError, SelectionMatcher,
-    ThreadCapability, ThreadExecution, bounded_items_for_threads, create_extract_output_file,
-    emit_container_running_progress, file_starts_with, maybe_emit_container_byte_progress,
-    ordered_streaming_compress, physical_memory_bytes,
+    ThreadCapability, ThreadExecution, UnsupportedOp, bounded_items_for_threads,
+    create_extract_output_file, emit_container_running_progress, file_starts_with,
+    maybe_emit_container_byte_progress, ordered_streaming_compress, physical_memory_bytes,
 };
 use rom_weaver_libarchive::{
     ReadFilter as LibarchiveReadFilter, RegularArchiveProbeFormat as LibarchiveProbeFormat,

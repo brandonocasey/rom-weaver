@@ -512,11 +512,11 @@ impl CliApp {
                         )));
                 report = match handler.apply(&request, &patch_context) {
                     Ok(report) => report,
-                    Err(RomWeaverError::Unsupported(label)) => OperationReport::unsupported(
+                    Err(RomWeaverError::Unsupported(op)) => OperationReport::unsupported(
                         OperationFamily::Patch,
                         Some(handler.descriptor().name.to_string()),
                         "apply",
-                        label,
+                        op.to_string(),
                         Some(context.plan_threads(ThreadCapability::single_threaded())),
                     ),
                     Err(error) => OperationReport::failed(

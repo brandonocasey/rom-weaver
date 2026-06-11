@@ -7,8 +7,8 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    ArchiveEntryKindFilter, OperationContext, OperationFamily, OperationStatus, Result,
-    RomWeaverError, ThreadCapability, ThreadExecution,
+    ArchiveEntryKindFilter, FormatOperationKind, OperationContext, OperationFamily,
+    OperationStatus, Result, RomWeaverError, ThreadCapability, ThreadExecution, UnsupportedOp,
 };
 use tracing::trace;
 
@@ -304,10 +304,12 @@ pub trait ContainerHandlerOperations: Send + Sync {
         context: &OperationContext,
     ) -> Result<Vec<String>> {
         let _ = (request, context);
-        Err(RomWeaverError::Unsupported(format!(
-            "{} does not support listing entries",
-            self.descriptor().name
-        )))
+        Err(RomWeaverError::Unsupported(
+            UnsupportedOp::FormatOperation {
+                format: self.descriptor().name.to_string(),
+                operation: FormatOperationKind::ListEntries,
+            },
+        ))
     }
     fn list_entry_records(
         &self,
@@ -336,10 +338,12 @@ pub trait ContainerHandlerOperations: Send + Sync {
         context: &OperationContext,
     ) -> Result<u64> {
         let _ = (request, context);
-        Err(RomWeaverError::Unsupported(format!(
-            "{} does not support create dry-run size measurement",
-            self.descriptor().name
-        )))
+        Err(RomWeaverError::Unsupported(
+            UnsupportedOp::FormatOperation {
+                format: self.descriptor().name.to_string(),
+                operation: FormatOperationKind::CreateDryRunSize,
+            },
+        ))
     }
 }
 

@@ -228,7 +228,10 @@ fn parse_ups_file_with_checksum_validation(
     let mut parser = UpsFileParser::new(BufReader::new(File::open(path)?), footer_offset);
 
     if parser.read_exact(UPS_MAGIC.len())?.as_slice() != UPS_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "UPS_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let source_size = parser.read_varint()?;
@@ -311,7 +314,10 @@ fn parse_ups_bytes_with_checksum_validation(
     let mut parser = UpsParser::new(bytes, footer_offset);
 
     if parser.read_exact(UPS_MAGIC.len())? != UPS_MAGIC {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "UPS_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let source_size = parser.read_varint()?;

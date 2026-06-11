@@ -88,8 +88,7 @@ impl ChdContainerHandler {
             ChdCodec::AVHUFF => match create_kind {
                 ChdCreateKind::Av(_) => self.encode_avhuff_chav_hunk(hunk),
                 _ => Err(RomWeaverError::Unsupported(
-                    "rust chd compressed create supports `avhuff` only for `chav` frame inputs"
-                        .to_string(),
+                    UnsupportedOp::ChdAvhuffRequiresChavFrames,
                 )),
             },
             ChdCodec::FLAC => {
@@ -102,10 +101,12 @@ impl ChdContainerHandler {
                 )?);
                 Ok(encoded)
             }
-            other => Err(RomWeaverError::Unsupported(format!(
-                "rust chd compressed create does not support codec `{}` for this media mode",
-                self.codec_label(other)
-            ))),
+            other => Err(RomWeaverError::Unsupported(
+                UnsupportedOp::ChdCodecForMedia {
+                    codec: self.codec_label(other).to_string(),
+                    scope: ChdMediaScope::CompressedMediaMode,
+                },
+            )),
         }
     }
 
@@ -333,10 +334,12 @@ impl ChdContainerHandler {
             ChdCodec::CD_FLAC => {
                 self.compress_prepared_cd_flac_payload(sectors, prepared, compression_level)
             }
-            other => Err(RomWeaverError::Unsupported(format!(
-                "rust chd compressed create does not support codec `{}` for disc media",
-                self.codec_label(other)
-            ))),
+            other => Err(RomWeaverError::Unsupported(
+                UnsupportedOp::ChdCodecForMedia {
+                    codec: self.codec_label(other).to_string(),
+                    scope: ChdMediaScope::Disc,
+                },
+            )),
         }
     }
 

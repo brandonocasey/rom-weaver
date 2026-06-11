@@ -14,7 +14,8 @@ use rom_weaver_core::{
     DEFAULT_BLOCK_CACHE_MAX_BLOCKS, DEFAULT_BLOCK_CACHE_SIZE_BYTES, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, PatchApplyRequest, PatchCapabilities,
     PatchCreateRequest, PatchHandler, PatchValidateRequest, ProbeConfidence, Result,
-    RomWeaverError, SharedBlockCacheReader, ThreadCapability, ThreadExecution, ValidationCodeError,
+    RomWeaverError, SharedBlockCacheReader, ThreadCapability, ThreadExecution, UnsupportedOp,
+    ValidationCodeError,
 };
 
 use crate::shared::threading::run_with_optional_pool;
@@ -267,7 +268,7 @@ fn render_hdiff_patch_to_memory(
             Ok((apply.output, execution))
         }
         ParsedPatchVariant::Directory19(_) => Err(RomWeaverError::Unsupported(
-            "HDiffPatch directory patches (HDIFF19) are not supported for patch-apply; expected single-file patch (.hdiff/.hpatchz)".into(),
+            UnsupportedOp::HdiffDirectoryPatch,
         )),
     }
 }

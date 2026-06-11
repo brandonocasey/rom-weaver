@@ -352,7 +352,10 @@ fn parse_ips_file(
 
     let mut parser = IpsFileParser::new(BufReader::new(file), file_len);
     if parser.read_exact(flavor.header().len())?.as_slice() != flavor.header() {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "IPS_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let mut records = Vec::new();
@@ -454,7 +457,10 @@ fn parse_ips_bytes_with_validation(
 
     let mut parser = IpsParser::new(bytes);
     if parser.read_exact(flavor.header().len())? != flavor.header() {
-        return Err(RomWeaverError::Validation("Patch header invalid".into()));
+        return Err(crate::coded_validation(
+            "IPS_HEADER_INVALID",
+            "Patch header invalid",
+        ));
     }
 
     let mut records = Vec::new();

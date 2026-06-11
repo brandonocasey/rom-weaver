@@ -467,12 +467,12 @@ impl CliApp {
                     };
                     match handler.validate(&request, &patch_context) {
                         Ok(report) => report,
-                        Err(RomWeaverError::Unsupported(label)) => {
+                        Err(RomWeaverError::Unsupported(op)) => {
                             return OperationReport::unsupported(
                                 OperationFamily::Patch,
                                 Some(handler.descriptor().name.to_string()),
                                 "validate",
-                                label,
+                                op.to_string(),
                                 Some(context.plan_threads(ThreadCapability::single_threaded())),
                             );
                         }
@@ -514,12 +514,12 @@ impl CliApp {
                     };
                     let report = match handler.apply(&request, &patch_context) {
                         Ok(report) => report,
-                        Err(RomWeaverError::Unsupported(label)) => {
+                        Err(RomWeaverError::Unsupported(op)) => {
                             return OperationReport::unsupported(
                                 OperationFamily::Patch,
                                 Some(handler.descriptor().name.to_string()),
                                 "validate",
-                                label,
+                                op.to_string(),
                                 Some(context.plan_threads(ThreadCapability::single_threaded())),
                             );
                         }

@@ -145,9 +145,7 @@ impl ChdContainerHandler {
         on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
     ) -> Result<ChdHeader> {
         if matches!(create_kind, ChdCreateKind::Av(_)) {
-            return Err(RomWeaverError::Unsupported(
-                "rust chd create currently supports only raw/dvd/hd/disc `store` mode".into(),
-            ));
+            return Err(RomWeaverError::Unsupported(UnsupportedOp::ChdStoreModeOnly));
         }
 
         let hunk_bytes = self.hunk_bytes(create_kind, logical_bytes, ChdCodec::NONE);
@@ -429,11 +427,14 @@ impl ChdContainerHandler {
                 break;
             }
             if !self.supports_create_codec(create_kind, codec) {
-                return Err(RomWeaverError::Unsupported(format!(
-                    "chd codec `{}` is not valid for {} media",
-                    self.codec_label(codec),
-                    self.media_label(self.media_kind_from_create_kind(create_kind))
-                )));
+                return Err(RomWeaverError::Unsupported(
+                    UnsupportedOp::ChdCodecInvalidForMedia {
+                        codec: self.codec_label(codec).to_string(),
+                        media: self
+                            .media_label(self.media_kind_from_create_kind(create_kind))
+                            .to_string(),
+                    },
+                ));
             }
             active_codecs.push((index as u8, codec));
         }
