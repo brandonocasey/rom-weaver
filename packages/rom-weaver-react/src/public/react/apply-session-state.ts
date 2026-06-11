@@ -1,12 +1,7 @@
-import { type SetStateAction, useCallback, useReducer } from "react";
-import type {
-  LocalPatcherSessionState,
-  LocalPatcherSessionStatePatch,
-  StagedInputInfo,
-} from "./apply-session-types.ts";
+import { type SetStateAction, useMemo, useReducer } from "react";
+import type { LocalPatcherSessionState, LocalPatcherSessionStatePatch } from "./apply-session-types.ts";
 import { resolveLocalStateUpdate } from "./patcher-form-session-utils.ts";
 import { createOutputSizeSummary } from "./patcher-presentation.ts";
-import type { InputProgress, RomInputRowState } from "./patcher-ui-state.ts";
 
 const createLocalPatcherSessionState = (): LocalPatcherSessionState => ({
   busy: false,
@@ -61,126 +56,52 @@ const localPatcherSessionStateReducer = (
   };
 };
 
+type LocalSessionDispatch = (patch: LocalPatcherSessionStatePatch) => void;
+type LocalSessionFieldSetter<K extends keyof LocalPatcherSessionState> = (
+  value: SetStateAction<LocalPatcherSessionState[K]>,
+) => void;
+
+// Every session setter is "patch one field through resolveLocalStateUpdate"; build them from a
+// single typed factory instead of hand-writing 16 identical useCallbacks. The factory closes over
+// the (stable) reducer dispatch, so each setter keeps a stable identity for the hooks that depend
+// on it. The computed-key object is widened to a string index, so the patch shape is asserted back.
+const createFieldSetter =
+  <K extends keyof LocalPatcherSessionState>(dispatch: LocalSessionDispatch, key: K): LocalSessionFieldSetter<K> =>
+  (value) =>
+    dispatch(
+      (current) => ({ [key]: resolveLocalStateUpdate(current[key], value) }) as Partial<LocalPatcherSessionState>,
+    );
+
 const useLocalPatcherSessionState = () => {
   const [localState, setLocalState] = useReducer(
     localPatcherSessionStateReducer,
     undefined,
     createLocalPatcherSessionState,
   );
-  const setBusy = useCallback(
-    (value: SetStateAction<boolean>) =>
-      setLocalState((current) => ({ busy: resolveLocalStateUpdate(current.busy, value) })),
-    [],
-  );
-  const setInputStaging = useCallback(
-    (value: SetStateAction<boolean>) =>
-      setLocalState((current) => ({ inputStaging: resolveLocalStateUpdate(current.inputStaging, value) })),
-    [],
-  );
-  const setErrorMessage = useCallback(
-    (value: SetStateAction<string>) =>
-      setLocalState((current) => ({ failureMessage: resolveLocalStateUpdate(current.failureMessage, value) })),
-    [],
-  );
-  const setOutputErrorMessage = useCallback(
-    (value: SetStateAction<string>) =>
-      setLocalState((current) => ({
-        outputErrorMessage: resolveLocalStateUpdate(current.outputErrorMessage, value),
-      })),
-    [],
-  );
-  const setProgress = useCallback(
-    (value: SetStateAction<InputProgress | null>) =>
-      setLocalState((current) => ({ progress: resolveLocalStateUpdate(current.progress, value) })),
-    [],
-  );
-  const setPatchProgress = useCallback(
-    (value: SetStateAction<InputProgress | null>) =>
-      setLocalState((current) => ({ patchProgress: resolveLocalStateUpdate(current.patchProgress, value) })),
-    [],
-  );
-  const setPatchProgressByKey = useCallback(
-    (value: SetStateAction<Record<string, InputProgress>>) =>
-      setLocalState((current) => ({
-        patchProgressByKey: resolveLocalStateUpdate(current.patchProgressByKey, value),
-      })),
-    [],
-  );
-  const setPatchStaging = useCallback(
-    (value: SetStateAction<boolean>) =>
-      setLocalState((current) => ({ patchStaging: resolveLocalStateUpdate(current.patchStaging, value) })),
-    [],
-  );
-  const setPatchInfoByKey = useCallback(
-    (value: SetStateAction<Record<string, StagedInputInfo>>) =>
-      setLocalState((current) => ({ patchInfoByKey: resolveLocalStateUpdate(current.patchInfoByKey, value) })),
-    [],
-  );
-  const setRomInputs = useCallback(
-    (value: SetStateAction<RomInputRowState[]>) =>
-      setLocalState((current) => ({ romInputs: resolveLocalStateUpdate(current.romInputs, value) })),
-    [],
-  );
-  const setOutputName = useCallback(
-    (value: SetStateAction<string>) =>
-      setLocalState((current) => ({ outputName: resolveLocalStateUpdate(current.outputName, value) })),
-    [],
-  );
-  const setOutputNameEdited = useCallback(
-    (value: SetStateAction<boolean>) =>
-      setLocalState((current) => ({
-        outputNameEdited: resolveLocalStateUpdate(current.outputNameEdited, value),
-      })),
-    [],
-  );
-  const setCompletedSizeSummary = useCallback(
-    (value: SetStateAction<ReturnType<typeof createOutputSizeSummary>>) =>
-      setLocalState((current) => ({
-        completedSizeSummary: resolveLocalStateUpdate(current.completedSizeSummary, value),
-      })),
-    [],
-  );
-  const setCompletedApplyTimeMs = useCallback(
-    (value: SetStateAction<number | null>) =>
-      setLocalState((current) => ({
-        completedApplyTimeMs: resolveLocalStateUpdate(current.completedApplyTimeMs, value),
-      })),
-    [],
-  );
-  const setCompletedCompressionTimeMs = useCallback(
-    (value: SetStateAction<number | null>) =>
-      setLocalState((current) => ({
-        completedCompressionTimeMs: resolveLocalStateUpdate(current.completedCompressionTimeMs, value),
-      })),
-    [],
-  );
-  const setPendingDownloadFileName = useCallback(
-    (value: SetStateAction<string | null>) =>
-      setLocalState((current) => ({
-        pendingDownloadFileName: resolveLocalStateUpdate(current.pendingDownloadFileName, value),
-      })),
+  // setLocalState is reducer-stable, so the setters are created once and stay referentially stable.
+  const setters = useMemo(
+    () => ({
+      setBusy: createFieldSetter(setLocalState, "busy"),
+      setCompletedApplyTimeMs: createFieldSetter(setLocalState, "completedApplyTimeMs"),
+      setCompletedCompressionTimeMs: createFieldSetter(setLocalState, "completedCompressionTimeMs"),
+      setCompletedSizeSummary: createFieldSetter(setLocalState, "completedSizeSummary"),
+      setErrorMessage: createFieldSetter(setLocalState, "failureMessage"),
+      setInputStaging: createFieldSetter(setLocalState, "inputStaging"),
+      setOutputErrorMessage: createFieldSetter(setLocalState, "outputErrorMessage"),
+      setOutputName: createFieldSetter(setLocalState, "outputName"),
+      setOutputNameEdited: createFieldSetter(setLocalState, "outputNameEdited"),
+      setPatchInfoByKey: createFieldSetter(setLocalState, "patchInfoByKey"),
+      setPatchProgress: createFieldSetter(setLocalState, "patchProgress"),
+      setPatchProgressByKey: createFieldSetter(setLocalState, "patchProgressByKey"),
+      setPatchStaging: createFieldSetter(setLocalState, "patchStaging"),
+      setPendingDownloadFileName: createFieldSetter(setLocalState, "pendingDownloadFileName"),
+      setProgress: createFieldSetter(setLocalState, "progress"),
+      setRomInputs: createFieldSetter(setLocalState, "romInputs"),
+    }),
     [],
   );
 
-  return {
-    localState,
-    setBusy,
-    setCompletedApplyTimeMs,
-    setCompletedCompressionTimeMs,
-    setCompletedSizeSummary,
-    setErrorMessage,
-    setInputStaging,
-    setOutputErrorMessage,
-    setOutputName,
-    setOutputNameEdited,
-    setPatchInfoByKey,
-    setPatchProgress,
-    setPatchProgressByKey,
-    setPatchStaging,
-    setPendingDownloadFileName,
-    setProgress,
-    setRomInputs,
-  };
+  return { localState, ...setters };
 };
 
 export { createLocalPatcherSessionState, localPatcherSessionStateReducer, useLocalPatcherSessionState };
