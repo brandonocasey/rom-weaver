@@ -25,7 +25,11 @@ import {
   releasePreparedRomSource,
   releasePreparedRomSourceAndWait,
 } from "./staged-source-cleanup.ts";
-import { canRecoverWithCandidateSelection } from "./staged-source-selection.ts";
+import {
+  canRecoverWithCandidateSelection,
+  createSelectionSkippedError,
+  isInteractiveSelectionCancelledError,
+} from "./staged-source-selection.ts";
 import type {
   PreparationProgress,
   SessionIdFactory,
@@ -129,6 +133,10 @@ class StagedRomSourceController<TSource, TState extends SharedRomSourceState> {
         requestCount: requests.length,
         role: stage.state.role,
       });
+      // A dismissed interactive prompt must abort the whole input preparation. Swallowing it (as a
+      // warning) lets staging fall through to prepareSelectedSource, which re-extracts and re-prompts
+      // a worker with no user to answer — the second prompt wedges and strands its staged OPFS copy.
+      if (isInteractiveSelectionCancelledError(error)) throw createSelectionSkippedError(error);
       if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
       if (!requests.length) this.pushWarning(stage, toRomWeaverError(error));
     }
@@ -282,6 +290,9 @@ class StagedRomSourceController<TSource, TState extends SharedRomSourceState> {
       this.applyPreparedSourceMetadata(stage);
       stage.state.status = "ready";
     } catch (error) {
+      // A dismissed interactive prompt is a deliberate cancel, not a recoverable ambiguity — stop
+      // rather than re-prompting (which would wedge a worker and strand its staged copy).
+      if (isInteractiveSelectionCancelledError(error)) throw createSelectionSkippedError(error);
       if (requests.length && !canRecoverWithCandidateSelection(error, requests)) throw error;
       if (requests.length) {
         this.handleSourceSelectionRequests(stage, requests);
