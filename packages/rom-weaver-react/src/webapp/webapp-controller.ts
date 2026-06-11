@@ -1,4 +1,3 @@
-import { createStore } from "zustand/vanilla";
 import {
   buildSettingsForWebapp,
   copySettings,
@@ -13,6 +12,7 @@ import {
   serializeSettingsForStorage,
   validateSettingsDraft,
 } from "./settings/settings-state.ts";
+import { createStore } from "./vanilla-store.ts";
 import {
   type CreatorSessionState,
   createEmptyCreatorSessionState,
