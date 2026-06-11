@@ -260,7 +260,13 @@ struct BspVm<'a, 'pool> {
     file_buffer: VmFileBuffer,
     current_file_pointer: u32,
     current_file_pointer_locked: bool,
-    frames: Vec<Frame<'a>>,
+    /// The frame currently executing. A frame always exists, so frame access is
+    /// infallible — the "empty stack" state the VM previously guarded with a
+    /// panic is unrepresentable by construction.
+    current_frame: Frame<'a>,
+    /// Frames suspended by a nested BSP patch (`bsppatch`), innermost last. Each
+    /// carries the `waiting_var` that receives the child's exit code on return.
+    suspended_frames: Vec<Frame<'a>>,
     dirty: bool,
     sha1: [u8; 20],
     _thread_pool: std::marker::PhantomData<&'pool SharedThreadPool>,
@@ -309,7 +315,8 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
             file_buffer: VmFileBuffer::open(input_path)?,
             current_file_pointer: 0,
             current_file_pointer_locked: false,
-            frames: vec![Frame::new(patch_space)],
+            current_frame: Frame::new(patch_space),
+            suspended_frames: Vec::new(),
             dirty: true,
             sha1: [0; 20],
             _thread_pool: std::marker::PhantomData,
@@ -317,45 +324,37 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
     }
 
     fn execute(&mut self) -> VmResult<VmOutcome> {
-        while !self.frames.is_empty() {
+        loop {
             let opcode = self.next_patch_byte()?;
             let args = self.opcode_parameters(opcode)?;
             let control = self.execute_opcode(opcode, &args)?;
-            match control {
-                StepControl::Continue => {}
-                StepControl::Exit(exit_code) => {
-                    self.frames.pop();
-                    if let Some(parent) = self.frames.last_mut() {
-                        if let Some(waiting_var) = parent.waiting_var.take() {
-                            parent.variables[waiting_var as usize] = exit_code;
-                            continue;
-                        }
-                        return Err("BSP runtime returned an invalid completion state".to_string());
-                    }
+            let StepControl::Exit(exit_code) = control else {
+                continue;
+            };
 
-                    if exit_code == 0 {
-                        return Ok(VmOutcome::Success);
-                    }
-                    return Ok(VmOutcome::Failure(exit_code));
+            // The top frame finished. Resume the parent that suspended it, if
+            // any, delivering the child's exit code to the variable it awaited;
+            // otherwise the root frame exited and the VM is done.
+            let Some(mut parent) = self.suspended_frames.pop() else {
+                if exit_code == 0 {
+                    return Ok(VmOutcome::Success);
                 }
-            }
-        }
-
-        Err("BSP runtime returned an invalid completion state".to_string())
-    }
-
-    fn top_frame<'b>(&'b self) -> &'b Frame<'a> {
-        match self.frames.last() {
-            Some(frame) => frame,
-            None => panic!("BSP runtime frame stack is empty"),
+                return Ok(VmOutcome::Failure(exit_code));
+            };
+            let waiting_var = parent.waiting_var.take().ok_or_else(|| {
+                "BSP runtime returned an invalid completion state".to_string()
+            })?;
+            parent.variables[waiting_var as usize] = exit_code;
+            self.current_frame = parent;
         }
     }
 
-    fn top_frame_mut<'b>(&'b mut self) -> &'b mut Frame<'a> {
-        match self.frames.last_mut() {
-            Some(frame) => frame,
-            None => panic!("BSP runtime frame stack is empty"),
-        }
+    fn top_frame(&self) -> &Frame<'a> {
+        &self.current_frame
+    }
+
+    fn top_frame_mut(&mut self) -> &mut Frame<'a> {
+        &mut self.current_frame
     }
 
     fn patch_len(&self) -> usize {
@@ -1527,7 +1526,9 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
         let slice = self.top_frame().patch_space.read_vec(start, len)?;
 
         self.top_frame_mut().waiting_var = Some(variable);
-        self.frames.push(Frame::new(PatchSpace::Owned(slice)));
+        let child = Frame::new(PatchSpace::Owned(slice));
+        let parent = std::mem::replace(&mut self.current_frame, child);
+        self.suspended_frames.push(parent);
         Ok(StepControl::Continue)
     }
 

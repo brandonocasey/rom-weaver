@@ -77,6 +77,15 @@ const REFERENCE_VECTORS: &[ReferenceVector] = &[
         patch_hex: "0601000000",
         input_hex: "010203",
     },
+    // Nested bsppatch (0x94): the outer patch writes 0xAA at position 0, then
+    // runs an embedded sub-patch that seeks to position 2 and writes 0xBB into
+    // the shared file buffer before exiting; the outer patch resumes and exits.
+    // A correct frame suspend/resume yields `aa00bb00`.
+    ReferenceVector {
+        name: "bsppatch_nested",
+        patch_hex: "600000000018aa9400160000000c0000000600000000600200000018bb0600000000",
+        input_hex: "00000000",
+    },
 ];
 
 fn decode_hex(hex: &str) -> Vec<u8> {
@@ -236,6 +245,20 @@ fn apply_executes_patch_script() {
     assert_eq!(execution.effective_threads, 1);
     assert!(!execution.used_parallelism);
     assert_eq!(output, vec![0xFF, 0x02, 0x03]);
+}
+
+#[test]
+fn apply_runs_nested_bsppatch_against_shared_buffer() {
+    // Pins the frame suspend/resume path: the outer patch writes 0xAA at
+    // position 0, a nested bsppatch (0x94) sub-patch writes 0xBB at position 2
+    // of the shared file buffer, then the outer patch resumes and exits. The
+    // child's exit code is delivered to the parent's waiting variable.
+    let patch_bytes = decode_hex(
+        "600000000018aa9400160000000c0000000600000000600200000018bb0600000000",
+    );
+    let output = apply_bsp_patch_bytes(patch_bytes.as_slice(), vec![0x00; 4], None)
+        .expect("nested BSP patch should apply");
+    assert_eq!(output, vec![0xAA, 0x00, 0xBB, 0x00]);
 }
 
 #[test]
