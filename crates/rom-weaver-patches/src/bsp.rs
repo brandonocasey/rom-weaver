@@ -55,27 +55,35 @@ impl BspPatchHandler {
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
         }
-        let staged_output_path = context.temp_paths().next_path(
-            "bsp-apply-staged-output",
-            request.output.extension().and_then(|value| value.to_str()),
-        );
-        if let Some(parent) = staged_output_path.parent() {
-            fs::create_dir_all(parent)?;
+        // The BSP VM edits its target file in place. Seed the output with the
+        // input and run the script directly against it, rather than working on a
+        // separate staged file and copying the result over. A logical rename is
+        // NOT free on OPFS (the bytes are still persisted under the output name
+        // on flush), so the old stage-then-copy path paid a full extra 128 MiB+
+        // copy in the browser. Working directly on the output removes it.
+        //
+        // `input == output` would let `fs::copy` truncate the source before
+        // reading it, so apply in place in that case and never delete it on
+        // failure. Otherwise the partial output is removed so callers never see a
+        // half-applied file (the VM can exit non-zero mid-run).
+        let in_place = request.input == request.output;
+        if !in_place {
+            fs::copy(&request.input, &request.output)?;
         }
-        fs::copy(&request.input, &staged_output_path)?;
-
         let apply_result = apply_bsp_patch_path(
             patch_path,
-            &staged_output_path,
+            &request.output,
             execution.used_parallelism.then_some(&pool),
         );
-        let result = (|| -> Result<u64> {
-            let written = apply_result?;
-            fs::copy(&staged_output_path, &request.output)?;
-            Ok(written)
-        })();
-        let _ = fs::remove_file(&staged_output_path);
-        let written = result?;
+        let written = match apply_result {
+            Ok(written) => written,
+            Err(error) => {
+                if !in_place {
+                    let _ = fs::remove_file(&request.output);
+                }
+                return Err(error);
+            }
+        };
         Ok(crate::patch_success_report(
             self.descriptor,
             "apply",
