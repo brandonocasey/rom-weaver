@@ -597,7 +597,6 @@ fn select_matching_file_for_input<'a>(
         ));
     }
 
-    let raw_input_md5 = md5_file(input_path)?;
     let mut matches = Vec::new();
     for file in &patch.files {
         let normalized_input = match normalize_rup_input(input_path, file, context) {
@@ -629,10 +628,15 @@ fn select_matching_file_for_input<'a>(
                 "RUP checksum validation is disabled, but patch has multiple file variants so input direction is ambiguous".into(),
             )),
         },
-        0 => Err(RomWeaverError::Validation(format!(
-            "RUP input validation failed; no file entry matched input MD5 {}",
-            format_md5_hex(raw_input_md5)
-        ))),
+        0 => {
+            // Only needed for this diagnostic — computed lazily so the common
+            // (matching) path does not pay a redundant full-file MD5 pass.
+            let raw_input_md5 = md5_file(input_path)?;
+            Err(RomWeaverError::Validation(format!(
+                "RUP input validation failed; no file entry matched input MD5 {}",
+                format_md5_hex(raw_input_md5)
+            )))
+        }
         _ => Err(RomWeaverError::Validation(
             "RUP input validation matched multiple file variants; patch-apply requires an unambiguous single-file variant".into(),
         )),
