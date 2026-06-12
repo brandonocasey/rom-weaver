@@ -253,9 +253,8 @@ fn apply_runs_nested_bsppatch_against_shared_buffer() {
     // position 0, a nested bsppatch (0x94) sub-patch writes 0xBB at position 2
     // of the shared file buffer, then the outer patch resumes and exits. The
     // child's exit code is delivered to the parent's waiting variable.
-    let patch_bytes = decode_hex(
-        "600000000018aa9400160000000c0000000600000000600200000018bb0600000000",
-    );
+    let patch_bytes =
+        decode_hex("600000000018aa9400160000000c0000000600000000600200000018bb0600000000");
     let output = apply_bsp_patch_bytes(patch_bytes.as_slice(), vec![0x00; 4], None)
         .expect("nested BSP patch should apply");
     assert_eq!(output, vec![0xAA, 0x00, 0xBB, 0x00]);

@@ -341,9 +341,10 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 }
                 return Ok(VmOutcome::Failure(exit_code));
             };
-            let waiting_var = parent.waiting_var.take().ok_or_else(|| {
-                "BSP runtime returned an invalid completion state".to_string()
-            })?;
+            let waiting_var = parent
+                .waiting_var
+                .take()
+                .ok_or_else(|| "BSP runtime returned an invalid completion state".to_string())?;
             parent.variables[waiting_var as usize] = exit_code;
             self.current_frame = parent;
         }
