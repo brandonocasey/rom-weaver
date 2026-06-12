@@ -145,7 +145,9 @@ impl PatchHandler for DpsPatchHandler {
         let (execution, prepared) = run_with_optional_pool(
             context,
             thread_capability,
-            true,
+            // Parallel prepare reads the source from worker threads, which cannot open
+            // OPFS files in wasm (os error 44); use the serial main-thread path there.
+            !crate::patches_reads_source_on_main_thread(),
             |pool| {
                 prepare_dps_writes_parallel(
                     &parsed.records,
