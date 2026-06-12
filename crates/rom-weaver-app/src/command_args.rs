@@ -466,6 +466,16 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            long = "target",
+            help = "For a disc-sheet (.cue/.gdi) input, glob selecting which referenced track (.bin) receives the patch; must match exactly one track. Uses the same matching as --select."
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub target: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
             long = "rom-filter",
             help = "Keep ROM-like payload candidates while resolving the patch input archive"
         )

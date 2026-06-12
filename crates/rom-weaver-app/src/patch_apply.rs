@@ -10,6 +10,7 @@ impl CliApp {
         trace!(
             input = %args.input.display(),
             selections = args.select.len(),
+            target = ?args.target,
             rom_filter = args.rom_filter,
             patch_filter = args.patch_filter,
             patch_count = args.patches.len(),
@@ -35,6 +36,7 @@ impl CliApp {
         let PatchApplyCommand {
             input,
             select,
+            target,
             rom_filter,
             patch_filter,
             no_extract,
@@ -106,7 +108,52 @@ impl CliApp {
         ) {
             return self.finish("patch-apply", report);
         }
-        let discovered_sidecars = if discover_implicit_patches {
+        // A `.cue`/`.gdi` input is a multi-track disc: patch one referenced
+        // track (chosen by `--target`) and reassemble the full disc. Plain
+        // inputs return `None` here and follow the single-file path unchanged.
+        let disc_context = match self.build_disc_context(&input, target.as_deref()) {
+            Ok(context) => context,
+            Err(error) => {
+                return self.finish(
+                    "patch-apply",
+                    OperationReport::failed(
+                        OperationFamily::Patch,
+                        None,
+                        "prepare",
+                        error.to_string(),
+                        probe_threads.clone(),
+                    ),
+                );
+            }
+        };
+        if disc_context.is_none() && target.is_some() {
+            return self.finish(
+                "patch-apply",
+                OperationReport::failed(
+                    OperationFamily::Patch,
+                    None,
+                    "validate",
+                    "--target requires a disc-sheet (.cue/.gdi) input".to_string(),
+                    probe_threads.clone(),
+                ),
+            );
+        }
+        if disc_context.is_some()
+            && (strip_header || add_header || repair_checksum || n64_byte_order.is_some())
+        {
+            return self.finish(
+                "patch-apply",
+                OperationReport::failed(
+                    OperationFamily::Patch,
+                    None,
+                    "validate",
+                    "disc patch apply (.cue/.gdi input) cannot be combined with --strip-header, --add-header, --repair-checksum, or --n64-byte-order".to_string(),
+                    probe_threads.clone(),
+                ),
+            );
+        }
+        let is_disc = disc_context.is_some();
+        let discovered_sidecars = if discover_implicit_patches && !is_disc {
             match self.discover_patch_apply_sidecars(&input, &select, no_ignore, &context) {
                 Ok(discovered) => discovered,
                 Err(error) => {
@@ -168,44 +215,53 @@ impl CliApp {
             return self.finish("patch-apply", report);
         }
 
-        let resolved_input = match self.resolve_source_with_auto_extract(
-            &input,
-            &select,
-            &context,
-            AutoExtractResolutionLabels {
-                command: "patch-apply",
-                family: OperationFamily::Patch,
-                format: None,
-                source_label: "patch apply input",
-                temp_prefix: "patch-apply-input-extract",
-            },
-            AutoExtractResolutionFlags {
-                no_extract,
-                no_ignore,
-                kind_filter: input_kind_filter,
-                stop_on_disc_image_codec: false,
-            },
-        ) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                return self.finish(
-                    "patch-apply",
-                    OperationReport::failed(
-                        OperationFamily::Patch,
-                        None,
-                        "prepare",
-                        error.to_string(),
-                        probe_threads.clone(),
-                    ),
-                );
-            }
-        };
-        let ResolvedChecksumSource {
-            source: resolved_input,
-            extracted_archives,
-            cleanup_paths,
-        } = resolved_input;
-        let mut temp_paths = cleanup_paths;
+        // For a disc input the patch applies to the chosen track directly (no
+        // container auto-extract); the full disc is reassembled after the apply
+        // loop. Plain inputs resolve through the normal auto-extract path.
+        let (resolved_input, extracted_archives, input_cleanup_paths) =
+            if let Some(disc) = disc_context.as_ref() {
+                (disc.target_file.clone(), 0usize, Vec::new())
+            } else {
+                let resolved = match self.resolve_source_with_auto_extract(
+                    &input,
+                    &select,
+                    &context,
+                    AutoExtractResolutionLabels {
+                        command: "patch-apply",
+                        family: OperationFamily::Patch,
+                        format: None,
+                        source_label: "patch apply input",
+                        temp_prefix: "patch-apply-input-extract",
+                    },
+                    AutoExtractResolutionFlags {
+                        no_extract,
+                        no_ignore,
+                        kind_filter: input_kind_filter,
+                        stop_on_disc_image_codec: false,
+                    },
+                ) {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        return self.finish(
+                            "patch-apply",
+                            OperationReport::failed(
+                                OperationFamily::Patch,
+                                None,
+                                "prepare",
+                                error.to_string(),
+                                probe_threads.clone(),
+                            ),
+                        );
+                    }
+                };
+                let ResolvedChecksumSource {
+                    source,
+                    extracted_archives,
+                    cleanup_paths,
+                } = resolved;
+                (source, extracted_archives, cleanup_paths)
+            };
+        let mut temp_paths = input_cleanup_paths;
         temp_paths.extend(discovered_sidecars.cleanup_paths);
         let mut resolved_patches = Vec::with_capacity(patches.len());
         let mut extracted_patch_notes = Vec::new();
@@ -358,9 +414,16 @@ impl CliApp {
             }
 
             let patch_count = resolved_patches.len();
-            let requires_compat_finalize =
-                add_header || repair_checksum || restore_n64_order.is_some() || patch_count > 1;
-            let needs_staged_output = requires_compat_finalize || compression_options.enabled;
+            // Disc inputs reject the header/N64 transforms and do their own
+            // reassembly, so they skip the standard compat finalize; they always
+            // stage the patched track before reassembling the full disc.
+            let requires_compat_finalize = !is_disc
+                && (add_header
+                    || repair_checksum
+                    || restore_n64_order.is_some()
+                    || patch_count > 1);
+            let needs_staged_output =
+                is_disc || requires_compat_finalize || compression_options.enabled;
             let staged_output = if needs_staged_output {
                 if compression_options.enabled {
                     match Self::patch_apply_raw_output_path(
@@ -644,6 +707,50 @@ impl CliApp {
                 }
             }
 
+            // Reassemble the full disc from the patched track. When compressing,
+            // the staged sheet feeds the compressor below; otherwise the disc is
+            // written beside `output` directly.
+            if is_disc && report.status == OperationStatus::Succeeded {
+                let disc = disc_context
+                    .as_ref()
+                    .expect("disc context present for disc input");
+                let staged_sheet = match self.stage_disc_directory(
+                    disc,
+                    &staged_output,
+                    &context,
+                    &mut temp_paths,
+                ) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return OperationReport::failed(
+                            OperationFamily::Patch,
+                            report.format.clone(),
+                            "prepare",
+                            error.to_string(),
+                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                        );
+                    }
+                };
+                for warning in &disc.warnings {
+                    report.label = format!("{}; {}", report.label, warning);
+                }
+                if !compression_options.enabled {
+                    match self.write_disc_output(disc, &staged_sheet, &output) {
+                        Ok(note) => report.label = format!("{}; {}", report.label, note),
+                        Err(error) => {
+                            return OperationReport::failed(
+                                OperationFamily::Patch,
+                                report.format.clone(),
+                                "compat",
+                                error.to_string(),
+                                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            );
+                        }
+                    }
+                }
+                raw_ready_output = staged_sheet;
+            }
+
             if patch_count > 1 {
                 report.label = format!(
                     "applied {patch_count} patches sequentially ({}); {}",
@@ -749,20 +856,28 @@ impl CliApp {
                         Some(context.plan_threads(ThreadCapability::single_threaded())),
                     );
                 };
-                let archive_input = match Self::stage_patch_apply_archive_input(
-                    &raw_ready_output,
-                    &output,
-                    &resolved_input,
-                ) {
-                    Ok(path) => path,
-                    Err(error) => {
-                        return OperationReport::failed(
-                            OperationFamily::Patch,
-                            report.format.clone(),
-                            "compress",
-                            error.to_string(),
-                            Some(context.plan_threads(ThreadCapability::single_threaded())),
-                        );
+                // A disc was already reassembled into a staged sheet (cue/gdi +
+                // bins); feed that directly to the compressor. Plain inputs
+                // stage the single patched payload under an archive-appropriate
+                // entry name.
+                let archive_input = if is_disc {
+                    raw_ready_output.clone()
+                } else {
+                    match Self::stage_patch_apply_archive_input(
+                        &raw_ready_output,
+                        &output,
+                        &resolved_input,
+                    ) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            return OperationReport::failed(
+                                OperationFamily::Patch,
+                                report.format.clone(),
+                                "compress",
+                                error.to_string(),
+                                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            );
+                        }
                     }
                 };
                 let compress_threads =

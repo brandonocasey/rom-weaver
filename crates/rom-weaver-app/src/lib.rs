@@ -29,12 +29,13 @@ use rom_weaver_containers::{
 use rom_weaver_core::{
     ArchiveEntryKindFilter, CancellationToken, ChecksumEngine, ChecksumRequest,
     ContainerCreateRequest, ContainerExtractRequest, ContainerHandler, ContainerListEntry,
-    ContainerProbeRequest, OperationContext, OperationFamily, OperationReport, OperationStatus,
-    PatchApplyRequest, PatchChecksumValidation, PatchCreateRequest, PatchValidateRequest,
-    ProgressEvent, ProgressSink, PromptCandidate, Result, RomWeaverError, Selection, SelectionList,
-    SelectionMatcher, SelectionPrompter, ThreadBudget, ThreadCapability, ThreadExecution,
-    UnsupportedOp, XdeltaSecondaryMode, is_patch_filter_candidate_name,
-    is_rom_filter_candidate_name, normalize_archive_name, should_ignore_common_container_file,
+    ContainerProbeRequest, DiscSheetKind, OperationContext, OperationFamily, OperationReport,
+    OperationStatus, PatchApplyRequest, PatchChecksumValidation, PatchCreateRequest,
+    PatchValidateRequest, ProgressEvent, ProgressSink, PromptCandidate, Result, RomWeaverError,
+    Selection, SelectionList, SelectionMatcher, SelectionPrompter, ThreadBudget, ThreadCapability,
+    ThreadExecution, UnsupportedOp, XdeltaSecondaryMode, detect_disc_sheet,
+    enumerate_disc_sheet_refs, is_patch_filter_candidate_name, is_rom_filter_candidate_name,
+    normalize_archive_name, should_ignore_common_container_file, sibling_gdi_path,
 };
 // The selection-input parser moved to core; the app keeps a thin wrapper only so the existing unit
 // test in `tests.rs` can exercise it through `CliApp`.
@@ -914,6 +915,7 @@ use extract_progress::*;
 mod compress_trim_batch;
 
 mod patch_apply;
+mod patch_apply_disc;
 #[path = "patch_commands.rs"]
 mod patch_commands;
 mod patch_create;

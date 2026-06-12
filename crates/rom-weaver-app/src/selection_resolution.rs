@@ -122,8 +122,8 @@ impl CliApp {
 
     /// Resolve payload entries to extract from `source`. Used when interactive selection is enabled
     /// and no explicit `--select` was given: lists the container's payload candidates (grouping a
-    /// CD's cue + bin/iso/img tracks into the single cue candidate so a disc is not treated as
-    /// ambiguous), keeps 0/1 logical payloads whole, and otherwise prompts the host to choose one or
+    /// CD/GD-ROM disc's cue/gdi sheet + bin/iso/img/raw tracks into the single sheet candidate so a
+    /// disc is not treated as ambiguous), keeps 0/1 logical payloads whole, and otherwise prompts the host to choose one or
     /// more entries. Returns an empty list when the container exposes no distinct ambiguous payload
     /// set, in which case the caller extracts everything as before.
     pub(super) fn resolve_extract_payload_selections(
@@ -153,18 +153,26 @@ impl CliApp {
             options.kind_filter,
             options.ignore_common_files,
         );
-        let has_cue = payload
-            .iter()
-            .any(|entry| entry.path.to_ascii_lowercase().ends_with(".cue"));
+        // A CD `.cue` or GD-ROM `.gdi` sheet describes one disc; collapse its
+        // track files into the single sheet candidate so the disc is not treated
+        // as ambiguous.
+        let has_disc_sheet = payload.iter().any(|entry| {
+            let lower = entry.path.to_ascii_lowercase();
+            lower.ends_with(".cue") || lower.ends_with(".gdi")
+        });
         let mut candidates: Vec<(String, Option<u64>)> = Vec::new();
         for entry in payload.iter().chain(containers.iter()) {
             let name = Self::normalize_selection_entry_name(&entry.path);
             if name.is_empty() {
                 continue;
             }
-            if has_cue {
+            if has_disc_sheet {
                 let lower = name.to_ascii_lowercase();
-                if lower.ends_with(".bin") || lower.ends_with(".iso") || lower.ends_with(".img") {
+                if lower.ends_with(".bin")
+                    || lower.ends_with(".iso")
+                    || lower.ends_with(".img")
+                    || lower.ends_with(".raw")
+                {
                     continue;
                 }
             }
