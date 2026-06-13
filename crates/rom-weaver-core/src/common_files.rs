@@ -35,6 +35,7 @@ pub const PATCH_FILTER_FILE_EXTENSIONS: &[&str] = &[
     ".dldi",
     ".dps",
     ".pds",
+    ".dcp",
 ];
 
 pub const ROM_FILTER_FILE_EXTENSIONS: &[&str] = &[

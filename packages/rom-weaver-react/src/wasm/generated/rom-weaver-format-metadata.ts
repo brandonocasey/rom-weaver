@@ -719,7 +719,8 @@ export const ROM_WEAVER_FILE_FILTERS = {
     ".pmsr",
     ".dldi",
     ".dps",
-    ".pds"
+    ".pds",
+    ".dcp"
   ],
   "romExtensions": [
     ".cue",
