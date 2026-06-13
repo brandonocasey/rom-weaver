@@ -103,8 +103,6 @@ const DropZone = ({
   accept,
   disabled,
   reading: readingLabel = "Reading folder…",
-  staging,
-  stagingLabel,
   onFiles,
   id,
   inputId,
@@ -123,9 +121,6 @@ const DropZone = ({
   disabled?: boolean;
   /** Label shown while a dropped folder is being read. */
   reading?: ReactNode;
-  /** External staging state: files are routing to their sections. */
-  staging?: boolean;
-  stagingLabel?: ReactNode;
   onFiles: (files: File[]) => void;
   id?: string;
   inputId?: string;
@@ -145,13 +140,7 @@ const DropZone = ({
   return (
     <label
       aria-disabled={disabled || undefined}
-      className={join(
-        "drop",
-        big && "hero",
-        big && bare && "bare",
-        dragging && "dragging",
-        (reading || staging) && "staging",
-      )}
+      className={join("drop", big && "hero", big && bare && "bare", dragging && "dragging", reading && "staging")}
       htmlFor={resolvedInputId}
       id={id}
       onDragLeave={() => setDragging(false)}
@@ -177,8 +166,8 @@ const DropZone = ({
       }}
     >
       <span className={join("main", !big && "btnish")}>
-        {reading || staging ? <span aria-hidden="true" className="spinner" /> : <Upload aria-hidden="true" />}
-        <span>{reading ? readingLabel : staging ? (stagingLabel ?? readingLabel) : label}</span>
+        {reading ? <span aria-hidden="true" className="spinner" /> : <Upload aria-hidden="true" />}
+        <span>{reading ? readingLabel : label}</span>
       </span>
       {hint ? <span className="hint fine">{hint}</span> : null}
       {hintCoarse ? <span className="hint coarse">{hintCoarse}</span> : null}

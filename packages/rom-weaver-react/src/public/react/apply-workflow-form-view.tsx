@@ -342,7 +342,7 @@ function ApplyWorkflowFormView({
   const disabledPatchCount = disabledPatchFlags.filter(Boolean).length;
   const enabledPatchCount = patches.length - disabledPatchCount;
   const localizer = useUiLocalizer();
-  // Inputs/patches still resolving — the 0x01 surface shows the staging pill.
+  // Inputs/patches still resolving — surfaced only on the selvage status strip.
   const inputsStaging =
     romInputs.some((row) => !!row.progress) || patches.some((item) => !!item.progress) || uiState.patchInput.loading;
   // The selvage status strip mirrors the apply job: staging while files route,
@@ -425,8 +425,6 @@ function ApplyWorkflowFormView({
         onFiles={handleUnifiedDrop}
         patchHint={`patches (${PATCH_INPUT_HINT})`}
         romHint={`roms (${ROM_INPUT_HINT})`}
-        staging={inputsStaging}
-        stagingLabel={localizer.message("ui.drop.staging")}
       />
       {workflowEmpty ? (
         <>
