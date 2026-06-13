@@ -175,6 +175,26 @@ impl CliApp {
         }
     }
 
+    /// Union the change-detection scan results with the paths the handler reported it extracted,
+    /// de-duplicating and sorting. The scan compares `(size, mtime)` against a pre-extract baseline
+    /// to infer what was written, but misses a re-extracted file whose snapshot matches a
+    /// pre-existing baseline entry — e.g. on the browser's OPFS, which does not bump mtime on
+    /// rewrite, so a disc `.cue` sheet a prior probe already left in the shared out dir is dropped.
+    /// Any path the handler explicitly reports was written by this extract, so it is added back.
+    pub(super) fn merge_scanned_and_reported_emitted_files(
+        mut scanned: Vec<PathBuf>,
+        reported: Vec<PathBuf>,
+    ) -> Vec<PathBuf> {
+        for path in reported {
+            if !scanned.contains(&path) {
+                scanned.push(path);
+            }
+        }
+        scanned.sort();
+        scanned.dedup();
+        scanned
+    }
+
     pub(super) fn emitted_file_detail_paths(report_details: Option<&Value>) -> Vec<PathBuf> {
         match report_details {
             Some(Value::Object(map)) => match map.get("emitted_files") {
@@ -270,5 +290,47 @@ impl CliApp {
             return Some("rom");
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod emitted_files_merge_tests {
+    use std::path::PathBuf;
+
+    use super::CliApp;
+
+    fn paths(names: &[&str]) -> Vec<PathBuf> {
+        names.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn reported_only_files_are_unioned_back_in() {
+        // The change-detection scan missed the re-extracted `disc.cue` (its OPFS snapshot matched a
+        // probe-left baseline entry), but the handler reported it. The merge must restore it so the
+        // disc arrives complete (sheet + tracks) rather than as bare, ungrouped tracks.
+        let scanned = paths(&["/work/track01.bin", "/work/track02.bin"]);
+        let reported = paths(&["/work/disc.cue", "/work/track01.bin", "/work/track02.bin"]);
+        let merged = CliApp::merge_scanned_and_reported_emitted_files(scanned, reported);
+        assert_eq!(
+            merged,
+            paths(&["/work/disc.cue", "/work/track01.bin", "/work/track02.bin"])
+        );
+    }
+
+    #[test]
+    fn scan_only_files_are_preserved_and_deduped() {
+        // A scan that already captured every file (the native filesystem case) is unchanged: the
+        // reported set is a subset, so the union is a no-op apart from sorting.
+        let scanned = paths(&["/work/b.bin", "/work/a.bin"]);
+        let reported = paths(&["/work/a.bin"]);
+        let merged = CliApp::merge_scanned_and_reported_emitted_files(scanned, reported);
+        assert_eq!(merged, paths(&["/work/a.bin", "/work/b.bin"]));
+    }
+
+    #[test]
+    fn empty_scan_falls_back_to_reported() {
+        let merged =
+            CliApp::merge_scanned_and_reported_emitted_files(Vec::new(), paths(&["/work/rom.nes"]));
+        assert_eq!(merged, paths(&["/work/rom.nes"]));
     }
 }

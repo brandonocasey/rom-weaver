@@ -173,9 +173,18 @@ impl CliApp {
                     );
                 }
             }
-            if primary_emitted_files.is_empty() {
-                primary_emitted_files = Self::emitted_file_detail_paths(report.details.as_ref());
-            }
+            // The scan above compares (size, mtime) against a pre-extract baseline to discover what
+            // this extract wrote. On filesystems that do not bump mtime on rewrite — notably the
+            // browser's OPFS, where a prior probe may have left an identical-sized file (e.g. a disc
+            // `.cue` sheet) in the shared out dir — a re-extracted file reads as "unchanged" and is
+            // missed, dropping it from the emitted set. The handler reports exactly the entries it
+            // extracted, so union those in: a file the handler emitted was written by this extract
+            // regardless of what the mtime-based diff inferred. (Native already lists everything, so
+            // this is a no-op there.)
+            primary_emitted_files = Self::merge_scanned_and_reported_emitted_files(
+                primary_emitted_files,
+                Self::emitted_file_detail_paths(report.details.as_ref()),
+            );
         }
         if report.status == OperationStatus::Succeeded {
             let format_name = handler.descriptor().name;
