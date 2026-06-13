@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import zlib from "node:zlib";
-import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
@@ -259,7 +258,6 @@ export default defineConfig(({ command }) => {
       serveRootStaticAssets(),
       deferDevHotUpdates(),
       react(),
-      tailwindcss(),
       writeWebappStaticAssets(),
       VitePWA({
         devOptions: {

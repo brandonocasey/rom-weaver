@@ -1,12 +1,13 @@
 import X from "lucide-react/dist/esm/icons/x.js";
 import type { ReactNode } from "react";
-import { cx } from "../tailwind-classes.ts";
 import type { createProgressViewModel } from "../workflow-presentation.ts";
 import { clampProgressPercent, normalizeProgressDisplayPercent } from "../workflow-presentation.ts";
 
 const THREAD_LABEL_SEGMENTS_REGEX = /^(.*?)(?:\s+(?:with|-)\s+(\d+\s+threads?))(\.\.\.)?$/i;
 const TRAILING_ELLIPSIS_REGEX = /\s*\.\.\.$/;
 const DOWNLOAD_LABEL_REGEX = /download/i;
+
+const join = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(" ");
 
 type ProgressViewModel = ReturnType<typeof createProgressViewModel>;
 
@@ -34,13 +35,15 @@ const formatProgressLabelParts = (progress: ProgressViewModel) => {
     return {
       percentText,
       taskText: label.replace(TRAILING_ELLIPSIS_REGEX, "").trim(),
+      threadsText: "",
     };
   }
   return {
     percentText,
-    taskText: `${String(threadMatch[1] || label)
+    taskText: String(threadMatch[1] || label)
       .replace(TRAILING_ELLIPSIS_REGEX, "")
-      .trim()} ${threadMatch[2] || ""}`.trim(),
+      .trim(),
+    threadsText: threadMatch[2] || "",
   };
 };
 
@@ -72,32 +75,35 @@ function ProgressActionButton({
         : 0;
   const isDownload = !progress && DOWNLOAD_LABEL_REGEX.test(label);
 
-  // While running, the button is replaced by a contained progress card (prototype
-  // `.fileprog`), matching how input/extraction progress reads elsewhere.
+  // While running, the button is replaced by the loom live-run panel — the
+  // borderless instrument row that spans the output card's content width.
   if (progress) {
     return (
-      <div className="fileprog rom-weaver-has-progress" id={progressId}>
-        <div className="iprog" title={progress.message}>
+      <div className="prog-panel runprog fileprog rom-weaver-has-progress" id={progressId} title={progress.message}>
+        <div className="prog run-prog">
           <div className="lab">
-            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-left">
-              {progressLabelParts?.taskText || progress.message}
-            </span>
-            {progressLabelParts?.percentText ? <span className="v">{progressLabelParts.percentText}</span> : null}
+            <span className="what run-stage-label">{progressLabelParts?.taskText || progress.message}</span>
           </div>
-          <div className={cx("track", isIndeterminate && "indet")}>
-            <div className="bar" style={{ width: isIndeterminate ? undefined : `${determinatePercent}%` }} />
+          <div aria-hidden="true" className={join("meter live", isIndeterminate && "indet")}>
+            <div className="fill run-fill" style={{ width: isIndeterminate ? undefined : `${determinatePercent}%` }} />
+          </div>
+          <div className="sub mono">
+            <span>{progressLabelParts?.threadsText || ""}</span>
+            <span className="run-pct">{progressLabelParts?.percentText || "—"}</span>
           </div>
         </div>
         {onCancel ? (
-          <button
-            aria-label={cancelLabel}
-            className="progress-cancel"
-            onClick={onCancel}
-            title={cancelLabel}
-            type="button"
-          >
-            <X aria-hidden="true" />
-          </button>
+          <div className="prog-actions">
+            <button
+              aria-label={cancelLabel}
+              className="cancel run-cancel progress-cancel"
+              onClick={onCancel}
+              title={cancelLabel}
+              type="button"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
         ) : null}
       </div>
     );
@@ -105,7 +111,7 @@ function ProgressActionButton({
 
   return (
     <button
-      className={cx("run", isDownload && "dl")}
+      className={join("btn primary run", isDownload && "download-btn dl")}
       disabled={disabled}
       id={id}
       onClick={onClick}

@@ -1,6 +1,8 @@
+import Info from "lucide-react/dist/esm/icons/info.js";
 import { type CSSProperties, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { cx } from "../tailwind-classes.ts";
+
+const cx = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(" ");
 
 /** Popovers portal into the styled app root so the design-system `.info-pop` rules apply. */
 const getInfoPortalTarget = (): Element =>
@@ -93,6 +95,7 @@ function InfoToggle({
         aria-controls={panelId}
         aria-expanded={open}
         aria-label={ariaLabel}
+        className="info-btn"
         onClick={() => {
           if (!open) setPanelStyle(undefined);
           setOpen((currentOpen) => !currentOpen);
@@ -101,7 +104,7 @@ function InfoToggle({
         title={title}
         type="button"
       >
-        i
+        <Info aria-hidden="true" />
       </button>
       {renderedPanel}
     </span>

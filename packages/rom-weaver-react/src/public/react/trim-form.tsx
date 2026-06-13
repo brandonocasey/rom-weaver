@@ -23,7 +23,7 @@ import type { TrimWorkflowSourceState } from "../../types/trim-workflow.ts";
 import { useCandidateSelection } from "./candidate-selection.tsx";
 import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./components/ds/compress-panel.tsx";
 import { Notice } from "./components/ds/feedback.tsx";
-import { InfoPopover } from "./components/ds/layout.tsx";
+import { InfoPopover, NeedsInput, StepSection } from "./components/ds/layout.tsx";
 import { ConfirmDialog } from "./components/ds/modal.tsx";
 import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { OutputRunAction, WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
@@ -61,6 +61,9 @@ import {
   useDisposableWorkflowOutput,
   useWorkflowProgressState,
 } from "./workflow-run-hooks.ts";
+
+/** Format pills under the 0x01 hero — mirrors TrimInputKind (tail trims, xiso, GC/Wii scrub). */
+const TRIM_HERO_FORMATS = ["nds", "dsi", "gba", "3ds", "xiso", "iso", "gcm", "wbfs", "rvz"] as const;
 
 const FILE_EXTENSION_REGEX = /\.[^./\\]+$/;
 
@@ -793,6 +796,8 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       : null,
   );
 
+  // "Needs input" directive forwards to the 0x01 unified picker.
+  const openUnifiedPicker = () => document.getElementById("trim-builder-input-file-unified")?.click();
   return (
     <main aria-labelledby="tab-trim" className="panel" id="trim-builder-container">
       <UnifiedDropZone
@@ -800,12 +805,20 @@ function TrimPatchForm(props: TrimPatchFormProps) {
         archiveHint={`archives (${ARCHIVE_INPUT_HINT})`}
         big={!source}
         disabled={uploadDisabled}
+        formats={TRIM_HERO_FORMATS}
         id="trim-builder-row-unified-drop"
         inputId="trim-builder-input-file-unified"
-        label={source ? "Replace ROM" : "Drop a ROM"}
+        label={source ? "Replace the ROM" : "Drop a ROM to trim"}
         onFiles={handleUnifiedDrop}
         romHint={`roms (${TRIM_INPUT_HINT})`}
       />
+      {source ? null : (
+        <StepSection num="0x02" title="ROM">
+          <NeedsInput onClick={openUnifiedPicker}>
+            Add a ROM in <b className="hexref mono">0x01</b> above
+          </NeedsInput>
+        </StepSection>
+      )}
       {source ? (
         <>
           <WorkflowRomInputStep
@@ -861,7 +874,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
                 : []
             }
             notice={sourceNotice}
-            num="01"
+            num="0x02"
             title="ROM"
           />
           <WorkflowOutputStep
@@ -945,7 +958,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
                 </Notice>
               ) : null
             }
-            num="02"
+            num="0x03"
             onFileNameChange={(value) => {
               setOutputName(value);
               updateSettings({

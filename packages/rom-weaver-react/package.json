@@ -58,7 +58,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.13",
     "@mdn/browser-compat-data": "8.0.0",
-    "@tailwindcss/vite": "4.2.4",
     "@testing-library/react": "16.3.2",
     "@types/node": "25.6.0",
     "@types/react": "19.2.14",
@@ -71,7 +70,6 @@
     "happy-dom": "20.10.2",
     "knip": "6.16.1",
     "playwright": "1.60.0",
-    "tailwindcss": "4.2.4",
     "typescript": "^6.0.3",
     "vite": "^8.0.0",
     "vite-plugin-pwa": "1.2.0",

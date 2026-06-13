@@ -4,7 +4,7 @@ import { probeApplyArchiveHasRom } from "./apply-archive-probe.ts";
 import { ApplyPatchListStep } from "./apply-patch-list-step.tsx";
 import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./components/ds/compress-panel.tsx";
 import { Notice } from "./components/ds/feedback.tsx";
-import { InfoPopover } from "./components/ds/layout.tsx";
+import { InfoPopover, NeedsInput, StepSection } from "./components/ds/layout.tsx";
 import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep, type WorkflowRomInputStepItem } from "./components/ds/workflow-rom-input-step.tsx";
@@ -32,6 +32,9 @@ import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./
  * purely presentational: it reads the same ui/patchStack/output/notice/dialog
  * controllers that ApplyPatchForm wires up and renders the step layout.
  */
+
+/** Format pills under the 0x01 hero — mirrors the loom prototype's apply list. */
+const APPLY_HERO_FORMATS = ["ips", "bps", "ups", "xdelta", "ppf", "cue", "zip", "7z", "chd", "rvz"] as const;
 
 const TIMING_LABEL = (ms?: number) =>
   typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : "";
@@ -333,6 +336,8 @@ function ApplyWorkflowFormView({
     });
   };
   const workflowEmpty = romInputs.length === 0 && patches.length === 0;
+  // "Needs input" directives forward to the 0x01 unified picker.
+  const openUnifiedPicker = () => document.getElementById("rom-weaver-input-file-unified")?.click();
 
   if (startup.status === "error") {
     return (
@@ -350,14 +355,38 @@ function ApplyWorkflowFormView({
         accept={fileInputAccept.unifiedApply}
         archiveHint={`archives (${ARCHIVE_INPUT_HINT})`}
         big={workflowEmpty}
+        formats={APPLY_HERO_FORMATS}
         id="rom-weaver-row-unified-drop"
+        info={
+          <InfoPopover title="Input handling">
+            <ul className="info-list">
+              <li>Archives are decompressed and the ROM is located automatically.</li>
+              <li>chd, rvz, and z3ds containers are unpacked before patching.</li>
+              <li>Nested archives resolve recursively.</li>
+              <li>RetroArch softpatch naming is supported.</li>
+            </ul>
+          </InfoPopover>
+        }
         inputId="rom-weaver-input-file-unified"
-        label={workflowEmpty ? "Drop ROMs or patches" : "Add a ROM or patches"}
+        label={workflowEmpty ? "Drop a ROM or patches" : "Replace the ROM or add patches"}
         onFiles={handleUnifiedDrop}
         patchHint={`patches (${PATCH_INPUT_HINT})`}
         romHint={`roms (${ROM_INPUT_HINT})`}
       />
-      {workflowEmpty ? null : (
+      {workflowEmpty ? (
+        <>
+          <StepSection num="0x02" title="ROM">
+            <NeedsInput onClick={openUnifiedPicker}>
+              Add a ROM in <b className="hexref mono">0x01</b> above
+            </NeedsInput>
+          </StepSection>
+          <StepSection num="0x03" title="Patches">
+            <NeedsInput onClick={openUnifiedPicker}>
+              Add patches in <b className="hexref mono">0x01</b> above
+            </NeedsInput>
+          </StepSection>
+        </>
+      ) : (
         <>
           <WorkflowRomInputStep
             id="rom-weaver-row-file-rom"
@@ -397,8 +426,8 @@ function ApplyWorkflowFormView({
                 />
               </>
             }
-            num="01"
-            title="ROMs"
+            num="0x02"
+            title="ROM"
           />
 
           <ApplyPatchListStep
@@ -425,94 +454,94 @@ function ApplyWorkflowFormView({
               </div>
             </div>
           ) : null}
-
-          <WorkflowOutputStep
-            action={
-              <>
-                {errorNotice?.visible ? (
-                  <Notice
-                    id="rom-weaver-row-error-message"
-                    level={errorNotice.level === "warning" ? "warn" : "error"}
-                    onDismiss={errorNotice.dismissible ? () => noticeController?.dismiss?.() : undefined}
-                  >
-                    {errorNotice.message}
-                  </Notice>
-                ) : null}
-                {uiState.checksumOverride.visible ? (
-                  <label className="checkrow warn">
-                    <input
-                      checked={uiState.checksumOverride.checked}
-                      disabled={uiState.checksumOverride.disabled}
-                      id="rom-weaver-checkbox-checksum-override"
-                      onChange={(event) => uiController.setChecksumOverride?.(event.currentTarget.checked)}
-                      type="checkbox"
-                    />
-                    <span>{uiState.checksumOverride.label}</span>
-                  </label>
-                ) : null}
-                {uiState.outputChecksumWarning.visible ? (
-                  <div id="rom-weaver-row-output-checksum-warning">
-                    <Notice level="warn">{uiState.outputChecksumWarning.message}</Notice>
-                    <label className="checkrow warn">
-                      <input
-                        checked={uiState.outputChecksumWarning.checked}
-                        disabled={uiState.outputChecksumWarning.disabled}
-                        id="rom-weaver-checkbox-output-checksum-override"
-                        onChange={(event) => uiController.setOutputChecksumOverride?.(event.currentTarget.checked)}
-                        type="checkbox"
-                      />
-                      <span>{uiState.outputChecksumWarning.label}</span>
-                    </label>
-                  </div>
-                ) : null}
-                <PatcherPrimaryAction controller={controllers.output} />
-              </>
-            }
-            compress={buildOutputCompressionPanel({
-              disabled: outputState.disabled,
-              fields: outputState.compress?.fields,
-              format: compressHeaderFormat,
-              formatId: "rom-weaver-select-output-format-compress",
-              formatOptions: compressionTypeOptions,
-              formatValue: outputState.compressionFormat,
-              onFieldChange: (key, value, updates) => controllers.output.setOutputCompressOption?.(key, value, updates),
-              onFormatChange: (value) => controllers.output.setOutputCompression(value),
-              summary: outputState.compress?.summary,
-              timing: outputState.compressTiming || undefined,
-            })}
-            disabled={outputState.disabled}
-            fileName={outputState.displayFileName}
-            fileNameId="rom-weaver-input-output-file-name"
-            fileNamePlaceholder="Output filename (no extension)"
-            format={outputState.compressionFormat}
-            formatId="rom-weaver-select-output-format"
-            formatOptions={outputState.options}
-            id="rom-weaver-row-output-file-name"
-            info={
-              <InfoPopover title="Output options">
-                <strong>Output</strong>
-                <ul>
-                  <li>Set the filename without an extension — the format selector controls it.</li>
-                  <li>Container formats (zip, 7z, chd, rvz) are produced directly.</li>
-                  <li>Compression defaults come from Settings › Compression and apply to compressed output.</li>
-                </ul>
-              </InfoPopover>
-            }
-            meta={outputState.applyTiming ? <span className="t">{outputState.applyTiming}</span> : undefined}
-            notice={
-              <SectionNotice
-                id="rom-weaver-output-notice-message"
-                onDismiss={dismissSectionNotice("outputNotice")}
-                state={uiState.outputNotice}
-              />
-            }
-            num="03"
-            onFileNameChange={(value) => controllers.output.setDisplayFileName(value)}
-            onFormatChange={(value) => controllers.output.setOutputCompression(value)}
-            title="Apply"
-          />
         </>
       )}
+
+      <WorkflowOutputStep
+        action={
+          <>
+            {errorNotice?.visible ? (
+              <Notice
+                id="rom-weaver-row-error-message"
+                level={errorNotice.level === "warning" ? "warn" : "error"}
+                onDismiss={errorNotice.dismissible ? () => noticeController?.dismiss?.() : undefined}
+              >
+                {errorNotice.message}
+              </Notice>
+            ) : null}
+            {uiState.checksumOverride.visible ? (
+              <label className="checkrow warn">
+                <input
+                  checked={uiState.checksumOverride.checked}
+                  disabled={uiState.checksumOverride.disabled}
+                  id="rom-weaver-checkbox-checksum-override"
+                  onChange={(event) => uiController.setChecksumOverride?.(event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                <span>{uiState.checksumOverride.label}</span>
+              </label>
+            ) : null}
+            {uiState.outputChecksumWarning.visible ? (
+              <div id="rom-weaver-row-output-checksum-warning">
+                <Notice level="warn">{uiState.outputChecksumWarning.message}</Notice>
+                <label className="checkrow warn">
+                  <input
+                    checked={uiState.outputChecksumWarning.checked}
+                    disabled={uiState.outputChecksumWarning.disabled}
+                    id="rom-weaver-checkbox-output-checksum-override"
+                    onChange={(event) => uiController.setOutputChecksumOverride?.(event.currentTarget.checked)}
+                    type="checkbox"
+                  />
+                  <span>{uiState.outputChecksumWarning.label}</span>
+                </label>
+              </div>
+            ) : null}
+            <PatcherPrimaryAction controller={controllers.output} />
+          </>
+        }
+        compress={buildOutputCompressionPanel({
+          disabled: outputState.disabled,
+          fields: outputState.compress?.fields,
+          format: compressHeaderFormat,
+          formatId: "rom-weaver-select-output-format-compress",
+          formatOptions: compressionTypeOptions,
+          formatValue: outputState.compressionFormat,
+          onFieldChange: (key, value, updates) => controllers.output.setOutputCompressOption?.(key, value, updates),
+          onFormatChange: (value) => controllers.output.setOutputCompression(value),
+          summary: outputState.compress?.summary,
+          timing: outputState.compressTiming || undefined,
+        })}
+        disabled={outputState.disabled}
+        fileName={outputState.displayFileName}
+        fileNameId="rom-weaver-input-output-file-name"
+        fileNamePlaceholder="Output filename (no extension)"
+        format={outputState.compressionFormat}
+        formatId="rom-weaver-select-output-format"
+        formatOptions={outputState.options}
+        id="rom-weaver-row-output-file-name"
+        info={
+          <InfoPopover title="Output options">
+            <strong>Output</strong>
+            <ul>
+              <li>Set the filename without an extension — the format selector controls it.</li>
+              <li>Container formats (zip, 7z, chd, rvz) are produced directly.</li>
+              <li>Compression defaults come from Settings › Compression and apply to compressed output.</li>
+            </ul>
+          </InfoPopover>
+        }
+        meta={outputState.applyTiming ? <span className="t">{outputState.applyTiming}</span> : undefined}
+        notice={
+          <SectionNotice
+            id="rom-weaver-output-notice-message"
+            onDismiss={dismissSectionNotice("outputNotice")}
+            state={uiState.outputNotice}
+          />
+        }
+        num="0x04"
+        onFileNameChange={(value) => controllers.output.setDisplayFileName(value)}
+        onFormatChange={(value) => controllers.output.setOutputCompression(value)}
+        title="Apply"
+      />
 
       <SharedArchiveDialog controller={controllers.dialog} />
     </main>

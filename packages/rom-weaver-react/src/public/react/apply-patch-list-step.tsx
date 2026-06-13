@@ -1,7 +1,10 @@
+import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
 import GripVertical from "lucide-react/dist/esm/icons/grip-vertical.js";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
+import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { ChecksumList, ChecksumRow } from "./components/ds/checksum-list.tsx";
-import { ExtractPanel } from "./components/ds/extraction-tree.tsx";
+import { Drawer, DrawerReadout } from "./components/ds/drawer.tsx";
+import { ExtractDrawer, ExtractName } from "./components/ds/extraction-tree.tsx";
 import { FileProgress, Notice } from "./components/ds/feedback.tsx";
 import { FileCard } from "./components/ds/file-card.tsx";
 import { InfoPopover, StepSection } from "./components/ds/layout.tsx";
@@ -119,57 +122,66 @@ const PatchOptions = ({
   if (!setOption) return null;
   const ppfUndoChecked = item.ppfUndo !== false;
   return (
-    <ChecksumList defaultOpen={false} label="Options" sublabel={item.format || undefined}>
-      <div className="popt-row">
-        <label className="popt-label" htmlFor={`rom-weaver-patch-validate-input-${index}`}>
-          Validate input
-        </label>
-        <input
-          className="input popt-input"
-          defaultValue={item.validateInputChecksum || ""}
-          disabled={item.optionsDisabled}
-          id={`rom-weaver-patch-validate-input-${index}`}
-          key={`validate-input:${item.key ?? index}`}
-          onBlur={(event) => setOption(index, { validateInputChecksum: event.currentTarget.value })}
-          placeholder={CHECKSUM_HINT}
-          spellCheck={false}
-          type="text"
-        />
-      </div>
-      <div className="popt-row">
-        <label className="popt-label" htmlFor={`rom-weaver-patch-validate-output-${index}`}>
-          Validate output
-        </label>
-        <input
-          className="input popt-input"
-          defaultValue={item.validateOutputChecksum || ""}
-          disabled={item.optionsDisabled}
-          id={`rom-weaver-patch-validate-output-${index}`}
-          key={`validate-output:${item.key ?? index}`}
-          onBlur={(event) => setOption(index, { validateOutputChecksum: event.currentTarget.value })}
-          placeholder={CHECKSUM_HINT}
-          spellCheck={false}
-          type="text"
-        />
+    <Drawer
+      bodyClassName="optsbody"
+      className="optsblock"
+      label="Options"
+      readouts={item.format ? <DrawerReadout>{item.format}</DrawerReadout> : undefined}
+    >
+      <div className="optsgrid">
+        <div className="ofld">
+          <label className="ofld-l" htmlFor={`rom-weaver-patch-validate-input-${index}`}>
+            Validate input
+          </label>
+          <input
+            className="input mono popt-input"
+            defaultValue={item.validateInputChecksum || ""}
+            disabled={item.optionsDisabled}
+            id={`rom-weaver-patch-validate-input-${index}`}
+            key={`validate-input:${item.key ?? index}`}
+            onBlur={(event) => setOption(index, { validateInputChecksum: event.currentTarget.value })}
+            placeholder={CHECKSUM_HINT}
+            spellCheck={false}
+            type="text"
+          />
+        </div>
+        <div className="ofld">
+          <label className="ofld-l" htmlFor={`rom-weaver-patch-validate-output-${index}`}>
+            Validate output
+          </label>
+          <input
+            className="input mono popt-input"
+            defaultValue={item.validateOutputChecksum || ""}
+            disabled={item.optionsDisabled}
+            id={`rom-weaver-patch-validate-output-${index}`}
+            key={`validate-output:${item.key ?? index}`}
+            onBlur={(event) => setOption(index, { validateOutputChecksum: event.currentTarget.value })}
+            placeholder={CHECKSUM_HINT}
+            spellCheck={false}
+            type="text"
+          />
+        </div>
       </div>
       {item.showPpfUndo ? (
-        <label className="opt popt-check" title="Safely re-apply over an already-patched ROM using the PPF undo data">
-          <input
-            checked={ppfUndoChecked}
-            disabled={item.optionsDisabled}
-            onChange={(event) => setOption(index, { ppfUndo: event.currentTarget.checked })}
-            type="checkbox"
-          />
-          PPF undo (safe re-apply)
-        </label>
+        <div className="optschecks">
+          <label className="popt" title="Safely re-apply over an already-patched ROM using the PPF undo data">
+            <input
+              checked={ppfUndoChecked}
+              disabled={item.optionsDisabled}
+              onChange={(event) => setOption(index, { ppfUndo: event.currentTarget.checked })}
+              type="checkbox"
+            />
+            <span>PPF undo (safe re-apply)</span>
+          </label>
+        </div>
       ) : null}
-    </ChecksumList>
+    </Drawer>
   );
 };
 
 type ReorderHandleProps = ReturnType<ReturnType<typeof useListReorder>["handleProps"]>;
 
-/** Left-gutter drag handle for patch rows: a grip glyph the user drags to reorder. */
+/** Drag handle in the patch card's action column: grip glyph, drag or arrow keys to reorder. */
 const PatchDragHandle = ({
   disabled,
   handleProps,
@@ -183,7 +195,7 @@ const PatchDragHandle = ({
 }) => (
   <button
     aria-label={`Patch ${index + 1} of ${total}. Drag or press the up and down arrow keys to reorder.`}
-    className="phandle"
+    className="handle phandle"
     disabled={disabled}
     title="Drag to reorder · ↑ / ↓ keys"
     type="button"
@@ -192,6 +204,43 @@ const PatchDragHandle = ({
     <GripVertical aria-hidden="true" className="phandle-grip" />
   </button>
 );
+
+/** The patch's track/target on the meta line — inline select when there is a choice. */
+const PatchTarget = ({
+  index,
+  item,
+  patchStack,
+}: {
+  index: number;
+  item: PatchStackItemState;
+  patchStack: PatcherStackController;
+}) => {
+  if (!item.targetOptions || item.targetOptions.length <= 1) return null;
+  return (
+    <span className="target-grp">
+      <Crosshair aria-hidden="true" />
+      <label className="sr-only" htmlFor={`rom-weaver-select-patch-target-${index}`}>
+        Apply patch to
+      </label>
+      <select
+        className="meta-target-select mono ptgt-sel"
+        disabled={item.targetDisabled}
+        id={`rom-weaver-select-patch-target-${index}`}
+        onChange={(event) => patchStack.setPatchTarget?.(index, event.currentTarget.value)}
+        value={item.targetValue || ""}
+      >
+        <option disabled value="">
+          Select target
+        </option>
+        {item.targetOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+};
 
 const ApplyPatchListStep = ({
   patchInput,
@@ -212,13 +261,14 @@ const ApplyPatchListStep = ({
   const reorderable = total > 1;
   const canReorder = reorderable && patches.every((item) => !item.progress && item.canRemove);
   const reorderList = useListReorder({ count: total, disabled: !canReorder, onReorder: patchStack.reorder });
+  const enabledBytes = patches.reduce((sum, item) => sum + (item.fileSize || 0), 0);
   return (
     <StepSection
       id="rom-weaver-row-patch-stack"
       info={
         <InfoPopover title="Supported patch types">
           <strong>Supported patch types</strong>
-          <ul>
+          <ul className="info-list">
             <li>
               IPS, IPS32, SOLID, BPS, UPS, VCDIFF/xdelta, GDIFF, HDiffPatch, APS, APSGBA, RUP, PPF, EBP, BSDIFF, and
               more.
@@ -229,10 +279,24 @@ const ApplyPatchListStep = ({
           </ul>
         </InfoPopover>
       }
-      num="02"
+      meta={
+        total > 0 ? (
+          <>
+            <span className="rb mono">
+              {total} {total === 1 ? "file" : "files"}
+            </span>
+            {enabledBytes ? <span className="rb mono">{formatByteSize(enabledBytes)}</span> : null}
+          </>
+        ) : undefined
+      }
+      num="0x03"
       title="Patches"
     >
-      <div className="workflow-file-list" id="rom-weaver-list-patch-stack" ref={reorderList.containerRef}>
+      <div
+        className="cards patch-cards workflow-file-list"
+        id="rom-weaver-list-patch-stack"
+        ref={reorderList.containerRef}
+      >
         {patches.map((item, index) =>
           item.progress ? (
             <FileProgress
@@ -256,45 +320,32 @@ const ApplyPatchListStep = ({
                   />
                 ) : undefined
               }
+              meta={
+                <>
+                  {item.fileSize ? <span className="fsize mono">{formatByteSize(item.fileSize)}</span> : null}
+                  {item.format ? <span className="meta-fmt mono">{item.format.toLowerCase()}</span> : null}
+                </>
+              }
               name={
-                <ExtractPanel
+                <ExtractName
                   fileName={item.fileName}
                   fileSize={item.fileSize}
                   legacyFileClassName="rom-weaver-patch-stack-file"
                   parentCompressions={item.archivePathEntries}
-                  timing={TIMING_LABEL(item.decompressionTimeMs)}
                 />
               }
               onRemove={() => patchStack.removeItem(index)}
               patch
               removeLabel="Remove patch"
               state={item.validationState === "invalid" ? "bad" : item.validationState === "valid" ? "ok" : undefined}
-              target={
-                item.targetOptions && item.targetOptions.length > 1 ? (
-                  <div className="ptgt-row">
-                    <label className="sr-only" htmlFor={`rom-weaver-select-patch-target-${index}`}>
-                      Apply patch to
-                    </label>
-                    <select
-                      className="select ptgt-sel"
-                      disabled={item.targetDisabled}
-                      id={`rom-weaver-select-patch-target-${index}`}
-                      onChange={(event) => patchStack.setPatchTarget?.(index, event.currentTarget.value)}
-                      value={item.targetValue || ""}
-                    >
-                      <option disabled value="">
-                        Select target
-                      </option>
-                      {item.targetOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : undefined
-              }
+              target={<PatchTarget index={index} item={item} patchStack={patchStack} />}
             >
+              <ExtractDrawer
+                fileName={item.fileName}
+                fileSize={item.fileSize}
+                parentCompressions={item.archivePathEntries}
+                timing={TIMING_LABEL(item.decompressionTimeMs)}
+              />
               <PatchInfo item={item} />
               <PatchOptions index={index} item={item} patchStack={patchStack} />
             </FileCard>
@@ -320,16 +371,16 @@ const ApplyPatchListStep = ({
         </select>
       ) : null}
       {patchInput.optionalPatches.length ? (
-        <div className="ropts">
+        <div className="optschecks ropts">
           {patchInput.optionalPatches.map((option) => (
-            <label className="opt" key={option.id} title={option.description || undefined}>
+            <label className="popt opt" key={option.id} title={option.description || undefined}>
               <input
                 checked={option.checked}
                 disabled={option.disabled}
                 onChange={(event) => ui.setOptionalPatch?.(option.id, event.currentTarget.checked)}
                 type="checkbox"
               />
-              {option.label}
+              <span>{option.label}</span>
             </label>
           ))}
         </div>
