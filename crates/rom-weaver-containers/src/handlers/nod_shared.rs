@@ -105,10 +105,13 @@ impl NodHandlerCore {
             };
         }
 
-        // Create has two internal worker consumers. Split the negotiated budget so the
-        // preloader and compressor cannot each claim the full pool.
-        let preloader_threads = total_threads / 2;
-        let processor_threads = total_threads - preloader_threads;
+        // Create has two internal worker consumers: the preloader (reads, and for compressed
+        // sources decompresses, the input) and the processor (compresses the output). The
+        // processor is the throughput bottleneck for disc create - especially at high zstd levels,
+        // where compression dwarfs reading a raw source - so an even split parks ~half the budget
+        // on a largely idle preloader. Bias toward processors (~3/4), keeping >=1 processor.
+        let processor_threads = (total_threads - total_threads / 4).max(1);
+        let preloader_threads = total_threads - processor_threads;
         NodCreateThreadPlan {
             preloader_threads,
             processor_threads,

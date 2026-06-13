@@ -2083,11 +2083,13 @@ mod tests {
     fn rvz_create_splits_preloader_and_processor_threads() {
         let core = NodHandlerCore::new(&RVZ, NodFormat::Rvz);
 
+        // The budget is biased ~3/4 toward the processor (compressor), the create bottleneck, with
+        // the remainder to the preloader: (preloader, processor).
         let eight_threads = ThreadCapability::parallel(None).negotiate(ThreadBudget::Fixed(8));
-        assert_eq!(core.create_thread_counts_for_test(&eight_threads), (4, 4));
+        assert_eq!(core.create_thread_counts_for_test(&eight_threads), (2, 6));
 
         let nine_threads = ThreadCapability::parallel(None).negotiate(ThreadBudget::Fixed(9));
-        assert_eq!(core.create_thread_counts_for_test(&nine_threads), (4, 5));
+        assert_eq!(core.create_thread_counts_for_test(&nine_threads), (2, 7));
 
         let single_thread = ThreadCapability::single_threaded().negotiate(ThreadBudget::Fixed(8));
         assert_eq!(core.create_thread_counts_for_test(&single_thread), (0, 0));
