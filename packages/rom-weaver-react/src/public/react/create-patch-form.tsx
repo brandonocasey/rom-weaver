@@ -2,6 +2,7 @@ import ArrowUpDown from "lucide-react/dist/esm/icons/arrow-up-down.js";
 import Download from "lucide-react/dist/esm/icons/download.js";
 import GitCompare from "lucide-react/dist/esm/icons/git-compare.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import { getPreferredCreatePatchFormat } from "../../lib/create/patch-format-limits.ts";
 import { appendFileNameExtension, hasFileNameExtension } from "../../lib/input/path-utils.ts";
 import { resolveAutomaticSelection } from "../../lib/input/selection.ts";
@@ -984,6 +985,13 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   const createSourcesEmpty = !(original || modified);
   // "Needs input" directives forward to the 0x01 unified picker.
   const openUnifiedPicker = () => document.getElementById("patch-builder-input-file-unified")?.click();
+  // The selvage status strip mirrors this workflow's job state.
+  useEffect(() => {
+    if (busy || createQueued) setWorkbenchActivity({ state: "running" });
+    else if (completedOutput) setWorkbenchActivity({ state: "done" });
+    else setWorkbenchActivity({ state: "idle" });
+  }, [busy, createQueued, completedOutput]);
+
   return (
     <main aria-labelledby="tab-creator" className="panel" id="patch-builder-container">
       <UnifiedDropZone

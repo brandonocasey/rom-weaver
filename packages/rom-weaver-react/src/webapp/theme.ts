@@ -51,10 +51,15 @@ const getSystemTheme = (): Theme => {
   return window.matchMedia(DARK_QUERY).matches ? "dark" : "light";
 };
 
+// Browser chrome (address bar / PWA title bar) follows the loom chassis color.
+const THEME_COLORS: Record<Theme, string> = { dark: "#0c0f13", light: "#ece9e1" };
+
 const applyTheme = (theme: Theme) => {
   current = theme;
-  if (typeof document !== "undefined" && document.documentElement)
+  if (typeof document !== "undefined" && document.documentElement) {
     document.documentElement.setAttribute("data-theme", theme);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLORS[theme]);
+  }
   logger.trace("Applied theme", { theme, userPreference });
 };
 

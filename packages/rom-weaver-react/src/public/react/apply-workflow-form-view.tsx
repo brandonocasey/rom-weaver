@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
 import { probeApplyArchiveHasRom } from "./apply-archive-probe.ts";
 import { ApplyPatchListStep } from "./apply-patch-list-step.tsx";
@@ -310,6 +311,19 @@ function ApplyWorkflowFormView({
     noticeController ? noticeController.getState : () => null,
     noticeController ? noticeController.getState : () => null,
   );
+  // The selvage status strip mirrors the apply job: running with the active
+  // stage label, done once a download is pending, failed on an error notice.
+  const applyProgress = outputState.applyButton.progress;
+  const applyStage = applyProgress ? String(applyProgress.label || applyProgress.message || "") : "";
+  const applyFailed = !!errorNotice?.visible && errorNotice.level !== "warning";
+  const applyDone = !!outputState.pendingDownloadFileName;
+  useEffect(() => {
+    if (applyProgress) setWorkbenchActivity({ stage: applyStage, state: "running" });
+    else if (applyFailed) setWorkbenchActivity({ state: "failed" });
+    else if (applyDone) setWorkbenchActivity({ state: "done" });
+    else setWorkbenchActivity({ state: "idle" });
+  }, [applyProgress, applyStage, applyFailed, applyDone]);
+
   const fileInputAccept = getFileInputAcceptAttributes();
   const dismissSectionNotice = (key: PatcherSectionNoticeKey) => () => uiController.dismissNotice?.(key);
 

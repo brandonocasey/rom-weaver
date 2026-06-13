@@ -704,7 +704,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
   /* label column sized just to the widest label (CRC32/SHA-1) so values still
      line up in a column, but without the old wide gap — leaves room for a
      larger value. Each row is its own grid, so this width must be fixed. */
-  margin: 0; display: grid; grid-template-columns: 47px minmax(0, 1fr) auto; align-items: center; gap: 4px 8px;
+  margin: 0; display: grid; grid-template-columns: minmax(47px, max-content) minmax(0, 1fr) auto; align-items: center; gap: 4px 8px;
   min-height: 26px; padding: 3px 9px; background: transparent; cursor: pointer;
   border: 0; border-block-end: 1px solid var(--seam-soft); transition: background .15s;
 }
@@ -1456,7 +1456,7 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
      on a phone — drop the group indent, trim row padding, shrink the copy
      control. Values still line up via the fixed label column. */
   .rw-app .ckgrp { padding-inline-start: 0; }
-  .rw-app .ck { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 3px 6px; padding-inline: 6px; }
+  .rw-app .ck { grid-template-columns: minmax(40px, max-content) minmax(0, 1fr) auto; gap: 3px 6px; padding-inline: 6px; }
   .rw-app .ck .ck-k { font-size: .72rem; }
   .rw-app .ck .ck-v { font-size: clamp(.72rem, 3.3vw, .94rem); line-height: 1.35; font-stretch: 62%; }
   .rw-app .ck .copy { width: 20px; height: 20px; }
@@ -1653,3 +1653,8 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
 .rw-app .pick-btn, .dlg .pick-btn { appearance: none; width: 100%; font: inherit; color: inherit; text-align: start; }
 .dlg .picklist li { list-style: none; }
 .dlg .picklist { margin: 0; padding: 0; }
+
+/* the app's build version is long (semver + branch + hash) — let it shrink and
+   ellipsize instead of pushing the selvage wider than the viewport */
+.rw-app .selvage .sv-meta { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rw-app .selvage .sv-threads, .rw-app .selvage .sv-cache { flex: none; }

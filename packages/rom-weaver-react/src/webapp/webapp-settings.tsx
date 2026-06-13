@@ -247,7 +247,7 @@ const SettingsToggle = ({ fieldKey, draftSettings, uiState, onDraftChange }: Fie
       ? getChoiceCheckboxValue(fieldKey, draftSettings) === field.checkedValue
       : getCheckboxValue(fieldKey, draftSettings);
   return (
-    <label className="opt">
+    <label className="popt opt">
       <input
         checked={checked}
         disabled={disabled}

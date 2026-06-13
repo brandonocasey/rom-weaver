@@ -1,6 +1,7 @@
 import Download from "lucide-react/dist/esm/icons/download.js";
 import Scissors from "lucide-react/dist/esm/icons/scissors.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import {
   getCompressionOutputExtension,
   isCompressionFormat,
@@ -798,6 +799,13 @@ function TrimPatchForm(props: TrimPatchFormProps) {
 
   // "Needs input" directive forwards to the 0x01 unified picker.
   const openUnifiedPicker = () => document.getElementById("trim-builder-input-file-unified")?.click();
+  // The selvage status strip mirrors this workflow's job state.
+  useEffect(() => {
+    if (busy || trimQueued) setWorkbenchActivity({ state: "running" });
+    else if (completedOutput) setWorkbenchActivity({ state: "done" });
+    else setWorkbenchActivity({ state: "idle" });
+  }, [busy, trimQueued, completedOutput]);
+
   return (
     <main aria-labelledby="tab-trim" className="panel" id="trim-builder-container">
       <UnifiedDropZone
