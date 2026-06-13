@@ -63,20 +63,14 @@ const createMultiTrackChdFixtureFile = async () => {
   }
 };
 
-test("apply workflow asks before split-bin staging for multi-track CHDs", async () => {
+test("apply workflow auto-groups a multi-track CHD into one split-bin disc without prompting", async () => {
   const { cleanup, source, stem } = await createMultiTrackChdFixtureFile();
   const selectionRequests = [];
   const workflow = new ApplyWorkflow({
+    // A multi-track disc is one logical ROM, so staging must resolve it without a prompt.
     selectFile: (request) => {
       selectionRequests.push(request);
-      const splitCandidate = request.candidates.find(
-        (candidate) =>
-          candidate.type === "group" &&
-          candidate.kind === "chd-output-mode" &&
-          candidate.label.startsWith("Split BIN tracks:"),
-      );
-      if (!splitCandidate) throw new Error("Missing split-bin candidate");
-      return { id: splitCandidate.id };
+      throw new Error("Multi-track CHD must auto-resolve without a selection prompt");
     },
     settings: {
       workers: {
@@ -87,21 +81,15 @@ test("apply workflow asks before split-bin staging for multi-track CHDs", async 
   try {
     await workflow.setInput(source);
 
-    expect(selectionRequests).toHaveLength(1);
-    const groups = selectionRequests[0].candidates.filter(
-      (candidate) => candidate.type === "group" && candidate.kind === "chd-output-mode",
-    );
-    expect(groups.map((candidate) => candidate.label)).toEqual([
-      `Merged BIN: ${stem}.bin`,
-      `Split BIN tracks: ${stem} (Track 1).bin + ${stem} (Track 2).bin`,
-    ]);
-    expect(groups.every((candidate) => candidate.selectable)).toBe(true);
+    expect(selectionRequests).toHaveLength(0);
 
     const input = workflow.getInput();
     expect(input?.status).toBe("ready");
     expect(input?.fileName).toBe(`${stem}.bin`);
-    // The cue rides on the bin rows via `cueText`; it is not a resolved input of its own.
+    // The disc auto-resolves to per-track split bins; the cue rides on the bin rows via `cueText`
+    // and is not a resolved input of its own.
     expect(input?.resolvedInputs?.map((entry) => entry.fileName)).toEqual([`${stem}.bin`, `${stem} (Track 2).bin`]);
+    expect(input?.resolvedInputs?.every((entry) => entry.kind === "track")).toBe(true);
     expect(input?.resolvedInputs?.every((entry) => entry.cueText?.includes("FILE "))).toBe(true);
   } finally {
     await workflow.dispose();
@@ -109,20 +97,11 @@ test("apply workflow asks before split-bin staging for multi-track CHDs", async 
   }
 });
 
-test("apply workflow keeps merged BIN when the CHD split prompt is declined", async () => {
+test("apply workflow groups CHD disc tracks under one disc id as a single logical input", async () => {
   const { cleanup, source, stem } = await createMultiTrackChdFixtureFile();
-  const selectionRequests = [];
   const workflow = new ApplyWorkflow({
-    selectFile: (request) => {
-      selectionRequests.push(request);
-      const mergedCandidate = request.candidates.find(
-        (candidate) =>
-          candidate.type === "group" &&
-          candidate.kind === "chd-output-mode" &&
-          candidate.label.startsWith("Merged BIN:"),
-      );
-      if (!mergedCandidate) throw new Error("Missing merged-bin candidate");
-      return { id: mergedCandidate.id };
+    selectFile: () => {
+      throw new Error("Multi-track CHD must auto-resolve without a selection prompt");
     },
     settings: {
       workers: {
@@ -133,19 +112,20 @@ test("apply workflow keeps merged BIN when the CHD split prompt is declined", as
   try {
     await workflow.setInput(source);
 
-    expect(selectionRequests).toHaveLength(1);
-    const groups = selectionRequests[0].candidates.filter(
-      (candidate) => candidate.type === "group" && candidate.kind === "chd-output-mode",
-    );
-    expect(groups.map((candidate) => candidate.label)).toEqual([
-      `Merged BIN: ${stem}.bin`,
-      `Split BIN tracks: ${stem} (Track 1).bin + ${stem} (Track 2).bin`,
-    ]);
-
     const input = workflow.getInput();
     expect(input?.status).toBe("ready");
-    expect(input?.fileName).toBe(`${stem}.bin`);
-    expect(input?.resolvedInputs?.map((entry) => entry.fileName)).toEqual([`${stem}.bin`]);
+    // No legacy "Merged BIN" / "Split BIN" output-mode prompt is offered any more.
+    expect(input?.candidates?.some((candidate) => candidate.kind === "chd-output-mode")).toBe(false);
+
+    const resolved = input?.resolvedInputs ?? [];
+    expect(resolved.map((entry) => entry.fileName)).toEqual([`${stem}.bin`, `${stem} (Track 2).bin`]);
+    // Both tracks are patchable and collapse under a single shared disc group id.
+    expect(resolved.every((entry) => entry.patchable === true)).toBe(true);
+    const groupIds = new Set(resolved.map((entry) => entry.groupId));
+    expect(groupIds.size).toBe(1);
+    expect([...groupIds][0]).toBeTruthy();
+    // Exactly one track is the selected primary of the one-card disc.
+    expect(resolved.filter((entry) => entry.selected)).toHaveLength(1);
   } finally {
     await workflow.dispose();
     await cleanup();

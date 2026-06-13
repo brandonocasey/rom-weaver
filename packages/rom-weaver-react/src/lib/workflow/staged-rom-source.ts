@@ -525,11 +525,29 @@ class StagedRomSourceController<TSource, TState extends SharedRomSourceState> {
     stage.selectedArchiveEntry = stage.internalCandidates.get(candidateId)?.archiveEntry;
   }
 
+  // A multi-track disc (cue/gdi sheet plus the tracks it groups) is one logical ROM, not an
+  // ambiguous set of independent candidates: its tracks all share the sheet's groupId. Treat it
+  // as resolved so it collapses into a single disc card with no prompt, matching how a loose
+  // bin+cue disc is handled. Genuine ambiguity (an unrelated extra ROM alongside the disc, so the
+  // patchable assets do not all share the one sheet group) still falls through to a prompt.
+  private isCohesiveDiscGroup(assets: InputAsset[]): boolean {
+    const sheetGroupIds = new Set(
+      assets
+        .filter((asset) => (asset.kind === "cue" || asset.kind === "gdi") && asset.groupId)
+        .map((asset) => asset.groupId),
+    );
+    if (sheetGroupIds.size !== 1) return false;
+    const [groupId] = [...sheetGroupIds];
+    const patchableAssets = assets.filter((asset) => asset.patchable);
+    return patchableAssets.length > 0 && patchableAssets.every((asset) => asset.groupId === groupId);
+  }
+
   private createPreparedAssetSelectionRequest(
     stage: SharedRomStagedSource<TSource, TState>,
   ): CandidateSelectionRequest | null {
     const assets = stage.preparedInputAssets || [];
     if (assets.filter((asset) => asset.patchable).length <= 1) return null;
+    if (this.isCohesiveDiscGroup(assets)) return null;
     return {
       candidates: assets.map((asset) => ({
         fileName: asset.fileName,
