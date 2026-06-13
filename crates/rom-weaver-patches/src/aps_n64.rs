@@ -102,41 +102,47 @@ impl PatchHandler for ApsN64PatchHandler {
         }
         let input_size = fs::metadata(&request.input)?.len();
         let thread_capability = parallel_per_record_capability(patch.records.len());
-        let execution = if crate::can_apply_in_memory_on_apply(input_size, patch.output_size) {
-            let mut execution = context.plan_threads(thread_capability.clone());
-            let mut output_bytes = fs::read(&request.input)?;
-            output_bytes.resize(patch.output_size as usize, 0);
-            apply_aps_records_in_memory(patch.output_size, &patch.records, &mut output_bytes)?;
-            fs::write(&request.output, &output_bytes)?;
-            execution.effective_threads = 1;
-            execution.used_parallelism = false;
-            execution
-        } else {
-            fs::copy(&request.input, &request.output)?;
-            let mut output = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&request.output)?;
-            output.set_len(patch.output_size)?;
-            let (execution, prepared) = run_with_optional_pool(
-                context,
-                thread_capability,
-                true,
-                |pool| {
-                    prepare_aps_writes_parallel(&patch.records, patch.output_size, pool, context)
+        let execution =
+            if crate::can_apply_in_memory_on_apply(context, input_size, patch.output_size) {
+                let mut execution = context.plan_threads(thread_capability.clone());
+                let mut output_bytes = fs::read(&request.input)?;
+                output_bytes.resize(patch.output_size as usize, 0);
+                apply_aps_records_in_memory(patch.output_size, &patch.records, &mut output_bytes)?;
+                fs::write(&request.output, &output_bytes)?;
+                execution.effective_threads = 1;
+                execution.used_parallelism = false;
+                execution
+            } else {
+                fs::copy(&request.input, &request.output)?;
+                let mut output = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&request.output)?;
+                output.set_len(patch.output_size)?;
+                let (execution, prepared) = run_with_optional_pool(
+                    context,
+                    thread_capability,
+                    true,
+                    |pool| {
+                        prepare_aps_writes_parallel(
+                            &patch.records,
+                            patch.output_size,
+                            pool,
+                            context,
+                        )
                         .map(Some)
-                },
-                || {
-                    apply_aps_records(&mut output, patch.output_size, &patch.records)?;
-                    Ok(None)
-                },
-            )?;
-            if let Some(prepared) = prepared {
-                apply_prepared_writes(&mut output, &prepared)?;
-            }
-            output.flush()?;
-            execution
-        };
+                    },
+                    || {
+                        apply_aps_records(&mut output, patch.output_size, &patch.records)?;
+                        Ok(None)
+                    },
+                )?;
+                if let Some(prepared) = prepared {
+                    apply_prepared_writes(&mut output, &prepared)?;
+                }
+                output.flush()?;
+                execution
+            };
 
         let checksum_suffix = checksum_validation_suffix(validate_checksums);
         Ok(crate::patch_success_report(

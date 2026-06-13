@@ -67,6 +67,10 @@ pub struct OperationContext {
     patch_checksum_validation: PatchChecksumValidation,
     ppf_undo_aware: bool,
     xdelta_secondary_mode: XdeltaSecondaryMode,
+    /// Per-operation override for the patch-apply in-memory size cap (bytes). `None` uses the
+    /// crate default / `ROM_WEAVER_PATCH_IN_MEMORY_LIMIT`. `Some(0)` forces the streaming fallback
+    /// (used by tests that exercise the parallel streaming path).
+    patch_apply_in_memory_limit: Option<u64>,
     /// One operation-scoped worker pool, sized to the full thread budget and reused by every
     /// extract (the primary container and each nested archive). Building a fresh pool per extract
     /// stacked worker threads across sequential/nested extracts and exhausted the browser's fixed
@@ -96,7 +100,19 @@ impl OperationContext {
             patch_checksum_validation: PatchChecksumValidation::Strict,
             ppf_undo_aware: false,
             xdelta_secondary_mode: XdeltaSecondaryMode::default(),
+            patch_apply_in_memory_limit: None,
             operation_pool: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn patch_apply_in_memory_limit(&self) -> Option<u64> {
+        self.patch_apply_in_memory_limit
+    }
+
+    pub fn with_patch_apply_in_memory_limit(self, limit: u64) -> Self {
+        Self {
+            patch_apply_in_memory_limit: Some(limit),
+            ..self
         }
     }
 

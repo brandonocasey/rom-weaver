@@ -44,8 +44,8 @@ use pat::{PatPatchHandler, has_pat_record_signature};
 use pmsr::PmsrPatchHandler;
 use ppf::PpfPatchHandler;
 use rom_weaver_core::{
-    FormatDescriptor, OperationFamily, OperationReport, PatchCapabilities, PatchHandler, Result,
-    RomWeaverError, ThreadExecution, ValidationCodeError,
+    FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchCapabilities,
+    PatchHandler, Result, RomWeaverError, ThreadExecution, ValidationCodeError,
 };
 use rom_weaver_xdelta::VcdiffPatchHandler;
 use rup::RupPatchHandler;
@@ -84,16 +84,16 @@ pub(crate) fn can_apply_in_memory(a: u64, b: u64) -> bool {
     a <= limit && b <= limit
 }
 
-/// Apply-path gate. Streaming is the DEFAULT for apply (bounded memory, OPFS-safe,
-/// and no slower at scale), so this returns `false` unless the in-memory fast path
-/// is explicitly opted back in by raising `ROM_WEAVER_PATCH_IN_MEMORY_LIMIT` above
-/// the input/output sizes (useful for small-input latency or A/B benchmarks). The
-/// create path keeps its own [`can_apply_in_memory`] threshold and is unaffected.
-pub(crate) fn can_apply_in_memory_on_apply(a: u64, b: u64) -> bool {
-    let limit = match std::env::var("ROM_WEAVER_PATCH_IN_MEMORY_LIMIT") {
-        Ok(value) => value.trim().parse::<u64>().unwrap_or(0),
-        Err(_) => 0,
-    };
+/// Apply-path gate: use the in-memory fast path when the source and target both fit under the cap
+/// (default [`IN_MEMORY_APPLY_LIMIT_BYTES`], overridable via `ROM_WEAVER_PATCH_IN_MEMORY_LIMIT`;
+/// set it to `0` to force streaming for benchmarks). The streaming fallback exists for over-cap
+/// inputs, but it is far slower for action-heavy patches - each action is a seek+read+write on an
+/// unbuffered file versus an in-memory copy (~15x on a 33 MiB BPS apply). Buffering the whole source
+/// on the calling thread also avoids worker OPFS opens (`os error 44`) on wasm.
+pub(crate) fn can_apply_in_memory_on_apply(context: &OperationContext, a: u64, b: u64) -> bool {
+    let limit = context
+        .patch_apply_in_memory_limit()
+        .unwrap_or_else(in_memory_apply_limit_bytes);
     a <= limit && b <= limit
 }
 

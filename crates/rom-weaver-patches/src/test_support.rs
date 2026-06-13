@@ -64,10 +64,15 @@ pub(crate) fn test_context_with_threads_in_root(
 }
 
 fn build_context(temp_root: PathBuf, threads: usize) -> OperationContext {
+    // Patch-apply unit tests exercise the parallel streaming path (thread budgets, ordered writes,
+    // overlap fallback). Production now applies in memory by default (covered end-to-end by
+    // cli_smoke), so force the streaming path here to keep that coverage. A test that wants the
+    // in-memory path can override via `with_patch_apply_in_memory_limit`.
     OperationContext::new(
         ThreadBudget::Fixed(threads),
         temp_root,
         Arc::new(NoopProgressSink),
         CancellationToken::new(),
     )
+    .with_patch_apply_in_memory_limit(0)
 }

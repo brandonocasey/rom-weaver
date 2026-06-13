@@ -56,73 +56,74 @@ impl PatPatchHandler {
         let thread_capability = parallel_per_record_capability(grouped_records.len());
         let planned_execution = context.plan_threads(thread_capability.clone());
 
-        let (execution, writes) = if crate::can_apply_in_memory_on_apply(output_len, output_len) {
-            let output_len_usize = usize::try_from(output_len).map_err(|_| {
-                RomWeaverError::Validation(format!(
-                    "input `{}` is too large to process in memory",
-                    request.input.display()
-                ))
-            })?;
-            let mut output_bytes = vec![0u8; output_len_usize];
-            let mut input = File::open(&request.input)?;
-            input.read_exact(&mut output_bytes)?;
-            let current_bytes: Vec<u8> = grouped_records
-                .iter()
-                .map(|g| output_bytes[g.offset as usize])
-                .collect();
-            let writes = grouped_records
-                .iter()
-                .enumerate()
-                .map(|(index, group)| {
-                    prepare_pat_offset_write(group, current_bytes[index], context)
-                })
-                .collect::<Result<Vec<_>>>()?;
-            for write in &writes {
-                output_bytes[write.offset as usize] = write.byte;
-            }
-            fs::write(&request.output, &output_bytes)?;
-            let mut execution = planned_execution;
-            execution.effective_threads = 1;
-            execution.used_parallelism = false;
-            (execution, writes)
-        } else {
-            fs::copy(&request.input, &request.output)?;
-            let input_bytes =
-                read_pat_group_input_bytes(&grouped_records, &request.input, context)?;
-            let (execution, mut writes) = if planned_execution.used_parallelism {
-                let (execution, pool) = context.build_pool(thread_capability)?;
-                let writes = pool.install(|| {
-                    grouped_records
-                        .par_iter()
-                        .enumerate()
-                        .map(|(index, group)| {
-                            prepare_pat_offset_write(group, input_bytes[index], context)
-                        })
-                        .collect::<Result<Vec<_>>>()
+        let (execution, writes) =
+            if crate::can_apply_in_memory_on_apply(context, output_len, output_len) {
+                let output_len_usize = usize::try_from(output_len).map_err(|_| {
+                    RomWeaverError::Validation(format!(
+                        "input `{}` is too large to process in memory",
+                        request.input.display()
+                    ))
                 })?;
-                (execution, writes)
-            } else {
+                let mut output_bytes = vec![0u8; output_len_usize];
+                let mut input = File::open(&request.input)?;
+                input.read_exact(&mut output_bytes)?;
+                let current_bytes: Vec<u8> = grouped_records
+                    .iter()
+                    .map(|g| output_bytes[g.offset as usize])
+                    .collect();
                 let writes = grouped_records
                     .iter()
                     .enumerate()
                     .map(|(index, group)| {
-                        prepare_pat_offset_write(group, input_bytes[index], context)
+                        prepare_pat_offset_write(group, current_bytes[index], context)
                     })
                     .collect::<Result<Vec<_>>>()?;
-                (planned_execution, writes)
+                for write in &writes {
+                    output_bytes[write.offset as usize] = write.byte;
+                }
+                fs::write(&request.output, &output_bytes)?;
+                let mut execution = planned_execution;
+                execution.effective_threads = 1;
+                execution.used_parallelism = false;
+                (execution, writes)
+            } else {
+                fs::copy(&request.input, &request.output)?;
+                let input_bytes =
+                    read_pat_group_input_bytes(&grouped_records, &request.input, context)?;
+                let (execution, mut writes) = if planned_execution.used_parallelism {
+                    let (execution, pool) = context.build_pool(thread_capability)?;
+                    let writes = pool.install(|| {
+                        grouped_records
+                            .par_iter()
+                            .enumerate()
+                            .map(|(index, group)| {
+                                prepare_pat_offset_write(group, input_bytes[index], context)
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    })?;
+                    (execution, writes)
+                } else {
+                    let writes = grouped_records
+                        .iter()
+                        .enumerate()
+                        .map(|(index, group)| {
+                            prepare_pat_offset_write(group, input_bytes[index], context)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    (planned_execution, writes)
+                };
+                writes.sort_by_key(|write| write.offset);
+                let mut output = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&request.output)?;
+                for write in &writes {
+                    output.seek(SeekFrom::Start(write.offset))?;
+                    output.write_all(&[write.byte])?;
+                }
+                output.flush()?;
+                (execution, writes)
             };
-            writes.sort_by_key(|write| write.offset);
-            let mut output = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&request.output)?;
-            for write in &writes {
-                output.seek(SeekFrom::Start(write.offset))?;
-                output.write_all(&[write.byte])?;
-            }
-            output.flush()?;
-            (execution, writes)
-        };
 
         let mut forward_applied = 0usize;
         let mut reverse_applied = 0usize;

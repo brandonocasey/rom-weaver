@@ -98,68 +98,68 @@ impl PatchHandler for BpsPatchHandler {
         output.set_len(patch.target_size)?;
         let thread_capability = bps_apply_thread_capability(&patch.actions);
         let has_target_copy = patch_contains_target_copy(&patch.actions);
-        let execution = if crate::can_apply_in_memory_on_apply(patch.source_size, patch.target_size)
-        {
-            let mut execution = context.plan_threads(thread_capability.clone());
-            let target_size = patch.target_size as usize;
-            let mut source_bytes = Vec::with_capacity(patch.source_size as usize);
-            source.read_to_end(&mut source_bytes)?;
-            let mut output_bytes = vec![0u8; target_size];
-            apply_patch_actions_in_memory(
-                &patch,
-                &source_bytes,
-                &mut output_bytes,
-                context,
-                self.descriptor.name,
-            )?;
-            output.seek(SeekFrom::Start(0))?;
-            output.write_all(&output_bytes)?;
-            execution.effective_threads = 1;
-            execution.used_parallelism = false;
-            execution
-        } else {
-            let (mut execution, prepared) = run_with_optional_pool(
-                context,
-                thread_capability,
-                // The parallel path reads the source from worker threads, which cannot
-                // open OPFS files in wasm (os error 44); fall back to the serial path
-                // that reads the source on the main thread there. Native keeps parallel.
-                !has_target_copy && !crate::patches_reads_source_on_main_thread(),
-                |pool| {
-                    prepare_bps_writes_parallel(
-                        &patch,
-                        &request.input,
-                        patch.source_size,
-                        pool,
-                        context,
-                    )
-                    .map(Some)
-                },
-                || {
-                    let mut buffered_source = BufReader::new(source);
-                    apply_patch_actions(
-                        &patch,
-                        &mut buffered_source,
-                        &mut output,
-                        context,
-                        self.descriptor.name,
-                    )?;
-                    Ok(None)
-                },
-            )?;
-            if let Some(prepared) = prepared {
-                let mut progress =
-                    BpsApplyProgress::new(context, self.descriptor.name, patch.target_size);
-                apply_prepared_bps_writes(&mut output, &prepared, &mut progress)?;
-            }
-            if execution.used_parallelism && has_target_copy {
-                execution.apply_pool_fallback(
-                    "BPS apply encountered TargetCopy actions that require sequential output"
-                        .to_string(),
-                );
-            }
-            execution
-        };
+        let execution =
+            if crate::can_apply_in_memory_on_apply(context, patch.source_size, patch.target_size) {
+                let mut execution = context.plan_threads(thread_capability.clone());
+                let target_size = patch.target_size as usize;
+                let mut source_bytes = Vec::with_capacity(patch.source_size as usize);
+                source.read_to_end(&mut source_bytes)?;
+                let mut output_bytes = vec![0u8; target_size];
+                apply_patch_actions_in_memory(
+                    &patch,
+                    &source_bytes,
+                    &mut output_bytes,
+                    context,
+                    self.descriptor.name,
+                )?;
+                output.seek(SeekFrom::Start(0))?;
+                output.write_all(&output_bytes)?;
+                execution.effective_threads = 1;
+                execution.used_parallelism = false;
+                execution
+            } else {
+                let (mut execution, prepared) = run_with_optional_pool(
+                    context,
+                    thread_capability,
+                    // The parallel path reads the source from worker threads, which cannot
+                    // open OPFS files in wasm (os error 44); fall back to the serial path
+                    // that reads the source on the main thread there. Native keeps parallel.
+                    !has_target_copy && !crate::patches_reads_source_on_main_thread(),
+                    |pool| {
+                        prepare_bps_writes_parallel(
+                            &patch,
+                            &request.input,
+                            patch.source_size,
+                            pool,
+                            context,
+                        )
+                        .map(Some)
+                    },
+                    || {
+                        let mut buffered_source = BufReader::new(source);
+                        apply_patch_actions(
+                            &patch,
+                            &mut buffered_source,
+                            &mut output,
+                            context,
+                            self.descriptor.name,
+                        )?;
+                        Ok(None)
+                    },
+                )?;
+                if let Some(prepared) = prepared {
+                    let mut progress =
+                        BpsApplyProgress::new(context, self.descriptor.name, patch.target_size);
+                    apply_prepared_bps_writes(&mut output, &prepared, &mut progress)?;
+                }
+                if execution.used_parallelism && has_target_copy {
+                    execution.apply_pool_fallback(
+                        "BPS apply encountered TargetCopy actions that require sequential output"
+                            .to_string(),
+                    );
+                }
+                execution
+            };
         validate_output_file(
             &request.output,
             &mut output,
