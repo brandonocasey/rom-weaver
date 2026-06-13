@@ -1668,3 +1668,21 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
 /* cards and progress panels are self-contained — per-tick re-renders inside
    one panel must not invalidate layout/paint for the rest of the bench */
 .rw-app .card, .rw-app .prog-panel { contain: layout paint style; }
+
+/* ── compositor-driven meter animations ──
+   Heavy pipeline phases can block the main thread for seconds (read-on-main
+   nested-archive checks); the prototype's margin/background-position keyframes
+   freeze with it. Re-expressed as transforms so the indeterminate bounce and
+   the weave sheen keep playing on the compositor through those stalls. */
+.rw-app .meter.indet .fill { width: 32%; margin-inline-start: 0; animation: indet-slide 1.8s ease-in-out infinite; }
+@keyframes indet-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(412%); } }
+.rw-app .meter .fill { overflow: clip; }
+.rw-app .meter .fill::after {
+  inset: 0 auto 0 -18px; width: calc(100% + 18px);
+  animation: none; background-position: 0 0;
+}
+.rw-app .running .meter .fill::after, .rw-app .meter.live .fill::after { animation: weave-slide .6s linear infinite; }
+@keyframes weave-slide { to { transform: translateX(18px); } }
+@media (prefers-reduced-motion: reduce) {
+  .rw-app .meter.indet .fill { animation: none; transform: none; width: 100%; opacity: .55; }
+}

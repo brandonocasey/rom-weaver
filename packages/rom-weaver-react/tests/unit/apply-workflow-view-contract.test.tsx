@@ -71,7 +71,15 @@ const patchItem = (fileName: string): PatchStackItemState =>
     validationValues: [],
   }) as unknown as PatchStackItemState;
 
-const renderView = ({ patches = [] as PatchStackItemState[], ui }: { patches?: PatchStackItemState[]; ui: PatcherUiState }) => {
+const renderView = ({
+  patches = [] as PatchStackItemState[],
+  patchEnablement,
+  ui,
+}: {
+  patches?: PatchStackItemState[];
+  patchEnablement?: Parameters<typeof ApplyWorkflowFormView>[0]["patchEnablement"];
+  ui: PatcherUiState;
+}) => {
   const controllers = {
     dialog: storeOf({ ...createInitialDialogState() }) as unknown as DialogController,
     output: storeOf(outputState()) as unknown as PatcherOutputController,
@@ -80,7 +88,7 @@ const renderView = ({ patches = [] as PatchStackItemState[], ui }: { patches?: P
   };
   return render(
     <RomWeaverSettingsProvider settings={{}}>
-      <ApplyWorkflowFormView controllers={controllers} />
+      <ApplyWorkflowFormView controllers={controllers} patchEnablement={patchEnablement} />
     </RomWeaverSettingsProvider>,
   );
 };
@@ -112,7 +120,10 @@ describe("apply workflow view — staged bench", () => {
     // ROM card in the input stack
     const romCard = container.querySelector("#rom-weaver-list-input-stack .card.file");
     expect(romCard).toBeTruthy();
-    expect(romCard?.querySelector(".card-name .nmline .nm")?.textContent).toBe("game.bin");
+    // display name drops the extension; the full filename rides the title attr
+    const nm = romCard?.querySelector(".card-name .nmline .nm");
+    expect(nm?.textContent).toBe("game");
+    expect(nm?.getAttribute("title")).toBe("game.bin");
     // checksum rows use the .ck/.ck-k/.ck-v readout structure
     const checksumLabels = Array.from(romCard?.querySelectorAll(".ck .ck-k") || []).map((el) => el.textContent);
     expect(checksumLabels).toContain("CRC32");
@@ -126,5 +137,29 @@ describe("apply workflow view — staged bench", () => {
     expect(container.querySelector("#rom-weaver-row-patch-stack .step-meta .rb")?.textContent).toContain("1 file");
     // no needs-input directives once content is staged
     expect(container.querySelectorAll("button.needs-input").length).toBe(0);
+  });
+});
+
+describe("apply workflow view — patch enable toggles", () => {
+  it("collapses disabled patches, surfaces the off-note, and gates the run", () => {
+    const ui = { ...createEmptyPatcherUiState(), romInputs: [romRow("game.bin")] };
+    const { container } = renderView({
+      patchEnablement: {
+        disabledIds: new Set(["patch-1"]),
+        getPatchIds: () => ["patch-1"],
+        onToggle: () => undefined,
+      },
+      patches: [patchItem("change.ips")],
+      ui,
+    });
+    const patchCard = container.querySelector("#rom-weaver-list-patch-stack .card");
+    expect(patchCard?.classList.contains("is-disabled")).toBe(true);
+    expect(patchCard?.querySelector(".patch-enable input")).toBeTruthy();
+    expect(patchCard?.querySelector(".patch-body .patch-body-inner")).toBeTruthy();
+    expect(container.querySelector(".patch-off-note")?.textContent).toContain("1 patch is off");
+    const run = container.querySelector("#rom-weaver-button-apply") as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    // the step header reports the enabled/disabled split
+    expect(container.querySelector("#rom-weaver-row-patch-stack .step-meta")?.textContent).toContain("1 disabled");
   });
 });

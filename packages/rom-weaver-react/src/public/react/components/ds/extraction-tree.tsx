@@ -37,6 +37,13 @@ type ExtractPanelProps = {
   timing?: string;
 };
 
+/** Card display name: basename without the extension (the format badge carries the type). */
+const getDisplayName = (fileName: string) => {
+  const base = getBaseFileName(fileName) || fileName;
+  const withoutExtension = base.replace(/\.[^.]+$/, "");
+  return withoutExtension || base;
+};
+
 const formatExtractionElapsedMs = (ms?: number) =>
   typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : undefined;
 
@@ -191,7 +198,9 @@ const ExtractName = ({
       />
     ) : null}
     <div className="nmline">
-      <span className="nm">{getBaseFileName(fileName) || fileName}</span>
+      <span className="nm" title={fileName}>
+        {getDisplayName(fileName)}
+      </span>
     </div>
   </>
 );

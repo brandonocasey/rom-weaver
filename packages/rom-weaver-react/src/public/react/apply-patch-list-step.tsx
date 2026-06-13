@@ -247,18 +247,50 @@ const PatchTarget = ({
   );
 };
 
+/** The loom On/Off switch leading a patch card's meta line. */
+const PatchEnableToggle = ({
+  disabled,
+  fileName,
+  onToggle,
+}: {
+  disabled: boolean;
+  fileName: string;
+  onToggle: () => void;
+}) => (
+  <label className="patch-enable">
+    <input
+      aria-label={`Include ${fileName.replace(/\.[^.]+$/, "")}`}
+      checked={!disabled}
+      onChange={onToggle}
+      type="checkbox"
+    />
+    <span aria-hidden="true" className="switch-state">
+      <b className="on">On</b>
+      <b className="off">Off</b>
+    </span>
+  </label>
+);
+
 const ApplyPatchListStep = ({
+  disabledFlags,
+  fault,
+  onTogglePatch,
   patchInput,
   patchNotice,
   patches,
   patchStack,
   ui,
+  woven,
 }: {
+  disabledFlags?: readonly boolean[];
+  fault?: boolean;
+  onTogglePatch?: (index: number) => void;
   patchInput: PatcherUiState["patchInput"];
   patchNotice: NoticeState;
   patches: PatchStackItemState[];
   patchStack: PatcherStackController;
   ui: PatcherUiController;
+  woven?: boolean;
 }) => {
   const total = patches.length;
   // Reordering only makes sense for a multi-patch stack. Dragging is additionally
@@ -266,9 +298,15 @@ const ApplyPatchListStep = ({
   const reorderable = total > 1;
   const canReorder = reorderable && patches.every((item) => !item.progress && item.canRemove);
   const reorderList = useListReorder({ count: total, disabled: !canReorder, onReorder: patchStack.reorder });
-  const enabledBytes = patches.reduce((sum, item) => sum + (item.fileSize || 0), 0);
+  const disabledCount = (disabledFlags || []).filter(Boolean).length;
+  const enabledBytes = patches.reduce(
+    (sum, item, index) => (disabledFlags?.[index] ? sum : sum + (item.fileSize || 0)),
+    0,
+  );
+  const enabledCount = total - disabledCount;
   return (
     <StepSection
+      fault={fault}
       id="rom-weaver-row-patch-stack"
       info={
         <InfoPopover title="Supported patch types">
@@ -288,14 +326,16 @@ const ApplyPatchListStep = ({
         total > 0 ? (
           <>
             <span className="rb mono">
-              {total} {total === 1 ? "file" : "files"}
+              {enabledCount} {enabledCount === 1 ? "file" : "files"}
             </span>
+            {disabledCount ? <span className="rb mono muted">{disabledCount} disabled</span> : null}
             {enabledBytes ? <span className="rb mono">{formatByteSize(enabledBytes)}</span> : null}
           </>
         ) : undefined
       }
       num="0x03"
       title="Patches"
+      woven={woven}
     >
       <div
         className="cards patch-cards workflow-file-list"
@@ -314,7 +354,14 @@ const ApplyPatchListStep = ({
           ) : (
             <FileCard
               key={item.key ?? `${index}:${item.fileName}`}
-              {...reorderList.rowProps(index)}
+              {...(() => {
+                const rowProps = reorderList.rowProps(index);
+                const disabledClass = disabledFlags?.[index] ? "is-disabled" : undefined;
+                return {
+                  ...rowProps,
+                  className: [rowProps.className, disabledClass].filter(Boolean).join(" ") || undefined,
+                };
+              })()}
               handle={
                 reorderable ? (
                   <PatchDragHandle
@@ -327,6 +374,13 @@ const ApplyPatchListStep = ({
               }
               meta={
                 <>
+                  {onTogglePatch ? (
+                    <PatchEnableToggle
+                      disabled={!!disabledFlags?.[index]}
+                      fileName={item.fileName}
+                      onToggle={() => onTogglePatch(index)}
+                    />
+                  ) : null}
                   {item.fileSize ? <span className="fsize mono">{formatByteSize(item.fileSize)}</span> : null}
                   {item.format ? <span className="meta-fmt mono">{item.format.toLowerCase()}</span> : null}
                 </>
@@ -345,14 +399,18 @@ const ApplyPatchListStep = ({
               state={item.validationState === "invalid" ? "bad" : item.validationState === "valid" ? "ok" : undefined}
               target={<PatchTarget index={index} item={item} patchStack={patchStack} />}
             >
-              <ExtractDrawer
-                fileName={item.fileName}
-                fileSize={item.fileSize}
-                parentCompressions={item.archivePathEntries}
-                timing={TIMING_LABEL(item.decompressionTimeMs)}
-              />
-              <PatchInfo item={item} />
-              <PatchOptions index={index} item={item} patchStack={patchStack} />
+              <div className="patch-body">
+                <div className="patch-body-inner">
+                  <ExtractDrawer
+                    fileName={item.fileName}
+                    fileSize={item.fileSize}
+                    parentCompressions={item.archivePathEntries}
+                    timing={TIMING_LABEL(item.decompressionTimeMs)}
+                  />
+                  <PatchInfo item={item} />
+                  <PatchOptions index={index} item={item} patchStack={patchStack} />
+                </div>
+              </div>
             </FileCard>
           ),
         )}

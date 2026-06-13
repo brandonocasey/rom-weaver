@@ -155,7 +155,15 @@ const FileProgress = ({ onCancel, cancelLabel = "Cancel operation", id, ...progr
   </div>
 );
 
-type DownloadMeta = { format?: string; name?: string; ratio?: string; savedSize?: string; size?: string };
+type DownloadMeta = {
+  format?: string;
+  name?: string;
+  ratio?: string;
+  savedSize?: string;
+  size?: string;
+  /** Total wall time, pushed to the button's right edge. */
+  total?: string;
+};
 
 /**
  * The primary action button. Renders the uppercase action by default, or the
@@ -196,6 +204,11 @@ const RunButton = ({
             {download.size}
             {download.savedSize ? <> &middot; saved {download.savedSize}</> : null}
             {download.ratio ? <> &middot; {download.ratio}</> : null}
+          </span>
+        ) : null}
+        {download.total ? (
+          <span className="dl-total mono">
+            <b>{download.total}</b>
           </span>
         ) : null}
       </>

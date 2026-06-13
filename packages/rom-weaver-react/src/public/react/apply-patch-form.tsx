@@ -521,13 +521,49 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     [props.onInputsChange, syncInputSelectionRefs],
   );
 
+  // Patch enable toggles (the loom On/Off switch): disabled patches stay on
+  // the bench but are excluded from the apply run. Keyed by stable source id
+  // so reorders/removals keep the right patches off.
+  const [disabledPatchIds, setDisabledPatchIds] = useState<ReadonlySet<string>>(new Set());
+  const disabledPatchIdsRef = useRef(disabledPatchIds);
+  disabledPatchIdsRef.current = disabledPatchIds;
+  const currentPatchesRef = useRef<BinarySource[]>([]);
+
   const handleLocalPatchesChange = useCallback(
     (nextPatches: BinarySource[]) => {
+      currentPatchesRef.current = nextPatches;
+      // Drop stale toggles so a removed patch's id can't disable a later re-add.
+      const ids = new Set(getBinarySourceListStableIds(nextPatches));
+      setDisabledPatchIds((previous) => {
+        const next = new Set([...previous].filter((id) => ids.has(id)));
+        return next.size === previous.size ? previous : next;
+      });
       syncPatchSelectionRefs(nextPatches);
       props.onPatchesChange?.(nextPatches);
     },
     [props.onPatchesChange, syncPatchSelectionRefs],
   );
+
+  const togglePatchEnabled = useCallback((index: number) => {
+    const id = getBinarySourceListStableIds(currentPatchesRef.current)[index];
+    if (id === undefined) return;
+    setDisabledPatchIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const filterEnabledPatches = useCallback((patches: BinarySource[]) => {
+    const disabled = disabledPatchIdsRef.current;
+    if (!disabled.size) return patches;
+    const ids = getBinarySourceListStableIds(patches);
+    return patches.filter((_, index) => {
+      const id = ids[index];
+      return id === undefined || !disabled.has(id);
+    });
+  }, []);
 
   const queueMutation = useCallback(<TValue,>(callback: () => Promise<TValue>) => {
     const run = mutationQueueRef.current.catch(() => undefined).then(callback);
@@ -795,7 +831,9 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   );
 
   const applyPatches = useCallback(
-    async (input: ApplyWorkflowSessionInput) => {
+    async (rawInput: ApplyWorkflowSessionInput) => {
+      // Disabled patches never reach the workflow; the bench keeps their cards.
+      const input: ApplyWorkflowSessionInput = { ...rawInput, patches: filterEnabledPatches(rawInput.patches) };
       const runPreparedWorkflow = async ({
         input: stagedInput,
         patches,
@@ -880,6 +918,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
       syncSelectionRefs,
       syncWorkflowOutputOverrides,
       prepareWorkflow,
+      filterEnabledPatches,
     ],
   );
 
@@ -1194,6 +1233,11 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           ui: resolvedUiController,
         }}
         onTrace={emitApplyFormInputTrace}
+        patchEnablement={{
+          disabledIds: disabledPatchIds,
+          getPatchIds: () => getBinarySourceListStableIds(currentPatchesRef.current),
+          onToggle: togglePatchEnabled,
+        }}
         startup={startup}
       />
       {candidateSelectionDialog}

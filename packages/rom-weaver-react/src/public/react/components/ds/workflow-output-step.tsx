@@ -4,12 +4,14 @@ import { StepSection } from "./layout.tsx";
 import { OutputCard, type OutputCardProps } from "./output-card.tsx";
 
 type WorkflowOutputStepProps = OutputCardProps & {
+  fault?: boolean;
   id?: string;
   info?: ReactNode;
   meta?: ReactNode;
   notice?: ReactNode;
   num: string;
   title: ReactNode;
+  woven?: boolean;
 };
 
 type OutputRunActionProps = {
@@ -22,8 +24,18 @@ type OutputRunActionProps = {
   progress?: FileProgressProps | null;
 };
 
-const WorkflowOutputStep = ({ id, info, meta, notice, num, title, ...output }: WorkflowOutputStepProps) => (
-  <StepSection id={id} info={info} meta={meta} num={num} title={title}>
+const WorkflowOutputStep = ({
+  fault,
+  id,
+  info,
+  meta,
+  notice,
+  num,
+  title,
+  woven,
+  ...output
+}: WorkflowOutputStepProps) => (
+  <StepSection fault={fault} id={id} info={info} meta={meta} num={num} title={title} woven={woven}>
     <OutputCard {...output} />
     {notice}
   </StepSection>

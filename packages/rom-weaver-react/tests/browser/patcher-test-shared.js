@@ -244,9 +244,7 @@ export const clickPatchCandidateSelectionOption = async (label) => selectPatchCa
 
 export const getInputStackFileName = () => {
   const candidates = Array.from(
-    document.querySelectorAll(
-      "#rom-weaver-list-input-stack .card .card-name .nmline .nm, #rom-weaver-list-input-stack .rom-weaver-input-stack-file strong",
-    ),
+    document.querySelectorAll("#rom-weaver-list-input-stack .rom-weaver-input-stack-file > strong"),
   )
     .map((entry) => entry.textContent?.trim() || "")
     .filter(Boolean);

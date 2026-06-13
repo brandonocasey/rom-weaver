@@ -1,3 +1,4 @@
+import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import { useEffect, useSyncExternalStore } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
@@ -26,6 +27,7 @@ import { inertUiController } from "./patcher-form-session.ts";
 import type { PatchStackItemState } from "./patcher-presentation.ts";
 import { ArchiveDialog as SharedArchiveDialog } from "./patcher-react-shared.tsx";
 import type { NoticeState, PatcherSectionNoticeKey, RomInputRowState } from "./patcher-ui-state.ts";
+import { useUiLocalizer } from "./settings-context.tsx";
 import { routeByTypeProbed } from "./unified-drop-routing.ts";
 import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./workflow-run-hooks.ts";
 
@@ -283,8 +285,16 @@ const renderDiscGroup = (
   };
 };
 
+/** Patch On/Off plumbing from the form: stable-id toggle set + index toggle. */
+type PatchEnablement = {
+  disabledIds: ReadonlySet<string>;
+  getPatchIds: () => string[];
+  onToggle: (index: number) => void;
+};
+
 function ApplyWorkflowFormView({
   controllers,
+  patchEnablement,
   startup = { message: "", status: "ready" },
 }: {
   controllers: {
@@ -295,6 +305,7 @@ function ApplyWorkflowFormView({
     dialog?: DialogController;
   };
   onTrace?: (message: string, details?: Record<string, unknown>) => void;
+  patchEnablement?: PatchEnablement;
   startup?: StartupState;
 }) {
   const uiController = controllers.ui || inertUiController;
@@ -315,24 +326,44 @@ function ApplyWorkflowFormView({
     noticeController ? noticeController.getState : () => null,
     noticeController ? noticeController.getState : () => null,
   );
-  // The selvage status strip mirrors the apply job: running with the active
-  // stage label, done once a download is pending, failed on an error notice.
-  const applyProgress = outputState.applyButton.progress;
-  const applyStage = applyProgress ? String(applyProgress.label || applyProgress.message || "") : "";
-  const applyFailed = !!errorNotice?.visible && errorNotice.level !== "warning";
-  const applyDone = !!outputState.pendingDownloadFileName;
-  useEffect(() => {
-    if (applyProgress) setWorkbenchActivity({ stage: applyStage, state: "running" });
-    else if (applyFailed) setWorkbenchActivity({ state: "failed" });
-    else if (applyDone) setWorkbenchActivity({ state: "done" });
-    else setWorkbenchActivity({ state: "idle" });
-  }, [applyProgress, applyStage, applyFailed, applyDone]);
 
   const fileInputAccept = getFileInputAcceptAttributes();
   const dismissSectionNotice = (key: PatcherSectionNoticeKey) => () => uiController.dismissNotice?.(key);
 
   const romInputs: RomInputRowState[] = uiState.romInputs;
   const patches = patchState.items;
+  // Per-index disabled flags for the loom On/Off switches.
+  const patchIds = patchEnablement ? patchEnablement.getPatchIds() : [];
+  const disabledPatchFlags = patches.map((_, index) => {
+    const id = patchIds[index];
+    return !!patchEnablement && id !== undefined && patchEnablement.disabledIds.has(id);
+  });
+  const disabledPatchCount = disabledPatchFlags.filter(Boolean).length;
+  const enabledPatchCount = patches.length - disabledPatchCount;
+  const localizer = useUiLocalizer();
+  // Inputs/patches still resolving — the 0x01 surface shows the staging pill.
+  const inputsStaging =
+    romInputs.some((row) => !!row.progress) || patches.some((item) => !!item.progress) || uiState.patchInput.loading;
+  // The selvage status strip mirrors the apply job: staging while files route,
+  // running with the active stage label, done once a download is pending,
+  // failed on an error notice.
+  const applyProgress = outputState.applyButton.progress;
+  const applyStage = applyProgress ? String(applyProgress.label || applyProgress.message || "") : "";
+  const applyFailed = !!errorNotice?.visible && errorNotice.level !== "warning";
+  const applyDone = !!outputState.pendingDownloadFileName;
+  const applyTotalTime = outputState.applyTiming;
+  const stagingStage = localizer.message("ui.drop.staging");
+  const doneStage = applyTotalTime ? localizer.message("ui.status.doneMsg", { t: applyTotalTime }) : "";
+  useEffect(() => {
+    if (applyProgress) setWorkbenchActivity({ stage: applyStage, state: "running" });
+    else if (applyFailed) setWorkbenchActivity({ state: "failed" });
+    else if (applyDone) setWorkbenchActivity({ stage: doneStage, state: "done" });
+    else if (inputsStaging) setWorkbenchActivity({ stage: stagingStage, state: "staging" });
+    else setWorkbenchActivity({ state: "idle" });
+  }, [applyProgress, applyStage, applyFailed, applyDone, doneStage, inputsStaging, stagingStage]);
+  const running = !!applyProgress;
+  const wovenSteps = running || applyDone;
+
   const romVerificationStates = buildRomVerificationStates(patches, romInputs);
   const romRowDeps: RomRowDeps = {
     alterHeaderChecked: uiState.romInfo.alterHeaderChecked,
@@ -374,6 +405,7 @@ function ApplyWorkflowFormView({
         archiveHint={`archives (${ARCHIVE_INPUT_HINT})`}
         big={workflowEmpty}
         formats={APPLY_HERO_FORMATS}
+        hintCoarse={localizer.message(workflowEmpty ? "ui.drop.tapAnywhere" : "ui.drop.tap")}
         id="rom-weaver-row-unified-drop"
         info={
           <InfoPopover title="Input handling">
@@ -390,6 +422,8 @@ function ApplyWorkflowFormView({
         onFiles={handleUnifiedDrop}
         patchHint={`patches (${PATCH_INPUT_HINT})`}
         romHint={`roms (${ROM_INPUT_HINT})`}
+        staging={inputsStaging}
+        stagingLabel={localizer.message("ui.drop.staging")}
       />
       {workflowEmpty ? (
         <>
@@ -407,6 +441,7 @@ function ApplyWorkflowFormView({
       ) : (
         <>
           <WorkflowRomInputStep
+            fault={applyFailed}
             id="rom-weaver-row-file-rom"
             info={
               <InfoPopover title="Input handling">
@@ -446,14 +481,19 @@ function ApplyWorkflowFormView({
             }
             num="0x02"
             title="ROM"
+            woven={wovenSteps}
           />
 
           <ApplyPatchListStep
+            disabledFlags={disabledPatchFlags}
+            fault={applyFailed}
+            onTogglePatch={patchEnablement?.onToggle}
             patches={patches}
             patchInput={uiState.patchInput}
             patchNotice={uiState.patchNotice}
             patchStack={controllers.patchStack}
             ui={uiController}
+            woven={wovenSteps}
           />
 
           {uiState.patchDetails.description ? (
@@ -514,7 +554,17 @@ function ApplyWorkflowFormView({
                 </label>
               </div>
             ) : null}
-            <PatcherPrimaryAction controller={controllers.output} />
+            <div className={disabledPatchCount ? "reveal is-open" : "reveal"} hidden={!disabledPatchCount}>
+              <p aria-live="polite" className="patch-off-note">
+                <TriangleAlert aria-hidden="true" />
+                <span>{disabledPatchCount ? localizer.messageCount("ui.patch.offCount", disabledPatchCount) : ""}</span>
+              </p>
+            </div>
+            <PatcherPrimaryAction
+              controller={controllers.output}
+              disableRun={patches.length > 0 && enabledPatchCount === 0}
+              totalTime={applyTotalTime || undefined}
+            />
           </>
         }
         compress={buildOutputCompressionPanel({
@@ -530,6 +580,7 @@ function ApplyWorkflowFormView({
           timing: outputState.compressTiming || undefined,
         })}
         disabled={outputState.disabled}
+        fault={applyFailed}
         fileName={outputState.displayFileName}
         fileNameId="rom-weaver-input-output-file-name"
         fileNamePlaceholder="Output filename (no extension)"
@@ -547,7 +598,26 @@ function ApplyWorkflowFormView({
             </ul>
           </InfoPopover>
         }
-        meta={outputState.applyTiming ? <span className="t">{outputState.applyTiming}</span> : undefined}
+        meta={
+          applyDone ? (
+            <>
+              {outputState.applyTiming ? (
+                <span className="rb mono done-chip">
+                  <span className="k">Apply</span>
+                  <span className="t">{outputState.applyTiming}</span>
+                </span>
+              ) : null}
+              {outputState.compressTiming ? (
+                <span className="rb mono done-chip" style={{ animationDelay: "0.19s" }}>
+                  <span className="k">Compress</span>
+                  <span className="t">{outputState.compressTiming}</span>
+                </span>
+              ) : null}
+            </>
+          ) : outputState.applyTiming ? (
+            <span className="t">{outputState.applyTiming}</span>
+          ) : undefined
+        }
         notice={
           <SectionNotice
             id="rom-weaver-output-notice-message"
@@ -559,6 +629,7 @@ function ApplyWorkflowFormView({
         onFileNameChange={(value) => controllers.output.setDisplayFileName(value)}
         onFormatChange={(value) => controllers.output.setOutputCompression(value)}
         title="Apply"
+        woven={applyDone || running}
       />
 
       <SharedArchiveDialog controller={controllers.dialog} />

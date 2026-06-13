@@ -34,6 +34,10 @@ type UnifiedDropZoneProps = {
   /** Step number/title; the inputs step is 0x01 in every workflow. */
   num?: string;
   title?: ReactNode;
+  /** Files are routing to their sections — show the staging pill. */
+  staging?: boolean;
+  stagingLabel?: ReactNode;
+  hintCoarse?: ReactNode;
   onFiles: (files: File[]) => void;
 };
 
