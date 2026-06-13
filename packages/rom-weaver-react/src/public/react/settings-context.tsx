@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo } from "react";
 import { resolveCompressionLevels } from "../../lib/compression/compression-settings.ts";
 import { createLogger } from "../../lib/logging.ts";
+import { createBrowserLocalizer, type Localizer } from "../../presentation/localization/index.ts";
 import { ROM_WEAVER_CREATE_CONTAINER_FORMATS } from "../../wasm/generated/rom-weaver-format-metadata.ts";
 import type {
   ApplyPatchFormSettings,
@@ -91,6 +92,19 @@ const useRomWeaverAssetBaseUrl = () => useContext(RomWeaverSettingsContext).asse
 const useApplySettings = () => {
   const settings = useRomWeaverSettings();
   return useMemo(() => toApplyWorkflowSettings(settings as ApplyPatchFormSettings), [settings]);
+};
+
+/**
+ * Localizer for the UI chrome (the `ui.*` catalog namespace), following the
+ * Language setting and falling back to the browser locale when unset.
+ */
+const useUiLocalizer = (): Localizer => {
+  const settings = useRomWeaverSettings();
+  const language =
+    typeof (settings as { language?: unknown }).language === "string"
+      ? ((settings as { language?: string }).language as string)
+      : undefined;
+  return useMemo(() => createBrowserLocalizer(language), [language]);
 };
 
 const normalizeDefaultCompression = (value: RuntimeValue, fallback: DefaultCompressionMode = "auto") => {
@@ -318,4 +332,5 @@ export {
   useCreateSettings,
   useRomWeaverAssetBaseUrl,
   useRomWeaverSettings,
+  useUiLocalizer,
 };

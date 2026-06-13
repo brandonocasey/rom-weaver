@@ -1,9 +1,17 @@
 import { formatBytes, formatCount, formatDuration, formatList } from "../formatting/index.ts";
-import { DEFAULT_LOCALE, type LocaleCode, MESSAGE_CATALOGS, type MessageCatalog, type MessageId } from "./catalog.ts";
+import {
+  DEFAULT_LOCALE,
+  type LocaleCode,
+  MESSAGE_CATALOGS,
+  type MessageId,
+  type PartialMessageCatalog,
+} from "./catalog.ts";
 
 type Localizer = {
   locale: LocaleCode;
   message: (id: MessageId, values?: Record<string, unknown>) => string;
+  /** Plural-aware lookup: resolves `${id}.one` / `${id}.other` via Intl.PluralRules. */
+  messageCount: (id: MessageId, count: number, values?: Record<string, unknown>) => string;
   formatBytes: (bytes: number) => string;
   formatDuration: (milliseconds: number) => string;
   formatCount: (count: number, unit?: string) => string;
@@ -21,12 +29,12 @@ const normalizeLocale = (locale?: string): LocaleCode => {
   return rawLocale.toLowerCase();
 };
 
-const getCatalog = (locale: LocaleCode): MessageCatalog => {
+const getCatalog = (locale: LocaleCode): PartialMessageCatalog => {
   const normalizedLocale = normalizeLocale(locale);
   return (
     MESSAGE_CATALOGS[normalizedLocale] ||
     MESSAGE_CATALOGS[normalizedLocale.split("-")[0] || ""] ||
-    (MESSAGE_CATALOGS.en as MessageCatalog)
+    (MESSAGE_CATALOGS.en as PartialMessageCatalog)
   );
 };
 
@@ -69,16 +77,27 @@ const isDevelopmentLike = () =>
 const createLocalizer = (locale?: string): Localizer => {
   const normalizedLocale = negotiateLocale([locale || ""]);
   const catalog = getCatalog(normalizedLocale);
+  let pluralRules: Intl.PluralRules | undefined;
+  const message: Localizer["message"] = (id, values) => {
+    const template = catalog[id] || (MESSAGE_CATALOGS.en as PartialMessageCatalog)[id];
+    if (!template) return isDevelopmentLike() ? `[[${id}]]` : String(id);
+    return interpolateMessage(template, values);
+  };
   return {
     formatBytes: (bytes) => formatBytes(bytes, normalizedLocale),
     formatCount: (count, unit) => formatCount(count, normalizedLocale, unit),
     formatDuration: (milliseconds) => formatDuration(milliseconds, normalizedLocale),
     formatList: (items) => formatList(items, normalizedLocale),
     locale: normalizedLocale,
-    message: (id, values) => {
-      const template = catalog[id] || (MESSAGE_CATALOGS.en as MessageCatalog)[id];
-      if (!template) return isDevelopmentLike() ? `[[${id}]]` : String(id);
-      return interpolateMessage(template, values);
+    message,
+    messageCount: (id, count, values) => {
+      pluralRules ??= new Intl.PluralRules(normalizedLocale);
+      const category = pluralRules.select(count);
+      const pluralId = `${id}.${category}` as MessageId;
+      const fallbackId = `${id}.other` as MessageId;
+      const resolvedId =
+        catalog[pluralId] || (MESSAGE_CATALOGS.en as PartialMessageCatalog)[pluralId] ? pluralId : fallbackId;
+      return message(resolvedId, { ...values, count, n: count });
     },
   };
 };
