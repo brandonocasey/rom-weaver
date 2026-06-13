@@ -353,6 +353,12 @@ const useLocalApplyPatchFormSession = ({
     .join(" / ");
   const applyTimingText = formatElapsedTiming(completedApplyTimeMs);
   const compressTimingText = formatElapsedTiming(completedCompressionTimeMs);
+  // Download-button total: every action that produced the output (apply +
+  // recompress), not just the apply pass.
+  const totalTimingText =
+    completedApplyTimeMs === null && completedCompressionTimeMs === null
+      ? ""
+      : formatElapsedTiming((completedApplyTimeMs ?? 0) + (completedCompressionTimeMs ?? 0));
   const patchDecompressionTimingText = (() => {
     const elapsedMs = getStagedDecompressionTimeMs(stagedPatchInfos);
     if (typeof elapsedMs !== "number" || !Number.isFinite(elapsedMs)) return "";
@@ -547,6 +553,7 @@ const useLocalApplyPatchFormSession = ({
         pendingDownloadFileName,
         progress,
         selectedOutputOptionLabel,
+        totalTimingText,
         z3dsLabelSource,
       }),
     [
@@ -572,6 +579,7 @@ const useLocalApplyPatchFormSession = ({
       outputNameEdited,
       progress,
       selectedOutputOptionLabel,
+      totalTimingText,
       z3dsLabelSource,
     ],
   );

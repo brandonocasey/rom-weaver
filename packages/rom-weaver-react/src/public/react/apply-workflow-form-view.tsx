@@ -13,6 +13,7 @@ import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep, type WorkflowRomInputStepItem } from "./components/ds/workflow-rom-input-step.tsx";
 import { PatcherPrimaryAction } from "./components/patcher-output-controls.tsx";
+import { ARCHIVE_FILE_EXTENSIONS, PATCH_FILE_EXTENSIONS, ROM_FILE_EXTENSIONS } from "./file-classification.ts";
 import { getFileInputAcceptAttributes } from "./file-input-accept";
 import { ARCHIVE_INPUT_HINT, PATCH_INPUT_HINT, ROM_INPUT_HINT } from "./input-helper-text.ts";
 import { createCompressionTypeOptions } from "./output-view-model.ts";
@@ -40,6 +41,13 @@ import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./
 
 /** Format pills under the 0x01 hero — mirrors the loom prototype's apply list. */
 const APPLY_HERO_FORMATS = ["ips", "bps", "ups", "xdelta", "ppf", "cue", "zip", "7z", "chd", "rvz"] as const;
+
+/** Full registry support, listed in the 0x01 info popover. */
+const APPLY_SUPPORTED_FILES = [
+  { extensions: ROM_FILE_EXTENSIONS, label: "ROMs" },
+  { extensions: PATCH_FILE_EXTENSIONS, label: "Patches" },
+  { extensions: ARCHIVE_FILE_EXTENSIONS, label: "Archives & containers" },
+] as const;
 
 const TIMING_LABEL = (ms?: number) =>
   typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : "";
@@ -352,7 +360,7 @@ function ApplyWorkflowFormView({
   const applyStage = applyProgress ? String(applyProgress.label || applyProgress.message || "") : "";
   const applyFailed = !!errorNotice?.visible && errorNotice.level !== "warning";
   const applyDone = !!outputState.pendingDownloadFileName;
-  const applyTotalTime = outputState.applyTiming;
+  const applyTotalTime = outputState.totalTiming;
   const stagingStage = localizer.message("ui.drop.staging");
   const doneStage = applyTotalTime ? localizer.message("ui.status.doneMsg", { t: applyTotalTime }) : "";
   useEffect(() => {
@@ -411,20 +419,19 @@ function ApplyWorkflowFormView({
         hintCoarse={localizer.message(workflowEmpty ? "ui.drop.tapAnywhere" : "ui.drop.tap")}
         id="rom-weaver-row-unified-drop"
         info={
-          <InfoPopover title="Input handling">
-            <ul className="info-list">
-              <li>Archives are decompressed and the ROM is located automatically.</li>
-              <li>chd, rvz, and z3ds containers are unpacked before patching.</li>
-              <li>Nested archives resolve recursively.</li>
-              <li>RetroArch softpatch naming is supported.</li>
-            </ul>
-          </InfoPopover>
+          <ul className="info-list">
+            <li>Archives are decompressed and the ROM is located automatically.</li>
+            <li>chd, rvz, and z3ds containers are unpacked before patching.</li>
+            <li>Nested archives resolve recursively.</li>
+            <li>RetroArch softpatch naming is supported.</li>
+          </ul>
         }
         inputId="rom-weaver-input-file-unified"
         label={workflowEmpty ? "Drop a ROM or patches" : "Replace the ROM or add patches"}
         onFiles={handleUnifiedDrop}
         patchHint={`patches (${PATCH_INPUT_HINT})`}
         romHint={`roms (${ROM_INPUT_HINT})`}
+        supported={APPLY_SUPPORTED_FILES}
       />
       {workflowEmpty ? (
         <>

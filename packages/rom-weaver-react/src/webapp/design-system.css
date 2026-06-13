@@ -304,7 +304,10 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 }
 .rw-app .step-meta .rb.muted { color: var(--ink-3); }
 .rw-app .step-meta .rb.time { color: var(--thread-text); }
-.rw-app .step-body { padding: 6px var(--pad) 18px; }
+/* 24px bottom (vs the prototype's 18px) so the seam rule between sections sits
+   visually centred: below the rule the next head contributes ~24px to its
+   heading's cap height (16px padding + line-box lead). */
+.rw-app .step-body { padding: 6px var(--pad) 24px; }
 
 /* ═══ dropzone ═══ */
 .rw-app .drop {
@@ -804,6 +807,12 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
   content: ""; position: absolute; inset-inline-start: 3px; top: .55em;
   width: 4px; height: 4px; border-radius: 50%; background: var(--thread-text);
 }
+/* full per-bucket extension support inside the 0x01 info popover */
+.rw-app .info-support { display: flex; flex-direction: column; gap: 7px; }
+.rw-app .info-list + .info-support { margin-block-start: 9px; padding-block-start: 9px; border-block-start: 1px solid var(--seam); }
+.rw-app .info-support p { margin: 0; }
+.rw-app .info-support b { display: block; color: var(--ink); font-size: .72rem; letter-spacing: .05em; text-transform: uppercase; }
+.rw-app .info-support .mono { color: var(--ink-3); font-size: .72rem; overflow-wrap: anywhere; }
 
 /* the cue/gdi sheet reads as a code block: a title bar (label + copy button) over
    a monospace listing on a recessed surface. the copy lives in the heading so the

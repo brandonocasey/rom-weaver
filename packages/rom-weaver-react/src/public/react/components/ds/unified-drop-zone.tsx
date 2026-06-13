@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { createLogger } from "../../../../lib/logging.ts";
-import { DropZone, StepSection } from "./layout.tsx";
+import { DropZone, InfoPopover, StepSection } from "./layout.tsx";
 
 /**
  * The 0x01 INPUTS step — the single combined drop surface shared by every
@@ -17,6 +17,11 @@ const joinHintParts = (parts: string[]): string | undefined => {
   return `${parts.slice(0, -1).join(", ")}${parts.length > 2 ? "," : ""} or ${parts[parts.length - 1]}`;
 };
 
+type SupportedFileGroup = {
+  label: string;
+  extensions: readonly string[];
+};
+
 type UnifiedDropZoneProps = {
   label: ReactNode;
   romHint?: string;
@@ -29,8 +34,10 @@ type UnifiedDropZoneProps = {
   inputId?: string;
   /** Format pills under the hero label (empty state only). */
   formats?: readonly string[];
-  /** Step header info popover. */
+  /** Extra content for the step-header info popover (above the supported-file lists). */
   info?: ReactNode;
+  /** Full per-bucket extension support, listed in the info popover; the hint line just says "many more". */
+  supported?: readonly SupportedFileGroup[];
   /** Step number/title; the inputs step is 0x01 in every workflow. */
   num?: string;
   title?: ReactNode;
@@ -46,6 +53,7 @@ const UnifiedDropZone = ({
   onFiles,
   patchHint,
   romHint,
+  supported,
   title = "Inputs",
   ...dropZoneProps
 }: UnifiedDropZoneProps) => {
@@ -56,13 +64,29 @@ const UnifiedDropZone = ({
     });
     onFiles(files);
   };
-  const hint = joinHintParts([romHint, patchHint, archiveHint].filter((part): part is string => !!part));
+  const joinedHint = joinHintParts([romHint, patchHint, archiveHint].filter((part): part is string => !!part));
+  const hint = joinedHint && supported?.length ? `${joinedHint} — and many more` : joinedHint;
+  const popover =
+    info || supported?.length ? (
+      <InfoPopover title="Input handling">
+        {info}
+        {supported?.length ? (
+          <div className="info-support">
+            {supported.map((group) => (
+              <p key={group.label}>
+                <b>{group.label}</b> <span className="mono">{group.extensions.join(", ")}</span>
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </InfoPopover>
+    ) : undefined;
   return (
     <StepSection
       className={
         dropZoneProps.big ? "is-input is-empty unified-drop-step unified-drop-step--hero" : "is-input unified-drop-step"
       }
-      info={info}
+      info={popover}
       num={num}
       title={title}
     >
@@ -71,5 +95,5 @@ const UnifiedDropZone = ({
   );
 };
 
-export type { UnifiedDropZoneProps };
+export type { SupportedFileGroup, UnifiedDropZoneProps };
 export { UnifiedDropZone };

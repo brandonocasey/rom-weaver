@@ -35,6 +35,8 @@ type PatcherOutputState = {
   compressionFormat: string;
   applyTiming: string;
   compressTiming: string;
+  /** Combined wall time for every completed action (apply + compress). */
+  totalTiming: string;
   downloadSummary: {
     format?: string;
     size?: string;
@@ -133,6 +135,7 @@ const createEmptyPatcherOutputState = ({
   pendingDownloadFileName: null,
   resolvedOutputName: "",
   sizeSummary: createOutputSizeSummary(),
+  totalTiming: "",
 });
 
 const createEmptyPatchStackState = (): PatchStackState => ({

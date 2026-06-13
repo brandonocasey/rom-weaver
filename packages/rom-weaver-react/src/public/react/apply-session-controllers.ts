@@ -64,6 +64,7 @@ const inertOutputController: PatcherOutputController = {
     pendingDownloadFileName: null,
     resolvedOutputName: "",
     sizeSummary: createOutputSizeSummary(),
+    totalTiming: "",
   }),
   cancelPrimaryAction: () => undefined,
   runPrimaryAction: () => undefined,

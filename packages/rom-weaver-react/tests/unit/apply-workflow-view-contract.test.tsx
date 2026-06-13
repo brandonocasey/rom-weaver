@@ -40,6 +40,7 @@ const outputState = (overrides: Partial<PatcherOutputState> = {}): PatcherOutput
     pendingDownloadFileName: null,
     resolvedOutputName: "",
     sizeSummary: {},
+    totalTiming: "",
     ...overrides,
   }) as unknown as PatcherOutputState;
 

@@ -195,6 +195,7 @@ interface OutputViewStateInput {
   pendingDownloadFileName: string | null;
   progress: InputProgress | null;
   selectedOutputOptionLabel: string | undefined;
+  totalTimingText: string;
   z3dsLabelSource: BinarySource | undefined;
 }
 
@@ -217,6 +218,7 @@ const buildOutputViewState = ({
   pendingDownloadFileName,
   progress,
   selectedOutputOptionLabel,
+  totalTimingText,
   z3dsLabelSource,
 }: OutputViewStateInput) => ({
   applyButton: {
@@ -251,6 +253,7 @@ const buildOutputViewState = ({
   pendingDownloadFileName,
   resolvedOutputName: effectiveResolvedOutputName,
   sizeSummary: completedSizeSummary,
+  totalTiming: totalTimingText,
 });
 
 interface NoticeViewStateInput {

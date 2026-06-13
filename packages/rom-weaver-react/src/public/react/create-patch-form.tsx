@@ -1,4 +1,3 @@
-import ArrowUpDown from "lucide-react/dist/esm/icons/arrow-up-down.js";
 import Download from "lucide-react/dist/esm/icons/download.js";
 import GitCompare from "lucide-react/dist/esm/icons/git-compare.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -27,6 +26,7 @@ import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { OutputRunAction, WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
 import { buildCompressPanel } from "./compress-options.ts";
+import { ARCHIVE_FILE_EXTENSIONS, ROM_FILE_EXTENSIONS } from "./file-classification.ts";
 import { getFileInputAcceptAttributes } from "./file-input-accept";
 import { ARCHIVE_INPUT_HINT, ROM_INPUT_HINT } from "./input-helper-text.ts";
 import { useInputSelectionHandler } from "./input-selection-handler.ts";
@@ -164,6 +164,12 @@ const getSourceNoticeMessage = (source: CreateDisplaySourceState | null | undefi
 
 /** Format pills under the 0x01 hero — mirrors the loom prototype's create list. */
 const CREATE_HERO_FORMATS = ["sfc", "gba", "iso", "bin", "zip", "7z", "chd", "rvz"] as const;
+
+/** Full registry support, listed in the 0x01 info popover. */
+const CREATE_SUPPORTED_FILES = [
+  { extensions: ROM_FILE_EXTENSIONS, label: "ROMs" },
+  { extensions: ARCHIVE_FILE_EXTENSIONS, label: "Archives & containers" },
+] as const;
 
 const getSourceNoticeLevel = (source: CreateDisplaySourceState | null | undefined) =>
   source?.status === "failed" ? "error" : "warn";
@@ -1006,6 +1012,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
         label={createSourcesEmpty ? "Drop the original and modified ROMs" : "Add or replace a ROM"}
         onFiles={handleUnifiedDrop}
         romHint={`roms (${ROM_INPUT_HINT})`}
+        supported={CREATE_SUPPORTED_FILES}
       />
       {createSourcesEmpty ? (
         <>
@@ -1035,16 +1042,18 @@ function CreatePatchForm(props: CreatePatchFormProps) {
             title: "Original",
           })}
           {createInputsSelected ? (
-            <div className="swap-row create-swap-row">
+            <div className="swap-row">
               <button
-                className="btn swap-btn create-swap-btn"
+                className="btn swap-btn"
                 disabled={uploadDisabled}
                 id="patch-builder-button-swap-sources"
                 onClick={swapCreateSources}
                 title="Swap original and modified"
                 type="button"
               >
-                <ArrowUpDown aria-hidden="true" />
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M16 4.5 20 8.5l-4 4M20 8.5H7M8 19.5l-4-4 4-4M4 15.5h13" />
+                </svg>
                 Swap
               </button>
             </div>
