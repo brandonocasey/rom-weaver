@@ -1766,26 +1766,61 @@ fn copy_target_range(
     length: u64,
     progress: &mut BpsApplyProgress<'_>,
 ) -> Result<()> {
+    if length == 0 {
+        return Ok(());
+    }
+    if start >= *output_offset {
+        return Err(RomWeaverError::Validation(format!(
+            "TargetCopy referenced unavailable output at offset {start}"
+        )));
+    }
+
+    // A TargetCopy reads already-written output starting at `start` while the write cursor sits
+    // `period` bytes ahead, so the copied bytes are a repeating pattern with period `period`
+    // (`output[start + i] == period[i % period]`). When `period >= buffer`, every buffer-sized
+    // chunk reads bytes that were written before this copy began, so a plain chunked copy never
+    // overlaps the write region. When `period < buffer` (the common RLE fill, e.g. period 1), the
+    // old code copied only `period` bytes per seek+read+write — up to four syscalls per output byte
+    // for a period-1 run. Instead, read the period once, tile it across the buffer, and bulk-write.
+    let period = *output_offset - start;
     let mut buffer = [0u8; COPY_BUFFER_SIZE];
-    let mut remaining = length;
-    let mut read_offset = start;
 
-    while remaining > 0 {
-        if read_offset >= *output_offset {
-            return Err(RomWeaverError::Validation(format!(
-                "TargetCopy referenced unavailable output at offset {read_offset}"
-            )));
+    if period >= COPY_BUFFER_SIZE as u64 {
+        let mut remaining = length;
+        let mut read_offset = start;
+        while remaining > 0 {
+            let chunk = remaining.min(COPY_BUFFER_SIZE as u64) as usize;
+            output.seek(SeekFrom::Start(read_offset))?;
+            output.read_exact(&mut buffer[..chunk])?;
+            output.seek(SeekFrom::Start(*output_offset))?;
+            output.write_all(&buffer[..chunk])?;
+            remaining -= chunk as u64;
+            read_offset += chunk as u64;
+            *output_offset += chunk as u64;
+            progress.report(*output_offset);
         }
+        return Ok(());
+    }
 
-        let available = *output_offset - read_offset;
-        let chunk = remaining.min(available).min(buffer.len() as u64) as usize;
-        output.seek(SeekFrom::Start(read_offset))?;
-        output.read_exact(&mut buffer[..chunk])?;
-        output.seek(SeekFrom::Start(*output_offset))?;
+    let p = period as usize;
+    output.seek(SeekFrom::Start(start))?;
+    output.read_exact(&mut buffer[..p])?;
+    // Tile whole periods across the buffer (geometric doubling). `tile` is a multiple of `period`,
+    // so writing successive full `tile` chunks continues the pattern seamlessly, and any final
+    // short chunk still starts on a period boundary.
+    let tile = (COPY_BUFFER_SIZE / p) * p;
+    let mut filled = p;
+    while filled < tile {
+        let n = (tile - filled).min(filled);
+        buffer.copy_within(0..n, filled);
+        filled += n;
+    }
+    output.seek(SeekFrom::Start(*output_offset))?;
+    let mut remaining = length;
+    while remaining > 0 {
+        let chunk = remaining.min(tile as u64) as usize;
         output.write_all(&buffer[..chunk])?;
-
         remaining -= chunk as u64;
-        read_offset += chunk as u64;
         *output_offset += chunk as u64;
         progress.report(*output_offset);
     }
