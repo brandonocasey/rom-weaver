@@ -885,100 +885,100 @@ function TrimPatchForm(props: TrimPatchFormProps) {
             num="0x02"
             title="ROM"
           />
-          <WorkflowOutputStep
-            action={
-              <OutputRunAction
-                disabled={actionDisabled}
-                download={
-                  completedOutput
-                    ? getCompletedDownloadMeta(
-                        completedOutput.fileName,
-                        completedOutput.size,
-                        completedOutput.inputSize ?? sourceState?.size,
-                        completedOutput.rawSize,
-                      )
-                    : undefined
-                }
-                icon={
-                  completedOutput ? <Download aria-hidden="true" /> : busy ? undefined : <Scissors aria-hidden="true" />
-                }
-                id="trim-builder-button-run"
-                onClick={() => (completedOutput ? void runTrim() : onRunClick())}
-                progress={
-                  trimQueued
-                    ? waitingProgressProps
-                      ? {
-                          ...waitingProgressProps,
-                          cancelLabel: "Cancel queued trim",
-                          onCancel: cancelTrimOutputProgress,
-                        }
-                      : null
-                    : busy && progressProps && progress?.stage !== "input"
-                      ? {
-                          ...progressProps,
-                          cancelLabel: "Cancel trim",
-                          onCancel: cancelTrimOutputProgress,
-                        }
-                      : null
-                }
-              >
-                TRIM & DOWNLOAD
-              </OutputRunAction>
-            }
-            compress={buildOutputCompressionPanel({
-              disabled: outputDisabled,
-              fields: trimCompressPanel?.fields,
-              format: compressHeaderFormat,
-              formatId: "trim-builder-select-output-compression",
-              formatOptions: compressFormatOptions,
-              formatValue: resolvedOutputFormat,
-              onFieldChange: (key, value, updates) => updateSettings({ ...settings, ...(updates || { [key]: value }) }),
-              onFormatChange: updateOutputFormat,
-              summary: trimCompressPanel?.summary,
-              timing: compressTimingText,
-            })}
-            disabled={outputDisabled}
-            fileName={resolvedOutputName}
-            fileNameId="trim-builder-output-file"
-            fileNamePlaceholder="Trimmed filename (no extension)"
-            format={resolvedOutputFormat}
-            formatId="trim-builder-select-output-format"
-            formatOptions={formatOptions}
-            info={
-              <InfoPopover title="Output options">
-                <strong>Output</strong>
-                <ul>
-                  <li>Set the filename without an extension — the format selector controls it.</li>
-                  <li>Trimming permanently removes trailing padding from the ROM and can't be undone.</li>
-                  <li>Choose the raw extension to keep the trimmed bytes, or zip/7z to compress them.</li>
-                </ul>
-              </InfoPopover>
-            }
-            meta={trimTimingText ? <span className="t">{trimTimingText}</span> : undefined}
-            notice={
-              message && messagePlacement === "output" ? (
-                <Notice
-                  id="trim-builder-row-error-message"
-                  level={errorCode === "AMBIGUOUS_SELECTION" ? "warn" : "error"}
-                  onDismiss={messageDismissible ? clearWorkflowMessage : undefined}
-                >
-                  {message}
-                </Notice>
-              ) : null
-            }
-            num="0x03"
-            onFileNameChange={(value) => {
-              setOutputName(value);
-              updateSettings({
-                ...settings,
-                output: { ...settings.output, outputName: value.trim() || undefined },
-              });
-            }}
-            onFormatChange={updateOutputFormat}
-            title="Trim"
-          />
         </>
       ) : null}
+      <WorkflowOutputStep
+        action={
+          <OutputRunAction
+            disabled={actionDisabled}
+            download={
+              completedOutput
+                ? getCompletedDownloadMeta(
+                    completedOutput.fileName,
+                    completedOutput.size,
+                    completedOutput.inputSize ?? sourceState?.size,
+                    completedOutput.rawSize,
+                  )
+                : undefined
+            }
+            icon={
+              completedOutput ? <Download aria-hidden="true" /> : busy ? undefined : <Scissors aria-hidden="true" />
+            }
+            id="trim-builder-button-run"
+            onClick={() => (completedOutput ? void runTrim() : onRunClick())}
+            progress={
+              trimQueued
+                ? waitingProgressProps
+                  ? {
+                      ...waitingProgressProps,
+                      cancelLabel: "Cancel queued trim",
+                      onCancel: cancelTrimOutputProgress,
+                    }
+                  : null
+                : busy && progressProps && progress?.stage !== "input"
+                  ? {
+                      ...progressProps,
+                      cancelLabel: "Cancel trim",
+                      onCancel: cancelTrimOutputProgress,
+                    }
+                  : null
+            }
+          >
+            TRIM & DOWNLOAD
+          </OutputRunAction>
+        }
+        compress={buildOutputCompressionPanel({
+          disabled: outputDisabled,
+          fields: trimCompressPanel?.fields,
+          format: compressHeaderFormat,
+          formatId: "trim-builder-select-output-compression",
+          formatOptions: compressFormatOptions,
+          formatValue: resolvedOutputFormat,
+          onFieldChange: (key, value, updates) => updateSettings({ ...settings, ...(updates || { [key]: value }) }),
+          onFormatChange: updateOutputFormat,
+          summary: trimCompressPanel?.summary,
+          timing: compressTimingText,
+        })}
+        disabled={outputDisabled}
+        fileName={resolvedOutputName}
+        fileNameId="trim-builder-output-file"
+        fileNamePlaceholder="Trimmed filename (no extension)"
+        format={resolvedOutputFormat}
+        formatId="trim-builder-select-output-format"
+        formatOptions={formatOptions}
+        info={
+          <InfoPopover title="Output options">
+            <strong>Output</strong>
+            <ul>
+              <li>Set the filename without an extension — the format selector controls it.</li>
+              <li>Trimming permanently removes trailing padding from the ROM and can't be undone.</li>
+              <li>Choose the raw extension to keep the trimmed bytes, or zip/7z to compress them.</li>
+            </ul>
+          </InfoPopover>
+        }
+        meta={trimTimingText ? <span className="t">{trimTimingText}</span> : undefined}
+        notice={
+          message && messagePlacement === "output" ? (
+            <Notice
+              id="trim-builder-row-error-message"
+              level={errorCode === "AMBIGUOUS_SELECTION" ? "warn" : "error"}
+              onDismiss={messageDismissible ? clearWorkflowMessage : undefined}
+            >
+              {message}
+            </Notice>
+          ) : null
+        }
+        num="0x03"
+        onFileNameChange={(value) => {
+          setOutputName(value);
+          updateSettings({
+            ...settings,
+            output: { ...settings.output, outputName: value.trim() || undefined },
+          });
+        }}
+        onFormatChange={updateOutputFormat}
+        title="Trim"
+      />
       <ConfirmDialog
         body={`The trimmed copy of ${sourceFileName} is saved as a new download — your original file is not changed. Keep the original: some patches and tools need the untrimmed ROM, and restored padding may not be byte-identical.`}
         cancelLabel="Cancel"
