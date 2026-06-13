@@ -22,6 +22,14 @@ pub(super) struct SelectionResolutionOptions<'a> {
     pub(super) source_label: &'a str,
 }
 
+/// One selectable unit in a fallback prompt: a single entry, or a loose multi-track disc
+/// (its sheet + tracks) collapsed under one display label that expands to every member.
+struct DiscSelectionGroup {
+    label: String,
+    key: String,
+    members: Vec<String>,
+}
+
 impl CliApp {
     pub(super) fn archive_entry_kind_filter(
         rom_filter: bool,
@@ -51,6 +59,64 @@ impl CliApp {
             }
         }
         (payload_matches, container_fallback_matches)
+    }
+
+    /// Group disc media/sheet entries that share a base name (a `.cue`/`.gdi` sheet plus its
+    /// `(Track N)` tracks) into one selection group; every other entry stays a singleton.
+    /// Order-preserving so the prompt reflects the listing order.
+    fn group_disc_selection_entries(entries: &[String]) -> Vec<DiscSelectionGroup> {
+        let mut groups: Vec<DiscSelectionGroup> = Vec::new();
+        for entry in entries {
+            match Self::disc_base_key(entry) {
+                Some(key) => {
+                    let lower = entry.to_ascii_lowercase();
+                    let is_sheet = lower.ends_with(".cue") || lower.ends_with(".gdi");
+                    if let Some(group) = groups.iter_mut().find(|group| group.key == key) {
+                        group.members.push(entry.clone());
+                        // Prefer a sheet (.cue/.gdi) name as the disc's display label.
+                        if is_sheet {
+                            group.label = entry.clone();
+                        }
+                    } else {
+                        groups.push(DiscSelectionGroup {
+                            label: entry.clone(),
+                            key,
+                            members: vec![entry.clone()],
+                        });
+                    }
+                }
+                None => groups.push(DiscSelectionGroup {
+                    label: entry.clone(),
+                    key: entry.to_ascii_lowercase(),
+                    members: vec![entry.clone()],
+                }),
+            }
+        }
+        groups
+    }
+
+    /// Base key for grouping a disc's sheet + tracks: strips the directory, the file extension,
+    /// and a trailing `(Track N)` segment. Returns `None` for non-disc entries so unrelated ROMs
+    /// never collapse together.
+    fn disc_base_key(name: &str) -> Option<String> {
+        let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        let lower = base.to_ascii_lowercase();
+        let is_disc_member = [".bin", ".cue", ".gdi", ".iso", ".img", ".raw", ".wav"]
+            .iter()
+            .any(|ext| lower.ends_with(ext));
+        if !is_disc_member {
+            return None;
+        }
+        let stem = base.rfind('.').map_or(base, |idx| &base[..idx]);
+        let mut key = stem.trim();
+        // Drop a trailing "(Track N)" descriptor so every track shares the disc base.
+        if let Some(open) = key.to_ascii_lowercase().rfind("(track") {
+            let trimmed = key[..open].trim();
+            if !trimmed.is_empty() {
+                key = trimmed;
+            }
+        }
+        Some(key.to_ascii_lowercase())
     }
 
     pub(super) fn extract_with_selection_fallback(
@@ -155,8 +221,10 @@ impl CliApp {
         );
         // A CD `.cue` or GD-ROM `.gdi` sheet describes one disc; collapse its
         // track files into the single sheet candidate so the disc is not treated
-        // as ambiguous.
-        let has_disc_sheet = payload.iter().any(|entry| {
+        // as ambiguous. Detect the sheet from the FULL entry list rather than the
+        // kind-filtered payload: a sheet excluded from `payload` would otherwise
+        // leave the bare bin/img tracks looking like competing candidates.
+        let has_disc_sheet = entries.iter().any(|entry| {
             let lower = entry.path.to_ascii_lowercase();
             lower.ends_with(".cue") || lower.ends_with(".gdi")
         });
@@ -183,6 +251,9 @@ impl CliApp {
         trace!(
             source = %source.display(),
             candidate_count = candidates.len(),
+            entry_count = entries.len(),
+            payload_count = payload.len(),
+            has_disc_sheet,
             interactive = self.interactive_selection_enabled,
             "resolving extract payload selections"
         );
@@ -268,11 +339,24 @@ impl CliApp {
             )));
         }
 
-        let prompt_candidates = unique_entries
+        // A loose multi-track disc ships a `.cue`/`.gdi` sheet plus its track files of a similar
+        // name; group those into a SINGLE candidate so the disc reads as one ROM rather than
+        // prompting per track (and dropping the sheet). Selecting the disc expands to every member.
+        let groups = Self::group_disc_selection_entries(&unique_entries);
+        // A single logical payload (e.g. one disc) needs no prompt — extract its whole group.
+        if groups.len() == 1 {
+            return Ok(groups
+                .into_iter()
+                .next()
+                .map(|group| group.members)
+                .unwrap_or_default());
+        }
+
+        let prompt_candidates = groups
             .iter()
-            .map(|entry| PromptCandidate {
-                value: entry.clone(),
-                label: entry.clone(),
+            .map(|group| PromptCandidate {
+                value: group.label.clone(),
+                label: group.label.clone(),
                 size: None,
             })
             .collect::<Vec<_>>();
@@ -294,7 +378,7 @@ impl CliApp {
         };
         Ok(selected_indexes
             .into_iter()
-            .map(|index| prompt_candidates[index].value.clone())
+            .flat_map(|index| groups[index].members.clone())
             .collect())
     }
 
@@ -457,5 +541,78 @@ impl CliApp {
 
     pub(super) fn should_ignore_checksum_candidate(candidate_name: &str) -> bool {
         should_ignore_common_container_file(candidate_name)
+    }
+}
+
+#[cfg(test)]
+mod disc_grouping_tests {
+    use super::CliApp;
+
+    #[test]
+    fn disc_base_key_strips_directory_extension_and_track_suffix() {
+        assert_eq!(CliApp::disc_base_key("Game.cue").as_deref(), Some("game"));
+        assert_eq!(
+            CliApp::disc_base_key("Game (Track 1).bin").as_deref(),
+            Some("game")
+        );
+        assert_eq!(
+            CliApp::disc_base_key("disc/Game (Track 02).bin").as_deref(),
+            Some("game")
+        );
+        assert_eq!(
+            CliApp::disc_base_key("nested\\Game.gdi").as_deref(),
+            Some("game")
+        );
+        assert_eq!(CliApp::disc_base_key("image.iso").as_deref(), Some("image"));
+    }
+
+    #[test]
+    fn disc_base_key_returns_none_for_non_disc_members() {
+        assert_eq!(CliApp::disc_base_key("readme.txt"), None);
+        assert_eq!(CliApp::disc_base_key("cover.png"), None);
+        assert_eq!(CliApp::disc_base_key("patch.bps"), None);
+    }
+
+    #[test]
+    fn group_disc_selection_entries_collapses_one_disc_into_a_single_group() {
+        let entries = vec![
+            "Game (Track 1).bin".to_string(),
+            "Game (Track 2).bin".to_string(),
+            "Game.cue".to_string(),
+        ];
+        let groups = CliApp::group_disc_selection_entries(&entries);
+        assert_eq!(groups.len(), 1);
+        let group = &groups[0];
+        // The `.cue` sheet wins the display label even though it is listed last.
+        assert_eq!(group.label, "Game.cue");
+        assert_eq!(group.members.len(), 3);
+        assert!(group.members.contains(&"Game (Track 1).bin".to_string()));
+        assert!(group.members.contains(&"Game.cue".to_string()));
+    }
+
+    #[test]
+    fn group_disc_selection_entries_keeps_separate_discs_and_extras_apart() {
+        let entries = vec![
+            "Alpha.cue".to_string(),
+            "Alpha (Track 1).bin".to_string(),
+            "Beta.cue".to_string(),
+            "Beta (Track 1).bin".to_string(),
+            "manual.txt".to_string(),
+        ];
+        let groups = CliApp::group_disc_selection_entries(&entries);
+        // Two discs + one unrelated file => three selection groups (still ambiguous => prompt).
+        assert_eq!(groups.len(), 3);
+        let labels: Vec<&str> = groups.iter().map(|group| group.label.as_str()).collect();
+        assert_eq!(labels, vec!["Alpha.cue", "Beta.cue", "manual.txt"]);
+        assert_eq!(groups[0].members.len(), 2);
+        assert_eq!(groups[2].members, vec!["manual.txt".to_string()]);
+    }
+
+    #[test]
+    fn group_disc_selection_entries_preserves_listing_order() {
+        let entries = vec!["second.nes".to_string(), "first.nes".to_string()];
+        let groups = CliApp::group_disc_selection_entries(&entries);
+        let labels: Vec<&str> = groups.iter().map(|group| group.label.as_str()).collect();
+        assert_eq!(labels, vec!["second.nes", "first.nes"]);
     }
 }

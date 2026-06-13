@@ -716,6 +716,57 @@ fn extract_rom_filter_extracts_rom_entries_only() {
 }
 
 #[test]
+fn extract_multi_track_disc_is_one_rom_no_select_needed() {
+    // A bin+cue disc carries several `.bin` tracks alongside a `.cue` sheet. The tracks would
+    // each look like a competing payload, but the sheet marks them as one logical disc, so a
+    // non-interactive extract pulls every member without an ambiguity/`--select` error.
+    let temp = setup_temp_dir();
+    fs::write(temp.child("track01.bin").path(), vec![0x11u8; 64]).expect("track01 fixture");
+    fs::write(temp.child("track02.bin").path(), vec![0x22u8; 64]).expect("track02 fixture");
+    temp.child("disc.cue")
+        .write_str(
+            "FILE \"track01.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\nFILE \"track02.bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n",
+        )
+        .expect("cue fixture");
+
+    let archive = temp.child("disc.zip");
+    Command::cargo_bin("rom-weaver")
+        .expect("binary")
+        .args([
+            "compress",
+            temp.child("disc.cue").path().to_str().expect("path"),
+            temp.child("track01.bin").path().to_str().expect("path"),
+            temp.child("track02.bin").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            archive.path().to_str().expect("path"),
+            "--json",
+        ])
+        .assert()
+        .code(0);
+
+    let out_dir = temp.child("extract-disc");
+    let json = run_single_json_event(
+        &[
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--rom-filter",
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+    assert_eq!(json["command"], "extract");
+    assert_eq!(json["status"], "succeeded");
+    // The whole disc lands: sheet plus every track, none dropped, none prompted for.
+    assert!(out_dir.child("disc.cue").path().exists());
+    assert!(out_dir.child("track01.bin").path().exists());
+    assert!(out_dir.child("track02.bin").path().exists());
+}
+
+#[test]
 fn probe_reports_rar_container_as_supported() {
     let temp = setup_temp_dir();
     let source = temp.child("version.rar");

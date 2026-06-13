@@ -994,6 +994,53 @@ const resolveCompressionRomAutoPickEntryName = (
   throw new Error(`${archiveFileName || "Archive"} contains multiple input candidates`);
 };
 
+// Loose multi-track discs (a `.cue`/`.gdi` sheet plus its track `.bin`s) ship inside plain
+// archives too, not only CHDs. The descent auto-resolves a SINGLE payload, which drops the
+// sheet and sibling tracks; when the resolved entry belongs to a complete disc group, return
+// the whole group (every sheet + track) so they extract together and group into one disc.
+const resolveArchiveDiscGroupEntryNames = async (
+  archiveFile: PatchFileInstance,
+  options: ApplyWorkflowOptions | undefined,
+  runtime: InputPreparationRuntimeLike,
+  selectedEntryName: string,
+): Promise<string[]> => {
+  if (PATH_BACKED_COMPRESSION_FORMATS.has(getCompressionFormat(archiveFile))) return [];
+  // With a pre-selected entry, only probe when it looks like a disc member; with no
+  // pre-selection we always probe, since that is exactly the ambiguous case the Rust
+  // descent would otherwise resolve to a single track (dropping the cue + siblings).
+  if (
+    selectedEntryName &&
+    !(
+      isBinEntryFileName(selectedEntryName) ||
+      isCueEntryFileName(selectedEntryName) ||
+      isGdiEntryFileName(selectedEntryName)
+    )
+  ) {
+    return [];
+  }
+  const romEntries = await listCompressionEntries(archiveFile, options, runtime, { romFilter: true }).catch(() => []);
+  if (romEntries.length < 2) return [];
+  const probe = await probeCompressionRomEntriesForSource(archiveFile, romEntries, options, runtime).catch(() => null);
+  if (!probe) return [];
+  const completeGroups = probe.cueGroups.filter((group) => isCompleteCueGroup(group));
+  const group = selectedEntryName
+    ? resolveCompressionRomCueGroup(completeGroups, selectedEntryName) ||
+      (completeGroups.length === 1 ? completeGroups[0] : null)
+    : // No pre-selection: only auto-pick when there is exactly one disc and nothing else
+      // competing for selection, so genuinely ambiguous archives still prompt.
+      completeGroups.length === 1 && probe.standaloneEntries.length === 0
+      ? completeGroups[0]
+      : null;
+  if (!group) return [];
+  // A single-disc archive may carry both a `.cue` and a `.gdi`; both are sidecars for the
+  // same tracks, so keep every sheet plus the group's tracks.
+  const sheetNames = romEntries
+    .filter((entry) => isCueEntryFileName(entry.filename) || isGdiEntryFileName(entry.filename))
+    .map((entry) => entry.filename);
+  const sheets = sheetNames.length ? sheetNames : [group.cueFileName];
+  return normalizeSelectedEntryNames([...sheets, ...group.trackFileNames]);
+};
+
 type PatchArchiveLeaf = {
   candidate: SelectionFileCandidate;
   file: PatchFileInstance;
@@ -1282,9 +1329,16 @@ const resolveArchiveInputAssetsByDescent = async (
     runtime,
     selectedEntryName: selectedInputEntryName,
   });
-  const selectedEntries = normalizeSelectedEntryNames(
+  const baseSelectedEntries = normalizeSelectedEntryNames(
     chdSelection.selectedEntryName ? [chdSelection.selectedEntryName] : [],
   );
+  // When the auto-resolved entry is part of a loose bin+cue/gdi disc, select the whole disc
+  // group so the sheet and every track extract together (otherwise only the single bin lands
+  // and the cue/gdi sidecar is silently dropped).
+  const discGroupEntries = chdSelection.chdSplitBin
+    ? []
+    : await resolveArchiveDiscGroupEntryNames(archiveFile, options, runtime, chdSelection.selectedEntryName || "");
+  const selectedEntries = discGroupEntries.length > 1 ? discGroupEntries : baseSelectedEntries;
   await preflightArchiveLimitsForDescent(archiveFile, options, runtime, { romFilter: true }, selectedEntries);
   traceArchivePreparation(options, "input.archive.descent.start", {
     compressionFormat,

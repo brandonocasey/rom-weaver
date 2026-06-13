@@ -236,6 +236,49 @@ fn extract_payload_selection_keeps_single_logical_payload_whole() {
     assert!(selected.is_empty());
 }
 
+#[test]
+fn extract_payload_selection_collapses_multi_track_disc_without_prompting() {
+    // A multi-track disc lists a `.cue` sheet plus several `.bin` tracks. Even though the
+    // tracks would each be a payload candidate, the sheet collapses them into one logical
+    // ROM, so no ambiguity prompt fires. The prompter is primed to pick a track to prove the
+    // resolver never consults it.
+    let app = test_app_with_prompt(vec![0]);
+    let context = app.context(ThreadBudget::Fixed(1));
+    let handler = TestListHandler {
+        entries: vec![
+            ContainerListEntry {
+                path: "disc.cue".to_string(),
+                size: Some(1),
+            },
+            ContainerListEntry {
+                path: "track01.bin".to_string(),
+                size: Some(20),
+            },
+            ContainerListEntry {
+                path: "track02.bin".to_string(),
+                size: Some(30),
+            },
+        ],
+    };
+
+    let selected = app
+        .resolve_extract_payload_selections(
+            &handler,
+            Path::new("disc.test"),
+            SelectionResolutionOptions {
+                kind_filter: ArchiveEntryKindFilter::new(true, false),
+                split_bin: false,
+                ignore_common_files: true,
+                source_label: "extract input",
+            },
+            &context,
+        )
+        .expect("selection");
+
+    // Empty => extract the whole container (the single logical disc), no per-track prompt.
+    assert!(selected.is_empty());
+}
+
 /// Compress `inputs` into a `zip` container at `output`, asserting the fixture build succeeds.
 fn compress_zip_fixture(app: &CliApp, inputs: &[PathBuf], output: &Path) {
     let outcome = app.run(Commands::Compress(CompressCommand {
