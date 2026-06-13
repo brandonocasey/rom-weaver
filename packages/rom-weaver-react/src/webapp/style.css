@@ -1,5 +1,6 @@
 /* RomWeaver React UI base tokens */
 
+@import "../assets/fonts/archivo.css";
 @import "../assets/fonts/inter-tight.css";
 @import "tailwindcss";
 
@@ -39,12 +40,12 @@ body{
 
 body{
 	margin:0;
-	/* follow the active dark-pro theme (which defaults to the OS preference) */
-	background-color:var(--rw-bg, var(--rom-weaver-color-background));
-	color:var(--rw-ink, var(--rom-weaver-color-text));
-	font:500 14.5px/1.5 "Inter Tight", "Segoe UI", sans-serif;
+	/* follow the active loom theme (which defaults to the OS preference) */
+	background-color:var(--chassis, var(--rom-weaver-color-background));
+	color:var(--ink, var(--rom-weaver-color-text));
+	font:500 14.5px/1.5 "Archivo", "Inter Tight", "Inter Tight Fallback", "Segoe UI", system-ui, sans-serif;
 	letter-spacing:0;
-	font-stretch:92%;
+	font-stretch:94%;
 	cursor:default;
 	text-rendering:optimizeLegibility;
 	-webkit-font-smoothing:antialiased;
