@@ -14,6 +14,22 @@ type RuntimeProgress = {
 const isRecord = (value: JsonValue | object | null | undefined): value is JsonRecord =>
   !!value && typeof value === "object" && !Array.isArray(value) && !ArrayBuffer.isView(value);
 
+/* Rust stage labels name the FORMAT, never the file ("extracting rvz (18%)",
+   "creating `7z` (3/10)"). When the call site knows the file, swap the generic
+   stem for the contextual label and keep the parenthetical progress detail. */
+const GENERIC_STAGE_LABEL =
+  /^(extracting|creating|compressing|converting|decompressing|reading)\s+`?[\w.-]+`?\s*(\((?:\d{1,3}\s*%|\d+\/\d+)\))?$/i;
+
+const contextualizeRuntimeLabel = (label: string | undefined, contextualLabel: string | undefined) => {
+  if (!label) return contextualLabel;
+  if (!contextualLabel) return label;
+  const generic = label.trim().match(GENERIC_STAGE_LABEL);
+  if (!generic) return label;
+  const detail = generic[2];
+  if (!detail) return contextualLabel;
+  return `${contextualLabel.replace(/\.{3}$/, "")} ${detail}`;
+};
+
 const forwardCreatePatchProgress =
   (onProgress?: Parameters<NonNullable<WorkflowRuntime["patch"]["createPatch"]>>[0]["onProgress"]) =>
   (progress: RuntimeProgress) => {
@@ -31,7 +47,8 @@ const forwardRomSpecificProgress = (
   if (!onProgress) return undefined;
   return (progress: RuntimeProgress) => {
     const label =
-      progress.label || fallbackLabel || (stage === "input" ? "Extracting disc image..." : "Creating disc image...");
+      contextualizeRuntimeLabel(progress.label, fallbackLabel) ||
+      (stage === "input" ? "Extracting disc image..." : "Creating disc image...");
     if (typeof progress.percent !== "number" || !Number.isFinite(progress.percent)) {
       onProgress({
         ...progress,
@@ -60,7 +77,8 @@ const forwardArchiveProgress = (
   let sawIntermediate = false;
   return (progress: RuntimeProgress) => {
     const label =
-      progress.label || fallbackLabel || (stage === "input" ? "Extracting archive entry..." : "Creating archive...");
+      contextualizeRuntimeLabel(progress.label, fallbackLabel) ||
+      (stage === "input" ? "Extracting archive entry..." : "Creating archive...");
     const details = isRecord(progress.details)
       ? {
           ...progress.details,
@@ -94,4 +112,4 @@ const forwardArchiveProgress = (
   };
 };
 
-export { forwardArchiveProgress, forwardCreatePatchProgress, forwardRomSpecificProgress };
+export { contextualizeRuntimeLabel, forwardArchiveProgress, forwardCreatePatchProgress, forwardRomSpecificProgress };
