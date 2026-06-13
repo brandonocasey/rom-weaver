@@ -4,6 +4,7 @@
 
 ## Recent Updates (2026-05-16)
 
+- `this commit`: Dreamcast `.dcp` (Universal Dreamcast Patcher) apply landed. New crates `rom-weaver-gdrom` (GD-ROM ISO9660 read/write + `MODE1/2352` EDC/ECC) and `rom-weaver-dcp` (ZIP/manifest/apply/rebuild); `rom-weaver-xdelta` gained `apply_patch_bytes`. CLI `patch apply` routes `.dcp` to a disc rebuild (input .cue/.gdi → patched data track → reassembled disc → CHD/GDI), validated byte-correct per file on real data. The rebuild streams the raw `MODE1/2352` track to a writer (`rebuild_track_to_writer`): the layout is planned from file sizes and each file's bytes are produced on demand, so peak memory scales with the largest single patched file's apply working set, not the disc. Remaining work (tests, webapp wiring, parity, create, format coverage) is tracked under "Dreamcast `.dcp` — remaining work" in the Patch Formats section.
 - `2026-05-17 audit`: Added backlog rows for current threading/streaming gaps (RVZ/Z3DS capability parity, qbsdiff threading, patch streaming migrations off full-buffer reads, and real codec backend implementation).
 - `this commit`: Added thread capability/runtime validation groundwork (`ThreadCapability::supports_execution`) and parity assertions for IPS/VCDIFF apply execution paths.
 - `this commit`: Native SOLID v4 patch support landed (`.solid`, parse/apply/create, MD5 validation, primitive stream handling, and CLI smoke coverage).
@@ -117,6 +118,37 @@
 | PAT-024 | patch | BSP | done | n/a | n/a | done | n/a | scan,write flags | unit,cli-smoke | done | BSP apply landed as a distinct scripted format (`.bsp`) via embedded BSP VM runtime execution; patch creation is intentionally unsupported and out of scope. |
 | PAT-025 | patch | cheat-patch-create | n/a | n/a | n/a | n/a | todo | scan,diff,write flags | fixture-parity,cli-smoke,json-contract | todo | Add cheat patch creation support that emits deterministic cheat-code outputs from original/modified inputs. |
 | PAT-026 | patch | HDiffPatch/HPatchZ | done | n/a | n/a | done | n/a | scan,diff,write flags | fixture-parity,cli-smoke | done | Native `.hdiff`/`.hpatchz` parse/apply landed with HDIFF13 and HDIFFSF20 single-file support; apply supports nocomp, zstd, zlib, bz2, lzma, and lzma2 with upstream fixture parity coverage (including HDIFFSF20 zstd). HDIFF13 apply parallelizes independent chunk decode when multiple chunks are present; HDIFFSF20 apply parallelizes independent step rendering when the payload has multiple steps and falls back to sequential when it does not. HDIFF19 directory patches remain intentionally unsupported for patch-apply. Patch creation is intentionally disabled (use upstream hdiffz/hpatchz tooling). |
+
+| PAT-027 | patch | DCP (Dreamcast) | done | n/a | n/a | done | todo | streaming write | unit,crate-roundtrip (no cli-smoke yet) | partial | Universal Dreamcast Patcher apply landed (disc input → rebuild GD-ROM data track → reassemble → CHD/GDI), validated byte-correct per file on the real Space Channel 5 disc. NOT a `PatchHandler` (separate disc-rebuild path via `rom-weaver-gdrom` + `rom-weaver-dcp`). Remaining work tracked below. |
+
+### Dreamcast `.dcp` — remaining work
+
+Apply is implemented and engine-tested; these items are not done:
+
+**Tests**
+- `cli_smoke` end-to-end `.dcp` fixture: synthesize a disc (`.gdi` + a `MODE1/2352` data track authored via `rom-weaver-gdrom` + dummy low-density tracks) plus a synthetic `.dcp` (a real xdelta delta + a verbatim file), run `patch apply`, and assert the rebuilt disc's files. Currently the whole CLI path (`run_dcp_apply`, data-track auto-select, staging, compress) is only validated manually against a local disc.
+- Boot-sector *replacement* path in `rebuild_track_to_writer`: a `.dcp` carrying `bootsector/IP.BIN` (32768 bytes) → assert the rebuilt boot area matches and `boot_sector_replaced` is set; plus the wrong-size IP.BIN error path. SC5 has no boot sector, so this branch is untested.
+- Direct `rom_weaver_xdelta::vcdiff_output_size` unit test (create a patch, assert reported size == target length); currently only covered indirectly.
+- CLI validation-error paths: `.dcp` with a non-disc input, `.dcp` chained with another patch, and `.dcp` combined with `--strip-header`/`--add-header`/`--repair-checksum`/`--n64-byte-order` (all currently rejected in `run_dcp_apply`, untested).
+- `mode1` real-track byte-for-byte test is `#[ignore]` (needs a local disc); no committed real-vector fixture.
+- Lock the streaming writer against the in-memory builder: assert `write_track` output, when mode1-decoded, equals `build_iso` (a 0-byte-file regression already has a targeted test).
+
+**Webapp / browser (Phase 6)**
+- DONE: `.dcp` added to the shared patch-extension list (`PATCH_FILTER_FILE_EXTENSIONS` in `rom-weaver-core/src/common_files.rs`), regenerated into `rom-weaver-format-metadata.ts`; the webapp classifier, file-picker `accept`, and patch-probe tolerance all derive from it, so a dropped `.dcp` routes to the patch bucket automatically (tsc + biome clean). No hardcoded patch list or format gate elsewhere.
+- TODO (form wiring — the main webapp gap): the only `.dcp` reference in `packages/rom-weaver-react/src` is the generated extension list; there is **no UI that pairs a `.dcp` with its disc source or dispatches the apply**. A `.dcp` is byte-stream→byte-stream-incompatible (it rebuilds a whole disc, not a single ROM), so the standard apply form's patch→ROM pairing does not model it. Needs: recognize a `.dcp` in the patch bucket as a disc-rebuild patch, require/pair a grouped disc ROM (`.gdi`/`.cue` + tracks, the disc-as-single-ROM grouping) as its source, and dispatch `run_dcp_apply` (same wasm CLI entry the native path uses) → CHD/GDI. Until this exists, `.dcp` apply is CLI-only despite the file routing to the right bucket.
+- TODO: end-to-end browser validation via the dev server (user-driven, after the form wiring above) — drop a disc (`.gdi` + tracks) + a `.dcp`, confirm it stages to OPFS, runs `run_dcp_apply` in the wasm CLI, and produces a CHD. Measure peak browser memory (the per-file VCDIFF apply is the floor — see Memory/perf). Check mobile Safari.
+- TODO: needs a fresh DCP-capable wasm build (`mise run build-wasm`) — the committed wasm artifact predates DCP.
+
+**Parity / correctness**
+- Byte-identical-to-UDP disc image: current output is *file-level* parity (every rebuilt file byte-correct), not the same `.gdi`/CHD bytes UDP emits. Would require reproducing DiscUtils' ISO9660 layout exactly and a UDP reference output to diff against.
+- Playability validation on an emulator / real hardware (path tables are correct-by-construction but unverified).
+
+**Memory / perf**
+- Per-file VCDIFF apply is still fully in-memory, so a single large patched file (e.g. SC5's ~174 MB `MAKUMA.AFS`) dominates peak RSS (~1.14 GB). The rebuild itself no longer scales with disc size; streaming the xdelta decode would lower the per-file floor.
+
+**Format coverage**
+- DCP *create* (generate a `.dcp` from two discs: diff the file trees, emit per-file xdelta deltas + verbatim files + optional `IP.BIN`, zip) — not implemented.
+- ZIP64 `.dcp` archives are rejected (large patches); Joliet/Rock Ridge in the source ISO is ignored (primary-descriptor only); non-45000 start LBAs / CDI layouts unsupported; xdelta-LZMA-secondary deltas are rejected (stock UDP uses `flags=0`, so unaffected).
 
 ## Codecs
 

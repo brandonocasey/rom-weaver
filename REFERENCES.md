@@ -11,6 +11,13 @@ It is intentionally a living document. Some patch families do not have stable fo
 - VCDIFF: RFC 3284 <https://www.rfc-editor.org/rfc/rfc3284.html>
 - DLDI (Dynamically Linked Device Interface): <https://www.chishm.com/DLDI/>
 - BSDIFF family background paper: <https://www.daemonology.net/papers/bsdiff.pdf>
+- DCP (Universal Dreamcast Patcher): no formal spec — a ZIP of per-file
+  xdelta3/VCDIFF deltas applied inside a GD-ROM ISO9660 filesystem; convention
+  documented from the UDP source (see implementations below).
+- ISO9660 / ECMA-119 (volume descriptors, directory records, path tables):
+  <https://wiki.osdev.org/ISO_9660>
+- CD-ROM sector layout + EDC/ECC (ECMA-130, `MODE1/2352`):
+  <https://www.ecma-international.org/wp-content/uploads/ECMA-130_2nd_edition_june_1996.pdf>
 
 ## Patch Reference Implementations
 
@@ -41,11 +48,22 @@ It is intentionally a living document. Some patch families do not have stable fo
   - Vendored Flips snapshot: <https://github.com/Alcaro/Flips/tree/5a3d2012b8ea53ae777c24b8ac4edb9a6bdb9761>
 - xdelta3 (VCDIFF-compatible toolchain): <https://github.com/jmacd/xdelta>
 - open-vcdiff (RFC 3284 implementation): <https://github.com/google/open-vcdiff>
+- Universal Dreamcast Patcher (the `.dcp` reference; GPL-3.0, study only — do
+  not copy): <https://github.com/DerekPascarella/UniversalDreamcastPatcher>
+  - GD-ROM ISO9660 build/extract (DiscUtilsGD, MIT) used by it and by
+    `buildgdi`: <https://github.com/Sappharad/GDIbuilder>
+- CD-ROM EDC/ECC reference (Neill Corlett's ECM algorithm; basis for the
+  `mode1` re-encoder): widely mirrored as `ecm.c`/`unecm.c` (ECMA-130 P/Q
+  Reed-Solomon product code over GF(2⁸), primitive poly `0x11D`, EDC poly
+  `0x8001801B`).
 
 ### In-Repo (`rom-weaver`) Implementations
 
 - Patch registry: [`crates/rom-weaver-patches/src/lib.rs`](crates/rom-weaver-patches/src/lib.rs)
 - Handlers directory: [`crates/rom-weaver-patches/src/`](crates/rom-weaver-patches/src/)
+- DCP format core: [`crates/rom-weaver-dcp/src/`](crates/rom-weaver-dcp/src/) (zip, manifest, apply, rebuild)
+- GD-ROM filesystem read/write: [`crates/rom-weaver-gdrom/src/`](crates/rom-weaver-gdrom/src/) (sector, iso9660, gdrom, iso_writer, mode1)
+- DCP CLI path: [`crates/rom-weaver-app/src/patch_apply_dcp.rs`](crates/rom-weaver-app/src/patch_apply_dcp.rs)
 
 ## Container / Compression Specs
 
@@ -76,6 +94,7 @@ It is intentionally a living document. Some patch families do not have stable fo
 | `DLDI`                | Chishm DLDI page, `rom-weaver` DLDI implementation                        |
 | `DPS`                 | `rom-weaver` DPS implementation                                           |
 | `SOLID`               | `rom-weaver` SOLID implementation                                         |
+| `DCP` (Dreamcast)     | UniversalDreamcastPatcher (format oracle), DiscUtilsGD/buildgdi (GD-ROM layout), ECMA-130 (EDC/ECC), RFC 3284 (per-file deltas) |
 
 ## BPS Comparison: MultiPatch / Flips
 

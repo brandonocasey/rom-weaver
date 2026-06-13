@@ -35,7 +35,9 @@ the WASM build over a JSON event protocol.
 | `crates/rom-weaver-containers` | Container registry + per-format handlers (`src/handlers/*.rs`: zip, 7z, tar*, chd glue, rvz, z3ds, pbp, cso, …). |
 | `crates/rom-weaver-chd` | Native CHD implementation (read sessions, create pipeline, codecs, disc inference). Exposed as a `ContainerHandler` + `ChdCodec`. |
 | `crates/rom-weaver-patches` | Patch format handlers (`src/{ips,bps,ups,ppf,rup,…}.rs`), one file per format. |
-| `crates/rom-weaver-xdelta` | VCDIFF/xdelta encode+decode, separate from `rom-weaver-patches` (parallel window encoding). |
+| `crates/rom-weaver-xdelta` | VCDIFF/xdelta encode+decode, separate from `rom-weaver-patches` (parallel window encoding). Also exposes `apply_patch_bytes` for in-memory VCDIFF apply (used by `.dcp`). |
+| `crates/rom-weaver-gdrom` | Dreamcast GD-ROM / CD data-track filesystem: read (`sector` cooking of `MODE1/2352`, `iso9660` parse, `GdRomFs` tree view with the +45000 LBA bias) and write (`iso_writer` authors a cooked ISO9660 image, `mode1` re-encodes EDC/ECC into raw `MODE1/2352`). Pure Rust, wasm-safe. |
+| `crates/rom-weaver-dcp` | Universal Dreamcast Patcher (`.dcp`) format: ZIP central-directory reader + entry inflate (`zip`), entry classification (`manifest`), per-file apply (`apply`), and full data-track rebuild (`rebuild`). Builds on `rom-weaver-gdrom` + `rom-weaver-xdelta`. |
 | `crates/rom-weaver-libarchive(-sys)` | libarchive FFI bindings (vendored under `vendor/libarchive`) used for zip/7z/tar/rar reads. |
 | `crates/rom-weaver-app` | Command orchestration shared by every frontend: argument structs, selection/auto-extract resolution, trim/header-fix pipelines, patch command flows. |
 | `crates/rom-weaver-cli` | Thin binary: clap parsing, progress/JSON reporters, native `main` and wasm `_start` entry. |
@@ -46,9 +48,11 @@ the WASM build over a JSON event protocol.
 | `scripts/` | WASM build orchestration (`build-wasm-cli.sh`, `wasm/with-wasi-env.sh`), benches, worktree setup. |
 
 Crate dependency flow is one-directional: `core` ← format crates
-(`checksum`/`codecs`/`containers`/`chd`/`patches`/`xdelta`) ← `app` ← `cli`.
-No format crate depends on another format crate except `containers`, which
-consumes `chd`, `codecs`, and `libarchive` to assemble its registry.
+(`checksum`/`codecs`/`containers`/`chd`/`patches`/`xdelta`/`gdrom`/`dcp`) ←
+`app` ← `cli`. Format crates mostly do not depend on each other, with two
+exceptions: `containers` consumes `chd`, `codecs`, and `libarchive` to assemble
+its registry; and `dcp` consumes `gdrom` (data-track filesystem) and `xdelta`
+(per-file VCDIFF apply).
 
 ## Core abstractions (`rom-weaver-core/src/registry.rs`)
 
@@ -107,6 +111,47 @@ Patterns that matter when touching this code:
 
 `docs/browser-concurrency.md` covers the browser-side concurrency rules in
 more depth.
+
+## Dreamcast `.dcp` patches (the filesystem-level apply path)
+
+Most patch formats are byte-stream transforms and fit `PatchHandler`. Universal
+Dreamcast Patcher (`.dcp`) is different: it is a ZIP of per-file xdelta/VCDIFF
+deltas (plus verbatim new files and an optional replacement `IP.BIN`) applied
+*inside* a GD-ROM data track's ISO9660 filesystem, after which the filesystem is
+rebuilt. It therefore does **not** register as a `PatchHandler`; it has a
+dedicated path that rebuilds a whole disc track.
+
+- **`rom-weaver-gdrom`** is the filesystem layer. A Dreamcast high-density data
+  track is `MODE1/2352` raw sectors whose ISO9660 records use *absolute* LBAs
+  biased by the track start (45000). `sector` cooks 2352→2048; `GdRomFs::open(reader, start_lba)`
+  parses the PVD/directory tree resolving extents at `lba − start_lba`;
+  `iso_writer::build_iso` authors a cooked image back (deterministic, pinnable
+  timestamp, +start_lba bias); `mode1::encode_mode1_sector` re-adds sync/header/
+  EDC (poly `0x8001801B`) /ECC (GF(2⁸), poly `0x11D`) — validated byte-for-byte
+  against real disc sectors. The first 16 sectors are the IP.BIN boot area and
+  are carried through (or replaced) on rebuild.
+- **`rom-weaver-dcp`** owns the format: `zip` reads the central directory and
+  inflates entries (miniz_oxide, no C deps → wasm-safe); `manifest` classifies
+  each entry as `Delta`/`Verbatim`/`BootSector`; `apply::apply_dcp` produces each
+  patched file via an I/O-free emit closure (so native and browser share it);
+  `rebuild::rebuild_track_to_writer` plans the rebuilt layout from file *sizes*
+  (a patched file's size is read from its VCDIFF header without decoding) and
+  then **streams** the raw `MODE1/2352` track to a writer, producing each file's
+  bytes on demand (delta applied against its freshly-read source, verbatim
+  inflated, or untouched file read through) and dropping them immediately. The
+  cooked image and raw track are never materialized, so peak memory scales with
+  the largest single file's apply working set — not the disc or the patch.
+- **CLI wiring.** `patch apply` detects a `.dcp` patch and routes to
+  `rom-weaver-app/src/patch_apply_dcp.rs`, which requires a disc-sheet
+  (`.cue`/`.gdi`) input, auto-selects the data track (largest track that opens
+  as a `GdRomFs`), rebuilds it, then reuses the shared disc staging
+  (`patch_apply_disc.rs`) to reassemble the full disc and compress to CHD by
+  default (or write the disc beside the output sheet with `--no-compress`).
+
+Parity note: output is currently *file-level* parity (every rebuilt file is
+byte-correct, validated against the file-based xdelta handler), not necessarily
+byte-identical to UDP's own disc image. Matching UDP's image byte-for-byte would
+require reproducing DiscUtils' exact ISO9660 layout and is deferred.
 
 ## Rust ⇄ TypeScript boundary
 
