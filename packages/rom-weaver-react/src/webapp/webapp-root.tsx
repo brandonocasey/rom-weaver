@@ -158,6 +158,11 @@ const ActivitySelvage = ({
 
 function WebappRoot({ state, serviceWorkerCache, pageUpdate, confirmationDialog, actions }: WebappRootProps) {
   useEntryAnimationLock();
+  // The page title follows the active workflow tab.
+  useEffect(() => {
+    const tab = WORKFLOW_TABS.find((entry) => entry.id === state.currentView);
+    document.title = tab ? `rom-weaver - ${tab.label}` : "rom-weaver";
+  }, [state.currentView]);
   const [updateDismissed, setUpdateDismissed] = useState(readUpdateDismissed);
   const [logOpen, setLogOpen] = useState(false);
   // Workflow forms keep their local state (staged files, validated patches,
