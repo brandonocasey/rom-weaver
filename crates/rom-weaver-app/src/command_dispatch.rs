@@ -29,10 +29,10 @@ impl CliApp {
             Commands::Compress(args) => self.run_compress(args),
             Commands::Trim(args) => self.run_trim(args),
             Commands::Patch(command) => match command {
-                PatchCommands::Apply(args) => self.run_patch_apply(args),
+                PatchCommands::Apply(args) => self.run_patch_apply(*args),
                 PatchCommands::Validate(args) => self.run_patch_validate(args),
                 PatchCommands::CreateCandidates(args) => self.run_patch_create_candidates(args),
-                PatchCommands::Create(args) => self.run_patch_create(args),
+                PatchCommands::Create(args) => self.run_patch_create(*args),
             },
         }
     }

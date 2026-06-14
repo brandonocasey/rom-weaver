@@ -355,11 +355,14 @@ impl CliApp {
     pub(super) fn run_patch_create(&self, args: PatchCreateCommand) -> AppRunOutcome {
         trace!(
             original = %args.original.display(),
-            modified = %args.modified.display(),
+            modified = ?args.modified,
             output = %args.output.display(),
             format = ?args.format,
             ignore_checksum_validation = args.ignore_checksum_validation,
             checksum_name = args.checksum_name,
+            code_count = args.codes.len(),
+            code_system = ?args.code_system,
+            code_kind = %args.code_kind,
             threads = %args.threads,
             xdelta_secondary = %args.xdelta_secondary,
             "starting patch-create command"
@@ -423,11 +426,75 @@ impl CliApp {
         ) {
             return self.finish("patch-create", report);
         }
+
+        // Derive the modified ROM from cheat codes when `--code` is given,
+        // otherwise require an explicit `--modified`. The synthesized ROM is a
+        // temp file under the context's temp namespace, which the diff-based
+        // create below treats like any other; the namespace is reclaimed when
+        // the context drops, so no explicit cleanup is needed.
+        let mut cheat_summary = None;
+        let modified_path: PathBuf = if !args.codes.is_empty() {
+            if args.modified.is_some() {
+                return self.finish(
+                    "patch-create",
+                    OperationReport::failed(
+                        OperationFamily::Patch,
+                        Some(requested_format.clone()),
+                        "validate",
+                        "--modified cannot be combined with --code".to_string(),
+                        probe_threads,
+                    ),
+                );
+            }
+            let dest = context
+                .temp_paths()
+                .next_path("patch-create-cheat-modified", Some("bin"));
+            match self.write_cheat_patched_rom(
+                &args.original,
+                &args.codes,
+                args.code_system.as_deref(),
+                &args.code_kind,
+                &dest,
+            ) {
+                Ok(summary) => {
+                    cheat_summary = Some(summary);
+                    dest
+                }
+                Err(error) => {
+                    return self.finish(
+                        "patch-create",
+                        OperationReport::failed(
+                            OperationFamily::Patch,
+                            Some(requested_format.clone()),
+                            "prepare",
+                            error.to_string(),
+                            probe_threads,
+                        ),
+                    );
+                }
+            }
+        } else {
+            match args.modified.clone() {
+                Some(path) => path,
+                None => {
+                    return self.finish(
+                        "patch-create",
+                        OperationReport::failed(
+                            OperationFamily::Patch,
+                            Some(requested_format.clone()),
+                            "validate",
+                            "patch create requires --modified or --code".to_string(),
+                            probe_threads,
+                        ),
+                    );
+                }
+            }
+        };
         if let Some(report) = self.require_existing_path(
             "patch-create",
             OperationFamily::Patch,
             Some(requested_format.clone()),
-            &args.modified,
+            &modified_path,
             probe_threads.clone(),
         ) {
             return self.finish("patch-create", report);
@@ -456,7 +523,7 @@ impl CliApp {
             "patch-create",
             Some(handler.descriptor().name.to_string()),
             &args.original,
-            &args.modified,
+            &modified_path,
             probe_threads.clone(),
         ) {
             Ok(sizes) => sizes,
@@ -510,7 +577,7 @@ impl CliApp {
 
         let request = PatchCreateRequest {
             original: args.original,
-            modified: args.modified,
+            modified: modified_path,
             output: create_output.clone(),
             format: handler.descriptor().name.to_string(),
         };
@@ -547,6 +614,11 @@ impl CliApp {
             && let Some(warning) = format_warning.as_deref()
         {
             report.label = format!("{}; warning: {warning}", report.label);
+        }
+        if report.status == OperationStatus::Succeeded
+            && let Some(summary) = cheat_summary.as_ref()
+        {
+            report.label = format!("{}; {}", report.label, summary.label());
         }
         if report.status == OperationStatus::Succeeded && args.checksum_name {
             report = Self::attach_emitted_files_details(report, vec![create_output.clone()], None);

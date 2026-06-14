@@ -2,6 +2,7 @@
 members = [
     "crates/rom-weaver-app",
     "crates/rom-weaver-chd",
+    "crates/rom-weaver-cheats",
     "crates/rom-weaver-checksum",
     "crates/rom-weaver-cli",
     "crates/rom-weaver-codecs",

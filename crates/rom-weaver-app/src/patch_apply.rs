@@ -30,6 +30,9 @@ impl CliApp {
             ignore_checksum_validation = args.ignore_checksum_validation,
             validate_with_output_checksums = args.validate_with_output_checksums.len(),
             ppf_undo_aware = args.ppf_undo_aware,
+            code_count = args.codes.len(),
+            code_system = ?args.code_system,
+            code_kind = %args.code_kind,
             threads = %args.threads,
             "starting patch-apply command"
         );
@@ -67,9 +70,12 @@ impl CliApp {
             ignore_checksum_validation,
             validate_with_output_checksums,
             ppf_undo_aware,
+            codes,
+            code_system,
+            code_kind,
             threads,
         } = args;
-        let discover_implicit_patches = patches.is_empty() && !no_extract;
+        let discover_implicit_patches = patches.is_empty() && codes.is_empty() && !no_extract;
         let input_kind_filter =
             Self::archive_entry_kind_filter(rom_filter || discover_implicit_patches, false);
         let patch_kind_filter = Self::archive_entry_kind_filter(false, patch_filter);
@@ -82,6 +88,18 @@ impl CliApp {
             })
             .with_ppf_undo_aware(ppf_undo_aware);
         let probe_threads = context.single_thread_execution();
+        if !codes.is_empty() && (strip_header || n64_byte_order.is_some()) {
+            return self.finish(
+                "patch-apply",
+                OperationReport::failed(
+                    OperationFamily::Patch,
+                    None,
+                    "validate",
+                    "--code cannot be combined with --strip-header or --n64-byte-order; cheat offsets are computed against the original ROM bytes".to_string(),
+                    probe_threads.clone(),
+                ),
+            );
+        }
         let ParsedPatchApplyInputs {
             compression_options,
             cached_input_checksums,
@@ -192,14 +210,14 @@ impl CliApp {
         if patches.is_empty() {
             patches = discovered_sidecars.patches.clone();
         }
-        if patches.is_empty() {
+        if patches.is_empty() && codes.is_empty() {
             return self.finish(
                 "patch-apply",
                 OperationReport::failed(
                     OperationFamily::Patch,
                     None,
                     "validate",
-                    "patch apply requires at least one --patch file or RetroArch-style sidecar patch inside the input archive".to_string(),
+                    "patch apply requires at least one --patch file, --code, or RetroArch-style sidecar patch inside the input archive".to_string(),
                     probe_threads.clone(),
                 ),
             );
@@ -345,13 +363,46 @@ impl CliApp {
             resolved_patches.push((patch_path.clone(), resolved_patch_source));
         }
 
+        // Bake cheat codes into a synthetic IPS patch applied before the explicit
+        // patches. Resolved against the resolved input ROM bytes (header strip /
+        // N64 byte-order rewrite are rejected above so offsets stay valid).
+        let mut cheat_summary = None;
+        if !codes.is_empty() {
+            match self.synthesize_cheat_ips(
+                &resolved_input,
+                &codes,
+                code_system.as_deref(),
+                &code_kind,
+                &context,
+                &mut temp_paths,
+            ) {
+                Ok((cheat_patch, summary)) => {
+                    cheat_summary = Some(summary);
+                    resolved_patches.insert(0, (cheat_patch.clone(), cheat_patch));
+                }
+                Err(error) => {
+                    Self::cleanup_temp_paths(temp_paths);
+                    return self.finish(
+                        "patch-apply",
+                        OperationReport::failed(
+                            OperationFamily::Patch,
+                            None,
+                            "prepare",
+                            error.to_string(),
+                            probe_threads.clone(),
+                        ),
+                    );
+                }
+            }
+        }
+
         let report = (|| {
-            if patches.is_empty() {
+            if resolved_patches.is_empty() {
                 return OperationReport::failed(
                     OperationFamily::Patch,
                     None,
                     "validate",
-                    "at least one --patch value is required",
+                    "at least one --patch value or --code is required",
                     probe_threads.clone(),
                 );
             }
@@ -985,6 +1036,13 @@ impl CliApp {
 
             report
         })();
+
+        let mut report = report;
+        if report.status == OperationStatus::Succeeded
+            && let Some(summary) = cheat_summary
+        {
+            report.label = format!("{}; {}", report.label, summary.label());
+        }
 
         Self::cleanup_temp_paths(temp_paths);
         self.finish("patch-apply", report)

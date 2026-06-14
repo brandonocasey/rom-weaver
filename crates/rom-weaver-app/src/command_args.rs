@@ -16,6 +16,12 @@ fn default_xdelta_secondary() -> String {
     XdeltaSecondaryMode::None.to_string()
 }
 
+fn default_code_kind() -> String {
+    // Infer the code scheme (Game Genie vs Pro Action Replay/GameShark) from the
+    // code's shape unless the caller pins it explicitly.
+    "auto".to_string()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
@@ -657,6 +663,38 @@ pub struct PatchApplyCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub ppf_undo_aware: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "code",
+            action = ArgAction::Append,
+            help = "Cheat code (Game Genie or Pro Action Replay/GameShark) to bake into the input ROM; repeat --code for each. Codes are decoded against the input ROM and applied as a synthetic patch."
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub codes: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "code-system",
+            help = "Override the cheat-code system (nes, snes, genesis, gameboy) when it cannot be auto-detected from the ROM header"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub code_system: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "code-kind",
+            default_value = "auto",
+            help = "Cheat code scheme: auto (infer), game-genie, or gameshark/par"
+        )
+    )]
+    #[serde(default = "default_code_kind")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub code_kind: String,
     #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
@@ -812,8 +850,16 @@ pub struct PatchValidateCommand {
 pub struct PatchCreateCommand {
     #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
     pub original: PathBuf,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
-    pub modified: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Modified ROM to diff against the original. Optional when --code is used; the modified ROM is then derived by baking the cheat codes into the original."
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub modified: Option<PathBuf>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -846,6 +892,38 @@ pub struct PatchCreateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub checksum_name: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "code",
+            action = ArgAction::Append,
+            help = "Cheat code (Game Genie or Pro Action Replay/GameShark) to bake into the original ROM to derive the modified ROM; repeat --code for each. Mutually exclusive with --modified."
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub codes: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "code-system",
+            help = "Override the cheat-code system (nes, snes, genesis, gameboy) when it cannot be auto-detected from the ROM header"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub code_system: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "code-kind",
+            default_value = "auto",
+            help = "Cheat code scheme: auto (infer), game-genie, or gameshark/par"
+        )
+    )]
+    #[serde(default = "default_code_kind")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub code_kind: String,
     #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]

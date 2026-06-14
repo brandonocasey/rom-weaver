@@ -1645,6 +1645,7 @@ name = "rom-weaver-app"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "rom-weaver-cheats",
  "rom-weaver-checksum",
  "rom-weaver-codecs",
  "rom-weaver-containers",
@@ -1678,6 +1679,14 @@ dependencies = [
  "sha1",
  "tracing",
  "zstd",
+]
+
+[[package]]
+name = "rom-weaver-cheats"
+version = "0.1.0"
+dependencies = [
+ "rom-weaver-core",
+ "tracing",
 ]
 
 [[package]]
