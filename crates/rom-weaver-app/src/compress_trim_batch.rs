@@ -40,6 +40,15 @@ impl CliApp {
 
         let context = self.context(threads);
         let probe_threads = context.single_thread_execution();
+        let fail = |format: Option<String>, stage: &str, message: String| {
+            OperationReport::failed(
+                OperationFamily::Container,
+                format,
+                stage,
+                message,
+                probe_threads.clone(),
+            )
+        };
         for input in &input {
             if let Some(report) = self.require_existing_path(
                 "compress",
@@ -64,13 +73,7 @@ impl CliApp {
             Err(error) => {
                 return self.finish(
                     "compress",
-                    OperationReport::failed(
-                        OperationFamily::Container,
-                        requested_format.clone(),
-                        "validate",
-                        error.to_string(),
-                        probe_threads,
-                    ),
+                    fail(requested_format.clone(), "validate", error.to_string()),
                 );
             }
         };
@@ -89,13 +92,7 @@ impl CliApp {
             Err(error) => {
                 return self.finish(
                     "compress",
-                    OperationReport::failed(
-                        OperationFamily::Container,
-                        Some(resolved_format.clone()),
-                        "validate",
-                        error.to_string(),
-                        probe_threads,
-                    ),
+                    fail(Some(resolved_format.clone()), "validate", error.to_string()),
                 );
             }
         };
@@ -109,12 +106,10 @@ impl CliApp {
         let Some(handler) = self.containers.find_by_name(&resolved_format) else {
             return self.finish(
                 "compress",
-                OperationReport::failed(
-                    OperationFamily::Container,
+                fail(
                     Some(resolved_format),
                     "probe",
-                    "requested output format is not registered",
-                    probe_threads,
+                    "requested output format is not registered".to_string(),
                 ),
             );
         };
@@ -122,24 +117,20 @@ impl CliApp {
         if !capabilities.probe_details && !capabilities.extract && !capabilities.create {
             return self.finish(
                 "compress",
-                OperationReport::failed(
-                    OperationFamily::Container,
+                fail(
                     Some(resolved_format),
                     "probe",
-                    "requested output format is not registered",
-                    probe_threads,
+                    "requested output format is not registered".to_string(),
                 ),
             );
         }
         if !capabilities.create {
             return self.finish(
                 "compress",
-                OperationReport::failed(
-                    OperationFamily::Container,
+                fail(
                     Some(handler.descriptor().name.to_string()),
                     "validate",
                     extract_only_create_validation_message(handler.descriptor().name),
-                    probe_threads,
                 ),
             );
         }
@@ -252,21 +243,21 @@ impl CliApp {
         };
         let context = self.context(threads);
         let thread_execution = context.single_thread_execution();
+        let fail = |stage: &str, message: String| {
+            OperationReport::failed(
+                OperationFamily::Command,
+                Some("nds".to_string()),
+                stage,
+                message,
+                thread_execution.clone(),
+            )
+        };
         let extension = extension
             .unwrap_or_else(|| Self::default_trim_extension_pattern(operation).to_string());
         let extension = match Self::normalize_trim_extension(&extension) {
             Ok(value) => value,
             Err(error) => {
-                return self.finish(
-                    "trim",
-                    OperationReport::failed(
-                        OperationFamily::Command,
-                        Some("nds".to_string()),
-                        "validate",
-                        error.to_string(),
-                        thread_execution,
-                    ),
-                );
+                return self.finish("trim", fail("validate", error.to_string()));
             }
         };
 
@@ -288,16 +279,7 @@ impl CliApp {
             Ok(paths) => paths,
             Err(error) => {
                 Self::cleanup_temp_paths(cleanup_paths);
-                return self.finish(
-                    "trim",
-                    OperationReport::failed(
-                        OperationFamily::Command,
-                        Some("nds".to_string()),
-                        "validate",
-                        error.to_string(),
-                        thread_execution,
-                    ),
-                );
+                return self.finish("trim", fail("validate", error.to_string()));
             }
         };
 
@@ -322,12 +304,9 @@ impl CliApp {
             Self::cleanup_temp_paths(cleanup_paths);
             return self.finish(
                 "trim",
-                OperationReport::failed(
-                    OperationFamily::Command,
-                    Some("nds".to_string()),
+                fail(
                     "validate",
-                    "--output requires exactly one trim-eligible source file",
-                    thread_execution,
+                    "--output requires exactly one trim-eligible source file".to_string(),
                 ),
             );
         }
@@ -510,9 +489,7 @@ impl CliApp {
             Self::cleanup_temp_paths(cleanup_paths);
             return self.finish(
                 "trim",
-                OperationReport::failed(
-                    OperationFamily::Command,
-                    Some("nds".to_string()),
+                fail(
                     "trim",
                     format!(
                         "{} completed with failures; processed={} trimmed={} already_trimmed={} failed={} skipped_unsupported={}; first_error={}",
@@ -534,7 +511,6 @@ impl CliApp {
                         skipped_unsupported,
                         first_error.unwrap_or_else(|| "(none)".to_string()),
                     ),
-                    thread_execution,
                 ),
             );
         }

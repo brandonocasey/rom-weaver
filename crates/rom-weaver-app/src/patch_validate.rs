@@ -51,20 +51,20 @@ impl CliApp {
                     PatchChecksumValidation::Strict
                 });
         let probe_threads = context.single_thread_execution();
+        let fail = |stage: &str, message: String| {
+            OperationReport::failed(
+                OperationFamily::Patch,
+                None,
+                stage,
+                message,
+                probe_threads.clone(),
+            )
+        };
         let cached_input_checksums =
             match Self::parse_patch_apply_checksum_values(&checksum_cache, "--checksum-cache") {
                 Ok(values) => values,
                 Err(error) => {
-                    return self.finish(
-                        "patch-validate",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
-                            None,
-                            "validate",
-                            error.to_string(),
-                            probe_threads.clone(),
-                        ),
-                    );
+                    return self.finish("patch-validate", fail("validate", error.to_string()));
                 }
             };
         let mut expected_input_checksums = match Self::parse_patch_apply_checksum_values(
@@ -73,16 +73,7 @@ impl CliApp {
         ) {
             Ok(values) => values,
             Err(error) => {
-                return self.finish(
-                    "patch-validate",
-                    OperationReport::failed(
-                        OperationFamily::Patch,
-                        None,
-                        "validate",
-                        error.to_string(),
-                        probe_threads.clone(),
-                    ),
-                );
+                return self.finish("patch-validate", fail("validate", error.to_string()));
             }
         };
         let mut effective_expected_size = validate_with_size;
@@ -141,16 +132,7 @@ impl CliApp {
         ) {
             Ok(resolved) => resolved,
             Err(error) => {
-                return self.finish(
-                    "patch-validate",
-                    OperationReport::failed(
-                        OperationFamily::Patch,
-                        None,
-                        "prepare",
-                        error.to_string(),
-                        probe_threads.clone(),
-                    ),
-                );
+                return self.finish("patch-validate", fail("prepare", error.to_string()));
             }
         };
         let ResolvedChecksumSource {
@@ -191,16 +173,7 @@ impl CliApp {
             ) {
                 Ok(resolved) => resolved,
                 Err(error) => {
-                    return self.finish(
-                        "patch-validate",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
-                            None,
-                            "prepare",
-                            error.to_string(),
-                            probe_threads.clone(),
-                        ),
-                    );
+                    return self.finish("patch-validate", fail("prepare", error.to_string()));
                 }
             };
             let ResolvedChecksumSource {
@@ -230,12 +203,9 @@ impl CliApp {
 
         let report = (|| {
             if patches.is_empty() {
-                return OperationReport::failed(
-                    OperationFamily::Patch,
-                    None,
+                return fail(
                     "validate",
-                    "at least one --patch value is required",
-                    probe_threads.clone(),
+                    "at least one --patch value is required".to_string(),
                 );
             }
 

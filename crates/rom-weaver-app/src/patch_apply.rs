@@ -88,15 +88,21 @@ impl CliApp {
             })
             .with_ppf_undo_aware(ppf_undo_aware);
         let probe_threads = context.single_thread_execution();
+        let fail = |stage: &str, message: String| {
+            OperationReport::failed(
+                OperationFamily::Patch,
+                None,
+                stage,
+                message,
+                probe_threads.clone(),
+            )
+        };
         if !codes.is_empty() && (strip_header || n64_byte_order.is_some()) {
             return self.finish(
                 "patch-apply",
-                OperationReport::failed(
-                    OperationFamily::Patch,
-                    None,
+                fail(
                     "validate",
                     "--code cannot be combined with --strip-header or --n64-byte-order; cheat offsets are computed against the original ROM bytes".to_string(),
-                    probe_threads.clone(),
                 ),
             );
         }
@@ -116,16 +122,7 @@ impl CliApp {
         ) {
             Ok(parsed) => parsed,
             Err(error) => {
-                return self.finish(
-                    "patch-apply",
-                    OperationReport::failed(
-                        OperationFamily::Patch,
-                        None,
-                        "validate",
-                        error.to_string(),
-                        probe_threads.clone(),
-                    ),
-                );
+                return self.finish("patch-apply", fail("validate", error.to_string()));
             }
         };
         if let Some(report) = self.require_existing_path(
@@ -143,27 +140,15 @@ impl CliApp {
         let disc_context = match self.build_disc_context(&input, target.as_deref()) {
             Ok(context) => context,
             Err(error) => {
-                return self.finish(
-                    "patch-apply",
-                    OperationReport::failed(
-                        OperationFamily::Patch,
-                        None,
-                        "prepare",
-                        error.to_string(),
-                        probe_threads.clone(),
-                    ),
-                );
+                return self.finish("patch-apply", fail("prepare", error.to_string()));
             }
         };
         if disc_context.is_none() && target.is_some() {
             return self.finish(
                 "patch-apply",
-                OperationReport::failed(
-                    OperationFamily::Patch,
-                    None,
+                fail(
                     "validate",
                     "--target requires a disc-sheet (.cue/.gdi) input".to_string(),
-                    probe_threads.clone(),
                 ),
             );
         }
@@ -172,12 +157,9 @@ impl CliApp {
         {
             return self.finish(
                 "patch-apply",
-                OperationReport::failed(
-                    OperationFamily::Patch,
-                    None,
+                fail(
                     "validate",
                     "disc patch apply (.cue/.gdi input) cannot be combined with --strip-header, --add-header, --repair-checksum, or --n64-byte-order".to_string(),
-                    probe_threads.clone(),
                 ),
             );
         }
@@ -192,16 +174,7 @@ impl CliApp {
             match self.discover_patch_apply_sidecars(&input, &select, no_ignore, &context) {
                 Ok(discovered) => discovered,
                 Err(error) => {
-                    return self.finish(
-                        "patch-apply",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
-                            None,
-                            "prepare",
-                            error.to_string(),
-                            probe_threads.clone(),
-                        ),
-                    );
+                    return self.finish("patch-apply", fail("prepare", error.to_string()));
                 }
             }
         } else {
@@ -213,12 +186,9 @@ impl CliApp {
         if patches.is_empty() && codes.is_empty() {
             return self.finish(
                 "patch-apply",
-                OperationReport::failed(
-                    OperationFamily::Patch,
-                    None,
+                fail(
                     "validate",
                     "patch apply requires at least one --patch file, --code, or RetroArch-style sidecar patch inside the input archive".to_string(),
-                    probe_threads.clone(),
                 ),
             );
         }
@@ -277,16 +247,7 @@ impl CliApp {
                 ) {
                     Ok(resolved) => resolved,
                     Err(error) => {
-                        return self.finish(
-                            "patch-apply",
-                            OperationReport::failed(
-                                OperationFamily::Patch,
-                                None,
-                                "prepare",
-                                error.to_string(),
-                                probe_threads.clone(),
-                            ),
-                        );
+                        return self.finish("patch-apply", fail("prepare", error.to_string()));
                     }
                 };
                 let ResolvedChecksumSource {
@@ -326,16 +287,7 @@ impl CliApp {
             ) {
                 Ok(resolved) => resolved,
                 Err(error) => {
-                    return self.finish(
-                        "patch-apply",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
-                            None,
-                            "prepare",
-                            error.to_string(),
-                            probe_threads.clone(),
-                        ),
-                    );
+                    return self.finish("patch-apply", fail("prepare", error.to_string()));
                 }
             };
             let ResolvedChecksumSource {
@@ -382,16 +334,7 @@ impl CliApp {
                 }
                 Err(error) => {
                     Self::cleanup_temp_paths(temp_paths);
-                    return self.finish(
-                        "patch-apply",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
-                            None,
-                            "prepare",
-                            error.to_string(),
-                            probe_threads.clone(),
-                        ),
-                    );
+                    return self.finish("patch-apply", fail("prepare", error.to_string()));
                 }
             }
         }

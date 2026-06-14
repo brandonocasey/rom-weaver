@@ -367,18 +367,21 @@ impl CliApp {
         );
         let base_context = self.context(args.threads);
         let probe_threads = base_context.single_thread_execution();
+        let fail = |format: Option<String>, stage: &str, message: String| {
+            OperationReport::failed(
+                OperationFamily::Patch,
+                format,
+                stage,
+                message,
+                probe_threads.clone(),
+            )
+        };
         let xdelta_secondary_mode = match args.xdelta_secondary.parse::<XdeltaSecondaryMode>() {
             Ok(mode) => mode,
             Err(error) => {
                 return self.finish(
                     "patch-create",
-                    OperationReport::failed(
-                        OperationFamily::Patch,
-                        args.format.clone(),
-                        "validate",
-                        error.to_string(),
-                        probe_threads.clone(),
-                    ),
+                    fail(args.format.clone(), "validate", error.to_string()),
                 );
             }
         };
@@ -395,13 +398,7 @@ impl CliApp {
                 Err(error) => {
                     return self.finish(
                         "patch-create",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
-                            args.format.clone(),
-                            "validate",
-                            error.to_string(),
-                            probe_threads,
-                        ),
+                        fail(args.format.clone(), "validate", error.to_string()),
                     );
                 }
             };
@@ -435,12 +432,10 @@ impl CliApp {
             if args.modified.is_some() {
                 return self.finish(
                     "patch-create",
-                    OperationReport::failed(
-                        OperationFamily::Patch,
+                    fail(
                         Some(requested_format.clone()),
                         "validate",
                         "--modified cannot be combined with --code".to_string(),
-                        probe_threads,
                     ),
                 );
             }
@@ -461,13 +456,7 @@ impl CliApp {
                 Err(error) => {
                     return self.finish(
                         "patch-create",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
-                            Some(requested_format.clone()),
-                            "prepare",
-                            error.to_string(),
-                            probe_threads,
-                        ),
+                        fail(Some(requested_format.clone()), "prepare", error.to_string()),
                     );
                 }
             }
@@ -477,12 +466,10 @@ impl CliApp {
                 None => {
                     return self.finish(
                         "patch-create",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
+                        fail(
                             Some(requested_format.clone()),
                             "validate",
                             "patch create requires --modified or --code".to_string(),
-                            probe_threads,
                         ),
                     );
                 }
@@ -506,16 +493,7 @@ impl CliApp {
                     )
                 })
                 .unwrap_or_else(|| "requested patch format is not registered".to_string());
-            return self.finish(
-                "patch-create",
-                OperationReport::failed(
-                    OperationFamily::Patch,
-                    Some(requested_format),
-                    "probe",
-                    label,
-                    probe_threads,
-                ),
-            );
+            return self.finish("patch-create", fail(Some(requested_format), "probe", label));
         };
         let sizes = match self.inspect_patch_create_input_sizes(
             "patch-create",
@@ -532,12 +510,10 @@ impl CliApp {
         {
             return self.finish(
                 "patch-create",
-                OperationReport::failed(
-                    OperationFamily::Patch,
+                fail(
                     Some(handler.descriptor().name.to_string()),
                     "validate",
                     label,
-                    probe_threads,
                 ),
             );
         }
@@ -561,12 +537,10 @@ impl CliApp {
                 Err(error) => {
                     return self.finish(
                         "patch-create",
-                        OperationReport::failed(
-                            OperationFamily::Patch,
+                        fail(
                             Some(handler.descriptor().name.to_string()),
                             "validate",
                             error.to_string(),
-                            probe_threads,
                         ),
                     );
                 }
