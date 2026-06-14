@@ -304,7 +304,7 @@ impl CliApp {
                 );
             }
         }
-        Self::cleanup_temp_paths(temp_paths);
+        Self::cleanup_temp_paths(&temp_paths);
         self.finish("checksum", report)
     }
 }

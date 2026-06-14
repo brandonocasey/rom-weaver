@@ -169,7 +169,7 @@ impl CliApp {
             ) {
                 Ok(summary) => summary,
                 Err(error) => {
-                    Self::cleanup_paths(std::slice::from_ref(&rebuilt_path));
+                    Self::cleanup_temp_paths(std::slice::from_ref(&rebuilt_path));
                     return fail("apply", error.to_string());
                 }
             };
@@ -202,7 +202,7 @@ impl CliApp {
                 match self.disc_target_track_override(disc, &rebuilt_path, &mut temp_paths) {
                     Ok(track_override) => track_override,
                     Err(error) => {
-                        Self::cleanup_paths(&temp_paths);
+                        Self::cleanup_temp_paths(&temp_paths);
                         return fail("prepare", error.to_string());
                     }
                 };
@@ -221,7 +221,7 @@ impl CliApp {
                 match self.stage_disc_directory(disc, &rebuilt_path, context, &mut temp_paths) {
                     Ok(path) => path,
                     Err(error) => {
-                        Self::cleanup_paths(&temp_paths);
+                        Self::cleanup_temp_paths(&temp_paths);
                         return fail("prepare", error.to_string());
                     }
                 };
@@ -241,7 +241,7 @@ impl CliApp {
             }
         };
 
-        Self::cleanup_paths(&temp_paths);
+        Self::cleanup_temp_paths(&temp_paths);
         report
     }
 
@@ -303,16 +303,5 @@ impl CliApp {
             Some(100.0),
             compress_report.thread_execution,
         )
-    }
-
-    /// Best-effort removal of staged temp files/dirs.
-    fn cleanup_paths(paths: &[PathBuf]) {
-        for path in paths {
-            if path.is_dir() {
-                let _ = fs::remove_dir_all(path);
-            } else {
-                let _ = fs::remove_file(path);
-            }
-        }
     }
 }

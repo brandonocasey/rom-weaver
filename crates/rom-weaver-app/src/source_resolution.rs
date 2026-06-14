@@ -454,9 +454,13 @@ impl CliApp {
         })
     }
 
-    pub(super) fn cleanup_temp_paths(temp_paths: Vec<PathBuf>) {
+    /// Best-effort removal of staged temp files/dirs. Missing paths and removal
+    /// errors are ignored (cleanup must never fail an operation). Takes a slice
+    /// so callers can clean up without surrendering ownership of their path
+    /// list.
+    pub(super) fn cleanup_temp_paths(temp_paths: &[PathBuf]) {
         for temp_path in temp_paths {
-            match fs::metadata(&temp_path) {
+            match fs::metadata(temp_path) {
                 Ok(metadata) if metadata.is_dir() => {
                     let _ = fs::remove_dir_all(temp_path);
                 }

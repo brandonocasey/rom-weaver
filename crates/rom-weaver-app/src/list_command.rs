@@ -221,7 +221,7 @@ impl CliApp {
                 report.label
             );
         }
-        Self::cleanup_temp_paths(cleanup_paths);
+        Self::cleanup_temp_paths(&cleanup_paths);
         self.finish("list", report)
     }
 

@@ -333,7 +333,7 @@ impl CliApp {
                     resolved_patches.insert(0, (cheat_patch.clone(), cheat_patch));
                 }
                 Err(error) => {
-                    Self::cleanup_temp_paths(temp_paths);
+                    Self::cleanup_temp_paths(&temp_paths);
                     return self.finish("patch-apply", fail("prepare", error.to_string()));
                 }
             }
@@ -979,7 +979,7 @@ impl CliApp {
             report.label = format!("{}; {}", report.label, summary.label());
         }
 
-        Self::cleanup_temp_paths(temp_paths);
+        Self::cleanup_temp_paths(&temp_paths);
         self.finish("patch-apply", report)
     }
 }

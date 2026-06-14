@@ -593,7 +593,7 @@ impl CliApp {
             report
         })();
 
-        Self::cleanup_temp_paths(temp_paths);
+        Self::cleanup_temp_paths(&temp_paths);
         self.finish("patch-validate", report)
     }
 }

@@ -278,13 +278,13 @@ impl CliApp {
         ) {
             Ok(paths) => paths,
             Err(error) => {
-                Self::cleanup_temp_paths(cleanup_paths);
+                Self::cleanup_temp_paths(&cleanup_paths);
                 return self.finish("trim", fail("validate", error.to_string()));
             }
         };
 
         if trim_sources.is_empty() {
-            Self::cleanup_temp_paths(cleanup_paths);
+            Self::cleanup_temp_paths(&cleanup_paths);
             return self.finish(
                 "trim",
                 OperationReport::succeeded(
@@ -301,7 +301,7 @@ impl CliApp {
         }
 
         if output.is_some() && trim_sources.len() != 1 {
-            Self::cleanup_temp_paths(cleanup_paths);
+            Self::cleanup_temp_paths(&cleanup_paths);
             return self.finish(
                 "trim",
                 fail(
@@ -486,7 +486,7 @@ impl CliApp {
         }
 
         if failed_count > 0 {
-            Self::cleanup_temp_paths(cleanup_paths);
+            Self::cleanup_temp_paths(&cleanup_paths);
             return self.finish(
                 "trim",
                 fail(
@@ -527,7 +527,7 @@ impl CliApp {
             ""
         };
 
-        Self::cleanup_temp_paths(cleanup_paths);
+        Self::cleanup_temp_paths(&cleanup_paths);
         self.finish(
             "trim",
             OperationReport::succeeded(
