@@ -659,7 +659,7 @@ pub fn reads_source_on_main_thread(_env_override: &str) -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn reads_source_on_main_thread(env_override: &str) -> bool {
-    std::env::var(env_override).as_deref() == Ok("1")
+    crate::env_bool(env_override)
 }
 
 #[cfg(test)]

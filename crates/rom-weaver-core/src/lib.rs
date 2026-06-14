@@ -2,6 +2,7 @@ mod cancel;
 mod common_files;
 mod context;
 mod disc_sheet;
+mod env;
 mod error;
 mod formatting;
 mod io;
@@ -23,6 +24,7 @@ pub use context::{OperationContext, PatchChecksumValidation, XdeltaSecondaryMode
 pub use disc_sheet::{
     DiscSheetKind, DiscSheetRefs, detect_disc_sheet, enumerate_disc_sheet_refs, sibling_gdi_path,
 };
+pub use env::{env_bool, env_u64, env_u64_opt};
 pub use error::{
     ChdMediaScope, FormatOperationKind, Result, RomWeaverError, UnsupportedOp, ValidationCodeError,
     ValidationField, ValidationFieldValue,

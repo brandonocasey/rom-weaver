@@ -240,9 +240,7 @@ fn zstd_memory_thread_cap(total_bytes: u64, level: i32) -> usize {
     const FALLBACK_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
     #[cfg(not(target_family = "wasm"))]
     const FALLBACK_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-    let budget = std::env::var("ROM_WEAVER_ZIP_ZSTD_MEM_BUDGET_MB")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
+    let budget = rom_weaver_core::env_u64_opt("ROM_WEAVER_ZIP_ZSTD_MEM_BUDGET_MB")
         .map(|mb| mb.saturating_mul(1024 * 1024))
         .or_else(|| physical_memory_bytes().map(|ram| ram / 2))
         .unwrap_or(FALLBACK_BUDGET_BYTES);
