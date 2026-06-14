@@ -1,5 +1,89 @@
 use super::*;
 
+/// Cook a CD/GD data-frame payload for extraction: audio sectors are byte-swapped (CHD stores
+/// audio big-endian); data sectors pass through untouched.
+fn cook_disc_frame_payload<'d>(track: &DiscTrack, data: &'d [u8]) -> Cow<'d, [u8]> {
+    if track.mode == DiscTrackMode::Audio {
+        let mut swapped = data.to_vec();
+        track.mode.swap_audio_bytes(&mut swapped);
+        Cow::Owned(swapped)
+    } else {
+        Cow::Borrowed(data)
+    }
+}
+
+/// Per-frame track router shared by the CD single-bin, CD split-track, and GD-ROM extract loops.
+/// A decoded frame stream is each track's data frames followed by its trailing pad frames; the
+/// router owns the track cursor and the data/pad accounting, handing every *data* frame's payload
+/// slice to `emit(track_index, track, data)` while pad frames only advance the cursor.
+struct DiscFrameRouter<'a> {
+    tracks: &'a [DiscTrack],
+    track_index: usize,
+    data_frames_remaining: u32,
+    pad_frames_remaining: u32,
+    processed_frames: u64,
+}
+
+impl<'a> DiscFrameRouter<'a> {
+    fn new(tracks: &'a [DiscTrack]) -> Self {
+        Self {
+            tracks,
+            track_index: 0,
+            data_frames_remaining: 0,
+            pad_frames_remaining: 0,
+            processed_frames: 0,
+        }
+    }
+
+    fn expected_frames(tracks: &[DiscTrack]) -> u64 {
+        tracks.iter().fold(0_u64, |total, track| {
+            total.saturating_add(u64::from(track.frames))
+        })
+    }
+
+    fn route_frame<E>(&mut self, frame: &[u8], mut emit: E) -> Result<()>
+    where
+        E: FnMut(usize, &DiscTrack, &[u8]) -> Result<()>,
+    {
+        loop {
+            if self.track_index >= self.tracks.len() {
+                return Ok(());
+            }
+            if self.data_frames_remaining == 0 && self.pad_frames_remaining == 0 {
+                let track = &self.tracks[self.track_index];
+                self.data_frames_remaining = track.frames.saturating_sub(track.pad_frames);
+                self.pad_frames_remaining = track.pad_frames;
+            }
+            if self.data_frames_remaining == 0 && self.pad_frames_remaining == 0 {
+                self.track_index += 1;
+                continue;
+            }
+
+            let track = &self.tracks[self.track_index];
+            if self.data_frames_remaining > 0 {
+                emit(self.track_index, track, &frame[..track.mode.data_bytes()])?;
+                self.data_frames_remaining -= 1;
+            } else {
+                self.pad_frames_remaining -= 1;
+            }
+            if self.data_frames_remaining == 0 && self.pad_frames_remaining == 0 {
+                self.track_index += 1;
+            }
+            self.processed_frames = self.processed_frames.saturating_add(1);
+            break;
+        }
+        Ok(())
+    }
+
+    fn processed_frames(&self) -> u64 {
+        self.processed_frames
+    }
+
+    fn finished(&self) -> bool {
+        self.track_index == self.tracks.len()
+    }
+}
+
 impl ChdContainerHandler {
     /// Resolve a cue sheet into unpadded CD-shaped tracks plus the number of the
     /// first track that falls inside a GD-ROM high-density area (when the sheet
@@ -947,66 +1031,29 @@ impl ChdContainerHandler {
                         .saturating_add(track.frames.saturating_sub(track.pad_frames));
                 }
 
-                let expected_frames = layout.tracks.iter().fold(0_u64, |total, track| {
-                    total.saturating_add(u64::from(track.frames))
-                });
-                let mut processed_frames = 0_u64;
-                let mut track_index = 0_usize;
-                let mut data_frames_remaining = 0_u32;
-                let mut pad_frames_remaining = 0_u32;
+                let expected_frames = DiscFrameRouter::expected_frames(&layout.tracks);
+                let mut router = DiscFrameRouter::new(&layout.tracks);
                 self.stream_chd_frames_with_progress(
                     &chd,
                     execution.effective_threads,
                     Some(&extract_progress),
                     |frame| {
-                        loop {
-                            if track_index >= layout.tracks.len() {
-                                return Ok(());
+                        router.route_frame(frame, |_track_index, track, data| {
+                            if write_single_bin && track.has_subcode {
+                                omitted_subcode = true;
                             }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                let track = &layout.tracks[track_index];
-                                data_frames_remaining =
-                                    track.frames.saturating_sub(track.pad_frames);
-                                pad_frames_remaining = track.pad_frames;
-                            }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                track_index += 1;
-                                continue;
-                            }
-
-                            let track = &layout.tracks[track_index];
-                            if data_frames_remaining > 0 {
-                                let data = &frame[..track.mode.data_bytes()];
-                                if write_single_bin && track.has_subcode {
-                                    omitted_subcode = true;
+                            if let Some(writer) = bin_writer.as_mut() {
+                                let data = cook_disc_frame_payload(track, data);
+                                writer.write_all(data.as_ref())?;
+                                if let Some(checksum) = single_bin_checksum.as_mut() {
+                                    checksum.update(data.as_ref())?;
                                 }
-                                if let Some(writer) = bin_writer.as_mut() {
-                                    let data = if track.mode == DiscTrackMode::Audio {
-                                        let mut swapped = data.to_vec();
-                                        track.mode.swap_audio_bytes(&mut swapped);
-                                        Cow::Owned(swapped)
-                                    } else {
-                                        Cow::Borrowed(data)
-                                    };
-                                    writer.write_all(data.as_ref())?;
-                                    if let Some(checksum) = single_bin_checksum.as_mut() {
-                                        checksum.update(data.as_ref())?;
-                                    }
-                                }
-                                data_frames_remaining -= 1;
-                            } else {
-                                pad_frames_remaining -= 1;
                             }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                track_index += 1;
-                            }
-                            processed_frames = processed_frames.saturating_add(1);
-                            break;
-                        }
-                        Ok(())
+                            Ok(())
+                        })
                     },
                 )?;
-                if processed_frames != expected_frames || track_index != layout.tracks.len() {
+                if router.processed_frames() != expected_frames || !router.finished() {
                     return Err(RomWeaverError::Validation(
                         "cd chd ended before all track frames were decoded".to_string(),
                     ));
@@ -1070,70 +1117,31 @@ impl ChdContainerHandler {
                     }
                 }
 
-                let expected_frames = layout.tracks.iter().fold(0_u64, |total, track| {
-                    total.saturating_add(u64::from(track.frames))
-                });
-                let mut processed_frames = 0_u64;
-                let mut track_index = 0_usize;
-                let mut data_frames_remaining = 0_u32;
-                let mut pad_frames_remaining = 0_u32;
+                let expected_frames = DiscFrameRouter::expected_frames(&layout.tracks);
+                let mut router = DiscFrameRouter::new(&layout.tracks);
                 self.stream_chd_frames_with_progress(
                     &chd,
                     execution.effective_threads,
                     Some(&extract_progress),
                     |frame| {
-                        loop {
-                            if track_index >= layout.tracks.len() {
-                                return Ok(());
-                            }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                let track = &layout.tracks[track_index];
-                                data_frames_remaining =
-                                    track.frames.saturating_sub(track.pad_frames);
-                                pad_frames_remaining = track.pad_frames;
-                            }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                track_index += 1;
-                                continue;
-                            }
-
-                            let track = &layout.tracks[track_index];
-                            if data_frames_remaining > 0 {
-                                if write_split_tracks[track_index] {
-                                    let data = &frame[..track.mode.data_bytes()];
-                                    if track.has_subcode {
-                                        omitted_subcode = true;
-                                    }
-                                    let data = if track.mode == DiscTrackMode::Audio {
-                                        let mut swapped = data.to_vec();
-                                        track.mode.swap_audio_bytes(&mut swapped);
-                                        Cow::Owned(swapped)
-                                    } else {
-                                        Cow::Borrowed(data)
-                                    };
-                                    if let Some(writer) = track_writers[track_index].as_mut() {
-                                        writer.write_all(data.as_ref())?;
-                                        if let Some(checksum) =
-                                            track_checksums[track_index].as_mut()
-                                        {
-                                            checksum.update(data.as_ref())?;
-                                        }
+                        router.route_frame(frame, |track_index, track, data| {
+                            if write_split_tracks[track_index] {
+                                if track.has_subcode {
+                                    omitted_subcode = true;
+                                }
+                                let data = cook_disc_frame_payload(track, data);
+                                if let Some(writer) = track_writers[track_index].as_mut() {
+                                    writer.write_all(data.as_ref())?;
+                                    if let Some(checksum) = track_checksums[track_index].as_mut() {
+                                        checksum.update(data.as_ref())?;
                                     }
                                 }
-                                data_frames_remaining -= 1;
-                            } else {
-                                pad_frames_remaining -= 1;
                             }
-                            if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                                track_index += 1;
-                            }
-                            processed_frames = processed_frames.saturating_add(1);
-                            break;
-                        }
-                        Ok(())
+                            Ok(())
+                        })
                     },
                 )?;
-                if processed_frames != expected_frames || track_index != layout.tracks.len() {
+                if router.processed_frames() != expected_frames || !router.finished() {
                     return Err(RomWeaverError::Validation(
                         "cd chd ended before all track frames were decoded".to_string(),
                     ));
@@ -1350,67 +1358,31 @@ impl ChdContainerHandler {
                 }
             }
 
-            let expected_frames = layout.tracks.iter().fold(0_u64, |total, track| {
-                total.saturating_add(u64::from(track.frames))
-            });
-            let mut processed_frames = 0_u64;
-            let mut track_index = 0_usize;
-            let mut data_frames_remaining = 0_u32;
-            let mut pad_frames_remaining = 0_u32;
+            let expected_frames = DiscFrameRouter::expected_frames(&layout.tracks);
+            let mut router = DiscFrameRouter::new(&layout.tracks);
             self.stream_chd_frames_with_progress(
                 &chd,
                 execution.effective_threads,
                 Some(&extract_progress),
                 |frame| {
-                    loop {
-                        if track_index >= layout.tracks.len() {
-                            return Ok(());
-                        }
-                        if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                            let track = &layout.tracks[track_index];
-                            data_frames_remaining = track.frames.saturating_sub(track.pad_frames);
-                            pad_frames_remaining = track.pad_frames;
-                        }
-                        if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                            track_index += 1;
-                            continue;
-                        }
-
-                        let track = &layout.tracks[track_index];
-                        if data_frames_remaining > 0 {
-                            if write_tracks[track_index] {
-                                let data = &frame[..track.mode.data_bytes()];
-                                if track.has_subcode {
-                                    omitted_subcode = true;
-                                }
-                                let data = if track.mode == DiscTrackMode::Audio {
-                                    let mut swapped = data.to_vec();
-                                    track.mode.swap_audio_bytes(&mut swapped);
-                                    Cow::Owned(swapped)
-                                } else {
-                                    Cow::Borrowed(data)
-                                };
-                                if let Some(writer) = track_writers[track_index].as_mut() {
-                                    writer.write_all(data.as_ref())?;
-                                    if let Some(checksum) = track_checksums[track_index].as_mut() {
-                                        checksum.update(data.as_ref())?;
-                                    }
+                    router.route_frame(frame, |track_index, track, data| {
+                        if write_tracks[track_index] {
+                            if track.has_subcode {
+                                omitted_subcode = true;
+                            }
+                            let data = cook_disc_frame_payload(track, data);
+                            if let Some(writer) = track_writers[track_index].as_mut() {
+                                writer.write_all(data.as_ref())?;
+                                if let Some(checksum) = track_checksums[track_index].as_mut() {
+                                    checksum.update(data.as_ref())?;
                                 }
                             }
-                            data_frames_remaining -= 1;
-                        } else {
-                            pad_frames_remaining -= 1;
                         }
-                        if data_frames_remaining == 0 && pad_frames_remaining == 0 {
-                            track_index += 1;
-                        }
-                        processed_frames = processed_frames.saturating_add(1);
-                        break;
-                    }
-                    Ok(())
+                        Ok(())
+                    })
                 },
             )?;
-            if processed_frames != expected_frames || track_index != layout.tracks.len() {
+            if router.processed_frames() != expected_frames || !router.finished() {
                 return Err(RomWeaverError::Validation(
                     "gd chd ended before all track frames were decoded".to_string(),
                 ));
