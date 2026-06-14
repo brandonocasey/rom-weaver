@@ -34,7 +34,7 @@ impl CliApp {
         let context = self
             .context(threads)
             .with_extract_checksum_algorithms(checksum);
-        let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let probe_threads = context.single_thread_execution();
         if let Some(report) = self.require_existing_path(
             "extract",
             OperationFamily::Container,
@@ -149,7 +149,7 @@ impl CliApp {
                     Some(handler.descriptor().name.to_string()),
                     "extract",
                     error.to_string(),
-                    Some(context.plan_threads(ThreadCapability::single_threaded())),
+                    context.single_thread_execution(),
                 )
             });
         let mut warnings = Vec::new();
@@ -218,7 +218,7 @@ impl CliApp {
                     "nested-extract",
                     "checking nested archives in extracted outputs".to_string(),
                     None,
-                    Some(context.plan_threads(ThreadCapability::single_threaded())),
+                    context.single_thread_execution(),
                 );
                 match self.extract_nested_archives(
                     &source,
@@ -244,7 +244,7 @@ impl CliApp {
                             Some(format_name.to_string()),
                             "extract",
                             error.to_string(),
-                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            context.single_thread_execution(),
                         );
                     }
                 }

@@ -20,7 +20,7 @@ impl CliApp {
     /// [`Self::run_patch_apply`] when the patch list is a single `.dcp`.
     pub(super) fn run_dcp_apply(&self, args: PatchApplyCommand) -> AppRunOutcome {
         let context = self.context(args.threads);
-        let single = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let single = context.single_thread_execution();
         let fail = |stage: &str, message: String| {
             OperationReport::failed(OperationFamily::Patch, None, stage, message, single.clone())
         };

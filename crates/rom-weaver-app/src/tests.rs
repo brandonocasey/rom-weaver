@@ -45,7 +45,7 @@ impl ContainerHandlerOperations for TestListHandler {
             "probe",
             "test probe",
             Some(100.0),
-            Some(context.plan_threads(ThreadCapability::single_threaded())),
+            context.single_thread_execution(),
         ))
     }
 
@@ -68,7 +68,7 @@ impl ContainerHandlerOperations for TestListHandler {
             "extract",
             "test extract",
             Some(100.0),
-            Some(context.plan_threads(ThreadCapability::single_threaded())),
+            context.single_thread_execution(),
         ))
     }
 
@@ -82,7 +82,7 @@ impl ContainerHandlerOperations for TestListHandler {
             Some(self.descriptor().name.to_string()),
             "create",
             "test create unsupported",
-            Some(context.plan_threads(ThreadCapability::single_threaded())),
+            context.single_thread_execution(),
         ))
     }
 }

@@ -68,7 +68,7 @@ impl CliApp {
                         None,
                         "prepare",
                         error.to_string(),
-                        Some(context.plan_threads(ThreadCapability::single_threaded())),
+                        context.single_thread_execution(),
                     ),
                 );
             }
@@ -97,7 +97,7 @@ impl CliApp {
                 "probe",
                 format!("probing `{}`", probe_source.display()),
                 Some(0.0),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                context.single_thread_execution(),
             );
             let request = ContainerProbeRequest {
                 source: probe_source.clone(),
@@ -166,7 +166,7 @@ impl CliApp {
                     "patch format for `{}` is explicitly not supported: {reason}",
                     probe_source.display()
                 ),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                context.single_thread_execution(),
             );
             if !self.emit_progress_events {
                 report =
@@ -191,7 +191,7 @@ impl CliApp {
                     header_match.header.headerless_extension()
                 ),
                 Some(100.0),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                context.single_thread_execution(),
             );
             if !self.emit_progress_events {
                 report =

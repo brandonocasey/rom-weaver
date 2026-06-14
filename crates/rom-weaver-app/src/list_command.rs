@@ -121,7 +121,7 @@ impl CliApp {
                         None,
                         "prepare",
                         error.to_string(),
-                        Some(context.plan_threads(ThreadCapability::single_threaded())),
+                        context.single_thread_execution(),
                     ),
                 );
             }
@@ -153,7 +153,7 @@ impl CliApp {
                 "list",
                 format!("listing entries for `{}`", list_source.display()),
                 None,
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                context.single_thread_execution(),
             );
             let report = match handler.list_entry_records(&request, &context) {
                 Ok(entries) => self.build_container_list_report(
@@ -243,7 +243,7 @@ impl CliApp {
                 source.display()
             ),
             Some(100.0),
-            Some(context.plan_threads(ThreadCapability::single_threaded())),
+            context.single_thread_execution(),
         );
         if handler.descriptor().matches_name("chd") {
             let request = ContainerProbeRequest {

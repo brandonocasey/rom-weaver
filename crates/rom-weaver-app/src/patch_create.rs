@@ -207,7 +207,7 @@ impl CliApp {
             "starting patch-create-candidates command"
         );
         let context = self.context(args.threads);
-        let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let probe_threads = context.single_thread_execution();
         if let Some(report) = self.require_existing_path(
             "patch-create-candidates",
             OperationFamily::Patch,
@@ -249,7 +249,7 @@ impl CliApp {
                 formats.join(",")
             ),
             Some(100.0),
-            Some(context.plan_threads(ThreadCapability::single_threaded())),
+            context.single_thread_execution(),
         );
         report.details = Some(json!({
             "patch_create_format_candidates": {
@@ -365,7 +365,7 @@ impl CliApp {
             "starting patch-create command"
         );
         let base_context = self.context(args.threads);
-        let probe_threads = Some(base_context.plan_threads(ThreadCapability::single_threaded()));
+        let probe_threads = base_context.single_thread_execution();
         let xdelta_secondary_mode = match args.xdelta_secondary.parse::<XdeltaSecondaryMode>() {
             Ok(mode) => mode,
             Err(error) => {
@@ -532,14 +532,14 @@ impl CliApp {
                 Some(handler.descriptor().name.to_string()),
                 "create",
                 op.to_string(),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                context.single_thread_execution(),
             ),
             Err(error) => OperationReport::failed(
                 OperationFamily::Patch,
                 Some(handler.descriptor().name.to_string()),
                 "create",
                 error.to_string(),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                context.single_thread_execution(),
             ),
         };
         let mut report = report;

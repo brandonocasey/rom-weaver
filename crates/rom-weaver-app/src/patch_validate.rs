@@ -50,7 +50,7 @@ impl CliApp {
                 } else {
                     PatchChecksumValidation::Strict
                 });
-        let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let probe_threads = context.single_thread_execution();
         let cached_input_checksums =
             match Self::parse_patch_apply_checksum_values(&checksum_cache, "--checksum-cache") {
                 Ok(values) => values,
@@ -266,7 +266,7 @@ impl CliApp {
                             None,
                             "compat",
                             error.to_string(),
-                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            context.single_thread_execution(),
                         );
                     }
                 }
@@ -286,7 +286,7 @@ impl CliApp {
                         target_order.label()
                     ),
                     None,
-                    Some(context.plan_threads(ThreadCapability::single_threaded())),
+                    context.single_thread_execution(),
                 );
                 let transformed_path = context
                     .temp_paths()
@@ -307,7 +307,7 @@ impl CliApp {
                             None,
                             "compat",
                             error.to_string(),
-                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            context.single_thread_execution(),
                         );
                     }
                 }
@@ -327,7 +327,7 @@ impl CliApp {
                             None,
                             "validate",
                             error.to_string(),
-                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            context.single_thread_execution(),
                         );
                     }
                 }
@@ -345,7 +345,7 @@ impl CliApp {
                         expected_input_checksums.len()
                     ),
                     None,
-                    Some(context.plan_threads(ThreadCapability::single_threaded())),
+                    context.single_thread_execution(),
                 );
                 match Self::validate_patch_apply_expected_checksums(
                     &validate_input,
@@ -361,7 +361,7 @@ impl CliApp {
                             None,
                             "validate",
                             error.to_string(),
-                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            context.single_thread_execution(),
                         );
                     }
                 }
@@ -420,7 +420,7 @@ impl CliApp {
                             "{} does not support dry-run validation",
                             handler.descriptor().name
                         ),
-                        Some(context.plan_threads(ThreadCapability::single_threaded())),
+                        context.single_thread_execution(),
                     );
                 }
                 formats.push(handler.descriptor().name.to_string());
@@ -473,7 +473,7 @@ impl CliApp {
                                 Some(handler.descriptor().name.to_string()),
                                 "validate",
                                 op.to_string(),
-                                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                                context.single_thread_execution(),
                             );
                         }
                         Err(error) => {
@@ -482,7 +482,7 @@ impl CliApp {
                                 Some(handler.descriptor().name.to_string()),
                                 "validate",
                                 error.to_string(),
-                                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                                context.single_thread_execution(),
                             );
                         }
                     }
@@ -503,7 +503,7 @@ impl CliApp {
                                 "failed to prepare validation output path `{}`: {error}",
                                 output.display()
                             ),
-                            Some(context.plan_threads(ThreadCapability::single_threaded())),
+                            context.single_thread_execution(),
                         );
                     }
 
@@ -520,7 +520,7 @@ impl CliApp {
                                 Some(handler.descriptor().name.to_string()),
                                 "validate",
                                 op.to_string(),
-                                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                                context.single_thread_execution(),
                             );
                         }
                         Err(error) => {
@@ -529,7 +529,7 @@ impl CliApp {
                                 Some(handler.descriptor().name.to_string()),
                                 "validate",
                                 error.to_string(),
-                                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                                context.single_thread_execution(),
                             );
                         }
                     };
@@ -542,9 +542,9 @@ impl CliApp {
                         Some(handler.descriptor().name.to_string()),
                         "validate",
                         report.label,
-                        report.thread_execution.or_else(|| {
-                            Some(context.plan_threads(ThreadCapability::single_threaded()))
-                        }),
+                        report
+                            .thread_execution
+                            .or_else(|| context.single_thread_execution()),
                     );
                 }
                 if !progress_tracker.saw_meaningful_running_progress() {
@@ -604,7 +604,7 @@ impl CliApp {
                     patch_count
                 ),
                 Some(100.0),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                context.single_thread_execution(),
             );
             report.details = Some(json!({
                 "patch_validation": {

@@ -40,7 +40,7 @@ impl CliApp {
         };
 
         let context = self.context(threads);
-        let probe_threads = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let probe_threads = context.single_thread_execution();
         for input in &input {
             if let Some(report) = self.require_existing_path(
                 "compress",
@@ -187,7 +187,7 @@ impl CliApp {
                 Some(handler.descriptor().name.to_string()),
                 "create",
                 error.to_string(),
-                Some(context.plan_threads(ThreadCapability::single_threaded())),
+                context.single_thread_execution(),
             )
         });
         if report.status == OperationStatus::Succeeded
@@ -252,7 +252,7 @@ impl CliApp {
             TrimOperation::Trim
         };
         let context = self.context(threads);
-        let thread_execution = Some(context.plan_threads(ThreadCapability::single_threaded()));
+        let thread_execution = context.single_thread_execution();
         let extension = extension
             .unwrap_or_else(|| Self::default_trim_extension_pattern(operation).to_string());
         let extension = match Self::normalize_trim_extension(&extension) {

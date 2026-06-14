@@ -206,6 +206,14 @@ impl OperationContext {
         capability.negotiate(self.thread_budget)
     }
 
+    /// Plans a single-threaded execution wrapped in `Some`, for the common
+    /// "report a failure/early-exit that did no parallel work" case. Replaces
+    /// the `Some(context.plan_threads(ThreadCapability::single_threaded()))`
+    /// idiom that the command flows repeated dozens of times.
+    pub fn single_thread_execution(&self) -> Option<ThreadExecution> {
+        Some(self.plan_threads(ThreadCapability::single_threaded()))
+    }
+
     pub fn build_pool(
         &self,
         capability: ThreadCapability,
