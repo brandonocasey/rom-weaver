@@ -754,12 +754,10 @@ enum LibarchiveExtractOutput {
     },
     FileData {
         index: usize,
-        archive_name: String,
         bytes: Vec<u8>,
     },
     FileEnd {
         index: usize,
-        archive_name: String,
     },
 }
 
@@ -1069,7 +1067,6 @@ fn extract_libarchive_task_chunk_to_sender(
                             sender,
                             LibarchiveExtractOutput::FileData {
                                 index: task.index,
-                                archive_name: task.archive_name.clone(),
                                 bytes: buffer[..read].to_vec(),
                             },
                             format_name,
@@ -1077,10 +1074,7 @@ fn extract_libarchive_task_chunk_to_sender(
                     }
                     send_libarchive_extract_output(
                         sender,
-                        LibarchiveExtractOutput::FileEnd {
-                            index: task.index,
-                            archive_name: task.archive_name.clone(),
-                        },
+                        LibarchiveExtractOutput::FileEnd { index: task.index },
                         format_name,
                     )?;
                 }
@@ -1357,16 +1351,13 @@ pub(crate) fn extract_regular_archive_with_libarchive(
                                 )))
                             }
                         }
-                        LibarchiveExtractOutput::FileData {
-                            index,
-                            archive_name,
-                            bytes,
-                        } => {
+                        LibarchiveExtractOutput::FileData { index, bytes } => {
                             let output = open_outputs.get_mut(&index).ok_or_else(|| {
                                 RomWeaverError::Validation(format!(
-                                    "{format_name} extract received data before start for entry {index} (`{archive_name}`)"
+                                    "{format_name} extract received data before start for entry {index}"
                                 ))
                             })?;
+                            let archive_name = &output.archive_name;
                             output.writer.write_all(&bytes).map_err(|error| {
                                 RomWeaverError::Validation(format!(
                                     "{format_name} extract failed while writing entry {index} (`{archive_name}`): {error}"
@@ -1393,13 +1384,10 @@ pub(crate) fn extract_regular_archive_with_libarchive(
                             }
                             Ok(())
                         }
-                        LibarchiveExtractOutput::FileEnd {
-                            index,
-                            archive_name,
-                        } => {
+                        LibarchiveExtractOutput::FileEnd { index } => {
                             let mut output = open_outputs.remove(&index).ok_or_else(|| {
                                 RomWeaverError::Validation(format!(
-                                    "{format_name} extract received end before start for entry {index} (`{archive_name}`)"
+                                    "{format_name} extract received end before start for entry {index}"
                                 ))
                             })?;
                             output.writer.flush().map_err(|error| {
