@@ -187,8 +187,7 @@ impl NativeCodecBackend {
                 )));
             }
 
-            let output = BufWriter::new(NonVectoredWriter::new(File::create(&request.output)?));
-            let mut output = output;
+            let mut output = BufWriter::new(NonVectoredWriter::new(File::create(&request.output)?));
             let copied = libarchive_read_entry_to_writer(
                 &mut archive,
                 self.descriptor.name,

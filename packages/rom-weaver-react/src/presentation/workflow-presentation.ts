@@ -417,22 +417,6 @@ const createThreadedProgressLabel = (label: WorkflowScalar, threads?: string | n
   return `${normalizedLabel}${threadLabel ? ` - ${threadLabel}` : ""}...`;
 };
 
-const createContextualProgressLabel = ({
-  label,
-  fallbackLabel,
-  formatLabel,
-  threads,
-}: ContextualProgressLabelOptions = {}): string => {
-  const rawLabel = String(label || "").trim();
-  const normalizedLabel = stripProgressEllipsis(rawLabel || String(fallbackLabel || ""));
-  const normalizedFormatLabel = String(formatLabel || "");
-  const contextualLabel = labelIncludesProgressFormat(normalizedLabel, normalizedFormatLabel)
-    ? normalizedLabel
-    : `${normalizedLabel} ${normalizedFormatLabel}`.trim();
-  if (hasProgressThreadLabel(contextualLabel) && TRAILING_ELLIPSIS_REGEX.test(rawLabel)) return `${contextualLabel}...`;
-  return createThreadedProgressLabel(contextualLabel, threads);
-};
-
 const createCompressionProgressLabel = (options: ContextualProgressLabelOptions = {}): string => {
   const formatLabel = String(options.formatLabel || "");
   const rawLabel = String(options.label || "").trim();
@@ -616,7 +600,6 @@ export {
   clampProgressPercent,
   createCompressionProgressLabel,
   createCompressionProgressLabelFromEvent,
-  createContextualProgressLabel,
   createOutputSizeSummary,
   createProgressEvent,
   createProgressViewModel,

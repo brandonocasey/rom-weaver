@@ -802,8 +802,8 @@ const createSharedCompressionRuntime = (
 
 const createRuntimePreload = (): WorkflowRuntimePreload => ({
   preloadCapability: async (capability, emit, options) => {
-    const workerKind = getPreloadWorkerKind(capability);
-    const tool = getPreloadWasmTool(capability);
+    const workerKind = "rom-weaver";
+    const tool = "rom-weaver";
     try {
       emitPreloadLog(emit, capability, `Preloading ${capability} capability`);
       emit({ data: { capability, status: "created", workerKind }, kind: "worker" });
@@ -837,16 +837,6 @@ const emitPreloadLog = (
     },
     kind: "log",
   });
-};
-
-const getPreloadWorkerKind = (capability: Parameters<NonNullable<WorkflowRuntimePreload["preloadCapability"]>>[0]) => {
-  if (capability === "compression" || capability === "checksum" || capability === "patch") return "rom-weaver";
-  return "rom-weaver";
-};
-
-const getPreloadWasmTool = (capability: Parameters<NonNullable<WorkflowRuntimePreload["preloadCapability"]>>[0]) => {
-  if (capability === "compression" || capability === "checksum" || capability === "patch") return "rom-weaver";
-  return undefined;
 };
 
 export type { RomSpecificRuntimeAdapter, TrimRuntimeAdapter };

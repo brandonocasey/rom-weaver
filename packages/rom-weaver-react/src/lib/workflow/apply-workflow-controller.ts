@@ -592,13 +592,7 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       if (!requests.length) this.pushWarning(stage, toRomWeaverError(error));
     }
     for (const request of requests) this.addCandidateRequest(stage, request);
-    if (!stage.state.candidates.length)
-      this.addDirectCandidate(
-        stage,
-        stage.state.role,
-        stage.index,
-        stage.state.role === "patch" ? stage.state.id : stage.state.id,
-      );
+    if (!stage.state.candidates.length) this.addDirectCandidate(stage, stage.state.role, stage.index, stage.state.id);
     const selectable = stage.state.candidates.filter((candidate) => candidate.selectable);
     if (selectable.length === 1) {
       stage.state.selectedCandidateId = selectable[0]?.id;

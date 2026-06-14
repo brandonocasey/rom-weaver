@@ -771,9 +771,9 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         let output_name =
             self.extract_name_with_underlying_magic(&request.source, Some(header.underlying_magic));
         let mut selections = SelectionMatcher::new(&request.selections);
-        if !selections.matches(&output_name) {
-            selections.ensure_all_matched()?;
-        }
+        // Record the single output against the requested selections (matches() marks them),
+        // then verify every requested selection matched it.
+        selections.matches(&output_name);
         selections.ensure_all_matched()?;
         if !request
             .kind_filter

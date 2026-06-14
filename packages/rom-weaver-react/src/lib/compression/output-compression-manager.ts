@@ -351,15 +351,11 @@ const OutputCompressionManager = (() => {
       ? _normalizeZstdCompressionLevel(value, fallback)
       : _normalizeCompressionLevel(value, fallback);
   const _normalizeArchiveCompressionLevelForFormat = (
-    compression: string | null | undefined,
+    _compression: string | null | undefined,
     codec: string | null | undefined,
     value: string | number | null | undefined,
     fallback?: number,
-  ) => {
-    const selected = _normalizeOutputCompression(compression);
-    if (selected === OUTPUT_COMPRESSION.ZIP) return _normalizeArchiveCompressionLevel(codec, value, fallback);
-    return _normalizeArchiveCompressionLevel(codec, value, fallback);
-  };
+  ) => _normalizeArchiveCompressionLevel(codec, value, fallback);
   const _normalizeCompressionProfile = (
     value: CompressionProfileInput,
     fallback?: CompressionProfile | string,
