@@ -91,12 +91,30 @@ const getApplyOutputCompression = (
   });
 };
 
+// A multi-track disc's "primary" resolved file is a track (e.g. "track01.bin"), a poor output
+// name. Use the disc's own name instead: the dropped archive (depth 0 of the archive chain) for
+// an archived disc, otherwise the `.cue`/`.gdi` sheet for a loose disc.
+const getDiscInputOutputFileName = (input: ApplyWorkflowInputState | null): string | undefined => {
+  const resolved = input?.resolvedInputs;
+  if (!resolved?.length) return undefined;
+  const isDisc = resolved.some((entry) => entry.kind === "track" || entry.kind === "cue" || entry.kind === "gdi");
+  if (!isDisc) return undefined;
+  return (
+    input?.parentCompressions?.[0]?.fileName ||
+    resolved.find((entry) => entry.kind === "cue" || entry.kind === "gdi")?.fileName ||
+    undefined
+  );
+};
+
 const getAutomaticApplyOutputName = (
   snapshot: ApplyWorkflowSessionInput,
   input: ApplyWorkflowInputState | null,
   patches: ApplyWorkflowPatchState[],
 ) => {
-  const inputFileName = input?.fileName || getReactBinarySourceFileName(snapshot.inputs[0], "patched.bin");
+  const inputFileName =
+    getDiscInputOutputFileName(input) ||
+    input?.fileName ||
+    getReactBinarySourceFileName(snapshot.inputs[0], "patched.bin");
   const inputBase = getFileNameWithoutExtension(inputFileName) || "patched";
   const patchNames = patches
     .map((patch, index) => {

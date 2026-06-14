@@ -1472,7 +1472,11 @@ const resolveArchiveInputAssetsByDescent = async (
   };
   const parentCompressions: InputParentCompression[] = orderedSteps.map((step, index) => {
     const sourceSize = index === 0 ? archiveFile.fileSize : orderedSteps[index - 1]?.outputSize;
-    const fileName = index === 0 ? step.sourceName : inArchivePath(step.source);
+    // Depth 0 is the dropped archive itself: show its ORIGINAL name, not the OPFS-staged
+    // source path (e.g. "/work/disc-bincue-5.7z"), whose collision-avoidance "-N" suffix
+    // would otherwise leak into the disc title and output filename.
+    const fileName =
+      index === 0 ? getBaseFileName(archiveFile.fileName || step.sourceName) : inArchivePath(step.source);
     return {
       depth: index,
       fileName,

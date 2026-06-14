@@ -223,14 +223,34 @@ const renderRomInputRow = (romInput: RomInputRowState, index: number, deps: RomR
 };
 
 /**
- * The disc display name. The cue is not a row of its own (its text rides on the
- * track rows), so derive the title from a track filename by dropping the
- * extension and a trailing "(Track N)" suffix — e.g. "Game (Track 1).bin" →
- * "Game".
+ * Normalize a disc-related filename into a display name by dropping the extension
+ * and a trailing "(Track N)" suffix — e.g. "Game (Track 1).bin" → "Game",
+ * "Final Fantasy VII (Disc 1).7z" → "Final Fantasy VII (Disc 1)".
  */
 const discDisplayName = (fileName: string): string => {
-  const withoutExt = fileName.replace(/\.[^.]+$/, "");
-  return withoutExt.replace(/\s*\(track\s*\d+\)\s*$/i, "") || withoutExt || fileName;
+  const base = fileName.replace(/^.*[/\\]/, "");
+  const withoutExt = base.replace(/\.[^.]+$/, "");
+  return withoutExt.replace(/\s*\(track\s*\d+\)\s*$/i, "") || withoutExt || base;
+};
+
+/**
+ * The disc's display name. The cue is not a row of its own (its text rides on the
+ * track rows), so a track filename like "track01.bin" is a poor title. Prefer the
+ * source archive's base name (what the user dropped, e.g. "disc-bincue.7z" →
+ * "disc-bincue"), then a `.cue`/`.gdi` sheet row if one exists, and only fall back
+ * to a track-derived name when nothing better is available.
+ */
+const discGroupDisplayName = (
+  groupRows: RomInputRowState[],
+  cueRow: RomInputRowState | undefined,
+  firstTrackName: string | undefined,
+): string => {
+  const archiveFileName = groupRows.find((row) => row.archivePathEntries?.length)?.archivePathEntries?.[0]?.fileName;
+  return (
+    (archiveFileName && discDisplayName(archiveFileName)) ||
+    (cueRow?.info.fileName && discDisplayName(cueRow.info.fileName)) ||
+    (firstTrackName ? discDisplayName(firstTrackName) : "Disc")
+  );
 };
 
 /** Render a multi-track disc as one card with per-track checksums + cue view. */
@@ -247,7 +267,7 @@ const renderDiscGroup = (
   const gdiText = groupRows.find((row) => Boolean(row.gdiText))?.gdiText;
   const totalBytes = trackRows.reduce((sum, row) => sum + (row.size ?? row.sourceSize ?? 0), 0);
   const firstTrackName = trackRows[0]?.info.fileName;
-  const discName = cueRow?.info.fileName ?? (firstTrackName ? discDisplayName(firstTrackName) : "Disc");
+  const discName = discGroupDisplayName(groupRows, cueRow, firstTrackName);
   // Any verified-bad track marks the disc bad; otherwise ok once any track verifies.
   let state: "bad" | "ok" | undefined;
   for (const row of groupRows) {
