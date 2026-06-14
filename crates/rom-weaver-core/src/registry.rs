@@ -297,8 +297,36 @@ pub struct CodecCapabilities {
 
 pub type CodecDescriptor = FormatDescriptor;
 
-pub fn traced_container_handler(handler: Arc<dyn ContainerHandler>) -> Arc<dyn ContainerHandler> {
-    Arc::new(TracingContainerHandler { inner: handler })
+/// Whether a registered container may run `create`/`create_dry_run_size`. For
+/// extract-only formats the wrapper returns a uniform extract-only error instead
+/// of dispatching to the inner handler.
+pub enum CreateSupport {
+    Supported,
+    ExtractOnly { supported_create_formats: String },
+}
+
+/// Static, per-handler metadata folded into the single container wrapper.
+///
+/// Containers register through exactly ONE wrapper (matching patches/codecs):
+/// keeping capabilities + the create gate as data here — rather than in a second
+/// hand-forwarding wrapper — is what prevents a newly added
+/// `ContainerHandlerOperations` method from silently resolving to its trait
+/// default in a layer someone forgot to update.
+pub struct ContainerHandlerRegistration {
+    pub descriptor: &'static FormatDescriptor,
+    pub capabilities: ContainerCapabilities,
+    pub is_single_payload_disc_image: bool,
+    pub create_support: CreateSupport,
+}
+
+pub fn traced_container_handler(
+    handler: Arc<dyn ContainerHandlerOperations>,
+    registration: ContainerHandlerRegistration,
+) -> Arc<dyn ContainerHandler> {
+    Arc::new(TracingContainerHandler {
+        inner: handler,
+        registration,
+    })
 }
 
 pub fn traced_patch_handler(handler: Arc<dyn PatchHandler>) -> Arc<dyn PatchHandler> {
@@ -484,16 +512,17 @@ pub trait CodecBackend: Send + Sync {
 }
 
 struct TracingContainerHandler {
-    inner: Arc<dyn ContainerHandler>,
+    inner: Arc<dyn ContainerHandlerOperations>,
+    registration: ContainerHandlerRegistration,
 }
 
 impl ContainerHandlerOperations for TracingContainerHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
-        self.inner.descriptor()
+        self.registration.descriptor
     }
 
     fn probe(&self, source: &Path) -> ProbeConfidence {
-        let descriptor = self.inner.descriptor();
+        let descriptor = self.registration.descriptor;
         trace!(
             family = ?descriptor.family,
             format = descriptor.name,
@@ -516,7 +545,7 @@ impl ContainerHandlerOperations for TracingContainerHandler {
         request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let descriptor = self.inner.descriptor();
+        let descriptor = self.registration.descriptor;
         trace!(
             family = ?descriptor.family,
             format = descriptor.name,
@@ -533,7 +562,7 @@ impl ContainerHandlerOperations for TracingContainerHandler {
         request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<Vec<String>> {
-        let descriptor = self.inner.descriptor();
+        let descriptor = self.registration.descriptor;
         trace!(
             family = ?descriptor.family,
             format = descriptor.name,
@@ -567,7 +596,7 @@ impl ContainerHandlerOperations for TracingContainerHandler {
         request: &ContainerProbeRequest,
         context: &OperationContext,
     ) -> Result<Vec<ContainerListEntry>> {
-        let descriptor = self.inner.descriptor();
+        let descriptor = self.registration.descriptor;
         trace!(
             family = ?descriptor.family,
             format = descriptor.name,
@@ -601,7 +630,7 @@ impl ContainerHandlerOperations for TracingContainerHandler {
         request: &ContainerExtractRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let descriptor = self.inner.descriptor();
+        let descriptor = self.registration.descriptor;
         trace!(
             family = ?descriptor.family,
             format = descriptor.name,
@@ -622,7 +651,7 @@ impl ContainerHandlerOperations for TracingContainerHandler {
         request: &ContainerCreateRequest,
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let descriptor = self.inner.descriptor();
+        let descriptor = self.registration.descriptor;
         trace!(
             family = ?descriptor.family,
             format = descriptor.name,
@@ -634,7 +663,17 @@ impl ContainerHandlerOperations for TracingContainerHandler {
             parent = ?request.parent.as_ref().map(|path| path.display().to_string()),
             "container create start"
         );
-        let result = self.inner.create(request, context);
+        let result = match &self.registration.create_support {
+            CreateSupport::Supported => self.inner.create(request, context),
+            CreateSupport::ExtractOnly {
+                supported_create_formats,
+            } => Err(RomWeaverError::Unsupported(
+                UnsupportedOp::ExtractOnlyCreate {
+                    format: request.format.clone(),
+                    supported_create_formats: supported_create_formats.clone(),
+                },
+            )),
+        };
         trace_operation_result("create", descriptor, &result);
         result
     }
@@ -645,7 +684,7 @@ impl ContainerHandlerOperations for TracingContainerHandler {
         overrides: &[CreateInputOverride],
         context: &OperationContext,
     ) -> Result<OperationReport> {
-        let descriptor = self.inner.descriptor();
+        let descriptor = self.registration.descriptor;
         trace!(
             family = ?descriptor.family,
             format = descriptor.name,
@@ -654,9 +693,19 @@ impl ContainerHandlerOperations for TracingContainerHandler {
             override_count = overrides.len(),
             "container create (input overrides) start"
         );
-        let result = self
-            .inner
-            .create_with_input_overrides(request, overrides, context);
+        let result = match &self.registration.create_support {
+            CreateSupport::Supported => self
+                .inner
+                .create_with_input_overrides(request, overrides, context),
+            CreateSupport::ExtractOnly {
+                supported_create_formats,
+            } => Err(RomWeaverError::Unsupported(
+                UnsupportedOp::ExtractOnlyCreate {
+                    format: request.format.clone(),
+                    supported_create_formats: supported_create_formats.clone(),
+                },
+            )),
+        };
         trace_operation_result("create", descriptor, &result);
         result
     }
@@ -666,17 +715,27 @@ impl ContainerHandlerOperations for TracingContainerHandler {
         request: &ContainerCreateRequest,
         context: &OperationContext,
     ) -> Result<u64> {
-        self.inner.create_dry_run_size(request, context)
+        match &self.registration.create_support {
+            CreateSupport::Supported => self.inner.create_dry_run_size(request, context),
+            CreateSupport::ExtractOnly {
+                supported_create_formats,
+            } => Err(RomWeaverError::Unsupported(
+                UnsupportedOp::ExtractOnlyCreate {
+                    format: request.format.clone(),
+                    supported_create_formats: supported_create_formats.clone(),
+                },
+            )),
+        }
     }
 }
 
 impl ContainerHandler for TracingContainerHandler {
     fn capabilities(&self) -> ContainerCapabilities {
-        self.inner.capabilities()
+        self.registration.capabilities.clone()
     }
 
     fn is_single_payload_disc_image(&self) -> bool {
-        self.inner.is_single_payload_disc_image()
+        self.registration.is_single_payload_disc_image
     }
 }
 

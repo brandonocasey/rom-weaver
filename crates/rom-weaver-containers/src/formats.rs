@@ -2,10 +2,9 @@ use std::{fs::File, path::Path, sync::Arc};
 
 use nod::read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader};
 use rom_weaver_core::{
-    ContainerCapabilities, ContainerCreateRequest, ContainerExtractRequest, ContainerHandler,
-    ContainerHandlerOperations, ContainerListEntry, ContainerProbeRequest, FormatDescriptor,
-    OperationFamily, OperationReport, ProbeConfidence, Result, RomWeaverError, ThreadCapability,
-    UnsupportedOp,
+    ContainerCapabilities, ContainerHandler, ContainerHandlerOperations,
+    ContainerHandlerRegistration, CreateSupport, FormatDescriptor, OperationFamily,
+    ProbeConfidence, RomWeaverError, ThreadCapability, UnsupportedOp,
 };
 
 use crate::{
@@ -383,10 +382,23 @@ struct ContainerFormatRegistration {
 
 impl ContainerFormatRegistration {
     fn build_handler(&'static self) -> Arc<dyn ContainerHandler> {
-        Arc::new(RegisteredContainerHandler {
-            registration: self,
-            inner: self.handler.build(self.descriptor),
-        })
+        let capabilities = self.capabilities.into_container_capabilities();
+        let create_support = if capabilities.create {
+            CreateSupport::Supported
+        } else {
+            CreateSupport::ExtractOnly {
+                supported_create_formats: supported_create_formats_text(),
+            }
+        };
+        rom_weaver_core::traced_container_handler(
+            self.handler.build(self.descriptor),
+            ContainerHandlerRegistration {
+                descriptor: self.descriptor,
+                capabilities,
+                is_single_payload_disc_image: self.handler.is_single_payload_disc_image(),
+                create_support,
+            },
+        )
     }
 
     fn metadata(&self) -> ContainerFormatMetadata {
@@ -397,98 +409,6 @@ impl ContainerFormatRegistration {
             capabilities: self.capabilities.metadata(),
             default_output: self.default_output,
         }
-    }
-}
-
-struct RegisteredContainerHandler {
-    registration: &'static ContainerFormatRegistration,
-    inner: Arc<dyn ContainerHandlerOperations>,
-}
-
-impl ContainerHandlerOperations for RegisteredContainerHandler {
-    fn descriptor(&self) -> &'static FormatDescriptor {
-        self.registration.descriptor
-    }
-
-    fn probe(&self, source: &Path) -> ProbeConfidence {
-        self.inner.probe(source)
-    }
-
-    fn probe_details(
-        &self,
-        request: &ContainerProbeRequest,
-        context: &rom_weaver_core::OperationContext,
-    ) -> Result<OperationReport> {
-        self.inner.probe_details(request, context)
-    }
-
-    fn list_entries(
-        &self,
-        request: &ContainerProbeRequest,
-        context: &rom_weaver_core::OperationContext,
-    ) -> Result<Vec<String>> {
-        self.inner.list_entries(request, context)
-    }
-
-    fn list_entry_records(
-        &self,
-        request: &ContainerProbeRequest,
-        context: &rom_weaver_core::OperationContext,
-    ) -> Result<Vec<ContainerListEntry>> {
-        self.inner.list_entry_records(request, context)
-    }
-
-    fn extract(
-        &self,
-        request: &ContainerExtractRequest,
-        context: &rom_weaver_core::OperationContext,
-    ) -> Result<OperationReport> {
-        self.inner.extract(request, context)
-    }
-
-    fn create(
-        &self,
-        request: &ContainerCreateRequest,
-        context: &rom_weaver_core::OperationContext,
-    ) -> Result<OperationReport> {
-        if !self.registration.capabilities.create {
-            return Err(extract_only_create_error(&request.format));
-        }
-        self.inner.create(request, context)
-    }
-
-    fn create_with_input_overrides(
-        &self,
-        request: &ContainerCreateRequest,
-        overrides: &[rom_weaver_core::CreateInputOverride],
-        context: &rom_weaver_core::OperationContext,
-    ) -> Result<OperationReport> {
-        if !self.registration.capabilities.create {
-            return Err(extract_only_create_error(&request.format));
-        }
-        self.inner
-            .create_with_input_overrides(request, overrides, context)
-    }
-
-    fn create_dry_run_size(
-        &self,
-        request: &ContainerCreateRequest,
-        context: &rom_weaver_core::OperationContext,
-    ) -> Result<u64> {
-        if !self.registration.capabilities.create {
-            return Err(extract_only_create_error(&request.format));
-        }
-        self.inner.create_dry_run_size(request, context)
-    }
-}
-
-impl ContainerHandler for RegisteredContainerHandler {
-    fn capabilities(&self) -> ContainerCapabilities {
-        self.registration.capabilities.into_container_capabilities()
-    }
-
-    fn is_single_payload_disc_image(&self) -> bool {
-        self.registration.handler.is_single_payload_disc_image()
     }
 }
 
@@ -715,7 +635,6 @@ impl ContainerRegistry {
             handlers: CONTAINER_FORMAT_REGISTRY
                 .iter()
                 .map(ContainerFormatRegistration::build_handler)
-                .map(rom_weaver_core::traced_container_handler)
                 .collect(),
         }
     }
