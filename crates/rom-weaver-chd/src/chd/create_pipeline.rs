@@ -241,13 +241,18 @@ impl ChdContainerHandler {
         let mut buffer = vec![0_u8; usize::try_from(hunk_bytes).unwrap_or(4096)];
         let mut remaining = logical_bytes;
         let mut raw_sha1 = Sha1::new();
+        // The buffer starts fully zeroed. Full hunks overwrite every byte via `read_exact`
+        // below, so the tail never goes stale; only the final short hunk leaves a tail that
+        // must be re-zeroed before it is written out as padding.
         for _ in 0..hunk_count {
-            buffer.fill(0);
             let read_len = usize::try_from(remaining.min(u64::from(hunk_bytes))).map_err(|_| {
                 RomWeaverError::Validation(
                     "decoded CHD chunk exceeded addressable memory".to_string(),
                 )
             })?;
+            if read_len < buffer.len() {
+                buffer[read_len..].fill(0);
+            }
             source
                 .read_exact(&mut buffer[..read_len])
                 .map_err(|error| {
