@@ -36,4 +36,24 @@ type CreateWorkflowDeps = PatchWorkflowDeps & {
   hasArchiveFileName: (fileName: string, compression: string) => boolean;
 };
 
-export type { CreateWorkflowDeps, PatchFileInstance, PatchWorkflowDeps, SharedProgressEventLike };
+// Worker apply-result summary contract, produced by the runtime adapter and
+// read by the apply workflow. Declared once here so both sides cannot drift.
+type PatchApplySummary = {
+  outputSize?: number;
+  patches?: Array<{
+    fileName: string;
+    format: string;
+    size?: number;
+  }>;
+  patchSize?: number;
+  rom?: {
+    fileName: string;
+    size?: number;
+  };
+  timing?: {
+    elapsedMs?: number;
+    elapsedSeconds?: number;
+  } | null;
+};
+
+export type { CreateWorkflowDeps, PatchApplySummary, PatchFileInstance, PatchWorkflowDeps, SharedProgressEventLike };

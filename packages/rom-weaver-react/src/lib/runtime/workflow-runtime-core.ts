@@ -3,6 +3,7 @@ import {
   forwardRomSpecificProgress,
 } from "../../platform/shared/workflow-runtime-progress.ts";
 import type { ChecksumResult } from "../../types/checksum.ts";
+import type { PatchApplySummary } from "../../types/workflow-internal.ts";
 import type { CompressionExtractResult, CompressionListResult, PublicOutput } from "../../types/workflow-runtime.ts";
 import type {
   RuntimePatchApplyWorkerInput,
@@ -117,24 +118,6 @@ type PatchRuntimeAdapter = {
   workerOutputFailureMessage?: string;
 };
 
-type InternalPatchApplySummary = {
-  outputSize?: number;
-  patches?: Array<{
-    fileName: string;
-    format: string;
-    size?: number;
-  }>;
-  patchSize?: number;
-  rom?: {
-    fileName: string;
-    size?: number;
-  };
-  timing?: {
-    elapsedMs?: number;
-    elapsedSeconds?: number;
-  } | null;
-};
-
 type ChecksumWorkerRunner = (
   input: {
     checksumAlgorithms: string[];
@@ -180,12 +163,10 @@ const toPatchWorkerFiles = (sources: RuntimeWorkerPathSource[], patchMetadata: A
     patchFormat: patchMetadata[index]?.patchFormat,
   }));
 
-const attachApplySummary = <TOutput extends PublicOutput>(
-  output: TOutput,
-  summary: InternalPatchApplySummary | null,
-) => (summary ? Object.assign(output, { _applySummary: summary }) : output);
+const attachApplySummary = <TOutput extends PublicOutput>(output: TOutput, summary: PatchApplySummary | null) =>
+  summary ? Object.assign(output, { _applySummary: summary }) : output;
 
-const getTimingElapsedMs = (timing: PublicOutput["timing"] | InternalPatchApplySummary["timing"] | undefined) => {
+const getTimingElapsedMs = (timing: PublicOutput["timing"] | PatchApplySummary["timing"] | undefined) => {
   if (!timing || typeof timing !== "object") return undefined;
   const elapsedMs = timing.elapsedMs;
   return typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= 0
@@ -283,7 +264,7 @@ const createSharedPatchRuntime = (adapter: PatchRuntimeAdapter): WorkflowRuntime
           adapter.workerOutputFailureMessage,
         ),
         result.applySummary && typeof result.applySummary === "object"
-          ? (result.applySummary as InternalPatchApplySummary)
+          ? (result.applySummary as PatchApplySummary)
           : null,
       );
     } finally {

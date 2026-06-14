@@ -15,7 +15,7 @@ import { reportProgress } from "../../lib/progress/progress-reporting.ts";
 import { getNamedSourcePath } from "../../storage/shared/binary/source-file-utils.ts";
 import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
 import type { SourceRef } from "../../types/source.ts";
-import type { PatchFileInstance, PatchWorkflowDeps } from "../../types/workflow-internal.ts";
+import type { PatchApplySummary, PatchFileInstance, PatchWorkflowDeps } from "../../types/workflow-internal.ts";
 import type { ApplyWorkflowResult, PatchInput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { ParsedPatchLike } from "../../workers/protocol/patch-engine.ts";
@@ -30,29 +30,11 @@ import {
   verifyPatchedOutputIfRequired,
 } from "./patch-apply-service.ts";
 
-type InternalWorkerApplySummary = {
-  outputSize?: number;
-  patches?: Array<{
-    fileName: string;
-    format: string;
-    size?: number;
-  }>;
-  patchSize?: number;
-  rom?: {
-    fileName: string;
-    size?: number;
-  };
-  timing?: {
-    elapsedMs?: number;
-    elapsedSeconds?: number;
-  } | null;
-};
-
 type PublicOutputWithApplySummary = ApplyWorkflowResult["output"] & {
-  _applySummary?: InternalWorkerApplySummary;
+  _applySummary?: PatchApplySummary;
 };
 
-const getTimingElapsedMs = (timing: InternalWorkerApplySummary["timing"] | undefined) => {
+const getTimingElapsedMs = (timing: PatchApplySummary["timing"] | undefined) => {
   if (!timing || typeof timing.elapsedMs !== "number" || !Number.isFinite(timing.elapsedMs) || timing.elapsedMs < 0)
     return undefined;
   return Math.round(timing.elapsedMs);

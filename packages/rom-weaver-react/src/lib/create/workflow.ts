@@ -1,17 +1,11 @@
 import {
-  createRomSpecificExtensionRegex,
-  ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS,
-} from "../../lib/compression/rom-specific-format-support.ts";
-import { isArchiveFile } from "../../lib/input/archive-type-utils.ts";
-import {
   createPatchFile,
   getDefaultCreatePatchOutputFileName,
   getPatchFileBytes,
 } from "../../lib/input/binary-service.ts";
-import { classifyPatcherInput, getInputSourceFileName } from "../../lib/input/input-classification.ts";
 import { getProgressEventPercent } from "../../presentation/workflow-presentation.ts";
 import { getNamedSource, getNamedSourceFileName } from "../../storage/shared/binary/source-file-utils.ts";
-import type { DirectSource, SourceRef } from "../../types/source.ts";
+import type { SourceRef } from "../../types/source.ts";
 import type { CreateWorkflowDeps, PatchFileInstance } from "../../types/workflow-internal.ts";
 import type { CreatePatchInput, CreatePatchResult, JsonValue } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
@@ -23,11 +17,14 @@ import {
 } from "../output/archive-output-service.ts";
 import { requireOutputName } from "../output/output-name-validation.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
+import {
+  getWorkflowSourceFileName,
+  roundElapsedMs,
+  shouldPrepareWorkflowSource,
+} from "../workflow/source-preparation.ts";
 import { createWorkflowTracer } from "../workflow/workflow-tracing.ts";
 import { embedSourceCrc32InPatchName } from "./patch-checksum-name.ts";
 
-const ROM_SPECIFIC_INPUT_EXTENSION_REGEX = createRomSpecificExtensionRegex(ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS);
-const FILE_QUERY_OR_HASH_REGEX = /[?#].*$/;
 type JsonObject = { [key: string]: JsonValue };
 type CreateSourceInput = PatchFileInstance | SourceRef;
 
@@ -39,58 +36,6 @@ const getCreateMetadata = (options: CreatePatchInput["options"]): JsonObject =>
 const getCreateCompression = (options: CreatePatchInput["options"]) => options?.output?.compression;
 const getCreateOutputName = (options: CreatePatchInput["options"]) => options?.output?.outputName;
 const { traceWorkflowStage, traceWorkflowStageBlock } = createWorkflowTracer("create");
-
-const getOutputTimingMs = (output: CreatePatchResult["output"] | undefined): number | undefined => {
-  const elapsedMs = output?.timing?.elapsedMs;
-  return typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= 0
-    ? Math.round(elapsedMs)
-    : undefined;
-};
-
-const createClassificationSource = (
-  source: SourceRef,
-  deps: Pick<CreateWorkflowDeps, "getNamedSource" | "getNamedSourceFileName">,
-) => {
-  const directSource = deps.getNamedSource(source) as DirectSource;
-  const fileName = deps.getNamedSourceFileName(source);
-  if (!fileName || directSource === source) return source;
-  if (typeof Blob !== "undefined" && directSource instanceof Blob) return { _file: directSource, fileName };
-  if (directSource && typeof directSource === "object") return { ...directSource, fileName };
-  return directSource;
-};
-
-const shouldPrepareCreateSource = (
-  source: SourceRef,
-  options: CreatePatchInput["options"] | undefined,
-  selectedArchiveEntry: string | undefined,
-  deps: Pick<CreateWorkflowDeps, "getNamedSource" | "getNamedSourceFileName">,
-) => {
-  if (selectedArchiveEntry) return true;
-  const directSource = deps.getNamedSource(source) as DirectSource;
-  if (typeof directSource === "string") {
-    if (isArchiveFile(directSource)) return options?.input?.containerInputsEnabled !== false;
-    if (ROM_SPECIFIC_INPUT_EXTENSION_REGEX.test(directSource)) return options?.input?.containerInputsEnabled !== false;
-    return false;
-  }
-  const classification = classifyPatcherInput(createClassificationSource(source, deps));
-  return classification.kind === "compression" ? options?.input?.containerInputsEnabled !== false : false;
-};
-
-const getCreateSourceFileName = (
-  source: CreateSourceInput,
-  fallback: string,
-  deps: Pick<CreateWorkflowDeps, "getNamedSource" | "getNamedSourceFileName">,
-) => {
-  const namedFileName = deps.getNamedSourceFileName(source as SourceRef, { fallback: "" });
-  if (namedFileName) return namedFileName;
-  const directSource = deps.getNamedSource(source as SourceRef);
-  if (typeof directSource === "string" && directSource.trim()) {
-    const normalized = directSource.replace(/\\/g, "/").replace(FILE_QUERY_OR_HASH_REGEX, "");
-    const slashIndex = normalized.lastIndexOf("/");
-    return normalized.slice(slashIndex + 1) || fallback;
-  }
-  return getInputSourceFileName(source) || fallback;
-};
 
 const runCreateWorkflow = async (
   input: CreatePatchInput,
@@ -112,10 +57,10 @@ const runCreateWorkflow = async (
     role: "original" | "modified",
     selectedArchiveEntry?: string,
   ): Promise<CreateSourceInput> => {
-    if (!shouldPrepareCreateSource(source, options, selectedArchiveEntry, deps)) {
+    if (!shouldPrepareWorkflowSource(source, options, selectedArchiveEntry, deps)) {
       traceWorkflowStage(options, "stage.skip", "source.prepare", role, {
         reason: "direct source",
-        sourceName: getCreateSourceFileName(source, `${role}.bin`, deps),
+        sourceName: getWorkflowSourceFileName(source, `${role}.bin`, deps),
       });
       return Promise.resolve(source);
     }
@@ -131,7 +76,7 @@ const runCreateWorkflow = async (
         }),
       () => ({
         selectedArchiveEntry,
-        sourceName: getCreateSourceFileName(source, `${role}.bin`, deps),
+        sourceName: getWorkflowSourceFileName(source, `${role}.bin`, deps),
       }),
     );
   };
@@ -167,7 +112,7 @@ const runCreateWorkflow = async (
     });
     const modified = await prepareCreateSource(input.modified, "modified", input.selectedModifiedEntryName);
     const defaultPatchFileName = deps.getDefaultCreatePatchOutputFileName(
-      getCreateSourceFileName(modified, "modified.bin", deps),
+      getWorkflowSourceFileName(modified, "modified.bin", deps),
       format,
     );
     const requestedFileName = getCreateOutputName(options) || defaultPatchFileName;
@@ -215,7 +160,7 @@ const runCreateWorkflow = async (
     if (compression === "none") return result;
     const patchFile = await createPatchFileFromPublicOutput(result.output, rawPatchFileName);
     const output = await createCompressedPatchOutput(patchFile);
-    const compressionTimeMs = getOutputTimingMs(output);
+    const compressionTimeMs = roundElapsedMs(output?.timing);
     return {
       format,
       output,
