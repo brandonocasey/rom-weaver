@@ -280,14 +280,14 @@ struct CreatedBpsPatch {
     action_count: usize,
 }
 
-enum BpsWritePlanKind {
+enum BpsWritePlanKind<'a> {
     SourceRange { source_offset: u64, len: u64 },
-    Literal(Vec<u8>),
+    Literal(&'a [u8]),
 }
 
-struct BpsWritePlan {
+struct BpsWritePlan<'a> {
     output_offset: u64,
-    kind: BpsWritePlanKind,
+    kind: BpsWritePlanKind<'a>,
 }
 
 struct PreparedBpsWrite {
@@ -1592,7 +1592,7 @@ fn patch_contains_target_copy(actions: &[BpsAction]) -> bool {
         .any(|action| matches!(action, BpsAction::TargetCopy { .. }))
 }
 
-fn collect_parallel_bps_write_plans(patch: &ParsedBpsPatch) -> Result<Vec<BpsWritePlan>> {
+fn collect_parallel_bps_write_plans(patch: &ParsedBpsPatch) -> Result<Vec<BpsWritePlan<'_>>> {
     let mut plans = Vec::with_capacity(patch.actions.len());
     let mut output_offset = 0u64;
     let mut source_relative_offset = 0i128;
@@ -1629,7 +1629,7 @@ fn collect_parallel_bps_write_plans(patch: &ParsedBpsPatch) -> Result<Vec<BpsWri
                 })?;
                 plans.push(BpsWritePlan {
                     output_offset: start,
-                    kind: BpsWritePlanKind::Literal(data.clone()),
+                    kind: BpsWritePlanKind::Literal(data.as_slice()),
                 });
             }
             BpsAction::SourceCopy {
@@ -1706,7 +1706,7 @@ fn prepare_bps_writes_parallel(
             .map(|plan| {
                 context.cancel().check()?;
                 let data = match &plan.kind {
-                    BpsWritePlanKind::Literal(data) => data.clone(),
+                    BpsWritePlanKind::Literal(data) => data.to_vec(),
                     BpsWritePlanKind::SourceRange { source_offset, len } => {
                         let range_len = usize::try_from(*len).map_err(|_| {
                             RomWeaverError::Validation(
