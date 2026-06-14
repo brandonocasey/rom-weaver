@@ -235,11 +235,12 @@ run = "npm --prefix packages/rom-weaver-react run dev --"
 
 [tasks.ci]
 description = "Run the full local quality gate (mirrors CI)"
-depends = ["fmt", "clippy", "typegen-check", "wasm-check", "thread-guards", "test-rust", "build-wasm-prod"]
+depends = ["fmt", "clippy", "typegen-check", "wasm-check", "thread-guards", "licenses-check", "test-rust", "build-wasm-prod"]
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
 npm --prefix packages/rom-weaver-react run lint
+npm --prefix packages/rom-weaver-react run test:unit
 npm --prefix packages/rom-weaver-react run test:browser:wasm
 npm --prefix packages/rom-weaver-react test
 npm --prefix packages/rom-weaver-react run build

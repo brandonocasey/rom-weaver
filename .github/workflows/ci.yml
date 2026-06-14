@@ -99,12 +99,16 @@ jobs:
       - name: Rust tests
         run: mise run test-rust
 
+      - name: Third-party license inventory
+        run: mise run licenses-check
+
       - name: WASM build
         run: mise run build-wasm-prod
 
       - name: rom-weaver-react checks
         run: |
           npm --prefix packages/rom-weaver-react run lint
+          npm --prefix packages/rom-weaver-react run test:unit
           npm --prefix packages/rom-weaver-react run test:browser:wasm
           npm --prefix packages/rom-weaver-react test
           npm --prefix packages/rom-weaver-react run build
