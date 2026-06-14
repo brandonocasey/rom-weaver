@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{fs, sync::Arc};
 
 use rom_weaver_core::{
@@ -776,4 +775,3 @@ fn build_bps_patch(source: &[u8], target: &[u8], actions: Vec<TestAction>) -> Ve
     bytes.extend_from_slice(&patch_checksum.to_le_bytes());
     bytes
 }
-/* jscpd:ignore-end */

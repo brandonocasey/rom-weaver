@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{
     fs::{self, File, OpenOptions},
     io::{BufWriter, Cursor, Read, Write},
@@ -824,4 +823,3 @@ fn decode_bsdiff_i64(bytes: &[u8]) -> Result<i64> {
 #[cfg(test)]
 #[path = "../tests/unit/bdf.rs"]
 mod tests;
-/* jscpd:ignore-end */

@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::shared::*;
 
 #[test]
@@ -556,7 +555,6 @@ fn z3ds_extract_rejects_invalid_header() {
             .contains("missing Z3DS magic")
     );
 }
-/* jscpd:ignore-end */
 
 // ---- relocated from shared.rs (single-module helpers) ----
 

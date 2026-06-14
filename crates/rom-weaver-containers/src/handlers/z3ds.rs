@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::*;
 use tracing::{debug, trace};
 
@@ -1150,4 +1149,3 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         ))
     }
 }
-/* jscpd:ignore-end */

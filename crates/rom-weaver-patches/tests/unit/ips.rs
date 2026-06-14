@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{
     fs,
     io::{Seek, SeekFrom, Write},
@@ -1308,4 +1307,3 @@ fn ignore_validation_context(temp: &TestDir, threads: usize) -> OperationContext
     test_context_with_threads(temp, threads)
         .with_patch_checksum_validation(PatchChecksumValidation::Ignore)
 }
-/* jscpd:ignore-end */

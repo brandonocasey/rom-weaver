@@ -834,5 +834,3 @@ pub(super) fn patch_progress_segment_end(index: usize, patch_count: usize) -> f3
         (((index + 1) as f32) * 100.0) / (patch_count as f32)
     }
 }
-
-/* jscpd:ignore-end */

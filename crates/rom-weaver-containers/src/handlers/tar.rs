@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -98,4 +97,3 @@ impl ContainerHandlerOperations for TarContainerHandler {
         Err(extract_only_create_error(self.descriptor.name))
     }
 }
-/* jscpd:ignore-end */

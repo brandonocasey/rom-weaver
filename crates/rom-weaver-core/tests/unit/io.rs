@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{
     collections::HashSet,
     fs,
@@ -200,7 +199,6 @@ fn block_cache_reader_supports_cross_thread_reads() {
 
     fs::remove_file(&temp_file).expect("cleanup temp file");
 }
-/* jscpd:ignore-end */
 
 #[test]
 fn shared_block_cache_reader_supports_parallel_reads() {

@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{
     fs,
     io::{Cursor, Write},
@@ -422,4 +421,3 @@ fn bzip2_encode(payload: &[u8]) -> Vec<u8> {
     encoder.write_all(payload).expect("bzip2 write");
     encoder.finish().expect("bzip2 finish")
 }
-/* jscpd:ignore-end */

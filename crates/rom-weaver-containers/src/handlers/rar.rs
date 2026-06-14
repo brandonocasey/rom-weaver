@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::*;
 
 pub(crate) struct RarContainerHandler {
@@ -79,4 +78,3 @@ impl ContainerHandlerOperations for RarContainerHandler {
         ))
     }
 }
-/* jscpd:ignore-end */

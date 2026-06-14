@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::fs;
 
 use rom_weaver_core::{
@@ -344,4 +343,3 @@ fn apply_strict_rejects_non_paper_mario_source() {
         .expect_err("strict validation should fail");
     assert!(error.to_string().contains("Source ROM checksum mismatch"));
 }
-/* jscpd:ignore-end */

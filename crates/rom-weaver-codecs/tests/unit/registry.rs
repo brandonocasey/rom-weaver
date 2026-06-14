@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -582,4 +581,3 @@ fn store_backend_decode_runs_with_parallel_runtime_when_budget_allows() {
         0,
     );
 }
-/* jscpd:ignore-end */

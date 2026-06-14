@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::*;
 use tracing::{debug, trace};
 
@@ -452,4 +451,3 @@ impl ContainerHandlerOperations for RvzContainerHandler {
         )
     }
 }
-/* jscpd:ignore-end */

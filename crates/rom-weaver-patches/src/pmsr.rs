@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{
     fs::{self, File, OpenOptions},
     io::{BufReader, Read, Seek, SeekFrom, Write},
@@ -941,4 +940,3 @@ impl<R: Read> PmsrFileParser<R> {
 #[cfg(test)]
 #[path = "../tests/unit/pmsr.rs"]
 mod tests;
-/* jscpd:ignore-end */

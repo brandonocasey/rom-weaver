@@ -1,5 +1,4 @@
 use super::*;
-/* jscpd:ignore-start */
 pub(super) fn compute_sequential(
     mapped: Option<&MappedRange>,
     source: &Path,
@@ -710,4 +709,3 @@ pub(super) fn tuned_chunk_size(range_len: u64, worker_count: usize) -> usize {
     let suggested = (range_len / (worker_count * TARGET_CHUNKS_PER_WORKER)).max(1);
     suggested.clamp(MIN_CHUNK_SIZE as u64, MAX_CHUNK_SIZE as u64) as usize
 }
-/* jscpd:ignore-end */

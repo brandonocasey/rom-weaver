@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::fs;
 
 use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
@@ -912,4 +911,3 @@ fn append_ppf2_file_id_diz_trailer(bytes: &mut Vec<u8>, diz: &str) {
     let diz_len = u32::try_from(diz.len()).expect("diz length must fit u32");
     bytes.extend_from_slice(&diz_len.to_le_bytes());
 }
-/* jscpd:ignore-end */

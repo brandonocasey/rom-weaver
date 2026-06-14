@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::fs;
 
 use rom_weaver_core::{
@@ -455,4 +454,3 @@ fn apply_runtime_threads_match_capabilities_for_multi_record_patch() {
     assert!(execution.used_parallelism);
     assert_eq!(fs::read(output_path).expect("output"), target);
 }
-/* jscpd:ignore-end */

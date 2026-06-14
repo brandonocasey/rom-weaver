@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::shared::*;
 
 #[test]
@@ -1467,7 +1466,6 @@ fn extract_rar_reports_thread_fallback_in_json() {
         b"unrar-0.4.0".to_vec()
     );
 }
-/* jscpd:ignore-end */
 
 // ---- relocated from shared.rs (single-module helpers) ----
 

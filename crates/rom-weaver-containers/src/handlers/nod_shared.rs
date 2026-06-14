@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::*;
 use tracing::{debug, trace};
 
@@ -613,7 +612,6 @@ impl NodHandlerCore {
         })
     }
 }
-/* jscpd:ignore-end */
 
 /// Generate an extract-only NOD container handler that forwards every operation to a shared
 /// [`NodHandlerCore`]. The five GameCube/Wii compressed formats (GCZ/WBFS/TGC/NFS/WIA) decode

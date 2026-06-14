@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{
     fs::{self, File},
     io::Write,
@@ -689,4 +688,3 @@ fn checksum_range_rejects_out_of_bounds_requests() {
             .contains("checksum range start 6 is past the end")
     );
 }
-/* jscpd:ignore-end */

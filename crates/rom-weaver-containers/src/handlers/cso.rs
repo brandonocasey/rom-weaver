@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::*;
 use tracing::{debug, trace};
 
@@ -485,4 +484,3 @@ impl ContainerHandlerOperations for CsoContainerHandler {
         Err(extract_only_create_error(self.descriptor.name))
     }
 }
-/* jscpd:ignore-end */

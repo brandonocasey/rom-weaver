@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::*;
 use tracing::debug;
 
@@ -600,4 +599,3 @@ impl ContainerHandlerOperations for ZipContainerHandler {
         ))
     }
 }
-/* jscpd:ignore-end */

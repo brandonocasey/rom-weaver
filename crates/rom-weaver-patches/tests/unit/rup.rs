@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::fs;
 
 use rom_weaver_core::{
@@ -1038,4 +1037,3 @@ fn smd_interleave_block(payload: &[u8]) -> Vec<u8> {
     }
     output
 }
-/* jscpd:ignore-end */

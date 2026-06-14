@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -543,4 +542,3 @@ fn find_by_name_routes_ips32_name_to_ips32_handler() {
     let handler = registry.find_by_name("ips32").expect("ips32");
     assert_eq!(handler.descriptor().name, "IPS32");
 }
-/* jscpd:ignore-end */

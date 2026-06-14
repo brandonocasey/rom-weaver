@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use std::env;
 
 fn main() {
@@ -13,4 +12,3 @@ fn main() {
         println!("cargo:rustc-cfg=rom_weaver_wasi_threads");
     }
 }
-/* jscpd:ignore-end */

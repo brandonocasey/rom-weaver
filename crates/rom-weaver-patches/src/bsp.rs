@@ -30,7 +30,6 @@ impl BspPatchHandler {
         Self { descriptor }
     }
 
-    /* jscpd:ignore-start */
     fn parse_report(&self, patch_path: &Path) -> Result<OperationReport> {
         crate::patch_parse_report_with(self.descriptor, || {
             let patch_len = fs::metadata(patch_path)?.len();
@@ -112,11 +111,9 @@ impl BspPatchHandler {
             Some(execution),
         ))
     }
-    /* jscpd:ignore-end */
 }
 
 impl PatchHandler for BspPatchHandler {
-    /* jscpd:ignore-start */
     fn descriptor(&self) -> &'static FormatDescriptor {
         self.descriptor
     }
@@ -132,7 +129,6 @@ impl PatchHandler for BspPatchHandler {
     ) -> Result<OperationReport> {
         self.apply_report(request, context)
     }
-    /* jscpd:ignore-end */
 
     fn create(
         &self,

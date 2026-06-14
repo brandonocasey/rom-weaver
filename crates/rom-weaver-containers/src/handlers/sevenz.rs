@@ -1,4 +1,3 @@
-/* jscpd:ignore-start */
 use super::*;
 use tracing::debug;
 
@@ -333,4 +332,3 @@ impl ContainerHandlerOperations for SevenZContainerHandler {
         ))
     }
 }
-/* jscpd:ignore-end */

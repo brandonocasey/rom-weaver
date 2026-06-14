@@ -1,6 +1,5 @@
 use super::*;
 
-/* jscpd:ignore-start */
 #[derive(Clone, Copy)]
 pub(super) struct CompressedCreateParams<'a> {
     pub(super) output: &'a Path,
@@ -744,4 +743,3 @@ impl ChdContainerHandler {
         })
     }
 }
-/* jscpd:ignore-end */

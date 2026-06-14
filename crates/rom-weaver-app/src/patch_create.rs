@@ -109,8 +109,6 @@ pub(super) fn create_patch_format_size_error_message(
     None
 }
 
-/* jscpd:ignore-start */
-
 impl CliApp {
     pub(super) fn inspect_patch_create_input_sizes(
         &self,

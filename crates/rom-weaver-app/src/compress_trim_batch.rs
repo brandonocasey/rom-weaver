@@ -1,5 +1,4 @@
 use super::*;
-/* jscpd:ignore-start */
 impl CliApp {
     pub(super) fn run_compress(&self, args: CompressCommand) -> AppRunOutcome {
         trace!(
@@ -771,4 +770,3 @@ impl CliApp {
         Ok(())
     }
 }
-/* jscpd:ignore-end */

@@ -1,6 +1,5 @@
 use super::*;
 
-/* jscpd:ignore-start */
 pub struct ChdContainerHandler;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,7 +483,6 @@ fn split_token(text: &str) -> Option<(&str, &str)> {
         Some((&trimmed[..end], &trimmed[end..]))
     }
 }
-/* jscpd:ignore-end */
 
 #[path = "cd_sector_ecc.rs"]
 mod cd_sector_ecc;
