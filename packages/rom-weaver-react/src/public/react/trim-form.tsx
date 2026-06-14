@@ -9,7 +9,6 @@ import {
 } from "../../lib/compression/container-format-registry.ts";
 import { appendFileNameExtension, hasFileNameExtension } from "../../lib/input/path-utils.ts";
 import { emitTraceLog } from "../../lib/logging.ts";
-import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
 import {
   type BrowserSaveDestination,
   type BrowserTrimResult,
@@ -52,7 +51,12 @@ import { getReactBinarySourceFileName, toBrowserPublicBinarySource } from "./wor
 import {
   createReactWorkflowId,
   createSettingsDependencyKey,
+  formatOptionalElapsedMs,
+  getSourceNoticeLevel,
+  getSourceNoticeMessage,
+  hasSourceQueueWarning,
   isDismissibleWorkflowError,
+  isUserRequestedCancellation,
   mergeSettingsWithOutput,
 } from "./workflow-form-utils.ts";
 import {
@@ -169,32 +173,6 @@ const getProgressDetails = (event: WorkflowProgress): Record<string, unknown> =>
   event.details && typeof event.details === "object" && !Array.isArray(event.details)
     ? (event.details as Record<string, unknown>)
     : {};
-
-const formatElapsedMs = (ms?: number) =>
-  typeof ms === "number" && Number.isFinite(ms) ? formatTiming(createTiming(ms)) : undefined;
-
-const hasSourceQueueWarning = (source: TrimWorkflowSourceState | null | undefined) =>
-  !!source && (source.status === "failed" || (source.warnings?.length ?? 0) > 0);
-
-const getSourceNoticeMessage = (source: TrimWorkflowSourceState | null | undefined) => {
-  if (!source) return "";
-  const warningMessage = source.warnings
-    ?.map((warning) => warning.message)
-    .filter(Boolean)
-    .join(" ");
-  if (warningMessage) return warningMessage;
-  if (source.status === "failed") return "Source preparation failed. Choose a different ROM.";
-  return "";
-};
-
-const getSourceNoticeLevel = (source: TrimWorkflowSourceState | null | undefined) =>
-  source?.status === "failed" ? "error" : "warn";
-
-const isSourceInvalid = (source: TrimWorkflowSourceState | null | undefined) =>
-  !!source && (source.status === "failed" || (source.warnings?.length ?? 0) > 0);
-
-const isUserRequestedCancellation = (error: unknown, signal: AbortSignal) =>
-  signal.aborted && getErrorCode(error) === "CANCELLED";
 
 type InternalTrimPatchFormProps = TrimPatchFormProps & {
   trimWorkflow?: typeof TrimWorkflow;
@@ -779,8 +757,8 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   const compressHeaderFormat = getOutputCompressionFormatLabel(resolvedOutputFormat, compressFormatOptions, {
     uncompressedValues: [rawExtensionOption],
   });
-  const trimTimingText = formatElapsedMs(completedTrimTimeMs ?? undefined);
-  const compressTimingText = formatElapsedMs(completedCompressionTimeMs ?? undefined);
+  const trimTimingText = formatOptionalElapsedMs(completedTrimTimeMs ?? undefined);
+  const compressTimingText = formatOptionalElapsedMs(completedCompressionTimeMs ?? undefined);
   const checksumProgress = progress?.stage === "checksum" ? progress : null;
   const sourceNoticeMessage = getSourceNoticeMessage(sourceState);
   const runtimeSourceNoticeVisible = !!message && messagePlacement === "source";
@@ -868,7 +846,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
                               fileName: resolvedSourceFileName,
                               fileSize: sourceState?.size,
                               parentCompressions: sourceState?.parentCompressions,
-                              timing: formatElapsedMs(sourceState?.decompressionTimeMs),
+                              timing: formatOptionalElapsedMs(sourceState?.decompressionTimeMs),
                             },
                             onRemove: () => updateSource(null),
                             panels: {
@@ -880,11 +858,11 @@ function TrimPatchForm(props: TrimPatchFormProps) {
                                 checksums: sourceState?.checksums,
                                 defaultOpen: false,
                                 progress: toWorkflowChecksumProgressProps(checksumProgress),
-                                timing: formatElapsedMs(sourceState?.checksumTimeMs),
+                                timing: formatOptionalElapsedMs(sourceState?.checksumTimeMs),
                               },
                             },
                             removeLabel: "Clear ROM",
-                            state: isSourceInvalid(sourceState)
+                            state: hasSourceQueueWarning(sourceState)
                               ? "bad"
                               : sourceState?.status === "ready"
                                 ? "ok"

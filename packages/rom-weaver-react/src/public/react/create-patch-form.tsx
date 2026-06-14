@@ -54,7 +54,11 @@ import {
   createSettingsDependencyKey,
   formatChecksumTiming,
   formatElapsedMs,
+  getSourceNoticeLevel,
+  getSourceNoticeMessage,
+  hasSourceQueueWarning,
   isDismissibleWorkflowError,
+  isUserRequestedCancellation,
   mergeSettingsWithOutput,
 } from "./workflow-form-utils.ts";
 import {
@@ -148,20 +152,6 @@ const getDisplaySourceChecksumTiming = (source: CreateDisplaySourceState | null 
     (source as (CreateDisplaySourceState & { checksumTimeMs?: number }) | null | undefined)?.checksumTimeMs,
   );
 
-const hasSourceQueueWarning = (source: CreateDisplaySourceState | null | undefined) =>
-  !!source && (source.status === "failed" || (source.warnings?.length ?? 0) > 0);
-
-const getSourceNoticeMessage = (source: CreateDisplaySourceState | null | undefined) => {
-  if (!source) return "";
-  const warningMessage = source.warnings
-    ?.map((warning) => warning.message)
-    .filter(Boolean)
-    .join(" ");
-  if (warningMessage) return warningMessage;
-  if (source.status === "failed") return "Source preparation failed. Choose a different ROM.";
-  return "";
-};
-
 /** Format pills under the 0x01 hero — mirrors the loom prototype's create list. */
 const CREATE_HERO_FORMATS = ["sfc", "gba", "iso", "bin", "zip", "7z", "chd", "rvz"] as const;
 
@@ -171,17 +161,9 @@ const CREATE_SUPPORTED_FILES = [
   { extensions: ARCHIVE_FILE_EXTENSIONS, label: "Archives & containers" },
 ] as const;
 
-const getSourceNoticeLevel = (source: CreateDisplaySourceState | null | undefined) =>
-  source?.status === "failed" ? "error" : "warn";
-
-const isSourceInvalid = (source: CreateDisplaySourceState | null | undefined) =>
-  !!source && (source.status === "failed" || (source.warnings?.length ?? 0) > 0);
-
 const getChecksumTimingLabel = (timing: string) => (timing ? `Checksum ${timing}` : "");
 const isChecksumProgress = (progress: WorkflowFormProgressState | null) =>
   !!progress && /checksum/i.test(`${progress.label} ${progress.message}`);
-const isUserRequestedCancellation = (error: unknown, signal: AbortSignal) =>
-  signal.aborted && getErrorCode(error) === "CANCELLED";
 
 type InternalCreatePatchFormProps = CreatePatchFormProps & {
   createWorkflow?: typeof CreateWorkflow;
@@ -970,7 +952,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
                           },
                         },
                         removeLabel,
-                        state: isSourceInvalid(sourceState)
+                        state: hasSourceQueueWarning(sourceState)
                           ? "bad"
                           : sourceState?.status === "ready"
                             ? "ok"
