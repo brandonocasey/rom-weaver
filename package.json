@@ -14,7 +14,6 @@
     "version": "node scripts/sync-version.mjs"
   },
   "devDependencies": {
-    "knip": "6.16.1",
     "lefthook": "2.1.8"
   }
 }

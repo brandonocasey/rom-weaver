@@ -1738,7 +1738,6 @@ dependencies = [
  "ciso",
  "claxon",
  "flate2",
- "lz4_flex",
  "nod",
  "rayon",
  "rom-weaver-chd",
