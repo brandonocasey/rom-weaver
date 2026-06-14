@@ -5,7 +5,6 @@ import {
 } from "../../storage/browser/browser-storage-estimate.ts";
 import type { ChecksumResult } from "../../types/checksum.ts";
 import type { LogLevel } from "../../types/logging.ts";
-import type { CompressionListResult } from "../../types/workflow-runtime.ts";
 import type {
   RuntimePatchApplyWorkerInput,
   RuntimePatchCreateCandidatesWorkerInput,
@@ -18,6 +17,7 @@ import type {
   RuntimeWorkerIo,
   WorkflowRuntimeLog,
 } from "../../types/workflow-runtime-adapter.ts";
+import type { CompressionListResult } from "../../types/workflow-runtime-types.ts";
 import type { CompressionLevelProfile } from "../../wasm/index.ts";
 import { createRomWeaverCommand } from "../../wasm/index.ts";
 import {

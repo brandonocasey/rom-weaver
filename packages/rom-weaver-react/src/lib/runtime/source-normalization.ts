@@ -7,7 +7,7 @@ import {
 import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
 import type { JsonObject, JsonValue } from "../../types/runtime.ts";
 import type { SourceRef } from "../../types/source.ts";
-import type { CompressionCreateInput } from "../../types/workflow-runtime.ts";
+import type { CompressionCreateInput } from "../../types/workflow-runtime-types.ts";
 
 type SevenZipZstdCreateInput = Extract<CompressionCreateInput, { entries: unknown }>;
 

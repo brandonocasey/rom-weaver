@@ -10,7 +10,7 @@ import {
   normalizeCodecEntries,
   runRomWeaverListWorker,
   selectRomWeaverOutputPath,
-} from "../../lib/runtime/rom-weaver-runtime.ts";
+} from "../../lib/runtime/wasm-command-runtime.ts";
 import type { RomSpecificRuntimeAdapter } from "../../lib/runtime/workflow-runtime-core.ts";
 import {
   attachRomSpecificOutputMetadata,

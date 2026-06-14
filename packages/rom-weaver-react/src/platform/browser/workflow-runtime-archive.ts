@@ -5,7 +5,7 @@ import {
   invokeRomWeaverExtractWorker,
   runRomWeaverListWorker,
   selectRomWeaverOutputPath,
-} from "../../lib/runtime/rom-weaver-runtime.ts";
+} from "../../lib/runtime/wasm-command-runtime.ts";
 import {
   createCompressionExtractResult,
   normalizeCompressionWorkerEntries,

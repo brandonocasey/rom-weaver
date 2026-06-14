@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { LocalApplyPatchFormSessionOptions } from "../../../src/public/react/apply-session-types.ts";
 import type { BinarySource } from "../../../src/public/react/patcher-form.ts";
 import { useLocalApplyPatchFormSession } from "../../../src/public/react/patcher-form-session.ts";
-import type { ApplyWorkflowResult } from "../../../src/types/workflow-runtime.ts";
+import type { ApplyWorkflowResult } from "../../../src/types/workflow-runtime-types.ts";
 
 const source = (name: string, size = 1024): BinarySource => ({ name, size }) as unknown as BinarySource;
 

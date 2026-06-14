@@ -4,7 +4,6 @@ import {
 } from "../../platform/shared/workflow-runtime-progress.ts";
 import type { ChecksumResult } from "../../types/checksum.ts";
 import type { PatchApplySummary } from "../../types/workflow-internal.ts";
-import type { CompressionExtractResult, CompressionListResult, PublicOutput } from "../../types/workflow-runtime.ts";
 import type {
   RuntimePatchApplyWorkerInput,
   RuntimePatchCreateCandidatesWorkerInput,
@@ -27,6 +26,11 @@ import type {
   WorkflowRuntimePreloadEvent,
   WorkflowRuntimeProgress,
 } from "../../types/workflow-runtime-adapter.ts";
+import type {
+  CompressionExtractResult,
+  CompressionListResult,
+  PublicOutput,
+} from "../../types/workflow-runtime-types.ts";
 import {
   getRomSpecificCompressionFormatRegistration,
   type RomSpecificCompressionFormat,

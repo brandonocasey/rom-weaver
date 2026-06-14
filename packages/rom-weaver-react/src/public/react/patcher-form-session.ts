@@ -8,7 +8,7 @@ import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
 import { formatCodedErrorForDisplay } from "../../presentation/errors.ts";
 import { createBrowserLocalizer } from "../../presentation/localization/index.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
-import type { ApplyWorkflowResult } from "../../types/workflow-runtime.ts";
+import type { ApplyWorkflowResult } from "../../types/workflow-runtime-types.ts";
 import {
   inertDialogController,
   inertOutputController,

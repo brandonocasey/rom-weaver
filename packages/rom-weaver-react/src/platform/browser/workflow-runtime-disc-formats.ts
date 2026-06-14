@@ -9,7 +9,7 @@ import {
   invokeRomWeaverExtractWorker,
   runRomWeaverListWorker,
   selectRomWeaverOutputPath,
-} from "../../lib/runtime/rom-weaver-runtime.ts";
+} from "../../lib/runtime/wasm-command-runtime.ts";
 import type { RomSpecificRuntimeAdapter } from "../../lib/runtime/workflow-runtime-core.ts";
 import type { RuntimeWorkerIo } from "../../types/workflow-runtime-adapter.ts";
 import { WORKER_OPFS_MOUNTPOINT } from "../../workers/shared/worker-storage/storage-layout.ts";

@@ -3,7 +3,7 @@ import { ApplyWorkflow, CreateWorkflow } from "../../platform/browser/browser-ap
 import { clampProgressPercent, normalizeProgressDisplayPercent } from "../../presentation/workflow-presentation.ts";
 import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
 import type { CreateWorkflowSourceState } from "../../types/create-workflow.ts";
-import type { ProgressEvent } from "../../types/workflow-runtime.ts";
+import type { ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type { BinarySource } from "./patcher-form.ts";
 
 const CREATE_OUTPUT_EXTENSION_REGEX = /\.[^.]*$/;

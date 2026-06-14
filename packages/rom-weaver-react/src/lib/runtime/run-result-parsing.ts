@@ -1,5 +1,5 @@
 import type { ChecksumMap, ChecksumVariant } from "../../types/checksum.ts";
-import type { CompressionListResult } from "../../types/workflow-runtime.ts";
+import type { CompressionListResult } from "../../types/workflow-runtime-types.ts";
 import type { RomWeaverRunJsonResult as BaseRomWeaverRunJsonResult, RomWeaverRunJsonEvent } from "../../wasm/index.ts";
 import {
   getRomWeaverRunEventDetails,

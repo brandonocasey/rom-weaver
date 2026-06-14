@@ -16,8 +16,8 @@ import { getNamedSourcePath } from "../../storage/shared/binary/source-file-util
 import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
 import type { SourceRef } from "../../types/source.ts";
 import type { PatchApplySummary, PatchFileInstance, PatchWorkflowDeps } from "../../types/workflow-internal.ts";
-import type { ApplyWorkflowResult, PatchInput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { ApplyWorkflowResult, PatchInput } from "../../types/workflow-runtime-types.ts";
 import type { ParsedPatchLike } from "../../workers/protocol/patch-engine.ts";
 import { createPatchFile, getPatchFileExternalSource } from "../input/binary-service.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";

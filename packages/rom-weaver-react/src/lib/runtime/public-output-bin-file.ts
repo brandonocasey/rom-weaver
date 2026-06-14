@@ -1,6 +1,6 @@
 import { readRuntimeOutputBlob, readRuntimeOutputBytes } from "../../storage/vfs/runtime-output.ts";
 import { createVfsFileRef } from "../../storage/vfs/source-ref.ts";
-import type { PublicOutput } from "../../types/workflow-runtime.ts";
+import type { PublicOutput } from "../../types/workflow-runtime-types.ts";
 import type { PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
 import {
   attachPatchFileSourceRef,

@@ -1,3 +1,4 @@
+import { assertBrowserBinarySource } from "../../lib/runtime/source-normalization.ts";
 import {
   invokeRomWeaverCreatePatchCandidatesWorker,
   invokeRomWeaverCreatePatchWorker,
@@ -6,8 +7,7 @@ import {
   invokeRomWeaverTrimWorker,
   runRomWeaverChecksumWorker,
   runRomWeaverProbePatchWorker,
-} from "../../lib/runtime/rom-weaver-runtime.ts";
-import { assertBrowserBinarySource } from "../../lib/runtime/source-normalization.ts";
+} from "../../lib/runtime/wasm-command-runtime.ts";
 import {
   createRuntimePreload,
   createSharedCompressionRuntime,

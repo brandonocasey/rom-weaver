@@ -8,8 +8,8 @@ import type {
   TrimWorkflowSourceState,
 } from "../../types/trim-workflow.ts";
 import type { WorkflowOptions, WorkflowWarning } from "../../types/workflow-controller.ts";
-import type { CreateWorkflowOptions, TrimInput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { CreateWorkflowOptions, TrimInput } from "../../types/workflow-runtime-types.ts";
 import { getCompressionOutputExtension, isCompressionFormat } from "../compression/container-format-registry.ts";
 import { RomWeaverError, withAbortSignal } from "../errors.ts";
 import { getFileNameWithoutExtension } from "../input/path-utils.ts";

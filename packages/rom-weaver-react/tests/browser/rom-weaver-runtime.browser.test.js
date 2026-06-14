@@ -4,7 +4,7 @@ import {
   resolveCompressionCreateThreadArg,
   resolvePatchApplyThreadArg,
   selectRomWeaverOutputPath,
-} from "../../src/lib/runtime/rom-weaver-runtime.ts";
+} from "../../src/lib/runtime/wasm-command-runtime.ts";
 import { createPublicSourceValidator } from "../../src/platform/shared/public-source-validation.ts";
 
 test("normalizeChdCodecArgs strips conflicting per-codec levels", () => {

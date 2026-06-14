@@ -1,6 +1,6 @@
 import { getPathBaseName } from "../../lib/path-utils.ts";
 import type { SourceRef } from "../../types/source.ts";
-import type { PublicOutput } from "../../types/workflow-runtime.ts";
+import type { PublicOutput } from "../../types/workflow-runtime-types.ts";
 import { copySourceToWriter } from "../shared/binary/binary-source-utils.ts";
 import { getNamedSource } from "../shared/binary/source-file-utils.ts";
 import { createCleanupOnce } from "../shared/disposal.ts";

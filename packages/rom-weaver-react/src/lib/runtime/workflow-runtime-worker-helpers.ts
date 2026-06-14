@@ -1,5 +1,5 @@
-import type { CompressionExtractResult, PublicOutput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { CompressionExtractResult, PublicOutput } from "../../types/workflow-runtime-types.ts";
 import { getArchiveEntryArrayBuffer, getArchiveEntryUint8Array } from "./source-normalization.ts";
 
 type SevenZipZstdCreateRequest = Extract<

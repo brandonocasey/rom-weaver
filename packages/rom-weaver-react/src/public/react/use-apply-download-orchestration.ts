@@ -2,7 +2,7 @@ import { type Dispatch, type MutableRefObject, type SetStateAction, useMemo } fr
 import { formatCodedErrorForDisplay, getErrorCode } from "../../presentation/errors.ts";
 import { createBrowserLocalizer } from "../../presentation/localization/index.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
-import type { ApplyWorkflowResult } from "../../types/workflow-runtime.ts";
+import type { ApplyWorkflowResult } from "../../types/workflow-runtime-types.ts";
 import {
   getChecksumProgressInfoPatch,
   getProgressDetails,

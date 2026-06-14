@@ -7,7 +7,7 @@ import type {
   CandidateSelectionRequest,
   CreateSettings,
 } from "../../platform/browser/browser-api.ts";
-import type { ProgressEvent } from "../../types/workflow-runtime.ts";
+import type { ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type {
   BinarySource,
   ApplyPatchFormProps as InternalApplyPatchFormProps,

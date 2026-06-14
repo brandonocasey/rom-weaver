@@ -1,5 +1,5 @@
-import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import type { PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
 import { RomWeaverError } from "../errors.ts";
 import { reportProgress } from "../progress/progress-reporting.ts";

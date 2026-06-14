@@ -8,7 +8,7 @@ import { ApplyWorkflow, type BrowserApplyResult, type WorkflowProgress } from ".
 import { getErrorCode } from "../../presentation/errors.ts";
 import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
-import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime.ts";
+import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import { probeApplyArchiveHasRom } from "./apply-archive-probe.ts";
 import { createStageSettingsKey } from "./apply-session-settings.ts";
 import type { StagedInputInfo } from "./apply-session-types.ts";

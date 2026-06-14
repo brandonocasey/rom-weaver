@@ -1,7 +1,7 @@
 import { createCleanupOnce } from "../../storage/shared/disposal.ts";
 import type { ProgressEvent as SharedProgressEvent } from "../../types/runtime.ts";
-import type { ApplyWorkflowOptions, PublicOutput } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { ApplyWorkflowOptions, PublicOutput } from "../../types/workflow-runtime-types.ts";
 import type { ParsedPatchLike } from "../../workers/protocol/patch-engine.ts";
 import {
   getPatchFileCleanup,

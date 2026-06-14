@@ -7,8 +7,8 @@ import { getProgressEventPercent } from "../../presentation/workflow-presentatio
 import { getNamedSource, getNamedSourceFileName } from "../../storage/shared/binary/source-file-utils.ts";
 import type { SourceRef } from "../../types/source.ts";
 import type { CreateWorkflowDeps, PatchFileInstance } from "../../types/workflow-internal.ts";
-import type { CreatePatchInput, CreatePatchResult, JsonValue } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { CreatePatchInput, CreatePatchResult, JsonValue } from "../../types/workflow-runtime-types.ts";
 import { patchWorkflowDeps } from "../apply/workflow.ts";
 import {
   createSingleFileArchiveOutput,

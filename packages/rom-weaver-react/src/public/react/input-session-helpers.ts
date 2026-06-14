@@ -1,6 +1,6 @@
 import { createProgressViewModelFromEvent } from "../../presentation/workflow-presentation.ts";
 import { getNamedSourceFileName, getNamedSourceSize } from "../../storage/shared/binary/source-file-utils.ts";
-import type { ProgressEvent } from "../../types/workflow-runtime.ts";
+import type { ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type { InputProgress } from "./patcher-ui-state.ts";
 
 type NamedSourceLike = Parameters<typeof getNamedSourceFileName>[0];

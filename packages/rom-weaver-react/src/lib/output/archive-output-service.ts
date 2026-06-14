@@ -7,6 +7,7 @@ import {
 import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
 import type { ArchiveEntryInput } from "../../types/runtime.ts";
 import type { CreateWorkflowDeps, PatchFileInstance, SharedProgressEventLike } from "../../types/workflow-internal.ts";
+import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type {
   ApplyWorkflowOptions,
   CompressionEntryInput,
@@ -14,8 +15,7 @@ import type {
   JsonValue,
   PublicOutput,
   SevenZipZstdCompressionOptions,
-} from "../../types/workflow-runtime.ts";
-import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+} from "../../types/workflow-runtime-types.ts";
 import { resolveCompressionLevels } from "../compression/compression-settings.ts";
 import { type ArchiveCompressionFormat, isArchiveCompressionFormat } from "../compression/container-format-registry.ts";
 import OutputCompressionManager from "../compression/output-compression-manager.ts";

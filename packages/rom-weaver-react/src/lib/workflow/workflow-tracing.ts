@@ -1,4 +1,4 @@
-import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
+import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 
 type WorkflowTraceOptions = ApplyWorkflowOptions | CreateWorkflowOptions | undefined;
 type WorkflowTraceMessage = "stage.fail" | "stage.finish" | "stage.skip" | "stage.start";

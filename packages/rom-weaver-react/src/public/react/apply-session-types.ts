@@ -1,6 +1,6 @@
 import type { ChecksumVariant } from "../../types/checksum.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
-import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime.ts";
+import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type { ApplyPatchFormProps, ApplyPatchFormSettings, BinarySource } from "./patcher-form.ts";
 import type { createOutputSizeSummary } from "./patcher-presentation.ts";
 import type { InputProgress, RomInputRowState } from "./patcher-ui-state.ts";

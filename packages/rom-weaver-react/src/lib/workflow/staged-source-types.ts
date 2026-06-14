@@ -1,8 +1,8 @@
 import type { ChecksumVariant } from "../../types/checksum.ts";
 import type { WorkflowKind, WorkflowProgress, WorkflowProgressRole } from "../../types/progress.ts";
 import type { CandidateSelectionRequest, SelectFile, SelectionCandidate } from "../../types/selection.ts";
-import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import type { InputAsset } from "../input/input-assets.ts";
 
 type SharedRomSourceRole = Extract<WorkflowProgressRole, "input" | "modified" | "original" | "patch">;

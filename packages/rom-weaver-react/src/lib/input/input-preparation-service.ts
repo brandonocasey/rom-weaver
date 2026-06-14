@@ -5,8 +5,8 @@ import {
 } from "../../storage/shared/binary/source-file-utils.ts";
 import type { CandidateSelectionRequest, SelectionFileCandidate } from "../../types/selection.ts";
 import type { SourceRef } from "../../types/source.ts";
-import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import type { PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
 import { ROM_SPECIFIC_DECOMPRESSION_INPUT_EXTENSIONS } from "../compression/rom-specific-format-support.ts";
 import { emitTraceLog } from "../logging.ts";

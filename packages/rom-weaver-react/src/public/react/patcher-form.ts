@@ -1,5 +1,5 @@
 import type { ApplySettings } from "../../types/settings.ts";
-import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime.ts";
+import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type { PatcherOutputState, PatchStackItemState, PatchStackState } from "./patcher-presentation.ts";
 import type {
   DialogEntry,

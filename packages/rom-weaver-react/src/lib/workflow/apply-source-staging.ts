@@ -1,6 +1,6 @@
 import type { WorkflowProgress } from "../../types/progress.ts";
 import type { CandidateSelectionRequest } from "../../types/selection.ts";
-import type { ApplyWorkflowOptions } from "../../types/workflow-runtime.ts";
+import type { ApplyWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import { toRomWeaverError } from "../errors.ts";
 import type { InputAsset } from "../input/input-assets.ts";
 import { getBaseFileName } from "../input/path-utils.ts";

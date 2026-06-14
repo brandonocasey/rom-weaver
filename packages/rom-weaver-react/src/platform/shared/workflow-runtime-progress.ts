@@ -1,5 +1,5 @@
-import type { JsonValue, ProgressEvent } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { JsonValue, ProgressEvent } from "../../types/workflow-runtime-types.ts";
 
 type JsonRecord = { [key: string]: JsonValue | undefined };
 

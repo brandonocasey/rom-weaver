@@ -10,7 +10,7 @@ import type {
   CompressionWorkflowOptions,
   CreateWorkflowOptions,
   ProgressEvent,
-} from "../../types/workflow-runtime.ts";
+} from "../../types/workflow-runtime-types.ts";
 import { createLogger } from "../logging.ts";
 
 const isRecord = (value: JsonValue | object | null | undefined): value is JsonObject =>

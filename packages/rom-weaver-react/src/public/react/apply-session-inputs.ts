@@ -1,6 +1,6 @@
 import { classifyPatcherInput } from "../../lib/input/input-classification.ts";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
-import type { ProgressEvent } from "../../types/workflow-runtime.ts";
+import type { ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type { ArchivePathEntry, StagedInputInfo } from "./apply-session-types.ts";
 import { getBinarySourceFileName } from "./input-session-helpers.ts";
 import type { BinarySource } from "./patcher-form.ts";

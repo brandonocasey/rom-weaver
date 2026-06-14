@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ApplyExecutionTimingTracker } from "../../src/public/react/apply-session-types.ts";
 import { deriveApplyCompletion } from "../../src/public/react/use-apply-download-orchestration.ts";
-import type { ApplyWorkflowResult } from "../../src/types/workflow-runtime.ts";
+import type { ApplyWorkflowResult } from "../../src/types/workflow-runtime-types.ts";
 
 const result = (sizeSummary?: Record<string, number>): ApplyWorkflowResult =>
   ({

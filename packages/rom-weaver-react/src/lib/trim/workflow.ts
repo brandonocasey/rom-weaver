@@ -8,8 +8,8 @@ import {
 import type { CompressionFormat } from "../../types/settings.ts";
 import type { SourceRef } from "../../types/source.ts";
 import type { CreateWorkflowDeps, PatchFileInstance } from "../../types/workflow-internal.ts";
-import type { TrimInput, TrimResult, TrimWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { TrimInput, TrimResult, TrimWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import {
   isArchiveCompressionFormat,
   isRomSpecificCompressionFormat,

@@ -23,7 +23,7 @@ import type {
   CreatePatchResult,
   PublicOutput,
   TrimResult,
-} from "./workflow-runtime.ts";
+} from "./workflow-runtime-types.ts";
 
 type WorkflowRuntimeProgress = {
   label?: string;

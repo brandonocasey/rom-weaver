@@ -6,8 +6,8 @@ import {
 import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
 import type { JsonValue, ProgressEvent as SharedProgressEvent } from "../../types/runtime.ts";
 import type { CompressionOptionValue } from "../../types/workflow-compression.ts";
-import type { ApplyWorkflowOptions, CreateWorkflowOptions, ProgressEvent } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { ApplyWorkflowOptions, CreateWorkflowOptions, ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import { COMPRESSION_DEFAULTS } from "../compression/compression-metadata.ts";
 import { resolveCompressionLevels } from "../compression/compression-settings.ts";
 import {

@@ -1,7 +1,7 @@
 import type { WorkflowKind } from "../../types/progress.ts";
 import type { CandidateSelectionRequest, SelectFile, SelectionCandidate } from "../../types/selection.ts";
-import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
+import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import { RomWeaverError, toRomWeaverError } from "../errors.ts";
 import { getInputPreparationMetrics, type InputAsset } from "../input/input-assets.ts";
 import {
