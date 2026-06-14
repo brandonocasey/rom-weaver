@@ -35,9 +35,10 @@ use rom_weaver_core::{
     ContainerHandlerOperations, ContainerListEntry, ContainerProbeRequest, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, OrderedChunkWriter,
     OrderedStreamingMessages, ProbeConfidence, Result, RomWeaverError, SelectionMatcher,
-    ThreadCapability, ThreadExecution, UnsupportedOp, bounded_items_for_threads,
-    create_extract_output_file, emit_container_running_progress, file_starts_with,
-    maybe_emit_container_byte_progress, ordered_streaming_compress, physical_memory_bytes,
+    ThreadCapability, ThreadExecution, UnsupportedOp, attach_extraction_details,
+    bounded_items_for_threads, create_extract_output_file, emit_container_running_progress,
+    file_starts_with, insert_thread_execution_details, maybe_emit_container_byte_progress,
+    operation_report_details, ordered_streaming_compress, physical_memory_bytes,
 };
 use rom_weaver_libarchive::{
     ReadFilter as LibarchiveReadFilter, RegularArchiveProbeFormat as LibarchiveProbeFormat,
@@ -128,36 +129,6 @@ fn resolve_create_codec<'a>(
         .ok_or_else(|| unsupported_create_codec_error(format_name, &codec_name, supported_codecs))
 }
 
-fn operation_report_details(report: &mut OperationReport) -> Map<String, Value> {
-    match report.details.take() {
-        Some(Value::Object(map)) => map,
-        _ => Map::new(),
-    }
-}
-
-fn insert_thread_execution_details(details: &mut Map<String, Value>, execution: &ThreadExecution) {
-    details.insert(
-        "requested_threads".to_string(),
-        json!(execution.requested_threads),
-    );
-    details.insert(
-        "effective_threads".to_string(),
-        json!(execution.effective_threads),
-    );
-    details.insert("thread_mode".to_string(), json!(execution.thread_mode));
-    details.insert(
-        "used_parallelism".to_string(),
-        json!(execution.used_parallelism),
-    );
-    details.insert(
-        "thread_fallback".to_string(),
-        json!(execution.thread_fallback),
-    );
-    if let Some(reason) = &execution.thread_fallback_reason {
-        details.insert("thread_fallback_reason".to_string(), json!(reason));
-    }
-}
-
 fn attach_compression_details(
     mut report: OperationReport,
     codec: impl Into<String>,
@@ -174,24 +145,6 @@ fn attach_compression_details(
     compression.insert("logical_bytes".to_string(), json!(logical_bytes));
     insert_thread_execution_details(&mut compression, execution);
     details.insert("compression".to_string(), Value::Object(compression));
-    report.details = Some(Value::Object(details));
-    report
-}
-
-fn attach_extraction_details(
-    mut report: OperationReport,
-    entry_count: usize,
-    file_count: usize,
-    written_bytes: u64,
-    execution: &ThreadExecution,
-) -> OperationReport {
-    let mut details = operation_report_details(&mut report);
-    let mut extraction = Map::new();
-    extraction.insert("entries".to_string(), json!(entry_count));
-    extraction.insert("files".to_string(), json!(file_count));
-    extraction.insert("written_bytes".to_string(), json!(written_bytes));
-    insert_thread_execution_details(&mut extraction, execution);
-    details.insert("extraction".to_string(), Value::Object(extraction));
     report.details = Some(Value::Object(details));
     report
 }

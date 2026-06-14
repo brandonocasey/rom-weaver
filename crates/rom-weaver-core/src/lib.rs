@@ -8,6 +8,7 @@ mod io;
 mod progress;
 mod prompt;
 mod registry;
+mod report_details;
 mod selection;
 mod threads;
 
@@ -51,6 +52,9 @@ pub use registry::{
     CreateInputSource, CreateSupport, FormatDescriptor, OperationReport, PatchApplyRequest,
     PatchCapabilities, PatchCreateRequest, PatchHandler, PatchValidateRequest, ProbeConfidence,
     traced_codec_backend, traced_container_handler, traced_patch_handler,
+};
+pub use report_details::{
+    attach_extraction_details, insert_thread_execution_details, operation_report_details,
 };
 pub use selection::{SelectionMatcher, normalize_archive_name};
 pub use threads::{
