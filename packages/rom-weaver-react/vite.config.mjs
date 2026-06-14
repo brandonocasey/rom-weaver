@@ -200,6 +200,33 @@ const writePreviewBrotliAssets = () => {
   };
 };
 
+// Primary (latin) Archivo woff2 — but not the latin-ext subset, which is only
+// fetched on demand via unicode-range and is wasteful to preload eagerly.
+const PRIMARY_FONT_PATTERN = /^assets\/archivo-var-latin-(?!ext-)[\w-]+\.woff2$/;
+
+// Preload the primary UI font from the document head so its download starts
+// alongside the HTML instead of waiting for the stylesheet to parse and discover
+// the @font-face. Build-only: the file name is content-hashed, so the hashed
+// name is read out of the emitted bundle at generate time.
+const preloadPrimaryFont = () => ({
+  apply: "build",
+  name: "rom-weaver-preload-primary-font",
+  transformIndexHtml: {
+    handler(_html, ctx) {
+      const fileName = ctx.bundle && Object.keys(ctx.bundle).find((key) => PRIMARY_FONT_PATTERN.test(key));
+      if (!fileName) return [];
+      return [
+        {
+          attrs: { as: "font", crossorigin: "", href: `./${fileName}`, rel: "preload", type: "font/woff2" },
+          injectTo: "head-prepend",
+          tag: "link",
+        },
+      ];
+    },
+    order: "post",
+  },
+});
+
 export default defineConfig(({ command }) => {
   const buildInfo = getBuildInfo();
   const devServiceWorkerEnabled = process.env.VITE_SW_DEV === "1";
@@ -291,6 +318,7 @@ export default defineConfig(({ command }) => {
         srcDir: "src/webapp",
         strategies: "injectManifest",
       }),
+      preloadPrimaryFont(),
       writePreviewBrotliAssets(),
     ],
     preview: {

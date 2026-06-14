@@ -1,5 +1,3 @@
-import "../../assets/fonts/inter-tight.css";
-
 export type {
   BrowserCreatePatchFormatCandidatesInput,
   RuntimePatchCreateFormatCandidates,
