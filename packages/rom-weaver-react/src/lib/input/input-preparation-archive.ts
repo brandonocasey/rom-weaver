@@ -1,21 +1,12 @@
-import { DEFAULT_VFS_ROOT } from "../../storage/vfs/path.ts";
 import { isVfsFileRef } from "../../storage/vfs/source-ref.ts";
-import type { CandidateSelectionRequest, SelectionFileCandidate } from "../../types/selection.ts";
 import type { SourceObject, SourceRef } from "../../types/source.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
-import type { ApplyWorkflowOptions, CreateWorkflowOptions, PublicOutput } from "../../types/workflow-runtime-types.ts";
+import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import { createArchiveSourceBlob } from "../archive-utils.ts";
 import { CREATE_ROM_SPECIFIC_COMPRESSION_FORMATS } from "../compression/container-format-registry.ts";
-import { RomWeaverError } from "../errors.ts";
 import { getPathBaseName } from "../path-utils.ts";
-import { reportProgress } from "../progress/progress-reporting.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
-import {
-  findArchiveEntryByFileName,
-  isCueEntryFileName,
-  isGdiEntryFileName,
-  parseCueFileReferences,
-} from "./archive.ts";
+import { isCueEntryFileName, isGdiEntryFileName } from "./archive.ts";
 import type { PatchFileInstance } from "./binary-service.ts";
 import {
   attachPatchFileCleanup,
@@ -30,6 +21,18 @@ import {
   isLazyExternalPatchFile,
   normalizeArchiveEntryBytes,
 } from "./binary-service.ts";
+import {
+  probeCompressionRomEntriesForSource,
+  resolveArchiveDiscGroupEntryNames,
+  resolveChdSplitBinSelection,
+  resolveCompressionRomAutoPickEntryName,
+} from "./input-archive-disc-groups.ts";
+import { assertDescentOutputLimits, preflightArchiveLimitsForDescent } from "./input-archive-limits.ts";
+import {
+  getPatchLeafFileForSelection,
+  getPatchLeafParentCompressionsForSelection,
+  resolvePatchArchiveLeaf,
+} from "./input-archive-patch-leaves.ts";
 import {
   attachInputPreparationMetrics,
   type InputAsset,
@@ -46,7 +49,7 @@ import {
   type InputPreparationRuntime,
   resolveInputPreparationRuntime,
 } from "./input-preparation-compression.ts";
-import { getBaseFileName, getDirectoryPath, normalizeArchiveEntryName } from "./path-utils.ts";
+import { getBaseFileName, normalizeArchiveEntryName } from "./path-utils.ts";
 import { parseCueFile } from "./rom-specific-file-utils.ts";
 import { applySidecarPatchOutputLabel, resolveSidecarPatchEntries } from "./sidecar-patch-resolution.ts";
 
@@ -92,13 +95,6 @@ type ArchiveFileBackedSource = Blob | FileSystemFileHandle | string;
 type ArchiveFileBackedPatchFile = PatchFileInstance & {
   _archiveFileBackedSource?: ArchiveFileBackedSource | null;
 };
-type ArchiveLimitState = {
-  depth?: number;
-  seenCompressedFileIdentities?: Set<string>;
-  totalCandidates?: number;
-  totalEntries?: number;
-  totalUncompressedBytes?: number;
-};
 type ValidatedPatchArchiveEntryCache = Map<string, PatchFileInstance>;
 const PATCH_MAGIC_BY_EXTENSION = {
   bps: "BPS1",
@@ -108,18 +104,8 @@ const PATCH_MAGIC_BY_EXTENSION = {
 const PATH_BACKED_COMPRESSION_FORMATS = new Set<string>(CREATE_ROM_SPECIFIC_COMPRESSION_FORMATS);
 const SYNC_READ_ARCHIVE_ENTRY_REGEX =
   /\.(?:cue|ips|ups|bps|aps|rup|ppf|ebp|bdf|bsp|bspatch|mod|xdelta|delta|dat|vcdiff)\d*$/i;
-const CHD_MERGED_SELECTION_PREFIX = "rom-weaver:chd-merged:";
-const CHD_SPLIT_SELECTION_PREFIX = "rom-weaver:chd-split:";
 const validatedPatchArchiveEntriesByFile = new WeakMap<PatchFileInstance, ValidatedPatchArchiveEntryCache>();
 const patchArchiveValidationCleanupAttached = new WeakSet<PatchFileInstance>();
-// Each ambiguous patch selection extracts every branch ONCE; the resulting (materialized) leaf files
-// are stashed against the emitted selection request so the controller can reuse the exact extracted
-// file for whichever candidate(s) the user picks — no re-extraction (which would collide on OPFS
-// paths) and correct addressing even for two sibling patches in one branch. Keyed by request, so the
-// stash is GC'd once the controller drops the request (e.g. on re-stage or source removal).
-type RegisteredPatchLeaf = { file: PatchFileInstance; parentCompressions: InputParentCompression[] };
-const patchLeafFilesByRequest = new WeakMap<CandidateSelectionRequest, Map<string, RegisteredPatchLeaf>>();
-
 const describeArchiveFileForTrace = (file: PatchFileInstance) => ({
   fileName: file.fileName || "input.bin",
   filePath: typeof file.filePath === "string" ? file.filePath : "",
@@ -149,49 +135,7 @@ const traceArchivePreparation = (
 const summarizeEntryNames = (entries: ArchiveEntryLike[], maxCount = 8) =>
   entries.slice(0, maxCount).map((entry) => entry.filename);
 
-const isCueGroupSelectionMatch = (group: CueGroupSelectionMatch, selectedEntryName: string) =>
-  group.cueFileName === selectedEntryName ||
-  group.trackFileNames.indexOf(selectedEntryName) !== -1 ||
-  getBaseFileName(group.cueFileName).toLowerCase() === getBaseFileName(selectedEntryName).toLowerCase();
-
-const isCompleteCueGroup = (group: Pick<CompressionRomCueGroup, "missingReferences" | "trackFileNames">) =>
-  group.missingReferences.length === 0 &&
-  group.trackFileNames.length > 0 &&
-  group.trackFileNames.some((fileName) => !isCueEntryFileName(fileName));
-
-const getSyntheticCueTrackEntries = (entries: ArchiveEntryLike[], cueFileName: string) =>
-  entries.filter(
-    (entry) =>
-      entry.archiveEntryType === "track" &&
-      !isCueEntryFileName(entry.filename) &&
-      !isGdiEntryFileName(entry.filename) &&
-      (!getDirectoryPath(cueFileName) || getDirectoryPath(entry.filename) === getDirectoryPath(cueFileName)),
-  );
-
 const isCompressionEntryFileName = (fileName: string) => classifyPatcherInput({ fileName }).kind === "compression";
-
-const isBinEntryFileName = (fileName: string) => /\.bin$/i.test(getBaseFileName(fileName));
-
-const parseChdSplitSelection = (
-  entryName: string | undefined,
-): { chdSplitBin?: boolean; selectedEntryName?: string } => {
-  const value = String(entryName || "");
-  if (value.startsWith(CHD_SPLIT_SELECTION_PREFIX)) {
-    return { chdSplitBin: true };
-  }
-  if (value.startsWith(CHD_MERGED_SELECTION_PREFIX)) {
-    return { chdSplitBin: false };
-  }
-  return { selectedEntryName: value || undefined };
-};
-
-// A CHD disc lists its sheet as a `.cue` (CD-ROM) or `.gdi` (GD-ROM); both mark a
-// multi-track disc that should auto-resolve to whole-disc split-bin extraction
-// instead of prompting per track.
-const getChdDiscSheetEntryName = (entries: ArchiveEntryLike[]) =>
-  entries.find((entry) => isCueEntryFileName(entry.filename) || isGdiEntryFileName(entry.filename))?.filename || "";
-
-const getChdBinEntries = (entries: ArchiveEntryLike[]) => entries.filter((entry) => isBinEntryFileName(entry.filename));
 
 const filterNestedContainerEntries = (entries: ArchiveEntryLike[]) =>
   entries.filter((entry) => typeof entry.filename === "string" && isCompressionEntryFileName(entry.filename));
@@ -203,141 +147,6 @@ const getChdCodecModeFromMediaKind = (mediaKind: unknown): ChdCodecMode | null =
   if (normalized === "cd" || normalized === "gd") return "cd";
   if (normalized === "dvd") return "dvd";
   return null;
-};
-
-const reportChdCodecMode = (
-  archiveFile: PatchFileInstance,
-  options: InputPreparationOptions,
-  chdMode: ChdCodecMode | null,
-) => {
-  if (!chdMode) return;
-  reportProgress(options, {
-    details: { chdMode },
-    label: "Preparing CHD extraction...",
-    percent: null,
-    stage: "input",
-  });
-  traceArchivePreparation(options, "input.archive.chd-mode", {
-    chdMode,
-    file: describeArchiveFileForTrace(archiveFile),
-  });
-};
-
-const getCompressedArchiveVisitKey = (file: PatchFileInstance) =>
-  [file.fileName || "", typeof file.filePath === "string" ? file.filePath : "", file.fileSize || 0].join("\u0000");
-
-const markCompressedArchiveVisit = (
-  file: PatchFileInstance,
-  options: InputPreparationOptions,
-  state: ArchiveLimitState,
-  message: string,
-) => {
-  let seen = state.seenCompressedFileIdentities;
-  if (!seen) {
-    seen = new Set();
-    state.seenCompressedFileIdentities = seen;
-  }
-  const key = getCompressedArchiveVisitKey(file);
-  if (!(key && seen.has(key))) {
-    if (key) seen.add(key);
-    return;
-  }
-  traceArchivePreparation(options, message, {
-    file: describeArchiveFileForTrace(file),
-    visitCount: seen.size,
-  });
-  throw new RomWeaverError("ARCHIVE_DEPTH_EXCEEDED", "Recursive input decompression stalled", {
-    details: {
-      depth: state.depth || 0,
-      fileName: file.fileName,
-    },
-  });
-};
-
-const getConfiguredLimit = (value: unknown) => {
-  const configured = Number(value);
-  return Number.isFinite(configured) && configured >= 0 ? Math.floor(configured) : null;
-};
-
-const hasConfiguredArchiveLimits = (options: InputPreparationOptions) =>
-  [
-    options?.limits?.maxArchiveDepth,
-    options?.limits?.maxCandidateEntries,
-    options?.limits?.maxEntries,
-    options?.limits?.maxSingleFileBytes,
-    options?.limits?.maxTotalUncompressedBytes,
-  ].some((value) => getConfiguredLimit(value) !== null);
-
-const assertArchiveLimit = (
-  code: string,
-  message: string,
-  actual: number,
-  configured: unknown,
-  details: Record<string, unknown> = {},
-) => {
-  const limit = getConfiguredLimit(configured);
-  if (limit === null || actual <= limit) return;
-  throw new RomWeaverError("INVALID_INPUT", message, {
-    details: { ...details, actual, code, limit },
-  });
-};
-
-const assertArchiveDepth = (options: InputPreparationOptions, depth: number) => {
-  const maxArchiveDepth = getConfiguredLimit(options?.limits?.maxArchiveDepth);
-  if (maxArchiveDepth === null || depth <= maxArchiveDepth) return;
-  throw new RomWeaverError("ARCHIVE_DEPTH_EXCEEDED", "Archive nesting exceeds configured depth limit", {
-    details: { depth, maxArchiveDepth },
-  });
-};
-
-const trackArchiveEntries = (
-  options: InputPreparationOptions,
-  state: ArchiveLimitState,
-  entries: ArchiveEntryLike[],
-) => {
-  state.totalEntries = (state.totalEntries || 0) + entries.length;
-  assertArchiveLimit(
-    "ARCHIVE_ENTRY_LIMIT_EXCEEDED",
-    "Archive entry count exceeds configured limit",
-    state.totalEntries,
-    options?.limits?.maxEntries,
-  );
-  const entryBytes = entries.reduce((total, entry) => total + (typeof entry.size === "number" ? entry.size : 0), 0);
-  state.totalUncompressedBytes = (state.totalUncompressedBytes || 0) + entryBytes;
-  assertArchiveLimit(
-    "ARCHIVE_TOTAL_UNCOMPRESSED_LIMIT_EXCEEDED",
-    "Archive total uncompressed size exceeds configured limit",
-    state.totalUncompressedBytes,
-    options?.limits?.maxTotalUncompressedBytes,
-  );
-};
-
-const trackArchiveCandidates = (
-  options: InputPreparationOptions,
-  state: ArchiveLimitState,
-  entries: ArchiveEntryLike[],
-) => {
-  state.totalCandidates = (state.totalCandidates || 0) + entries.length;
-  assertArchiveLimit(
-    "ARCHIVE_CANDIDATE_LIMIT_EXCEEDED",
-    "Archive candidate count exceeds configured limit",
-    state.totalCandidates,
-    options?.limits?.maxCandidateEntries,
-  );
-};
-
-const assertArchiveEntryFileSize = (
-  options: InputPreparationOptions,
-  entry: ArchiveEntryLike | undefined,
-  entryName: string,
-) => {
-  assertArchiveLimit(
-    "ARCHIVE_SINGLE_FILE_LIMIT_EXCEEDED",
-    "Archive entry size exceeds configured limit",
-    typeof entry?.size === "number" ? entry.size : 0,
-    options?.limits?.maxSingleFileBytes,
-    { entryName },
-  );
 };
 
 const getNamedArchiveBlobSource = (blob: Blob, fileName?: string | null): Blob => {
@@ -495,50 +304,6 @@ const listCompressionEntryResult = async (
   return { ...result, chdMode, entries };
 };
 
-const resolveChdSplitBinSelection = async ({
-  archiveFile,
-  compressionFormat,
-  kindFilter,
-  options,
-  runtime,
-  selectedEntryName,
-}: {
-  archiveFile: PatchFileInstance;
-  compressionFormat: string;
-  kindFilter: CompressionEntryKindFilter;
-  options: InputPreparationOptions;
-  runtime: InputPreparationRuntimeLike;
-  selectedEntryName?: string;
-}): Promise<{ selectedEntryName?: string; chdMode?: ChdCodecMode; chdSplitBin?: boolean }> => {
-  const parsedSelection = parseChdSplitSelection(selectedEntryName);
-  if (parsedSelection.chdSplitBin !== undefined) return { ...parsedSelection, chdMode: "cd" };
-  if (parsedSelection.selectedEntryName) return parsedSelection;
-  if (compressionFormat !== "chd" || !kindFilter.romFilter || typeof options?.onCandidatesFound !== "function") {
-    return parsedSelection;
-  }
-
-  const mergedResult = await listCompressionEntryResult(archiveFile, options, runtime, kindFilter, {
-    chdSplitBin: false,
-  });
-  const splitResult = await listCompressionEntryResult(archiveFile, options, runtime, kindFilter, {
-    chdSplitBin: true,
-  });
-  const chdMode = mergedResult.chdMode || splitResult.chdMode;
-  reportChdCodecMode(archiveFile, options, chdMode);
-  const mergedEntries = mergedResult.entries;
-  const splitEntries = splitResult.entries;
-  const mergedBinEntries = getChdBinEntries(mergedEntries);
-  const splitBinEntries = getChdBinEntries(splitEntries);
-  const cueEntryName = getChdDiscSheetEntryName(mergedEntries) || getChdDiscSheetEntryName(splitEntries);
-  if (!(cueEntryName && mergedBinEntries.length === 1 && splitBinEntries.length > 1))
-    return { ...parsedSelection, ...(chdMode ? { chdMode } : {}) };
-
-  // A multi-track CD/GD disc is one logical ROM. Default to per-track split bins
-  // — so each track gets its own checksums and can be patch-targeted, matching
-  // how loose bin+cue discs are handled — instead of prompting Merged vs Split.
-  return { chdMode: chdMode || "cd", chdSplitBin: true };
-};
-
 const extractCompressionEntries = async (
   file: PatchFileInstance,
   entryNames: string[],
@@ -680,97 +445,6 @@ const normalizeSelectedEntryNames = (entryNames: readonly string[] | undefined):
 const findArchiveEntryByName = (entries: ArchiveEntryLike[], entryName: string) =>
   entries.find((entry) => entry.filename === entryName || getBaseFileName(entry.filename) === entryName);
 
-const preflightArchiveLimitsForDescent = async (
-  file: PatchFileInstance,
-  options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike,
-  kindFilter: CompressionEntryKindFilter,
-  selectedEntryNames: readonly string[] = [],
-  state: ArchiveLimitState = {},
-): Promise<void> => {
-  if (!hasConfiguredArchiveLimits(options)) return;
-  const depth = state.depth || 0;
-  assertArchiveDepth(options, depth);
-  markCompressedArchiveVisit(file, options, state, "input.archive.limit-preflight.stall");
-  const entries = await listCompressionEntries(file, options, runtime, kindFilter);
-  trackArchiveEntries(options, state, entries);
-  trackArchiveCandidates(options, state, entries);
-  const selectedNames = normalizeSelectedEntryNames(selectedEntryNames);
-  for (const selectedName of selectedNames) {
-    assertArchiveEntryFileSize(options, findArchiveEntryByName(entries, selectedName), selectedName);
-  }
-  const selectedEntry = selectedNames[0] ? findArchiveEntryByName(entries, selectedNames[0] || "") : undefined;
-  const nestedEntries = filterNestedContainerEntries(entries);
-  const directEntries = entries.filter(
-    (entry) => !nestedEntries.some((candidate) => candidate.filename === entry.filename),
-  );
-  const nestedEntry =
-    selectedEntry && isCompressionEntryFileName(selectedEntry.filename)
-      ? selectedEntry
-      : !selectedEntry && directEntries.length === 0 && nestedEntries.length === 1
-        ? nestedEntries[0]
-        : undefined;
-  if (!nestedEntry) return;
-  assertArchiveEntryFileSize(options, nestedEntry, nestedEntry.filename);
-  const extracted = await extractArchiveEntry(
-    file,
-    nestedEntry.filename,
-    undefined,
-    options,
-    runtime,
-    undefined,
-    kindFilter,
-  );
-  try {
-    if (!isCompressionFile(extracted)) return;
-    await preflightArchiveLimitsForDescent(
-      extracted,
-      options,
-      runtime,
-      kindFilter,
-      selectedEntry ? selectedNames.slice(1) : [],
-      {
-        ...state,
-        depth: depth + 1,
-      },
-    );
-  } finally {
-    await Promise.resolve(getPatchFileCleanup(extracted)?.()).catch(() => undefined);
-  }
-};
-
-const assertDescentOutputLimits = (
-  options: InputPreparationOptions,
-  depth: number,
-  outputs: unknown[],
-  totalOutputBytes: number,
-) => {
-  assertArchiveDepth(options, depth);
-  for (const output of outputs) {
-    if (!isRecord(output)) continue;
-    const size = typeof output.size_bytes === "number" ? output.size_bytes : 0;
-    const entryName =
-      typeof output.path === "string"
-        ? getBaseFileName(output.path)
-        : typeof output.file_name === "string"
-          ? output.file_name
-          : "";
-    assertArchiveLimit(
-      "ARCHIVE_SINGLE_FILE_LIMIT_EXCEEDED",
-      "Archive entry size exceeds configured limit",
-      size,
-      options?.limits?.maxSingleFileBytes,
-      { entryName },
-    );
-  }
-  assertArchiveLimit(
-    "ARCHIVE_TOTAL_UNCOMPRESSED_LIMIT_EXCEEDED",
-    "Archive total uncompressed size exceeds configured limit",
-    totalOutputBytes,
-    options?.limits?.maxTotalUncompressedBytes,
-  );
-};
-
 const getValidatedPatchArchiveEntryCache = (archiveFile: PatchFileInstance): ValidatedPatchArchiveEntryCache => {
   const existing = validatedPatchArchiveEntriesByFile.get(archiveFile);
   if (existing) return existing;
@@ -854,363 +528,24 @@ const filterValidPatchArchiveEntriesForSource = async (
   return validEntries;
 };
 
-const probeCompressionRomEntriesForSource = async (
-  archiveFile: PatchFileInstance,
-  entries: ArchiveEntryLike[],
-  options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
-): Promise<CompressionRomProbe> => {
-  const nestedCompressionEntries = filterNestedContainerEntries(entries);
-  const directRomEntries = entries.filter(
-    (entry) => !nestedCompressionEntries.some((candidate) => candidate.filename === entry.filename),
-  );
-  const romEntries = entries;
-  const cueGroups: CompressionRomCueGroup[] = [];
-  const referencedTrackNames = new Set<string>();
-  for (const entry of romEntries) {
-    const cueFileName = String(entry.filename || "");
-    const sheetIsCue = isCueEntryFileName(cueFileName);
-    const sheetIsGdi = isGdiEntryFileName(cueFileName);
-    // A CHD CD/GD-ROM lists a `.cue`/`.gdi` sheet plus per-track `.bin`s; both
-    // describe one disc, so group the tracks under the sheet (a GD-ROM `.gdi`
-    // gets a synthetic disc group exactly like a `.cue`).
-    if (!(sheetIsCue || sheetIsGdi)) continue;
-    const syntheticTrackEntries =
-      entry.archiveEntryType === "cue" || entry.archiveEntryType === "gdi"
-        ? getSyntheticCueTrackEntries(entries, cueFileName)
-        : [];
-    if (syntheticTrackEntries.length) {
-      const references = syntheticTrackEntries.map((trackEntry, index) => ({
-        fileName: trackEntry.filename,
-        mode: "MODE1/2048",
-        patchable: true,
-        trackNumber: index + 1,
-        type: "BINARY",
-      }));
-      cueGroups.push({
-        cueFileName,
-        missingReferences: [],
-        references,
-        trackFileNames: syntheticTrackEntries.map((trackEntry) => {
-          referencedTrackNames.add(trackEntry.filename);
-          return trackEntry.filename;
-        }),
-      });
-      continue;
-    }
-    // Only `.cue` text is read+parsed for references; a `.gdi` without synthetic
-    // track entries is left for standalone handling rather than mis-parsed.
-    if (!sheetIsCue) continue;
-    try {
-      const cueText = decodeUtf8(
-        await extractArchiveEntryBytes(archiveFile, cueFileName, options, runtime, undefined, {
-          romFilter: true,
-        }),
-      );
-      const references = parseCueFileReferences(cueText);
-      const trackFileNames: string[] = [];
-      const missingReferences: string[] = [];
-      for (const reference of references) {
-        const trackEntry = findArchiveEntryByFileName(entries, cueFileName, reference.fileName) as
-          | { filename: string }
-          | undefined;
-        if (!trackEntry) {
-          missingReferences.push(reference.fileName);
-          continue;
-        }
-        trackFileNames.push(trackEntry.filename);
-        referencedTrackNames.add(trackEntry.filename);
-      }
-      cueGroups.push({
-        cueFileName,
-        cueText,
-        missingReferences,
-        references,
-        trackFileNames,
-      });
-    } catch (_error) {
-      cueGroups.push({
-        cueFileName,
-        missingReferences: ["Invalid or unreadable CUE"],
-        trackFileNames: [],
-      });
-    }
-  }
-  // A single disc can ship both a `.cue` and a `.gdi` describing the same tracks
-  // (e.g. a GD-ROM with a low-density CUE alongside its GDI). Each sheet builds its
-  // own group above, so collapse sheets covering an identical track set into one
-  // disc group — otherwise the disc reads as two competing candidates and prompts.
-  const trackSetKey = (group: CompressionRomCueGroup) => JSON.stringify([...group.trackFileNames].sort());
-  const dedupedCueGroups: CompressionRomCueGroup[] = [];
-  const seenTrackSets = new Set<string>();
-  for (const group of cueGroups) {
-    const key = trackSetKey(group);
-    if (key && seenTrackSets.has(key)) continue;
-    if (key) seenTrackSets.add(key);
-    dedupedCueGroups.push(group);
-  }
-  const standaloneEntries = romEntries.filter(
-    (entry) =>
-      !(
-        isCueEntryFileName(entry.filename) ||
-        isGdiEntryFileName(entry.filename) ||
-        referencedTrackNames.has(entry.filename)
-      ),
-  );
-  return {
-    cueGroups: dedupedCueGroups,
-    directRomEntries,
-    nestedCompressionEntries,
-    referencedTrackNames,
-    romEntries,
-    standaloneEntries,
-  };
-};
-
-const resolveCompressionRomCueGroup = (
-  cueGroups: CompressionRomCueGroup[],
-  selectedEntryName: string,
-): CompressionRomCueGroup | null =>
-  cueGroups.find((group) => isCueGroupSelectionMatch(group, selectedEntryName)) || null;
-
-const resolveCompressionRomAutoPickEntryName = (
-  archiveFileName: string | undefined,
-  probe: CompressionRomProbe,
-  selectedEntryName: string,
-): string | null => {
-  const completeCueGroups = probe.cueGroups.filter((group) => isCompleteCueGroup(group));
-  if (selectedEntryName) {
-    const selectedGroup = resolveCompressionRomCueGroup(completeCueGroups, selectedEntryName);
-    if (selectedGroup) return selectedGroup.cueFileName;
-    const selectedEntry = probe.romEntries.find((entry) => entry.filename === selectedEntryName);
-    return selectedEntry?.filename || selectedEntryName;
-  }
-  if (!probe.romEntries.length) return null;
-  if (completeCueGroups.length === 1 && probe.standaloneEntries.length === 0)
-    return completeCueGroups[0]?.cueFileName || null;
-  if (completeCueGroups.length === 0 && probe.standaloneEntries.length === 1)
-    return probe.standaloneEntries[0]?.filename || null;
-  if (completeCueGroups.length === 0 && probe.romEntries.length === 1) return probe.romEntries[0]?.filename || null;
-  throw new Error(`${archiveFileName || "Archive"} contains multiple input candidates`);
-};
-
 // Loose multi-track discs (a `.cue`/`.gdi` sheet plus its track `.bin`s) ship inside plain
 // archives too, not only CHDs. The descent auto-resolves a SINGLE payload, which drops the
 // sheet and sibling tracks; when the resolved entry belongs to a complete disc group, return
 // the whole group (every sheet + track) so they extract together and group into one disc.
-const resolveArchiveDiscGroupEntryNames = async (
-  archiveFile: PatchFileInstance,
-  options: ApplyWorkflowOptions | undefined,
-  runtime: InputPreparationRuntimeLike,
-  selectedEntryName: string,
-): Promise<string[]> => {
-  if (PATH_BACKED_COMPRESSION_FORMATS.has(getCompressionFormat(archiveFile))) return [];
-  // With a pre-selected entry, only probe when it looks like a disc member; with no
-  // pre-selection we always probe, since that is exactly the ambiguous case the Rust
-  // descent would otherwise resolve to a single track (dropping the cue + siblings).
-  if (
-    selectedEntryName &&
-    !(
-      isBinEntryFileName(selectedEntryName) ||
-      isCueEntryFileName(selectedEntryName) ||
-      isGdiEntryFileName(selectedEntryName)
-    )
-  ) {
-    return [];
-  }
-  const romEntries = await listCompressionEntries(archiveFile, options, runtime, { romFilter: true }).catch(() => []);
-  if (romEntries.length < 2) return [];
-  const probe = await probeCompressionRomEntriesForSource(archiveFile, romEntries, options, runtime).catch(() => null);
-  if (!probe) return [];
-  const completeGroups = probe.cueGroups.filter((group) => isCompleteCueGroup(group));
-  const group = selectedEntryName
-    ? resolveCompressionRomCueGroup(completeGroups, selectedEntryName) ||
-      (completeGroups.length === 1 ? completeGroups[0] : null)
-    : // No pre-selection: only auto-pick when there is exactly one disc and nothing else
-      // competing for selection, so genuinely ambiguous archives still prompt.
-      completeGroups.length === 1 && probe.standaloneEntries.length === 0
-      ? completeGroups[0]
-      : null;
-  if (!group) return [];
-  // A single-disc archive may carry both a `.cue` and a `.gdi`; both are sidecars for the
-  // same tracks, so keep every sheet plus the group's tracks.
-  const sheetNames = romEntries
-    .filter((entry) => isCueEntryFileName(entry.filename) || isGdiEntryFileName(entry.filename))
-    .map((entry) => entry.filename);
-  const sheets = sheetNames.length ? sheetNames : [group.cueFileName];
-  return normalizeSelectedEntryNames([...sheets, ...group.trackFileNames]);
-};
-
-type PatchArchiveLeaf = {
-  candidate: SelectionFileCandidate;
-  file: PatchFileInstance;
-  parentCompressions: InputParentCompression[];
-};
-
-const PATCH_LEAF_ROOT_SEGMENTS = DEFAULT_VFS_ROOT.split("/").filter(Boolean);
-
 /** Compute a leaf's archive-nesting breadcrumbs by stripping the extraction root (`/work`): a direct
  * patch yields `[]`, a nested patch yields its chain of containing nested-archive directories (named
  * after each archive, e.g. `["B_disc1"]`, `["C_set", "C_sub"]`). Stripping the fixed root (rather
  * than the prefix shared across leaves) keeps the nesting visible even when every patch sits under
  * the same nested archive. */
-const derivePatchLeafBreadcrumbs = (path: string): string[] => {
-  const dirSegments = String(path || "")
-    .split("/")
-    .filter(Boolean)
-    .slice(0, -1);
-  let start = 0;
-  while (start < PATCH_LEAF_ROOT_SEGMENTS.length && dirSegments[start] === PATCH_LEAF_ROOT_SEGMENTS[start]) {
-    start += 1;
-  }
-  return dirSegments.slice(start);
-};
-
 /** Extract EVERY patch across all (nested) branches of a patch archive in one recursive descent with
  * interactive selection OFF, so an ambiguous multi-branch container fully unpacks instead of
  * prompting for a single branch. Each valid leaf patch is cached by its unique extracted path so the
  * re-entrant selection (and the multi-select fan-out) can reuse it without re-extracting — essential
  * because two sibling patches in one branch cannot be addressed by a primary-container `--select`. */
-const enumeratePatchLeaves = async (
-  archiveFile: PatchFileInstance,
-  options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike,
-  sourceIndex: number,
-): Promise<PatchArchiveLeaf[]> => {
-  const resolvedRuntime = await resolveInputPreparationRuntime(runtime);
-  if (!resolvedRuntime.compression.extract) throw new Error("Compression extraction is unavailable");
-  const compressionFormat = getCompressionFormat(archiveFile);
-  await preflightArchiveLimitsForDescent(archiveFile, options, runtime, { patchFilter: true }, []);
-  traceArchivePreparation(options, "input.archive.patch.enumerate.start", {
-    compressionFormat,
-    file: describeArchiveFileForTrace(archiveFile),
-  });
-  const result = await resolvedRuntime.compression.extract({
-    descendSinglePayload: true,
-    entries: [],
-    format: compressionFormat,
-    options: getCompressionRuntimeOptions(options, { interactiveSelectionEnabled: false }, { patchFilter: true }),
-    source: getCompressionRuntimeSource(archiveFile),
-  });
-  const outputs: PublicOutput[] = Array.isArray(result.outputs) ? result.outputs : result.output ? [result.output] : [];
-  const cache = getValidatedPatchArchiveEntryCache(archiveFile);
-  const leaves: PatchArchiveLeaf[] = [];
-  for (let index = 0; index < outputs.length; index += 1) {
-    const output = outputs[index];
-    if (!output) continue;
-    const displayPath = String(output.path || "");
-    const fileName = getBaseFileName(output.fileName || `patch-${index + 1}.bin`);
-    let file = displayPath ? cache.get(displayPath) : undefined;
-    if (!file) {
-      file = await createPatchFileFromPublicOutput(output, fileName, { materializeBlob: true });
-      file.fileName = fileName;
-    }
-    if (isCompressionFile(file) || !(await isValidPatchPatchFile(file))) {
-      if (!(displayPath && cache.has(displayPath)))
-        await Promise.resolve(getPatchFileCleanup(file)?.()).catch(() => undefined);
-      continue;
-    }
-    if (displayPath) {
-      ensureValidatedPatchArchiveEntryCleanup(archiveFile);
-      cache.set(displayPath, file);
-    }
-    // Full archive-nesting path: the source archive, then each nested archive/folder it descends
-    // through (the leaf file name is shown separately as the candidate's primary label).
-    const breadcrumbs = [archiveFile.fileName || "archive", ...derivePatchLeafBreadcrumbs(displayPath)];
-    // Surface the same chain as parentCompressions so a fanned-out patch keeps its "extract section"
-    // (the archive › nested-archive path) in the patch stack row. The runtime only reports a single
-    // extract elapsed time and the leaf size (not per-intermediate-archive sizes), so attach the
-    // elapsed time to the root entry but leave parent sizes unset — synthesizing the whole-archive
-    // size as a single leaf's parent would compute a nonsensical compression ratio (archive ÷ leaf).
-    const extractElapsedMs =
-      typeof output.timing?.elapsedMs === "number" && Number.isFinite(output.timing.elapsedMs)
-        ? output.timing.elapsedMs
-        : undefined;
-    const parentCompressions: InputParentCompression[] = breadcrumbs.map((entryName, depth) => ({
-      depth,
-      fileName: entryName,
-      kind: "archive",
-      ...(depth === 0 && extractElapsedMs !== undefined ? { decompressionTimeMs: extractElapsedMs } : {}),
-    }));
-    leaves.push({
-      candidate: {
-        ...(breadcrumbs.length ? { breadcrumbs } : {}),
-        fileName,
-        id: makeInputId(sourceIndex, displayPath || fileName, normalizeArchiveEntryName),
-        kind: "patch",
-        path: displayPath || fileName,
-        selectable: true,
-        size: output.size,
-        type: "file",
-      },
-      file,
-      parentCompressions,
-    });
-  }
-  traceArchivePreparation(options, "input.archive.patch.enumerate.finish", {
-    compressionFormat,
-    file: describeArchiveFileForTrace(archiveFile),
-    leafCandidateIds: leaves.map((leaf) => leaf.candidate.id),
-    leafCount: leaves.length,
-    leafPaths: leaves.map((leaf) => leaf.candidate.path),
-    outputCount: outputs.length,
-  });
-  return leaves;
-};
-
 /** Resolve one patch leaf from a (possibly nested) patch archive. Returns the cached/extracted leaf
  * for an explicit selection, auto-picks a lone leaf, prompts (flat multi-select across all branches)
  * when several exist, and returns `null` when no valid patch is discovered so the caller can fall
  * back to the generic single-payload descent. */
-const resolvePatchArchiveLeaf = async (
-  archiveFile: PatchFileInstance,
-  options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike,
-  selectedArchiveEntry: string | undefined,
-  sourceIndex: number,
-): Promise<PatchFileInstance | null> => {
-  const cache = getValidatedPatchArchiveEntryCache(archiveFile);
-  if (selectedArchiveEntry) {
-    const cached = cache.get(selectedArchiveEntry);
-    if (cached) return cached;
-  }
-  const leaves = await enumeratePatchLeaves(archiveFile, options, runtime, sourceIndex);
-  if (selectedArchiveEntry) {
-    const leaf = leaves.find((entry) => entry.candidate.path === selectedArchiveEntry);
-    if (leaf) return leaf.file;
-    throw new RomWeaverError(
-      "SELECTION_NOT_FOUND",
-      `${archiveFile.fileName || "Patch archive"} has no patch entry "${selectedArchiveEntry}"`,
-    );
-  }
-  if (leaves.length === 0) return null;
-  if (leaves.length === 1) return leaves[0]?.file ?? null;
-  if (typeof options?.onCandidatesFound !== "function") return leaves[0]?.file ?? null;
-  const request: CandidateSelectionRequest = {
-    candidates: leaves.map((entry) => entry.candidate),
-    multiSelect: true,
-    role: "patch",
-    sourceIndex,
-    sourceName: archiveFile.fileName || "Patch archive",
-    warnings: [],
-  };
-  patchLeafFilesByRequest.set(
-    request,
-    new Map(
-      leaves.map((entry) => [entry.candidate.id, { file: entry.file, parentCompressions: entry.parentCompressions }]),
-    ),
-  );
-  traceArchivePreparation(options, "input.archive.patch.register", {
-    candidateIds: leaves.map((entry) => entry.candidate.id),
-    count: leaves.length,
-    sourceName: request.sourceName,
-  });
-  options.onCandidatesFound(request);
-  throw new RomWeaverError("AMBIGUOUS_SELECTION", `${request.sourceName} requires patch selection`, {
-    details: { request },
-  });
-};
-
 /** Resolve a single compressed input/patch FILE with one recursive `extract` (no `list`): the Rust
  * core descends nested containers and resolves a single payload per level via the interactive
  * callback, returning the bottom leaf file. Used by the patch (and rom file-staging) path. */
@@ -1574,18 +909,8 @@ const prepareAutoPatchInputs = async (
 
 /** Retrieve the already-extracted leaf patch file for a candidate of an emitted patch-selection
  * request, so the controller can stage the user's pick(s) without re-extracting. */
-const getPatchLeafFileForSelection = (
-  request: CandidateSelectionRequest,
-  candidateId: string,
-): PatchFileInstance | undefined => patchLeafFilesByRequest.get(request)?.get(candidateId)?.file;
-
 /** Retrieve the archive-nesting chain (source archive › nested archives) for a registered patch
  * leaf so a fanned-out patch entry keeps its "extract section" in the patch stack row. */
-const getPatchLeafParentCompressionsForSelection = (
-  request: CandidateSelectionRequest,
-  candidateId: string,
-): InputParentCompression[] | undefined => patchLeafFilesByRequest.get(request)?.get(candidateId)?.parentCompressions;
-
 /**
  * Probe whether an archive/container holds a pickable ROM. The unified Apply
  * drop surface uses this to route a dropped archive: one with a ROM is a ROM
@@ -1615,11 +940,43 @@ const archiveContainsRomEntry = async (
   return !!resolveCompressionRomAutoPickEntryName(archiveFile.fileName, romProbe, "");
 };
 
+// Shared low-level archive primitives consumed by the sibling modules split out of this orchestrator
+// (input-archive-limits, input-archive-disc-groups, input-archive-patch-leaves). Not part of the
+// public input-preparation surface — internal to the input-archive cluster.
+export type {
+  ArchiveEntryLike,
+  ChdCodecMode,
+  CompressionEntryKindFilter,
+  CompressionRomCueGroup,
+  CompressionRomProbe,
+  CueGroupSelectionMatch,
+  InputPreparationOptions,
+  InputPreparationRuntimeLike,
+};
 export {
   archiveContainsRomEntry,
+  describeArchiveFileForTrace,
+  ensureValidatedPatchArchiveEntryCleanup,
+  extractArchiveEntry,
+  extractArchiveEntryBytes,
+  filterNestedContainerEntries,
+  findArchiveEntryByName,
+  getCompressionFormat,
+  getCompressionRuntimeOptions,
+  getCompressionRuntimeSource,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
+  getValidatedPatchArchiveEntryCache,
+  isCompressionEntryFileName,
+  isCompressionFile,
+  isRecord,
+  isValidPatchPatchFile,
+  listCompressionEntries,
+  listCompressionEntryResult,
+  normalizeSelectedEntryNames,
+  PATH_BACKED_COMPRESSION_FORMATS,
   prepareAutoPatchInputs,
   resolveArchiveInput,
   resolveArchiveInputAssets,
+  traceArchivePreparation,
 };
