@@ -139,4 +139,4 @@ const withAbortSignal = async <T>(operation: Promise<T>, signal?: AbortSignal): 
   });
 };
 
-export { RomWeaverError, throwIfAborted, toRomWeaverError, withAbortSignal };
+export { OUT_OF_MEMORY_MESSAGE_REGEX, RomWeaverError, throwIfAborted, toRomWeaverError, withAbortSignal };

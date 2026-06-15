@@ -1,8 +1,8 @@
+import { OUT_OF_MEMORY_MESSAGE_REGEX } from "../../lib/errors.ts";
 import { createLogger } from "../../lib/logging.ts";
 import { getDefaultBrowserThreadCount } from "../../platform/shared/compression-options.ts";
 import type {
   RomWeaverBrowserOpfsRunOptions,
-  RomWeaverCommand,
   RomWeaverRunInput,
   RomWeaverRunJsonEvent,
   RomWeaverRunJsonOptions,
@@ -13,6 +13,7 @@ import browserWasmUrl from "../../wasm/rom-weaver-app.wasm?url";
 import browserRunnerWorkerUrl from "../../wasm/workers/browser-runner-worker.ts?worker&url";
 import browserThreadWorkerUrl from "../../wasm/workers/browser-wasi-thread-worker.ts?worker&url";
 import { createBrowserWorkerClient } from "../../wasm/workers/browser-worker-client.ts";
+import { formatCommandForTrace } from "../../wasm/workers/worker-trace-format.ts";
 import { type BrowserVirtualFile, getActiveBrowserVirtualFiles } from "../protocol/browser-virtual-files.ts";
 import { isBrowserRuntime } from "../shared/runtime-env.ts";
 import { WORKER_OPFS_MOUNTPOINT } from "../shared/worker-storage/storage-layout.ts";
@@ -365,10 +366,16 @@ const recycleWarmRomWeaverRunner = async (workerThreads?: RuntimeValue) => {
   await createRomWeaverRunner({ workerThreads });
 };
 
-// The wasm runner's linear memory only ever grows, so the browser surfaces an exhausted heap as a
-// `RangeError: Out of memory`. Detect it so we can recycle the worker onto a clean heap.
-const isRunnerOutOfMemoryError = (error: unknown): boolean =>
-  error instanceof Error && error.name === "RangeError" && /out of memory/i.test(error.message);
+// The wasm runner's linear memory only ever grows, so the browser surfaces an exhausted heap as an
+// out-of-memory error. V8 reports it as `RangeError: Out of memory`, but the wasi/Emscripten layer
+// can also surface "cannot enlarge memory", "ENOMEM", etc. — reuse the canonical matcher so every
+// OOM phrasing triggers a clean-heap worker recycle, while still catching a RangeError mentioning
+// memory whose exact wording the shared regex might not enumerate.
+const isRunnerOutOfMemoryError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  if (OUT_OF_MEMORY_MESSAGE_REGEX.test(error.message)) return true;
+  return error.name === "RangeError" && /memory/i.test(error.message);
+};
 
 const createRunnerAbortError = () => {
   const error = new Error("Workflow was cancelled") as Error & { code?: string };
@@ -415,7 +422,7 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
   }
   emitRunnerTraceLine(
     options,
-    `runJson preparing command=${formatCommandForTrace(commandOrRequest)} activeVirtualFiles=${JSON.stringify(
+    `runJson preparing command=${formatCommandForTrace(readRomWeaverRunInputCommand(commandOrRequest))} activeVirtualFiles=${JSON.stringify(
       describeVirtualFilesForTrace(activeVirtualFiles),
     )} scopedVirtualFiles=${JSON.stringify(
       describeVirtualFilesForTrace(scopedActiveVirtualFiles),
@@ -530,15 +537,6 @@ const getResourceName = (urlLike: string) => {
     return url.pathname.split("/").filter(Boolean).pop() || "rom-weaver-app.wasm";
   } catch (_err) {
     return urlLike.split("/").filter(Boolean).pop() || "rom-weaver-app.wasm";
-  }
-};
-
-const formatCommandForTrace = (commandOrRequest: RomWeaverRunInput) => {
-  const command: RomWeaverCommand = readRomWeaverRunInputCommand(commandOrRequest);
-  try {
-    return JSON.stringify(command);
-  } catch (_err) {
-    return String(command.type || "unknown");
   }
 };
 
