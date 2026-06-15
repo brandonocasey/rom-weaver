@@ -37,6 +37,7 @@ import {
   toBrowserPublicBinarySource,
   toReactProgressEvent,
 } from "./workflow-adapters.ts";
+import { usePageDropForwarder } from "./workflow-form-effects.ts";
 import { createReactWorkflowId, formatChecksumTiming } from "./workflow-form-utils.ts";
 
 type ApplyWorkflowSessionInput = {
@@ -1199,24 +1200,18 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   // Forward a page-level drop (dragging anywhere on the page) to the unified
   // apply routing so the whole tab is a drop target, not just the dropzone box.
   const handledPageDropIdRef = useRef<number | null>(null);
-  useEffect(() => {
-    const pageDrop = props.pageDrop;
-    if (!pageDrop || handledPageDropIdRef.current === pageDrop.id) return;
-    handledPageDropIdRef.current = pageDrop.id;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
+  usePageDropForwarder(
+    props.pageDrop,
+    (files, isCancelled) => {
       // Same classification/routing the in-tab unified drop surface uses.
-      void routeByTypeProbed(pageDrop.files, probeApplyArchiveHasRom).then(({ inputs, patches }) => {
-        if (cancelled) return;
+      void routeByTypeProbed(files, probeApplyArchiveHasRom).then(({ inputs, patches }) => {
+        if (isCancelled()) return;
         if (inputs.length) resolvedUiController.provideRomInputFiles?.(inputs);
         if (patches.length) resolvedUiController.providePatchInputFiles?.(patches);
       });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [props.pageDrop, resolvedUiController]);
+    },
+    handledPageDropIdRef,
+  );
 
   handleSelectionCancelledRef.current = (request) => {
     const normalizedSourceName = request.sourceName.trim().toLowerCase();

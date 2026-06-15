@@ -1,7 +1,6 @@
 import Download from "lucide-react/dist/esm/icons/download.js";
 import GitCompare from "lucide-react/dist/esm/icons/git-compare.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import { getPreferredCreatePatchFormat } from "../../lib/create/patch-format-limits.ts";
 import { appendFileNameExtension, hasFileNameExtension } from "../../lib/input/path-utils.ts";
 import { resolveAutomaticSelection } from "../../lib/input/selection.ts";
@@ -49,6 +48,13 @@ import {
   toBrowserPublicBinarySource,
   toStagedInputInfo,
 } from "./workflow-adapters.ts";
+import {
+  markCompressionStart,
+  usePageDropForwarder,
+  useQueuedRunEffect,
+  useWorkbenchActivity,
+  useWorkflowResetActions,
+} from "./workflow-form-effects.ts";
 import {
   createReactWorkflowId,
   createSettingsDependencyKey,
@@ -302,6 +308,13 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     setMessageDismissible(false);
     setMessagePlacement(null);
   }, []);
+  const resetWorkflowOutput = useWorkflowResetActions({
+    clearCompleted: clearCompletedOutput,
+    clearWorkflowMessage,
+    disposeActiveOutput,
+    setProgress,
+    setQueued: setCreateQueued,
+  });
   const setWorkflowMessage = useCallback(
     (placement: CreateMessagePlacement, error: Error) => {
       const code = getErrorCode(error);
@@ -437,25 +450,17 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   }, [props.defaultSettings, props.settings, providerSettings]);
 
   const updateOriginal = (file: BinarySource | null) => {
-    setCreateQueued(false);
-    disposeActiveOutput();
-    clearCompletedOutput();
+    resetWorkflowOutput();
     setOriginalState(null);
     if (props.original === undefined) setInternalOriginal(file);
     props.onOriginalChange?.(file);
-    clearWorkflowMessage();
-    setProgress(null);
   };
 
   const updateModified = (file: BinarySource | null) => {
-    setCreateQueued(false);
-    disposeActiveOutput();
-    clearCompletedOutput();
+    resetWorkflowOutput();
     setModifiedState(null);
     if (props.modified === undefined) setInternalModified(file);
     props.onModifiedChange?.(file);
-    clearWorkflowMessage();
-    setProgress(null);
   };
 
   // Combined drop surface: both sources are ROMs, so files fill Original then
@@ -487,11 +492,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     const previousOriginal = original;
     const previousOriginalState = originalState;
     void workflow.swap();
-    setCreateQueued(false);
-    disposeActiveOutput();
-    clearCompletedOutput();
-    clearWorkflowMessage();
-    setProgress(null);
+    resetWorkflowOutput();
     setOriginalState(modifiedState);
     setModifiedState(previousOriginalState);
     if (props.original === undefined) setInternalOriginal(modified);
@@ -508,19 +509,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
 
   // Forward a page-level drop (dragging anywhere on the page) to the unified
   // handler so the whole tab is a drop target, not just the dropzone box.
-  useEffect(() => {
-    const pageDrop = props.pageDrop;
-    if (!pageDrop || handledPageDropIdRef.current === pageDrop.id) return;
-    handledPageDropIdRef.current = pageDrop.id;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      handleUnifiedDrop(pageDrop.files);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [props.pageDrop]);
+  usePageDropForwarder(props.pageDrop, (files) => handleUnifiedDrop(files), handledPageDropIdRef);
   const cancelSourceStaging = (role: "modified" | "original") => {
     setCreateQueued(false);
     resetStagedCreateWorkflow();
@@ -537,23 +526,16 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   };
 
   const updateSettings = (nextSettings: CreatePatchFormSettings) => {
-    setCreateQueued(false);
-    disposeActiveOutput();
-    clearCompletedOutput();
-    clearWorkflowMessage();
+    resetWorkflowOutput({ clearProgress: false });
     if (!props.settings) setInternalSettings(nextSettings);
     props.onSettingsChange?.(nextSettings);
   };
 
   const updatePatchType = (nextPatchType: string) => {
-    setCreateQueued(false);
     setPatchTypeManuallySelected(true);
-    disposeActiveOutput();
-    clearCompletedOutput();
+    resetWorkflowOutput();
     if (!props.patchType) setInternalPatchType(nextPatchType);
     props.onPatchTypeChange?.(nextPatchType);
-    clearWorkflowMessage();
-    setProgress(null);
   };
 
   const createSelectFileHandler = useCallback(
@@ -751,9 +733,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
       const usingStagedWorkflow = stagedCreateWorkflowRef.current === createWorkflow;
       const baseProgressHandler = createProgressHandler("create");
       const handleProgress: typeof baseProgressHandler = (event) => {
-        if (event.stage === "compress" && createExecutionTimingRef.current.compressionStartedAt === null) {
-          createExecutionTimingRef.current.compressionStartedAt = Date.now();
-        }
+        if (event.stage === "compress") markCompressionStart(createExecutionTimingRef.current);
         baseProgressHandler(event);
       };
       createWorkflow.on("progress", handleProgress);
@@ -816,26 +796,16 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     [abortActiveOperation, disposeActiveOutput],
   );
 
-  useEffect(() => {
-    if (!createQueued) return;
-    if (busy || completedOutput) {
-      setCreateQueued(false);
-      return;
-    }
-    if (!canQueueCreate) {
-      setCreateQueued(false);
-      return;
-    }
-    if (createQueueBlocked) {
-      setCreateQueued(false);
-      return;
-    }
-    if (createPreparationPending) return;
-    if (!canStartCreate) {
-      setCreateQueued(false);
-      return;
-    }
-    void runCreate();
+  useQueuedRunEffect({
+    blocked: createQueueBlocked,
+    busy,
+    canQueue: canQueueCreate,
+    canStart: canStartCreate,
+    completed: !!completedOutput,
+    pending: createPreparationPending,
+    queued: createQueued,
+    run: () => void runCreate(),
+    setQueued: setCreateQueued,
   });
 
   const progressProps = toWorkflowFileProgressProps(progress);
@@ -954,11 +924,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   // "Needs input" directives forward to the 0x01 unified picker.
   const openUnifiedPicker = () => document.getElementById("patch-builder-input-file-unified")?.click();
   // The selvage status strip mirrors this workflow's job state.
-  useEffect(() => {
-    if (busy || createQueued) setWorkbenchActivity({ state: "running" });
-    else if (completedOutput) setWorkbenchActivity({ state: "done" });
-    else setWorkbenchActivity({ state: "idle" });
-  }, [busy, createQueued, completedOutput]);
+  useWorkbenchActivity({ busy, completed: !!completedOutput, queued: createQueued });
 
   return (
     <main aria-labelledby="tab-creator" className="panel" id="patch-builder-container">

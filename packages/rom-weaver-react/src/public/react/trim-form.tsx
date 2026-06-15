@@ -1,7 +1,6 @@
 import Download from "lucide-react/dist/esm/icons/download.js";
 import Scissors from "lucide-react/dist/esm/icons/scissors.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import {
   getCompressionOutputExtension,
   isCompressionFormat,
@@ -48,6 +47,13 @@ import {
 } from "./settings-context.tsx";
 import { routeSingleRom } from "./unified-drop-routing.ts";
 import { getReactBinarySourceFileName, toBrowserPublicBinarySource } from "./workflow-adapters.ts";
+import {
+  markCompressionStart,
+  usePageDropForwarder,
+  useQueuedRunEffect,
+  useWorkbenchActivity,
+  useWorkflowResetActions,
+} from "./workflow-form-effects.ts";
 import {
   createReactWorkflowId,
   createSettingsDependencyKey,
@@ -356,6 +362,13 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     setCompletedTrimTimeMs(null);
     trimExecutionTimingRef.current = { compressionStartedAt: null, trimStartedAt: null };
   }, [clearCompletedOutput]);
+  const resetWorkflowOutput = useWorkflowResetActions({
+    clearCompleted: clearCompletedRunState,
+    clearWorkflowMessage,
+    disposeActiveOutput,
+    setProgress,
+    setQueued: setTrimQueued,
+  });
   const { cancelOutputProgress, runWorkflow } = useWorkflowRunLifecycle({
     abortActiveOperation,
     activeAbortControllerRef,
@@ -372,15 +385,11 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   });
 
   const updateSource = (file: BinarySource | null) => {
-    setTrimQueued(false);
-    disposeActiveOutput();
-    clearCompletedRunState();
+    resetWorkflowOutput();
     stagedTrimWorkflowGenerationRef.current += 1;
     setSourceState(null);
     if (props.source === undefined) setInternalSource(file);
     props.onSourceChange?.(file);
-    clearWorkflowMessage();
-    setProgress(null);
   };
 
   // Single-bucket unified routing: keep the first dropped ROM, ignore patches
@@ -393,18 +402,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
 
   // Forward a page-level drop (dragging anywhere on the page) to the unified
   // handler so the whole tab is a drop target, not just the dropzone box.
-  useEffect(() => {
-    const pageDrop = props.pageDrop;
-    if (!pageDrop || handledPageDropIdRef.current === pageDrop.id) return;
-    handledPageDropIdRef.current = pageDrop.id;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) handleUnifiedDrop(pageDrop.files);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [props.pageDrop]);
+  usePageDropForwarder(props.pageDrop, (files) => handleUnifiedDrop(files), handledPageDropIdRef);
   const cancelSourceStaging = () => {
     setTrimQueued(false);
     stagedTrimWorkflowGenerationRef.current += 1;
@@ -420,23 +418,16 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   cancelSelectionRef.current = () => updateSource(null);
 
   const updateSettings = (nextSettings: TrimPatchFormSettings) => {
-    setTrimQueued(false);
-    disposeActiveOutput();
-    clearCompletedRunState();
-    clearWorkflowMessage();
+    resetWorkflowOutput({ clearProgress: false });
     if (!props.settings) setInternalSettings(nextSettings);
     props.onSettingsChange?.(nextSettings);
   };
 
   const updateOutputFormat = (nextOutputFormat: string) => {
-    setTrimQueued(false);
     setOutputFormatEdited(true);
-    disposeActiveOutput();
-    clearCompletedRunState();
+    resetWorkflowOutput();
     if (props.outputFormat === undefined) setInternalOutputFormat(nextOutputFormat);
     props.onOutputFormatChange?.(nextOutputFormat);
-    clearWorkflowMessage();
-    setProgress(null);
   };
 
   useEffect(() => {
@@ -594,11 +585,10 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       });
       const handleProgress = (event: WorkflowProgress) => {
         const details = getProgressDetails(event);
-        if (details.stage === "compress" && trimExecutionTimingRef.current.compressionStartedAt === null) {
-          const now = Date.now();
-          trimExecutionTimingRef.current.compressionStartedAt = now;
-          if (typeof trimExecutionTimingRef.current.trimStartedAt === "number") {
-            setCompletedTrimTimeMs(Math.max(0, now - trimExecutionTimingRef.current.trimStartedAt));
+        if (details.stage === "compress" && markCompressionStart(trimExecutionTimingRef.current)) {
+          const { compressionStartedAt, trimStartedAt } = trimExecutionTimingRef.current;
+          if (typeof trimStartedAt === "number" && typeof compressionStartedAt === "number") {
+            setCompletedTrimTimeMs(Math.max(0, compressionStartedAt - trimStartedAt));
           }
         }
         reportProgressEvent(event, "trim");
@@ -693,26 +683,16 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     [abortActiveOperation, disposeActiveOutput],
   );
 
-  useEffect(() => {
-    if (!trimQueued) return;
-    if (busy || completedOutput) {
-      setTrimQueued(false);
-      return;
-    }
-    if (!source) {
-      setTrimQueued(false);
-      return;
-    }
-    if (trimQueueBlocked) {
-      setTrimQueued(false);
-      return;
-    }
-    if (trimPreparationPending) return;
-    if (!trimReady) {
-      setTrimQueued(false);
-      return;
-    }
-    void runTrim();
+  useQueuedRunEffect({
+    blocked: trimQueueBlocked,
+    busy,
+    canQueue: !!source,
+    canStart: trimReady,
+    completed: !!completedOutput,
+    pending: trimPreparationPending,
+    queued: trimQueued,
+    run: () => void runTrim(),
+    setQueued: setTrimQueued,
   });
 
   const progressProps = toWorkflowFileProgressProps(progress);
@@ -775,11 +755,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   const openUnifiedPicker = () => document.getElementById("trim-builder-input-file-unified")?.click();
   const trimSourceEmpty = useFlatTransitionFlag(!source);
   // The selvage status strip mirrors this workflow's job state.
-  useEffect(() => {
-    if (busy || trimQueued) setWorkbenchActivity({ state: "running" });
-    else if (completedOutput) setWorkbenchActivity({ state: "done" });
-    else setWorkbenchActivity({ state: "idle" });
-  }, [busy, trimQueued, completedOutput]);
+  useWorkbenchActivity({ busy, completed: !!completedOutput, queued: trimQueued });
 
   return (
     <main aria-labelledby="tab-trim" className="panel" id="trim-builder-container">
