@@ -13,9 +13,8 @@ use rom_weaver_checksum::crc32_bytes;
 use rom_weaver_core::{
     DEFAULT_BLOCK_CACHE_MAX_BLOCKS, DEFAULT_BLOCK_CACHE_SIZE_BYTES, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, OperationStatus, PatchApplyRequest,
-    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
-    ProgressEvent, Result, RomWeaverError, SharedBlockCacheReader, SharedThreadPool,
-    ThreadCapability,
+    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, ProgressEvent, Result,
+    RomWeaverError, SharedBlockCacheReader, SharedThreadPool, ThreadCapability,
 };
 use suffix_array::SuffixArray;
 use tracing::{debug, trace};
@@ -80,11 +79,10 @@ impl PatchHandler for BpsPatchHandler {
         debug!(
             format = self.descriptor.name,
             patch = %patch_path.display(),
-            validate_checksums = context.patch_checksum_validation() == PatchChecksumValidation::Strict,
+            validate_checksums = context.strict_patch_checksums(),
             "bps patch apply start"
         );
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
         let patch = parse_bps_file_with_checksum_validation(patch_path, validate_checksums)?;
         trace!(
             format = self.descriptor.name,

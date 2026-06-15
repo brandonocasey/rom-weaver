@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rom_weaver_core::{CancellationToken, NoopProgressSink, ThreadBudget};
+use rom_weaver_core::{CancellationToken, NoopProgressSink, PatchChecksumValidation, ThreadBudget};
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 

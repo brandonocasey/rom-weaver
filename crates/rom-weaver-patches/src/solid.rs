@@ -9,9 +9,8 @@ use rayon::prelude::*;
 use rom_weaver_checksum::md5_file;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler,
-    PatchValidateRequest, ProbeConfidence, Result, RomWeaverError, SharedThreadPool,
-    ValidationCodeError,
+    PatchCapabilities, PatchCreateRequest, PatchHandler, PatchValidateRequest, ProbeConfidence,
+    Result, RomWeaverError, SharedThreadPool, ValidationCodeError,
 };
 
 use crate::checksum_validation_suffix;
@@ -118,8 +117,7 @@ impl PatchHandler for SolidPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let parsed = parse_solid_patch_file(patch_path)?;
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
         if validate_checksums {
             validate_source_checksum(parsed.source_md5, &request.input)?;
         }
@@ -165,8 +163,7 @@ impl PatchHandler for SolidPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let parsed = parse_solid_patch_file(patch_path)?;
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
         if validate_checksums {
             validate_source_checksum(parsed.source_md5, &request.input)?;
         }

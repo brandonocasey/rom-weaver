@@ -10,9 +10,8 @@ use crc32fast::Hasher;
 use rayon::prelude::*;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler,
-    PatchValidateRequest, ProbeConfidence, Result, RomWeaverError, SharedThreadPool,
-    ThreadCapability,
+    PatchCapabilities, PatchCreateRequest, PatchHandler, PatchValidateRequest, ProbeConfidence,
+    Result, RomWeaverError, SharedThreadPool, ThreadCapability,
 };
 
 use crate::checksum_validation_suffix;
@@ -77,8 +76,7 @@ impl PatchHandler for PmsrPatchHandler {
             "pmsr patch apply start"
         );
         let patch = parse_pmsr_file(patch_path)?;
-        let validate_source =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_source = context.strict_patch_checksums();
 
         if validate_source {
             validate_paper_mario_source(&request.input)?;
@@ -174,8 +172,7 @@ impl PatchHandler for PmsrPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let patch = parse_pmsr_file(patch_path)?;
-        let validate_source =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_source = context.strict_patch_checksums();
 
         if validate_source {
             validate_paper_mario_source(&request.input)?;

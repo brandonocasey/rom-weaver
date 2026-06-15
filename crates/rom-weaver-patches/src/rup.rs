@@ -14,8 +14,8 @@ use rom_weaver_checksum::md5_bytes;
 use rom_weaver_checksum::md5_file;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence,
-    Result, RomWeaverError, SharedThreadPool, UnsupportedOp,
+    PatchCapabilities, PatchCreateRequest, PatchHandler, ProbeConfidence, Result, RomWeaverError,
+    SharedThreadPool, UnsupportedOp,
 };
 
 use crate::checksum_validation_suffix;
@@ -111,8 +111,7 @@ impl PatchHandler for RupPatchHandler {
             "rup patch apply start"
         );
         let patch = parse_rup_file(patch_path)?;
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
         let selected =
             select_matching_file_for_input(&patch, &request.input, validate_checksums, context)?;
         let file = selected.file;

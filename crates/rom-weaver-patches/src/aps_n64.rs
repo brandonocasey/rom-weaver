@@ -8,9 +8,8 @@ use tracing::{debug, info, trace};
 
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler,
-    PatchValidateRequest, ProbeConfidence, Result, RomWeaverError, SharedThreadPool,
-    ThreadCapability,
+    PatchCapabilities, PatchCreateRequest, PatchHandler, PatchValidateRequest, ProbeConfidence,
+    Result, RomWeaverError, SharedThreadPool, ThreadCapability,
 };
 
 use crate::checksum_validation_suffix;
@@ -93,8 +92,7 @@ impl PatchHandler for ApsN64PatchHandler {
             "aps patch apply start"
         );
         let patch = parse_aps_file(patch_path)?;
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
 
         if validate_checksums
             && patch.header_type == APS_N64_MODE
@@ -173,8 +171,7 @@ impl PatchHandler for ApsN64PatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let patch = parse_aps_file(patch_path)?;
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
 
         if validate_checksums
             && patch.header_type == APS_N64_MODE

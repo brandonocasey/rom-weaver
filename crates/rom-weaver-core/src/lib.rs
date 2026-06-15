@@ -6,6 +6,7 @@ mod env;
 mod error;
 mod formatting;
 mod io;
+mod patch_support;
 mod progress;
 mod prompt;
 mod registry;
@@ -37,6 +38,7 @@ pub use io::{
     bounded_items_for_threads, create_extract_output_file, file_starts_with,
     ordered_streaming_compress, reads_source_on_main_thread,
 };
+pub use patch_support::{checksum_validation_suffix, require_single_patch_file};
 pub use progress::{
     ContainerByteProgress, NoopProgressSink, OperationFamily, OperationStatus, ProgressEvent,
     ProgressSink, RecordingProgressSink, emit_container_running_progress,

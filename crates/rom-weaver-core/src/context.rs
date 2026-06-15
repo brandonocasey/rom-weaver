@@ -182,6 +182,13 @@ impl OperationContext {
         self.patch_policy.patch_checksum_validation
     }
 
+    /// Whether patch handlers should enforce stored source/target checksums.
+    /// Equivalent to `patch_checksum_validation() == PatchChecksumValidation::Strict`,
+    /// which every checksum-bearing apply/create handler derived inline.
+    pub fn strict_patch_checksums(&self) -> bool {
+        self.patch_checksum_validation() == PatchChecksumValidation::Strict
+    }
+
     pub fn with_patch_checksum_validation(mut self, validation: PatchChecksumValidation) -> Self {
         self.patch_policy.patch_checksum_validation = validation;
         self

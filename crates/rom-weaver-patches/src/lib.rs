@@ -25,7 +25,7 @@ mod varint;
 use std::{
     fs::{self, File},
     io::{BufWriter, Read, Seek, SeekFrom},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 
@@ -309,30 +309,10 @@ pub(crate) fn coded_validation(code: &'static str, message: &'static str) -> Rom
     RomWeaverError::ValidationCode(ValidationCodeError::new(code).with_message(message))
 }
 
-pub(crate) fn require_single_patch_file<'a>(
-    patches: &'a [PathBuf],
-    format_name: &str,
-) -> Result<&'a PathBuf> {
-    if patches.len() != 1 {
-        return Err(RomWeaverError::Validation(format!(
-            "{format_name} apply expects exactly one patch file"
-        )));
-    }
-    Ok(&patches[0])
-}
-
-/// The trailing note appended to an operation label when checksum validation was disabled.
-///
-/// Every checksum-bearing apply handler (APS/BPS/PPF/PMSR/SOLID/DPS/UPS/RUP/...) built this same
-/// `if validate_checksums { "" } else { "; checksum validation skipped" }` inline; centralizing it
-/// keeps the wording identical across formats.
-pub(crate) fn checksum_validation_suffix(validate_checksums: bool) -> &'static str {
-    if validate_checksums {
-        ""
-    } else {
-        "; checksum validation skipped"
-    }
-}
+// `require_single_patch_file` and `checksum_validation_suffix` are shared with
+// `rom-weaver-xdelta` and live in the foundation crate so the error/label wording
+// stays identical across every patch format.
+pub(crate) use rom_weaver_core::{checksum_validation_suffix, require_single_patch_file};
 
 pub(crate) fn patch_success_report(
     descriptor: &'static FormatDescriptor,

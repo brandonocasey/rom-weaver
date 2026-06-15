@@ -21,9 +21,9 @@ use rayon::prelude::*;
 use rom_weaver_checksum::crc32_bytes;
 use rom_weaver_core::{
     DEFAULT_BLOCK_CACHE_MAX_BLOCKS, DEFAULT_BLOCK_CACHE_SIZE_BYTES, FormatDescriptor,
-    OperationContext, OperationReport, PatchApplyRequest, PatchCapabilities,
-    PatchChecksumValidation, PatchCreateRequest, PatchHandler, ProbeConfidence, Result,
-    RomWeaverError, SharedBlockCacheReader, SharedThreadPool,
+    OperationContext, OperationReport, PatchApplyRequest, PatchCapabilities, PatchCreateRequest,
+    PatchHandler, ProbeConfidence, Result, RomWeaverError, SharedBlockCacheReader,
+    SharedThreadPool,
 };
 
 const UPS_MAGIC: &[u8; 4] = b"UPS1";
@@ -74,8 +74,7 @@ impl PatchHandler for UpsPatchHandler {
             patch = %patch_path.display(),
             "ups patch apply start"
         );
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
         let patch = parse_ups_file_with_checksum_validation(patch_path, validate_checksums)?;
         let input_len = fs::metadata(&request.input)?.len();
         let input_checksum = crc32_path_cached(&request.input, context)?;

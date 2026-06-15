@@ -10,9 +10,8 @@ use tracing::{debug, info, trace};
 use rom_weaver_core::{
     DEFAULT_BLOCK_CACHE_MAX_BLOCKS, DEFAULT_BLOCK_CACHE_SIZE_BYTES, FormatDescriptor,
     OperationContext, OperationFamily, OperationReport, PatchApplyRequest, PatchCapabilities,
-    PatchChecksumValidation, PatchCreateRequest, PatchHandler, PatchValidateRequest,
-    ProbeConfidence, Result, RomWeaverError, SharedBlockCacheReader, SharedThreadPool,
-    ValidationCodeError,
+    PatchCreateRequest, PatchHandler, PatchValidateRequest, ProbeConfidence, Result,
+    RomWeaverError, SharedBlockCacheReader, SharedThreadPool, ValidationCodeError,
 };
 
 use crate::checksum_validation_suffix;
@@ -88,8 +87,7 @@ impl PatchHandler for DpsPatchHandler {
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
-        let validate_source_size =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_source_size = context.strict_patch_checksums();
         let parse_mode = if validate_source_size {
             DpsParseMode::Strict
         } else {
@@ -210,8 +208,7 @@ impl PatchHandler for DpsPatchHandler {
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
-        let validate_source_size =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_source_size = context.strict_patch_checksums();
         let parse_mode = if validate_source_size {
             DpsParseMode::Strict
         } else {

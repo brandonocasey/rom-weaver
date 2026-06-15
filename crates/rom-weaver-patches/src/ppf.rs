@@ -8,8 +8,8 @@ use tracing::{debug, info, trace};
 
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
-    PatchCapabilities, PatchChecksumValidation, PatchCreateRequest, PatchHandler,
-    PatchValidateRequest, ProbeConfidence, Result, RomWeaverError, SharedThreadPool,
+    PatchCapabilities, PatchCreateRequest, PatchHandler, PatchValidateRequest, ProbeConfidence,
+    Result, RomWeaverError, SharedThreadPool,
 };
 
 use crate::checksum_validation_suffix;
@@ -93,8 +93,7 @@ impl PatchHandler for PpfPatchHandler {
             "ppf patch apply start"
         );
         let parsed = parse_ppf_file(patch_path)?;
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
         let input_len = fs::metadata(&request.input)?.len();
         trace!(
             format = self.descriptor.name,
@@ -196,8 +195,7 @@ impl PatchHandler for PpfPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let parsed = parse_ppf_file(patch_path)?;
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
         let input_len = fs::metadata(&request.input)?.len();
 
         if let Some(expected_len) = parsed.expected_input_len

@@ -1,4 +1,5 @@
 use super::*;
+use rom_weaver_core::{checksum_validation_suffix, require_single_patch_file};
 
 pub(super) const VCDIFF_MAGIC_BYTES: [u8; 3] = [0xD6, 0xC3, 0xC4];
 pub(super) const VCDIFF_VERSION_STANDARD: u8 = 0x00;
@@ -67,18 +68,6 @@ pub(super) fn xdelta_secondary_candidates_for_mode(mode: XdeltaSecondaryMode) ->
         XdeltaSecondaryMode::Lzma => &[XDELTA_LZMA_SECONDARY_ID],
         XdeltaSecondaryMode::None => &[],
     }
-}
-
-pub(super) fn require_single_patch_file<'a>(
-    patches: &'a [PathBuf],
-    format_name: &str,
-) -> Result<&'a PathBuf> {
-    if patches.len() != 1 {
-        return Err(RomWeaverError::Validation(format!(
-            "{format_name} apply expects exactly one patch file"
-        )));
-    }
-    Ok(&patches[0])
 }
 
 pub struct VcdiffPatchHandler {
@@ -186,8 +175,7 @@ impl PatchHandler for VcdiffPatchHandler {
                 "native VCDIFF backend does not support custom code tables".into(),
             ));
         }
-        let validate_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let validate_checksums = context.strict_patch_checksums();
         let input_len = std::fs::metadata(&request.input)?.len();
         let uses_xdelta_lzma_sections = patch.secondary_compressor_id
             == Some(XDELTA_LZMA_SECONDARY_ID)
@@ -216,11 +204,7 @@ impl PatchHandler for VcdiffPatchHandler {
             )?;
 
             let execution = context.plan_threads(ThreadCapability::single_threaded());
-            let checksum_suffix = if validate_checksums {
-                String::new()
-            } else {
-                "; checksum validation skipped".to_string()
-            };
+            let checksum_suffix = checksum_validation_suffix(validate_checksums);
             return Ok(OperationReport::succeeded(
                 OperationFamily::Patch,
                 Some(self.descriptor.name.to_string()),
@@ -255,11 +239,7 @@ impl PatchHandler for VcdiffPatchHandler {
             )?;
 
             let execution = context.plan_threads(ThreadCapability::single_threaded());
-            let checksum_suffix = if validate_checksums {
-                String::new()
-            } else {
-                "; checksum validation skipped".to_string()
-            };
+            let checksum_suffix = checksum_validation_suffix(validate_checksums);
             return Ok(OperationReport::succeeded(
                 OperationFamily::Patch,
                 Some(self.descriptor.name.to_string()),
@@ -356,11 +336,7 @@ impl PatchHandler for VcdiffPatchHandler {
         }
         output.flush()?;
 
-        let checksum_suffix = if validate_checksums {
-            String::new()
-        } else {
-            "; checksum validation skipped".to_string()
-        };
+        let checksum_suffix = checksum_validation_suffix(validate_checksums);
         Ok(OperationReport::succeeded(
             OperationFamily::Patch,
             Some(self.descriptor.name.to_string()),
@@ -383,8 +359,7 @@ impl PatchHandler for VcdiffPatchHandler {
     ) -> Result<OperationReport> {
         let compare_secondary = is_xdelta_descriptor(self.descriptor);
         let secondary_mode = context.xdelta_secondary_mode();
-        let include_checksums =
-            context.patch_checksum_validation() == PatchChecksumValidation::Strict;
+        let include_checksums = context.strict_patch_checksums();
         let xdelta_app_header = if compare_secondary {
             Some(build_default_xdelta_app_header(
                 &request.original,
