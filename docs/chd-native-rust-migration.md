@@ -1,11 +1,13 @@
-# CHD Native Rust Migration Plan (Experiment Branch)
+# CHD Native Rust Backend (historical)
 
-This branch now runs CHD through the Rust path directly with no runtime backend toggle.
+This is a record of the completed migration of CHD support to a pure-Rust path.
+CHD now runs through Rust directly with no runtime backend toggle; the notes
+below are kept for design and parity history.
 
-## Status today
+## What landed
 
 - `probe`, `extract`, and `create` run through the Rust CHD path in `rom-weaver-containers`.
-- The `ROM_WEAVER_CHD_BACKEND` mode switch has been removed from this branch.
+- The `ROM_WEAVER_CHD_BACKEND` mode switch was removed; there is no longer a runtime backend selector.
 - Legacy native CHD create/read helper paths were deleted from the active CHD container flow.
 
 ## Current supported create codecs
