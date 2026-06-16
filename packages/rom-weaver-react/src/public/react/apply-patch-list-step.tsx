@@ -2,6 +2,7 @@ import Check from "lucide-react/dist/esm/icons/check.js";
 import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
 import GripVertical from "lucide-react/dist/esm/icons/grip-vertical.js";
 import X from "lucide-react/dist/esm/icons/x.js";
+import type { ReactNode } from "react";
 import { createTiming, formatTiming } from "../../lib/progress/timing.ts";
 import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { ChecksumList, ChecksumRow } from "./components/ds/checksum-list.tsx";
@@ -300,6 +301,7 @@ const PatchEnableToggle = ({
 
 const ApplyPatchListStep = ({
   disabledFlags,
+  emptyState,
   fault,
   onTogglePatch,
   patchInput,
@@ -310,6 +312,8 @@ const ApplyPatchListStep = ({
   woven,
 }: {
   disabledFlags?: readonly boolean[];
+  /** Fixture shown when no patches (and no embedded/optional patch choices) are present. */
+  emptyState?: ReactNode;
   fault?: boolean;
   onTogglePatch?: (index: number) => void;
   patchInput: PatcherUiState["patchInput"];
@@ -452,6 +456,13 @@ const ApplyPatchListStep = ({
           ),
         )}
       </div>
+      {total === 0 &&
+      emptyState &&
+      !patchInput.embeddedPatchLoadingVisible &&
+      !patchInput.embeddedPatchOptions.length &&
+      !patchInput.optionalPatches.length
+        ? emptyState
+        : null}
       {patchInput.embeddedPatchLoadingVisible ? (
         <p className="hintline">{patchInput.embeddedPatchLoadingMessage}</p>
       ) : null}

@@ -418,6 +418,20 @@ function ApplyWorkflowFormView({
   const workflowEmpty = useFlatTransitionFlag(romInputs.length === 0 && patches.length === 0);
   // "Needs input" directives forward to the 0x01 unified picker.
   const openUnifiedPicker = () => document.getElementById("rom-weaver-input-file-unified")?.click();
+  // Each section keeps its empty fixture whenever its own list is empty — not
+  // just when the whole workflow is — so loading only a ROM (or only patches)
+  // still shows the other section's "add it in 0x01" prompt instead of a bare
+  // header.
+  const romNeedsInput = (
+    <NeedsInput onClick={openUnifiedPicker}>
+      Add a ROM in <b className="hexref mono">0x01</b> above
+    </NeedsInput>
+  );
+  const patchesNeedsInput = (
+    <NeedsInput onClick={openUnifiedPicker}>
+      Add patches in <b className="hexref mono">0x01</b> above
+    </NeedsInput>
+  );
 
   if (startup.status === "error") {
     return (
@@ -456,19 +470,16 @@ function ApplyWorkflowFormView({
       {workflowEmpty ? (
         <>
           <StepSection num="0x02" title="ROM">
-            <NeedsInput onClick={openUnifiedPicker}>
-              Add a ROM in <b className="hexref mono">0x01</b> above
-            </NeedsInput>
+            {romNeedsInput}
           </StepSection>
           <StepSection num="0x03" title="Patches">
-            <NeedsInput onClick={openUnifiedPicker}>
-              Add patches in <b className="hexref mono">0x01</b> above
-            </NeedsInput>
+            {patchesNeedsInput}
           </StepSection>
         </>
       ) : (
         <>
           <WorkflowRomInputStep
+            emptyState={romNeedsInput}
             fault={applyFailed}
             id="rom-weaver-row-file-rom"
             info={
@@ -514,6 +525,7 @@ function ApplyWorkflowFormView({
 
           <ApplyPatchListStep
             disabledFlags={disabledPatchFlags}
+            emptyState={patchesNeedsInput}
             fault={applyFailed}
             onTogglePatch={patchEnablement?.onToggle}
             patches={patches}

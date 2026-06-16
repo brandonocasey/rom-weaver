@@ -18,6 +18,8 @@ type WorkflowRomInputStepItem = {
 type WorkflowRomInputStepProps = Omit<ComponentProps<typeof StepSection>, "children"> & {
   afterItems?: ReactNode;
   dropZone?: ComponentProps<typeof DropZone> | null;
+  /** Fixture shown in place of the (empty) card list when no ROM is loaded. */
+  emptyState?: ReactNode;
   items: WorkflowRomInputStepItem[];
   listId?: string;
   notice?: ReactNode;
@@ -41,6 +43,7 @@ const WorkflowRomInputStepRow = ({ item }: { item: WorkflowRomInputStepItem }) =
 const WorkflowRomInputStep = ({
   afterItems,
   dropZone,
+  emptyState,
   items,
   listId,
   notice,
@@ -54,6 +57,7 @@ const WorkflowRomInputStep = ({
           {rows}
         </div>
       ) : null}
+      {rows.length === 0 && emptyState ? emptyState : null}
       {afterItems ? <div className="workflow-step-after-items">{afterItems}</div> : null}
       {dropZone ? <DropZone {...dropZone} /> : null}
       {notice}
