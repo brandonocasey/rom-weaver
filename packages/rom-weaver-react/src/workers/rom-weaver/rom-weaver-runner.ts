@@ -428,6 +428,35 @@ const recycleWarmRomWeaverRunner = async (workerThreads?: RuntimeValue) => {
   await warmupRomWeaverRunner(workerThreads ?? runnerCreateWorkerThreads);
 };
 
+// Back-to-back ops should be as fast as the first. The wasm heap only ever grows, so a runner that just
+// ran a heavy op sits closer to its memory cap; reusing it makes the next op slower (and eventually
+// forces an out-of-memory recycle onto the critical path). After a heavy op, once the runtime goes
+// quiet, recycle to a fresh clean-heap runner (which the eager pool pre-warm re-warms) so the next
+// action starts from the same clean+warm baseline as the first. Debounced + idle-gated so a burst of
+// back-to-back ops never recycles mid-burst — the warm runner stays available for immediate reuse, and
+// only a genuine pause stands up the clean replacement. Skipped for light ops, whose heap growth is
+// small enough that the reactive out-of-memory recycle already covers the rare exhaustion.
+const IDLE_RECYCLE_DEBOUNCE_MS = 600;
+const IDLE_RECYCLE_MIN_OP_BYTES = 32 * 1024 * 1024;
+let idleRecycleTimer: ReturnType<typeof setTimeout> | null = null;
+let idleRecycleInFlight = false;
+const scheduleIdleRecycle = (operationBytes: number) => {
+  if (!isBrowserRuntime()) return;
+  if (!PRE_EXTRACT_GAP.recycleRunnerAfterWarmup) return;
+  if (operationBytes < IDLE_RECYCLE_MIN_OP_BYTES) return;
+  if (idleRecycleTimer) clearTimeout(idleRecycleTimer);
+  idleRecycleTimer = setTimeout(() => {
+    idleRecycleTimer = null;
+    if (idleRecycleInFlight || !runnerPool || runnerPool.busyCount !== 0) return;
+    idleRecycleInFlight = true;
+    void recycleWarmRomWeaverRunner()
+      .catch(() => undefined)
+      .finally(() => {
+        idleRecycleInFlight = false;
+      });
+  }, IDLE_RECYCLE_DEBOUNCE_MS);
+};
+
 // The wasm runner's linear memory only ever grows, so the browser surfaces an exhausted heap as an
 // out-of-memory error. V8 reports it as `RangeError: Out of memory`, but the wasi/Emscripten layer
 // can also surface "cannot enlarge memory", "ENOMEM", etc. — reuse the canonical matcher so every
@@ -577,6 +606,9 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
       // No-op if the runner was terminated above; otherwise returns the warm runner to the pool (or
       // disposes it when marked stale).
       lease.release();
+      // After a heavy op, restore the clean-heap baseline during the next idle gap (debounced) so a
+      // following op starts as fast as the first instead of on a heap left near its cap.
+      scheduleIdleRecycle(operationBytes);
     }
   };
 
@@ -586,9 +618,21 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
   );
 };
 
+// Normalize a worker-threads seed so "auto"/numbers/undefined compare by surface value; used only to
+// detect a thread-budget *change* between warmups.
+const normalizeWorkerThreadsSeed = (value: RuntimeValue | undefined): string =>
+  value == null ? "" : String(value).trim().toLowerCase();
+
 const warmupRomWeaverRunner = async (workerThreads?: RuntimeValue) => {
   if (!isBrowserRuntime()) throw new Error("rom-weaver wasm runner is only available in browser runtimes");
+  // A thread-budget change must not silently reuse the old warm pool: getRunnerPool().acquire reuses a
+  // warm idle runner regardless of the requested thread count, so without this the next op keeps the
+  // stale-sized pool and grows it on demand. Drop the pooled runners when the seed changes so a fresh
+  // runner is created at the new budget and self-pre-warms to it — keeping ops warm after a thread change.
+  const seedChanged =
+    normalizeWorkerThreadsSeed(runnerCreateWorkerThreads) !== normalizeWorkerThreadsSeed(workerThreads);
   runnerCreateWorkerThreads = workerThreads;
+  if (seedChanged) markRomWeaverRunnerStale();
   const lease = await getRunnerPool().acquire({ workerThreads });
   try {
     return lease.runner.ready;
