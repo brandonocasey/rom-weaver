@@ -86,6 +86,20 @@ const SourceInfoList = ({
   const hasBytes = typeof bytes === "number" && Number.isFinite(bytes);
   if (!(hasBytes || checksums || discType || lead || progress)) return null;
   const byteValue = hasBytes ? String(Math.floor(bytes as number)) : "";
+  // When transform variants (headerless, auto-trimmed…) are present, the base
+  // checksums become one of several groups, so they get their own labeled head
+  // ("Raw") to match — an unlabeled block alongside labeled variants reads as if
+  // it belonged to the first variant.
+  const variantRows = (checksumVariants || []).filter((variant) => variant.id !== "raw");
+  const rawLabel = checksumVariants?.find((variant) => variant.id === "raw")?.label ?? "Raw";
+  const baseRows = (
+    <>
+      <ChecksumRow copyValue={byteValue} label="BYTES" value={byteValue} />
+      <ChecksumRow label="CRC32" value={checksums?.crc32 || ""} />
+      <ChecksumRow label="MD5" value={checksums?.md5 || ""} />
+      <ChecksumRow label="SHA-1" value={checksums?.sha1 || ""} />
+    </>
+  );
   return (
     <ChecksumList
       defaultOpen={defaultOpen}
@@ -96,10 +110,14 @@ const SourceInfoList = ({
       timing={timing}
     >
       {discType ? <ChecksumRow copyValue={discType} label="DISC" value={discType} /> : null}
-      <ChecksumRow copyValue={byteValue} label="BYTES" value={byteValue} />
-      <ChecksumRow label="CRC32" value={checksums?.crc32 || ""} />
-      <ChecksumRow label="MD5" value={checksums?.md5 || ""} />
-      <ChecksumRow label="SHA-1" value={checksums?.sha1 || ""} />
+      {variantRows.length ? (
+        <div className="ck-group">
+          <div className="ck-group-head">{rawLabel}</div>
+          {baseRows}
+        </div>
+      ) : (
+        baseRows
+      )}
       <VariantGroups bytes={bytes} variants={checksumVariants} />
     </ChecksumList>
   );
@@ -116,9 +134,11 @@ type DiscTrackPanelInfo = {
 };
 
 /**
- * A multi-track disc's per-bin checksums under a single collapsible "Tracks"
- * section — each track is a labeled sub-group rather than its own top-level
- * panel, so the tracks read as one unit.
+ * A multi-track disc's per-bin checksums under a single collapsible
+ * "Checks & Tracks" section — each track is a labeled sub-group rather than its
+ * own top-level panel, so the tracks read as one unit. This is the disc form of
+ * the single-file "Checks" panel: it carries the checksums, just grouped by
+ * track, so a disc card has no separate Checks drawer.
  */
 const DiscTracksPanel = ({
   tracks,
@@ -131,7 +151,7 @@ const DiscTracksPanel = ({
 }) => {
   if (!tracks.length) return null;
   return (
-    <ChecksumList defaultOpen={false} label="Tracks" onToggle={onToggle} open={open}>
+    <ChecksumList defaultOpen={false} label="Checks & Tracks" onToggle={onToggle} open={open}>
       {tracks.map((track) => {
         const hasBytes = typeof track.bytes === "number" && Number.isFinite(track.bytes);
         const byteValue = hasBytes ? String(Math.floor(track.bytes as number)) : "";

@@ -448,8 +448,8 @@ const ApplyPatchListStep = ({
                     parentCompressions={item.archivePathEntries}
                     timing={TIMING_LABEL(item.decompressionTimeMs)}
                   />
-                  <PatchInfo item={item} />
                   <PatchOptions index={index} item={item} patchStack={patchStack} />
+                  <PatchInfo item={item} />
                 </div>
               </div>
             </FileCard>

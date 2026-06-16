@@ -29,13 +29,13 @@ const WorkflowRomInputStepRow = ({ item }: { item: WorkflowRomInputStepItem }) =
   if (item.progress) return <FileProgress {...item.progress} />;
   if (!item.card) return null;
   const { children, extract, panels, ...cardProps } = item.card;
-  // The name line leads the card header; the extract chain and info panels are
-  // the card's drawers, below the header at full card width.
+  // The name line leads the card header; below it the drawers follow the shared
+  // card order — Extract first, then the info panels (Options → sheets → Checks).
   return (
     <FileCard {...cardProps} name={<ExtractName {...extract} />}>
-      {panels ? <RomInputPanels {...panels} /> : null}
-      {children}
       <ExtractDrawer {...extract} />
+      {children}
+      {panels ? <RomInputPanels {...panels} /> : null}
     </FileCard>
   );
 };

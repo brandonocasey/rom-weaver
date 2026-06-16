@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { getDiscKind, getDiscKindLabel } from "../../../../lib/input/rom-specific-file-utils.ts";
 import type { ChecksumVariant } from "../../../../types/checksum.ts";
-import { CuePanel } from "./cue-panel.tsx";
+import { DiscSheetsPanel } from "./cue-panel.tsx";
 import { FixesPanel, type FixesPanelProps } from "./fixes-panel.tsx";
 import {
   type DiscTrackPanelInfo,
@@ -59,13 +59,14 @@ const RomInputPanels = ({
     if (showInfo) return <SourceInfoList {...info} discType={discType} />;
     return null;
   };
-  // Prototype drawer order: checks/tracks lead, then options, then the sheets.
+  // Shared card drawer order: Options first, then the disc index sheets, then
+  // the checks (a single "Checks" panel, or "Checks & Tracks" for a disc). The
+  // Extract drawer leads above these, rendered by the card row.
   return (
     <>
-      {renderInfo()}
       {showFixes && !isDisc ? <FixesPanel {...fixes} /> : null}
-      {showCue && cue?.cueText ? <CuePanel cueText={cue.cueText} /> : null}
-      {showCue && gdi?.gdiText ? <CuePanel cueText={gdi.gdiText} label="GDI" sublabel="gd-rom sheet" /> : null}
+      {showCue ? <DiscSheetsPanel cueText={cue?.cueText} gdiText={gdi?.gdiText} /> : null}
+      {renderInfo()}
     </>
   );
 };
