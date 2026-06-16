@@ -63,10 +63,15 @@ describe("log store buffer", () => {
   it("caps the buffer and keeps the newest lines in order", () => {
     installLogStore();
     const log = createLogger("test-buffer");
-    for (let i = 0; i < 600; i += 1) log.warn(`entry ${i}`);
+    // Mirrors MAX_LOG_LINES in src/webapp/log-store.ts (the constant is
+    // module-private, so keep this literal in sync if the cap changes).
+    const maxLogLines = 2500;
+    const pushed = maxLogLines + 150;
+    for (let i = 0; i < pushed; i += 1) log.warn(`entry ${i}`);
     const entries = getLogEntries();
-    expect(entries.length).toBe(500);
-    expect(entries[0]?.message).toBe("entry 100");
-    expect(entries[entries.length - 1]?.message).toBe("entry 599");
+    expect(entries.length).toBe(maxLogLines);
+    // Oldest lines are dropped: the first kept entry is the (pushed - cap)th.
+    expect(entries[0]?.message).toBe(`entry ${pushed - maxLogLines}`);
+    expect(entries[entries.length - 1]?.message).toBe(`entry ${pushed - 1}`);
   });
 });
