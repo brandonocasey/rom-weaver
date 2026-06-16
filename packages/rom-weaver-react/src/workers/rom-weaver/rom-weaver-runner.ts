@@ -116,6 +116,12 @@ const PRE_EXTRACT_GAP = {
 // Page-thread cache of the compiled wasm module (#4), keyed by wasm URL so a changed asset recompiles.
 let cachedBrowserWasmModule: { module: WebAssembly.Module; wasmUrl: string } | null = null;
 
+// Single-flight guard for the page-thread compile (#4b). The runtime preload fires the `compression`
+// and `checksum` capability warmups in parallel, so without this both miss the still-empty cache and
+// each compiles the full ~6 MB module (observed as a doubled "compiling on page thread" every boot).
+// Coalesce concurrent first compiles for the same URL onto one in-flight promise.
+let inflightBrowserWasmCompile: { promise: Promise<WebAssembly.Module>; wasmUrl: string } | null = null;
+
 const nowMs = () =>
   typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 
@@ -150,10 +156,22 @@ const getCachedBrowserWasmModule = async (wasmUrl?: string): Promise<WebAssembly
     emitWasmCacheTrace("wasm module cache hit (skipping fetch+compile)", { wasmUrl });
     return cachedBrowserWasmModule.module;
   }
+  // A compile for this URL is already running (parallel preload): await the shared one instead of
+  // kicking a second full compile of the same module.
+  if (inflightBrowserWasmCompile?.wasmUrl === wasmUrl) {
+    emitWasmCacheTrace("wasm module compile in flight; awaiting shared page-thread compile", { wasmUrl });
+    try {
+      return await inflightBrowserWasmCompile.promise;
+    } catch {
+      return undefined;
+    }
+  }
+  emitWasmCacheTrace("wasm module cache miss; compiling on page thread", { wasmUrl });
+  const startedAt = nowMs();
+  const promise = compileBrowserWasmModule(wasmUrl);
+  inflightBrowserWasmCompile = { promise, wasmUrl };
   try {
-    emitWasmCacheTrace("wasm module cache miss; compiling on page thread", { wasmUrl });
-    const startedAt = nowMs();
-    const module = await compileBrowserWasmModule(wasmUrl);
+    const module = await promise;
     cachedBrowserWasmModule = { module, wasmUrl };
     emitWasmCacheTrace("wasm module compiled and cached", {
       compileMs: Number((nowMs() - startedAt).toFixed(1)),
@@ -166,6 +184,8 @@ const getCachedBrowserWasmModule = async (wasmUrl?: string): Promise<WebAssembly
       wasmUrl,
     });
     return undefined;
+  } finally {
+    if (inflightBrowserWasmCompile?.promise === promise) inflightBrowserWasmCompile = null;
   }
 };
 
