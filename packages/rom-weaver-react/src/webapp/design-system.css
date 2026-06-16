@@ -1171,8 +1171,8 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
    .loom-app flexes to fill, so the strip lands at the bottom) */
 .rw-app .selvage {
   position: relative;
-  padding: 7px clamp(10px, 2.5vw, 28px) max(7px, env(safe-area-inset-bottom));
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  /* edge-to-edge band: vertical + safe-area padding only, no inline inset */
+  padding: 7px 0 max(7px, env(safe-area-inset-bottom));
   background: color-mix(in srgb, var(--plate) 88%, transparent);
   border-block-start: 1px solid var(--seam);
   font-size: .66rem; color: var(--ink-3);
@@ -1181,6 +1181,12 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
   /* thread accent along the top edge, fading at the selvage ends */
   content: ""; position: absolute; inset-inline: 0; top: -1px; height: 1px;
   background: linear-gradient(to right, transparent, color-mix(in oklab, var(--thread) 60%, transparent) 18% 82%, transparent);
+}
+/* content stays within the centered form-container boundary (matches .app) */
+.rw-app .sv-inner {
+  max-width: 880px; width: 100%; margin-inline: auto;
+  padding-inline: clamp(10px, 2.5vw, 28px);
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
 }
 .rw-app .sv-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
 .rw-app .sv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-4); transition: background .3s; }
@@ -1421,7 +1427,7 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
   .rw-app .step.is-input .drop, .rw-app .needs-input { margin-inline: 6px; width: calc(100% - 12px); }
   /* the notice shares the same 6px inset as the cards/headers */
   .rw-app .notice { margin-inline: 6px; }
-  .rw-app .selvage { padding-inline: 8px; }
+  .rw-app .sv-inner { padding-inline: 8px; }
   /* update banner stays ONE row on a phone: dot · text+version-link · Reload ·
      dismiss — the text wraps internally, Reload stays an inline slim button */
   .rw-app .updates { gap: 8px; }
@@ -1463,7 +1469,8 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
      runs off the small screen */
   /* footer: one line, always — status truncates, metadata yields. bump the type a
      step up from the desktop .66rem so the status stays readable on a phone */
-  .rw-app .selvage { flex-wrap: nowrap; gap: 10px; font-size: .76rem; }
+  .rw-app .selvage { font-size: .76rem; }
+  .rw-app .sv-inner { flex-wrap: nowrap; gap: 10px; }
   /* version/cache/threads stay visible on a phone (stage text yields first);
      only the live heap readout is desktop-only — it's the widest and least useful */
   .rw-app .selvage .sv-mem { display: none; }
@@ -1473,7 +1480,7 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
 @media (max-width: 380px) {
   .rw-app .brand-word { display: none; }
   /* the cache version is the first footer item to yield on very narrow screens */
-  .rw-app .selvage { gap: 8px; }
+  .rw-app .sv-inner { gap: 8px; }
   .rw-app .selvage .sv-cache { display: none; }
 }
 

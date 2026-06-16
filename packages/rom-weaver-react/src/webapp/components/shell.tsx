@@ -289,31 +289,33 @@ const Selvage = ({
   const stateClass = state === "idle" || state === "staging" ? "" : state;
   return (
     <footer className="selvage">
-      <span className={join("sv-state", stateClass)}>
-        <span aria-hidden="true" className="sv-dot" />
-        <span className="mono">{localizer.message(`ui.status.${state}`)}</span>
-      </span>
-      <span aria-live="polite" className="sv-stage mono">
-        {stage || ""}
-      </span>
-      <span className="sv-spacer" />
-      {version ? <span className="sv-meta mono">{version}</span> : null}
-      {cacheLabel ? <span className="sv-meta mono sv-cache">{cacheLabel}</span> : null}
-      {threads ? (
-        <span className="sv-meta mono sv-threads">
-          {threads} {localizer.message("ui.env.threads")}
+      <div className="sv-inner">
+        <span className={join("sv-state", stateClass)}>
+          <span aria-hidden="true" className="sv-dot" />
+          <span className="mono">{localizer.message(`ui.status.${state}`)}</span>
         </span>
-      ) : null}
-      {githubHref ? (
-        <a className="sv-link" href={githubHref} rel="noreferrer" target="_blank">
-          GitHub
-        </a>
-      ) : null}
-      {donateHref ? (
-        <a className="sv-link donate" href={donateHref} rel="noreferrer" target="_blank">
-          ♥ <span>{localizer.message("ui.footer.donate")}</span>
-        </a>
-      ) : null}
+        <span aria-live="polite" className="sv-stage mono">
+          {stage || ""}
+        </span>
+        <span className="sv-spacer" />
+        {version ? <span className="sv-meta mono">{version}</span> : null}
+        {cacheLabel ? <span className="sv-meta mono sv-cache">{cacheLabel}</span> : null}
+        {threads ? (
+          <span className="sv-meta mono sv-threads">
+            {threads} {localizer.message("ui.env.threads")}
+          </span>
+        ) : null}
+        {githubHref ? (
+          <a className="sv-link" href={githubHref} rel="noreferrer" target="_blank">
+            GitHub
+          </a>
+        ) : null}
+        {donateHref ? (
+          <a className="sv-link donate" href={donateHref} rel="noreferrer" target="_blank">
+            ♥ <span>{localizer.message("ui.footer.donate")}</span>
+          </a>
+        ) : null}
+      </div>
     </footer>
   );
 };
