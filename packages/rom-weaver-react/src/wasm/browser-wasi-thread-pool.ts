@@ -124,6 +124,13 @@ export function createBrowserWasiThreadWorkerPool({
   const workers: ThreadPoolShell[] = [];
   let disposed = false;
   let nextCommandId = 1;
+  // Eager non-blocking self-pre-warm. `ready` resolves once the pool has pre-warmed to `initialSize`;
+  // it is informational — nothing blocks on it (threaded runs negotiate their own shells via
+  // createCommand -> ensureSize), so the pre-warm is only a head start for the next op.
+  let resolvePrewarm: () => void = () => undefined;
+  const ready: Promise<void> = new Promise<void>((resolve) => {
+    resolvePrewarm = resolve;
+  });
 
   const rejectShell = (slot: ThreadPoolShell, error: Error) => {
     slot.rejectReady?.(error);
@@ -528,6 +535,7 @@ export function createBrowserWasiThreadWorkerPool({
 
   const dispose = async () => {
     disposed = true;
+    resolvePrewarm();
     for (const slot of workers) {
       try {
         slot.worker?.postMessage({ mode: "shutdown" } satisfies ThreadWorkerShutdownMessage);
@@ -540,11 +548,27 @@ export function createBrowserWasiThreadWorkerPool({
     workers.length = 0;
   };
 
+  // Pre-warm the pool to `initialSize` immediately (non-blocking). Runner init does not wait on it and
+  // threaded runs grow the pool on demand via createCommand, so this is purely a head start that lets a
+  // freshly created runner — at boot, after a reset/thread-change, or after an idle recycle between ops
+  // — be warm for the next op. No artificial delay: the sooner the pool warms, the sooner an op that
+  // arrives mid-warm-up benefits.
+  const startPrewarm = () => {
+    if (disposed || initialSize <= 0) {
+      resolvePrewarm();
+      return;
+    }
+    void ensureSize(initialSize)
+      .catch(() => undefined)
+      .finally(() => resolvePrewarm());
+  };
+  startPrewarm();
+
   return {
     createCommand,
     dispose,
     isReady,
-    ready: ensureSize(initialSize),
+    ready,
     resolvedThreadWorkerUrl,
   };
 }

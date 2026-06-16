@@ -130,9 +130,10 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
     virtualOnlyMounts: Boolean(options.virtualOnlyMounts ?? false),
     writableRoots: baseWritableRoots,
   });
-  if (threadWorkerPool) {
-    await threadWorkerPool.ready;
-  }
+  // The wasi thread pool pre-warms itself to `initialSize` after a short idle delay (see
+  // browser-wasi-thread-pool.ts). Runner init no longer waits on it: the page-load warmup and small
+  // non-threaded ops never need the shells, and threaded runs grow the pool on demand, so a runner
+  // becomes usable as soon as its wasm is instantiated instead of after ~all `initialSize` shells spawn.
 
   const runner = {
     async dispose() {
