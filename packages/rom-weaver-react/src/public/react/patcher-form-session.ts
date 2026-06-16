@@ -74,6 +74,14 @@ const DEFAULT_COMPRESSION_OPTIONS = [
   ...CREATE_ROM_SPECIFIC_COMPRESSION_FORMATS,
 ];
 
+// Coalesce ROM- and patch-bucket staging that lands close together into ONE staging tick
+// so their archive extractions overlap (prepareWorkflow already fans out setInput + addPatch
+// within a single pass) instead of the ROM bucket finishing before the patch bucket's pass
+// begins. Kept short — a lone upload (or a single multi-file drop, which already arrives in
+// one render) still stages almost immediately; this only buys the brief moment needed to fold
+// a ROM and its patches dropped a beat apart into the same concurrent batch.
+const STAGE_COALESCE_WINDOW_MS = 80;
+
 const useLocalApplyPatchFormSession = ({
   inputs,
   patches,
@@ -798,110 +806,123 @@ const useLocalApplyPatchFormSession = ({
     stage: { stageInput, stagePatches },
   });
 
+  // One coalescing window drives BOTH buckets. The ROM and patch staging decisions are the same
+  // independent choreographies as before, but a short debounce defers them by a tick so a ROM and
+  // its patches that arrive a beat apart (separate drops/picks) collapse into a single staging pass
+  // — syncRomInput's snapshot already carries the patches, so prepareWorkflow extracts the input and
+  // every patch concurrently — instead of the ROM bucket staging first and the patch bucket queueing
+  // behind it. Reading the latest snapshot at fire time means rapid successive changes fold into the
+  // final batch; the input block runs before the patch block so the input mutation is still enqueued
+  // first and every patch's readiness evaluates against a fully staged input.
   useEffect(() => {
-    if (!stageInput) return;
-    const previousSync = inputStageSyncRef.current;
-    const inputsChanged = !sameBinarySourceLists(previousSync.inputs, effectiveInputs);
-    const settingsChanged = previousSync.settingsKey !== stageSettingsKey;
-    if (!effectiveInputs.length) {
-      const shouldClearStagedInput = previousSync.inputs.length > 0;
-      inputStageSyncRef.current = {
-        inputs: [],
-        settingsKey: stageSettingsKey,
-      };
-      inputStageMachine.invalidateStage();
-      setInputStaging(false);
-      setRomInputs([]);
-      if (!shouldClearStagedInput) return;
-      emitSessionTrace("input staging clear dispatched", {
-        previousCount: previousSync.inputs.length,
-      });
-      void stageInput(createStageSnapshot(), {
-        onChecksum: () => undefined,
-        onProgress: () => undefined,
-        onState: () => undefined,
-      }).catch((error) => {
-        const normalizedError = toError(error);
-        if (isWorkflowDisposedError(normalizedError)) return;
-        emitSessionTrace("input staging clear failed", {
-          message: normalizedError.message,
-          name: normalizedError.name,
-        });
-        logUiError("Input staging clear failed", normalizedError);
-        onError?.(normalizedError);
-      });
-      return;
-    }
-    if (!(inputsChanged || settingsChanged)) return;
-    const previousInputs = previousSync.inputs.slice();
-    inputStageSyncRef.current = {
-      inputs: effectiveInputs.slice(),
-      settingsKey: stageSettingsKey,
-    };
-    syncRomInput(createStageSnapshot(), previousInputs);
+    if (!(stageInput || stagePatches)) return;
+    const handle = setTimeout(() => {
+      if (stageInput) {
+        const previousSync = inputStageSyncRef.current;
+        const inputsChanged = !sameBinarySourceLists(previousSync.inputs, effectiveInputs);
+        const settingsChanged = previousSync.settingsKey !== stageSettingsKey;
+        if (!effectiveInputs.length) {
+          const shouldClearStagedInput = previousSync.inputs.length > 0;
+          inputStageSyncRef.current = {
+            inputs: [],
+            settingsKey: stageSettingsKey,
+          };
+          inputStageMachine.invalidateStage();
+          setInputStaging(false);
+          setRomInputs([]);
+          if (shouldClearStagedInput) {
+            emitSessionTrace("input staging clear dispatched", {
+              previousCount: previousSync.inputs.length,
+            });
+            void stageInput(createStageSnapshot(), {
+              onChecksum: () => undefined,
+              onProgress: () => undefined,
+              onState: () => undefined,
+            }).catch((error) => {
+              const normalizedError = toError(error);
+              if (isWorkflowDisposedError(normalizedError)) return;
+              emitSessionTrace("input staging clear failed", {
+                message: normalizedError.message,
+                name: normalizedError.name,
+              });
+              logUiError("Input staging clear failed", normalizedError);
+              onError?.(normalizedError);
+            });
+          }
+        } else if (inputsChanged || settingsChanged) {
+          const previousInputs = previousSync.inputs.slice();
+          inputStageSyncRef.current = {
+            inputs: effectiveInputs.slice(),
+            settingsKey: stageSettingsKey,
+          };
+          syncRomInput(createStageSnapshot(), previousInputs);
+        }
+      }
+
+      if (stagePatches) {
+        const previousSync = patchStageSyncRef.current;
+        const inputsChanged = !sameBinarySourceLists(previousSync.inputs, effectiveInputs);
+        const patchesChanged = !sameBinarySourceLists(previousSync.patches, activePatches);
+        // Reordering and removing patches only rearrange/drop files already staged in OPFS;
+        // as long as no current patch is new, there is nothing to (re-)stage — just record order.
+        const previousPatchIds = new Set(getBinarySourceListStableIds(previousSync.patches));
+        const noNewPatches =
+          patchesChanged && getBinarySourceListStableIds(activePatches).every((id) => previousPatchIds.has(id));
+        // Appending patches keeps the existing prefix staged; only the new tail needs work.
+        const patchesAppended =
+          patchesChanged &&
+          activePatches.length > previousSync.patches.length &&
+          sameBinarySourceLists(previousSync.patches, activePatches.slice(0, previousSync.patches.length));
+        const previousPatchCount = previousSync.patches.length;
+        const settingsChanged = previousSync.settingsKey !== stageSettingsKey;
+        if (inputsChanged || patchesChanged || settingsChanged) {
+          if (activePatches.length) {
+            patchStageSyncRef.current = {
+              inputs: effectiveInputs.slice(),
+              patches: activePatches.slice(),
+              settingsKey: stageSettingsKey,
+            };
+            const skipForInputOnlyChange = inputsChanged && !patchesChanged && !settingsChanged;
+            const skipForReorderOrRemove = noNewPatches && !inputsChanged && !settingsChanged;
+            if (skipForReorderOrRemove) {
+              emitSessionTrace("patch reorder/remove skipped re-stage", { patchCount: activePatches.length });
+            } else if (!skipForInputOnlyChange) {
+              const freshFromIndex = patchesAppended && !inputsChanged && !settingsChanged ? previousPatchCount : 0;
+              if (freshFromIndex > 0) {
+                emitSessionTrace("patch append staged incrementally", {
+                  freshFromIndex,
+                  patchCount: activePatches.length,
+                });
+              }
+              syncPatchFiles(createStageSnapshot(), { freshFromIndex });
+            }
+          } else {
+            patchStageSyncRef.current = {
+              inputs: effectiveInputs.slice(),
+              patches: [],
+              settingsKey: stageSettingsKey,
+            };
+            patchStageMachine.invalidateStage();
+            setPatchStaging(false);
+            setPatchProgress(null);
+          }
+        }
+      }
+    }, STAGE_COALESCE_WINDOW_MS);
+    return () => clearTimeout(handle);
   }, [
+    activePatches,
     createStageSnapshot,
     effectiveInputs,
     emitSessionTrace,
     inputStageMachine,
     onError,
-    stageInput,
-    stageSettingsKey,
-    syncRomInput,
-  ]);
-
-  useEffect(() => {
-    if (!stagePatches) return;
-    const previousSync = patchStageSyncRef.current;
-    const inputsChanged = !sameBinarySourceLists(previousSync.inputs, effectiveInputs);
-    const patchesChanged = !sameBinarySourceLists(previousSync.patches, activePatches);
-    // Reordering and removing patches only rearrange/drop files already staged in OPFS;
-    // as long as no current patch is new, there is nothing to (re-)stage — just record order.
-    const previousPatchIds = new Set(getBinarySourceListStableIds(previousSync.patches));
-    const noNewPatches =
-      patchesChanged && getBinarySourceListStableIds(activePatches).every((id) => previousPatchIds.has(id));
-    // Appending patches keeps the existing prefix staged; only the new tail needs work.
-    const patchesAppended =
-      patchesChanged &&
-      activePatches.length > previousSync.patches.length &&
-      sameBinarySourceLists(previousSync.patches, activePatches.slice(0, previousSync.patches.length));
-    const previousPatchCount = previousSync.patches.length;
-    const settingsChanged = previousSync.settingsKey !== stageSettingsKey;
-    if (!(inputsChanged || patchesChanged || settingsChanged)) return;
-    if (!activePatches.length) {
-      patchStageSyncRef.current = {
-        inputs: effectiveInputs.slice(),
-        patches: [],
-        settingsKey: stageSettingsKey,
-      };
-      patchStageMachine.invalidateStage();
-      setPatchStaging(false);
-      setPatchProgress(null);
-      return;
-    }
-    patchStageSyncRef.current = {
-      inputs: effectiveInputs.slice(),
-      patches: activePatches.slice(),
-      settingsKey: stageSettingsKey,
-    };
-    if (inputsChanged && !patchesChanged && !settingsChanged) return;
-    if (noNewPatches && !inputsChanged && !settingsChanged) {
-      emitSessionTrace("patch reorder/remove skipped re-stage", { patchCount: activePatches.length });
-      return;
-    }
-    const freshFromIndex = patchesAppended && !inputsChanged && !settingsChanged ? previousPatchCount : 0;
-    if (freshFromIndex > 0) {
-      emitSessionTrace("patch append staged incrementally", { freshFromIndex, patchCount: activePatches.length });
-    }
-    syncPatchFiles(createStageSnapshot(), { freshFromIndex });
-  }, [
-    activePatches,
-    createStageSnapshot,
-    effectiveInputs,
     patchStageMachine,
+    stageInput,
     stagePatches,
     stageSettingsKey,
     syncPatchFiles,
+    syncRomInput,
   ]);
 
   const localUiStoreController = useLiveStoreController(localUiState);

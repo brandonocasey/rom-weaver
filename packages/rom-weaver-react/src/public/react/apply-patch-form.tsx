@@ -65,6 +65,31 @@ type ApplyWorkflowPrepareHandlers = {
   };
 };
 
+type PreparedApplyWorkflow = {
+  checksums: Record<string, string> | null;
+  input: ApplyWorkflowInputState | null;
+  patches: ApplyWorkflowPatchState[];
+  workflow: ApplyWorkflow;
+};
+
+// A single staging member (one bucket) folded into a coalesced prepareWorkflow pass. Progress is
+// emitted once at the merged-handler level and routed by role, so the one concurrent extraction
+// drives the ROM rows (input role) AND the patch cards (patch role) instead of one bucket's pass
+// dropping the other bucket's progress events.
+type StageBatchHandlers = {
+  onChecksumReady?: ApplyWorkflowPrepareHandlers["onChecksumReady"];
+  onInputProgress?: (event: ProgressEvent) => void;
+  onInputState?: ApplyWorkflowPrepareHandlers["onInputState"];
+  onPatchProgress?: (event: ProgressEvent) => void;
+  selection?: ApplyWorkflowPrepareHandlers["selection"];
+};
+
+type StageBatchMember = {
+  handlers: StageBatchHandlers;
+  run: (prepared: PreparedApplyWorkflow) => Promise<void>;
+  fail: (error: unknown) => void;
+};
+
 type ApplyWorkflowSyncState = {
   executionSettingsKey: string;
   inputs: BinarySource[];
@@ -883,6 +908,79 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     [prepareWorkflow, queueMutation],
   );
 
+  // The session fires ROM and patch staging in the same tick (its coalescing window). Batch those
+  // calls into ONE prepareWorkflow pass so the input and every patch extract concurrently (the pass
+  // fans out setInput + addPatch) while BOTH buckets keep live progress — progress is emitted once
+  // and routed by role below. Each caller still resolves with its own staged infos.
+  const stageBatchRef = useRef<{
+    members: StageBatchMember[];
+    snapshot: ApplyWorkflowSessionInput | null;
+    scheduled: boolean;
+  }>({ members: [], scheduled: false, snapshot: null });
+
+  const flushStageBatch = useCallback(() => {
+    const batch = stageBatchRef.current;
+    const { members, snapshot } = batch;
+    stageBatchRef.current = { members: [], scheduled: false, snapshot: null };
+    if (!(members.length && snapshot)) return;
+    const mergedHandlers: ApplyWorkflowPrepareHandlers = {
+      onChecksumReady: (state) => {
+        for (const member of members) member.handlers.onChecksumReady?.(state);
+      },
+      onInputState: (state) => {
+        for (const member of members) member.handlers.onInputState?.(state);
+      },
+      onProgress: (event) => {
+        // Emit once, then fan the typed progress out to whichever buckets are staging, by role.
+        const { progressEvent, workflowProgress } = emitWorkflowProgress(event);
+        for (const member of members) {
+          if (workflowProgress.role === "input") member.handlers.onInputProgress?.(progressEvent);
+          else if (workflowProgress.role === "patch") member.handlers.onPatchProgress?.(progressEvent);
+        }
+      },
+      selection: {
+        promptInputSelection: members.some((member) => member.handlers.selection?.promptInputSelection !== false),
+        promptPatchSelection: members.some((member) => member.handlers.selection?.promptPatchSelection !== false),
+      },
+    };
+    void queueMutation(() =>
+      prepareWorkflow(snapshot, mergedHandlers, async (prepared) => {
+        for (const member of members) await member.run(prepared);
+      }),
+    ).catch((error) => {
+      for (const member of members) member.fail(error);
+    });
+  }, [emitWorkflowProgress, prepareWorkflow, queueMutation]);
+
+  const enqueueStageBatch = useCallback(
+    <TValue,>(
+      snapshot: ApplyWorkflowSessionInput,
+      handlers: StageBatchHandlers,
+      callback: (prepared: PreparedApplyWorkflow) => Promise<TValue>,
+    ): Promise<TValue> =>
+      new Promise<TValue>((resolve, reject) => {
+        const batch = stageBatchRef.current;
+        batch.members.push({
+          fail: reject,
+          handlers,
+          run: async (prepared) => {
+            try {
+              resolve(await callback(prepared));
+            } catch (error) {
+              reject(error);
+            }
+          },
+        });
+        // Members coalesced in one tick share the same render's snapshot; keep the latest.
+        batch.snapshot = snapshot;
+        if (!batch.scheduled) {
+          batch.scheduled = true;
+          queueMicrotask(flushStageBatch);
+        }
+      }),
+    [flushStageBatch],
+  );
+
   const applyPatches = useCallback(
     async (rawInput: ApplyWorkflowSessionInput) => {
       // Disabled patches never reach the workflow; the bench keeps their cards.
@@ -1014,7 +1112,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         inputCount: input.inputs.length,
         inputs: summarizeApplyWorkflowSources(input.inputs, "Input"),
       });
-      return withPreparedWorkflow(
+      return enqueueStageBatch(
         input,
         {
           onChecksumReady: (state) => {
@@ -1022,14 +1120,11 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
               if (info) handlers.onChecksum(info);
             }
           },
+          onInputProgress: handlers.onProgress,
           onInputState: (state) => {
             for (const info of toStagedInputInfos(state, input.inputs)) {
               if (info) handlers.onState(info);
             }
-          },
-          onProgress: (event) => {
-            const emitted = emitWorkflowProgress(event);
-            if (emitted.workflowProgress.role === "input") handlers.onProgress(emitted.progressEvent);
           },
         },
         async ({ input: stagedInput, workflow }) => {
@@ -1062,7 +1157,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         },
       );
     },
-    [emitWorkflowProgress, withPreparedWorkflow],
+    [enqueueStageBatch],
   );
 
   const stagePatches = useCallback(
@@ -1076,13 +1171,10 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
       const originalNames = input.patches.map((patch, index) =>
         getReactBinarySourceFileName(patch, `Patch ${index + 1}`),
       );
-      return withPreparedWorkflow(
+      return enqueueStageBatch(
         input,
         {
-          onProgress: (event) => {
-            const emitted = emitWorkflowProgress(event);
-            if (emitted.workflowProgress.role === "patch") handlers.onProgress(emitted.progressEvent);
-          },
+          onPatchProgress: handlers.onProgress,
           selection: {
             promptInputSelection: false,
             promptPatchSelection: true,
@@ -1117,7 +1209,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         },
       );
     },
-    [emitWorkflowProgress, withPreparedWorkflow],
+    [enqueueStageBatch],
   );
 
   const setPatchTarget = useCallback(
