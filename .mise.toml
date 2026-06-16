@@ -173,6 +173,10 @@ run = "{{ config_root }}/scripts/check-thread-guards.sh"
 description = "Run the React dev server"
 run = "npm --prefix packages/rom-weaver-react run dev --"
 
+[tasks.preview]
+description = "Preview the built React webapp"
+run = "npm --prefix packages/rom-weaver-react run preview --"
+
 [tasks.ci]
 description = "Run the full local quality gate (mirrors CI)"
 depends = ["fmt", "clippy", "typegen-check", "wasm-check", "thread-guards", "licenses-check", "test-rust", "build-wasm-prod"]

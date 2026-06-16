@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "mise run dev",
+    "preview": "mise run preview",
     "prepare": "sh scripts/lefthook-install.sh",
     "hooks:install": "lefthook install",
     "hooks:run": "lefthook run pre-commit --force",
