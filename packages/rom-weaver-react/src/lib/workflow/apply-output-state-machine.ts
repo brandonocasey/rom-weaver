@@ -119,13 +119,28 @@ const recomputeApplyOutputState = (
   if (!state.manualOutputName) state.outputName = buildAutomaticOutputName(state, input, patchOutputNames);
 };
 
+// A multi-track disc's "primary" resolved file is a track (e.g. `track01.bin`), a poor output name.
+// Prefer the disc's own name: the source archive (depth 0 of the archive chain) for an archived
+// disc, otherwise the `.cue`/`.gdi` sheet for a loose disc.
+const getDiscOutputFileName = (input: ApplyWorkflowInputState): string | undefined => {
+  const resolved = input.resolvedInputs;
+  if (!resolved?.length) return undefined;
+  const isDisc = resolved.some((entry) => entry.kind === "track" || entry.kind === "cue" || entry.kind === "gdi");
+  if (!isDisc) return undefined;
+  return (
+    input.parentCompressions[0]?.fileName ||
+    resolved.find((entry) => entry.kind === "cue" || entry.kind === "gdi")?.fileName ||
+    undefined
+  );
+};
+
 const buildAutomaticOutputName = (
   state: ApplyOutputState,
   input: ApplyWorkflowInputState | null,
   patchOutputNames: string[],
 ): string => {
   if (!input?.fileName) return state.outputName;
-  const inputBase = getFileNameWithoutExtension(input.fileName) || "patched";
+  const inputBase = getFileNameWithoutExtension(getDiscOutputFileName(input) || input.fileName) || "patched";
   const patchNames = patchOutputNames.map((fileName) => getFileNameWithoutExtension(fileName)).filter(Boolean);
   return buildPatchedOutputBaseName(inputBase, patchNames);
 };
