@@ -187,6 +187,38 @@ fn rvz_extract_round_trips_to_iso() {
 }
 
 #[test]
+fn rvz_extract_probe_emits_platform_and_container_details() {
+    let temp = setup_temp_dir();
+    let iso_bytes = build_test_gamecube_iso(0x8000);
+    fs::write(temp.child("disc.iso").path(), &iso_bytes).expect("iso fixture");
+    write_rvz_fixture_from_iso(temp.child("disc.iso").path(), temp.child("disc.rvz").path());
+
+    let out_dir = temp.child("extract");
+    let output = command_stdout(
+        &[
+            "extract",
+            temp.child("disc.rvz").path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--probe",
+            "--json",
+        ],
+        0,
+    );
+
+    let events = parse_json_lines(&output);
+    let json = events.last().expect("extract terminal event");
+    assert_eq!(json["command"], "extract");
+    assert_eq!(json["status"], "succeeded");
+    // `--probe` folds the container probe block into the extract result.
+    assert!(!json["details"]["container"]["recommended_compress_format"].is_null());
+    // Single-payload disc image identity, backfilled from the decoded output without `--checksum`.
+    let entry = emitted_file_entry(json, "disc.iso");
+    assert_eq!(entry["platform"], "Nintendo GameCube");
+    assert_eq!(entry["disc_format"], "DVD");
+}
+
+#[test]
 fn rvz_extract_supports_single_output_selection() {
     let temp = setup_temp_dir();
     let iso_bytes = build_test_gamecube_iso(0x8000);

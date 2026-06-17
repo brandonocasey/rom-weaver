@@ -951,6 +951,114 @@ fn extract_ignores_common_sidecars_unless_no_ignore() {
 }
 
 #[test]
+fn extract_checksum_rom_only_hashes_rom_outputs_only() {
+    let temp = setup_temp_dir();
+    fs::write(
+        temp.child("game.nes").path(),
+        with_nes_header(b"checksum rom payload"),
+    )
+    .expect("rom fixture");
+    fs::write(temp.child("readme.txt").path(), b"not a rom").expect("sidecar fixture");
+
+    let archive = temp.child("bundle.zip");
+    command_stdout(
+        &[
+            "compress",
+            temp.child("game.nes").path().to_str().expect("path"),
+            temp.child("readme.txt").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            archive.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    let out_dir = temp.child("extract");
+    let events = run_json_events(
+        &[
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--no-ignore",
+            "--checksum-rom",
+            "crc32",
+            "--json",
+        ],
+        0,
+    );
+    let json = events.last().expect("extract terminal event");
+    assert_eq!(json["status"], "succeeded");
+    // ROM output is hashed and identified inline.
+    let rom = emitted_file_entry(json, "game.nes");
+    assert!(rom["checksums"]["crc32"].as_str().is_some());
+    assert_eq!(rom["platform"], "Nintendo Entertainment System");
+    // The non-ROM sidecar is extracted but never hashed.
+    let sidecar = emitted_file_entry(json, "readme.txt");
+    assert!(sidecar["checksums"].is_null());
+}
+
+#[test]
+fn extract_checksum_rom_skips_disc_sheet_but_hashes_tracks() {
+    let temp = setup_temp_dir();
+    fs::write(temp.child("track01.bin").path(), vec![0x11u8; 64]).expect("track01 fixture");
+    fs::write(temp.child("track02.bin").path(), vec![0x22u8; 64]).expect("track02 fixture");
+    temp.child("disc.cue")
+        .write_str(
+            "FILE \"track01.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\nFILE \"track02.bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n",
+        )
+        .expect("cue fixture");
+
+    let archive = temp.child("disc.zip");
+    command_stdout(
+        &[
+            "compress",
+            temp.child("disc.cue").path().to_str().expect("path"),
+            temp.child("track01.bin").path().to_str().expect("path"),
+            temp.child("track02.bin").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            archive.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    let out_dir = temp.child("extract-disc");
+    let json = run_single_json_event(
+        &[
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--rom-filter",
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--checksum-rom",
+            "crc32",
+            "--json",
+        ],
+        0,
+    );
+    assert_eq!(json["status"], "succeeded");
+    // Data tracks are hashed.
+    assert!(
+        emitted_file_entry(&json, "track01.bin")["checksums"]["crc32"]
+            .as_str()
+            .is_some()
+    );
+    assert!(
+        emitted_file_entry(&json, "track02.bin")["checksums"]["crc32"]
+            .as_str()
+            .is_some()
+    );
+    // The `.cue` sheet still lands with the disc (counts as ROM) but is never hashed.
+    assert!(out_dir.child("disc.cue").path().exists());
+    assert!(emitted_file_entry(&json, "disc.cue")["checksums"].is_null());
+}
+
+#[test]
 fn extract_pbp_without_select_emits_all_discs() {
     let temp = setup_temp_dir();
     let disc1 = build_test_pbp_iso(72, 7);

@@ -1375,6 +1375,77 @@ fn checksum_game_boy_rom_has_only_raw_variant() {
     assert_eq!(ids, vec!["raw"], "Game Boy should only have raw variant");
 }
 
+#[test]
+fn checksum_probe_emits_platform_for_known_rom() {
+    let temp = setup_temp_dir();
+    fs::write(
+        temp.child("game.nes").path(),
+        with_nes_header(b"checksum probe payload"),
+    )
+    .expect("fixture");
+
+    let json = run_single_json_event(
+        &[
+            "checksum",
+            temp.child("game.nes").path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--probe",
+            "--json",
+        ],
+        0,
+    );
+    assert_eq!(json["command"], "checksum");
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(json["details"]["platform"], "Nintendo Entertainment System");
+}
+
+#[test]
+fn checksum_probe_fails_unidentified_source() {
+    let temp = setup_temp_dir();
+    fs::write(temp.child("blob.bin").path(), vec![0x5A_u8; 4096]).expect("fixture");
+
+    let json = run_single_json_event(
+        &[
+            "checksum",
+            temp.child("blob.bin").path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--probe",
+            "--json",
+        ],
+        1,
+    );
+    assert_eq!(json["command"], "checksum");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["stage"], "probe");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("did not resolve to a known platform")
+    );
+}
+
+#[test]
+fn checksum_without_probe_succeeds_on_unidentified_source() {
+    let temp = setup_temp_dir();
+    fs::write(temp.child("blob.bin").path(), vec![0x5A_u8; 4096]).expect("fixture");
+
+    let json = run_single_json_event(
+        &[
+            "checksum",
+            temp.child("blob.bin").path().to_str().expect("path"),
+            "--algo",
+            "crc32",
+            "--json",
+        ],
+        0,
+    );
+    assert_eq!(json["status"], "succeeded");
+    assert!(json["details"]["platform"].is_null());
+}
+
 // ---- relocated from shared.rs (single-module helpers) ----
 
 fn write_gzip_fixture(source_path: &Path, gzip_path: &Path) {
