@@ -129,6 +129,11 @@ const createApplyPatchValidationKey = <TSource>(
       fileName: target.fileName,
       id: target.id,
       size: target.size,
+      // The resolved input file's staging path uniquely identifies the selected candidate. Folding it
+      // into the key forces re-validation when the input candidate is switched to a different staged
+      // file that happens to share the same id/name/size (e.g. same-named entries in an archive),
+      // which id/name/size alone would treat as an unchanged target and skip.
+      sourcePath: (target.file as { filePath?: string } | undefined)?.filePath,
     },
   });
 
