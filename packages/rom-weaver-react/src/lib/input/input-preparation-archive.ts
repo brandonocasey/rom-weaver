@@ -237,7 +237,38 @@ const listCompressionEntries = async (
   return result.entries || [];
 };
 
-const listCompressionEntryResult = async (
+// Memoize entry listings per (archive file, filter + overrides). One input load issues several list
+// passes over the same staged archive — chd-split detection, disc-group naming, and the limit
+// preflight all re-enumerate it — and each is a full worker round-trip that returns identical entries
+// (the archive is immutable). Keyed on the PatchFileInstance object so a *different* staged copy (e.g.
+// the drop-routing probe's transient copy) is never conflated with the prep copy. Parity-safe: listing
+// is a pure read that never affects extracted bytes. A transient failure is evicted so a retry re-lists.
+const listEntryResultCache = new WeakMap<object, Map<string, ReturnType<typeof computeListCompressionEntryResult>>>();
+
+const listCompressionEntryResult = (
+  file: PatchFileInstance,
+  options: InputPreparationOptions,
+  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
+  kindFilter: CompressionEntryKindFilter = {},
+  overrides: CompressionExtractOverrides = {},
+): ReturnType<typeof computeListCompressionEntryResult> => {
+  let perFile = listEntryResultCache.get(file);
+  if (!perFile) {
+    perFile = new Map();
+    listEntryResultCache.set(file, perFile);
+  }
+  const cacheKey = `${!!kindFilter.romFilter}|${!!kindFilter.patchFilter}|${JSON.stringify(overrides ?? {})}`;
+  const existing = perFile.get(cacheKey);
+  if (existing) return existing;
+  const pending = computeListCompressionEntryResult(file, options, runtime, kindFilter, overrides);
+  perFile.set(cacheKey, pending);
+  void pending.catch(() => {
+    if (perFile?.get(cacheKey) === pending) perFile.delete(cacheKey);
+  });
+  return pending;
+};
+
+const computeListCompressionEntryResult = async (
   file: PatchFileInstance,
   options: InputPreparationOptions,
   runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
