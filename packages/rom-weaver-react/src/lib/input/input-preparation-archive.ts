@@ -705,7 +705,14 @@ const prepareAutoPatchInputs = async (
   const romProbe = await probeCompressionRomEntriesForSource(archiveFile, romEntries, options, runtime);
   const patchEntries = await filterValidPatchArchiveEntriesForSource(archiveFile, options, runtime);
   if (!patchEntries.length) return [];
-  const selectedRomEntryName = resolveCompressionRomAutoPickEntryName(archiveFile.fileName, romProbe, "");
+  let selectedRomEntryName: string | null;
+  try {
+    selectedRomEntryName = resolveCompressionRomAutoPickEntryName(archiveFile.fileName, romProbe, "");
+  } catch {
+    // Multiple competing ROMs: sidecar patches cannot be attributed to one ROM until the user
+    // keeps a single ROM, so skip implicit patch discovery and let the ROM descent prompt first.
+    return [];
+  }
   if (!selectedRomEntryName) return [];
 
   const sidecarPatches = resolveSidecarPatchEntries(selectedRomEntryName, patchEntries);
@@ -760,7 +767,13 @@ const archiveContainsRomEntry = async (
   );
   if (!directRomEntries.length) return false;
   const romProbe = await probeCompressionRomEntriesForSource(archiveFile, romEntries, options, runtime);
-  return !!resolveCompressionRomAutoPickEntryName(archiveFile.fileName, romProbe, "");
+  try {
+    return !!resolveCompressionRomAutoPickEntryName(archiveFile.fileName, romProbe, "");
+  } catch {
+    // Multiple competing ROM candidates: the archive still HOLDS a ROM, so route it to the ROM
+    // bucket. The single-payload descent then prompts the user to keep exactly one.
+    return true;
+  }
 };
 
 // Shared low-level archive primitives consumed by the sibling modules split out of this orchestrator
