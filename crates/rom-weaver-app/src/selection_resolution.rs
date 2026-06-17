@@ -28,6 +28,8 @@ struct DiscSelectionGroup {
     label: String,
     key: String,
     members: Vec<String>,
+    /// Summed size of every member file, when known; drives the prompt's size hint.
+    size: Option<u64>,
 }
 
 impl CliApp {
@@ -82,6 +84,7 @@ impl CliApp {
                             label: entry.clone(),
                             key,
                             members: vec![entry.clone()],
+                            size: None,
                         });
                     }
                 }
@@ -89,6 +92,7 @@ impl CliApp {
                     label: entry.clone(),
                     key: entry.to_ascii_lowercase(),
                     members: vec![entry.clone()],
+                    size: None,
                 }),
             }
         }
@@ -214,81 +218,187 @@ impl CliApp {
                     handler.descriptor().name
                 ))
             })?;
-        let (payload, containers) = Self::kind_filtered_container_list_entries(
+        // Collapse the container's entries into the LOGICAL ROMs it carries: a CD/GD-ROM disc
+        // (its `.cue`/`.gdi` sheet plus every track) becomes one unit, while each loose ROM stays
+        // its own unit. A disc must extract as a whole — sheet + all tracks together — so a chosen
+        // unit expands back to every member file.
+        let groups = Self::build_logical_payload_groups(
             &entries,
             options.kind_filter,
             options.ignore_common_files,
         );
-        // A CD `.cue` or GD-ROM `.gdi` sheet describes one disc; collapse its
-        // track files into the single sheet candidate so the disc is not treated
-        // as ambiguous. Detect the sheet from the FULL entry list rather than the
-        // kind-filtered payload: a sheet excluded from `payload` would otherwise
-        // leave the bare bin/img tracks looking like competing candidates.
-        let has_disc_sheet = entries.iter().any(|entry| {
-            let lower = entry.path.to_ascii_lowercase();
-            lower.ends_with(".cue") || lower.ends_with(".gdi")
-        });
-        let mut candidates: Vec<(String, Option<u64>)> = Vec::new();
-        for entry in payload.iter().chain(containers.iter()) {
-            let name = Self::normalize_selection_entry_name(&entry.path);
-            if name.is_empty() {
-                continue;
-            }
-            if has_disc_sheet {
-                let lower = name.to_ascii_lowercase();
-                if lower.ends_with(".bin")
-                    || lower.ends_with(".iso")
-                    || lower.ends_with(".img")
-                    || lower.ends_with(".raw")
-                {
-                    continue;
-                }
-            }
-            if !candidates.iter().any(|(existing, _)| existing == &name) {
-                candidates.push((name, entry.size));
-            }
-        }
+        // Patch payloads stay multi-select (apply several patches at once); a ROM disambiguation is
+        // "keep exactly one" so it is single-select.
+        let multi_select = options.kind_filter.patch && !options.kind_filter.rom;
         trace!(
             source = %source.display(),
-            candidate_count = candidates.len(),
+            group_count = groups.len(),
             entry_count = entries.len(),
-            payload_count = payload.len(),
-            has_disc_sheet,
+            multi_select,
             interactive = self.interactive_selection_enabled,
             "resolving extract payload selections"
         );
-        match candidates.len() {
-            // 0 or 1 distinct payload: extract everything at this level. This keeps a single logical
+        match groups.len() {
+            // 0 or 1 logical payload: extract everything at this level. This keeps a single logical
             // payload whole — notably a CD image whose cue + bin/iso/img tracks were grouped into one
-            // candidate must be extracted together, not just the cue.
+            // unit must be extracted together, not just the cue.
             0 | 1 => Ok(Vec::new()),
             _ => {
-                let prompt_candidates = candidates
+                let prompt_candidates = groups
                     .iter()
-                    .map(|(name, size)| PromptCandidate {
-                        value: name.clone(),
-                        label: name.clone(),
-                        size: *size,
+                    .map(|group| PromptCandidate {
+                        value: group.label.clone(),
+                        label: group.label.clone(),
+                        size: group.size,
                     })
                     .collect::<Vec<_>>();
                 let heading = format!(
-                    "{source_label} payload selection for `{}` is ambiguous. Choose one or more entries:",
+                    "{source_label} payload selection for `{}` is ambiguous. {choose}:",
                     source.display(),
-                    source_label = options.source_label
+                    source_label = options.source_label,
+                    choose = if multi_select {
+                        "Choose one or more entries"
+                    } else {
+                        "Choose one ROM to keep"
+                    }
                 );
-                let selected_indexes = self.prompt_for_selections(&heading, &prompt_candidates)?;
+                let selected_indexes = if multi_select {
+                    self.prompt_for_selections(&heading, &prompt_candidates)?
+                } else {
+                    self.prompt_for_selection(&heading, &prompt_candidates)?
+                        .into_iter()
+                        .collect()
+                };
                 if selected_indexes.is_empty() {
                     return Err(RomWeaverError::Validation(format!(
                         "interactive selection was cancelled for `{}`",
                         source.display()
                     )));
                 }
+                // Expand each chosen logical ROM back to its member files so a disc's sheet + tracks
+                // all extract together.
                 Ok(selected_indexes
                     .into_iter()
-                    .map(|index| prompt_candidates[index].value.clone())
+                    .flat_map(|index| groups[index].members.clone())
                     .collect())
             }
         }
+    }
+
+    /// Collapse a container's listed entries into the logical ROMs it carries, applying the
+    /// `kind_filter`/common-file ignore rules. A CD/GD-ROM disc (a `.cue`/`.gdi` sheet plus its
+    /// track media) becomes one group whose `members` are every file to extract; each loose ROM is
+    /// its own single-member group. Detect sheets from the FULL entry list (a sheet that the kind
+    /// filter drops from the payload must still anchor its disc) and keep listing order so prompts
+    /// match the listing.
+    fn build_logical_payload_groups(
+        entries: &[ContainerListEntry],
+        kind_filter: ArchiveEntryKindFilter,
+        ignore_common_files: bool,
+    ) -> Vec<DiscSelectionGroup> {
+        let (payload, containers) =
+            Self::kind_filtered_container_list_entries(entries, kind_filter, ignore_common_files);
+        // Candidate payload names (payload preferred, else container fallbacks), order-preserving.
+        let mut size_by_name: BTreeMap<String, Option<u64>> = BTreeMap::new();
+        let mut candidate_names: Vec<String> = Vec::new();
+        let mut seen = HashSet::new();
+        for entry in payload.iter().chain(containers.iter()) {
+            let name = Self::normalize_selection_entry_name(&entry.path);
+            if name.is_empty() {
+                continue;
+            }
+            size_by_name.entry(name.clone()).or_insert(entry.size);
+            if seen.insert(name.clone()) {
+                candidate_names.push(name);
+            }
+        }
+        // Disc sheets from the full listing — a sheet anchors its disc even when the kind filter
+        // excludes it (e.g. a `--rom-filter` run drops the non-payload `.cue`).
+        let sheet_names: Vec<String> = entries
+            .iter()
+            .filter(|entry| {
+                let lower = entry.path.to_ascii_lowercase();
+                lower.ends_with(".cue") || lower.ends_with(".gdi")
+            })
+            .map(|entry| Self::normalize_selection_entry_name(&entry.path))
+            .filter(|name| !name.is_empty())
+            .collect();
+        for sheet in &sheet_names {
+            size_by_name.entry(sheet.clone()).or_insert_with(|| {
+                entries
+                    .iter()
+                    .find_map(|entry| {
+                        (Self::normalize_selection_entry_name(&entry.path) == *sheet)
+                            .then_some(entry.size)
+                    })
+                    .flatten()
+            });
+        }
+
+        let is_disc_media = |name: &str| {
+            let lower = name.to_ascii_lowercase();
+            [".bin", ".iso", ".img", ".raw", ".wav"]
+                .iter()
+                .any(|ext| lower.ends_with(ext))
+        };
+
+        let mut groups: Vec<DiscSelectionGroup> = if sheet_names.len() <= 1 {
+            match sheet_names.first() {
+                // Exactly one disc: collapse every disc-media candidate under the sheet; non-media
+                // candidates stay their own logical ROMs.
+                Some(sheet) => {
+                    let mut disc_members = vec![sheet.clone()];
+                    let mut others: Vec<DiscSelectionGroup> = Vec::new();
+                    for name in &candidate_names {
+                        if name == sheet {
+                            continue;
+                        }
+                        if is_disc_media(name) {
+                            disc_members.push(name.clone());
+                        } else {
+                            others.push(DiscSelectionGroup {
+                                label: name.clone(),
+                                key: name.to_ascii_lowercase(),
+                                members: vec![name.clone()],
+                                size: None,
+                            });
+                        }
+                    }
+                    let mut grouped = vec![DiscSelectionGroup {
+                        label: sheet.clone(),
+                        key: sheet.to_ascii_lowercase(),
+                        members: disc_members,
+                        size: None,
+                    }];
+                    grouped.extend(others);
+                    grouped
+                }
+                // No sheet: each candidate is its own ROM, but loose same-base disc media (e.g. two
+                // bins of one sheet-less disc) still collapse into one unit by shared base name.
+                None => Self::group_disc_selection_entries(&candidate_names),
+            }
+        } else {
+            // Multiple discs: group by shared base name so each disc's sheet + tracks collapse
+            // together. Seed the sheets (kind-filtered out of the candidate list) so they anchor.
+            let mut grouping_names = candidate_names.clone();
+            for sheet in &sheet_names {
+                if !grouping_names.iter().any(|name| name == sheet) {
+                    grouping_names.push(sheet.clone());
+                }
+            }
+            Self::group_disc_selection_entries(&grouping_names)
+        };
+
+        // Attach a summed size for each logical ROM so the prompt can show disc totals.
+        for group in &mut groups {
+            let total: u64 = group
+                .members
+                .iter()
+                .filter_map(|name| size_by_name.get(name).copied().flatten())
+                .sum();
+            group.size = (total > 0).then_some(total);
+        }
+        groups
     }
 
     pub(super) fn is_selection_resolution_error(label: &str) -> bool {

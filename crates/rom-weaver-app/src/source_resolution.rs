@@ -1,4 +1,4 @@
-use super::selection_resolution::SelectionExtract;
+use super::selection_resolution::{SelectionExtract, SelectionResolutionOptions};
 use super::*;
 
 #[derive(Debug)]
@@ -236,12 +236,38 @@ impl CliApp {
 
             let out_dir = context.temp_paths().next_path(labels.temp_prefix, None);
             fs::create_dir_all(&out_dir)?;
+            // Ask BEFORE extracting: when the caller pinned no `--select` and interactive selection
+            // is enabled, resolve the container's logical ROMs up front and prompt for the one to
+            // keep (single-select for ROMs) instead of extracting everything and prompting after.
+            // An unambiguous container resolves to an empty list, so we extract it whole as before.
+            let resolved_selections;
+            let select_for_extract: &[String] =
+                if select.is_empty() && self.interactive_selection_enabled {
+                    resolved_selections = self.resolve_extract_payload_selections(
+                        handler.as_ref(),
+                        &current_source,
+                        SelectionResolutionOptions {
+                            kind_filter: options.kind_filter,
+                            split_bin: false,
+                            ignore_common_files: !options.no_ignore,
+                            source_label: labels.source_label,
+                        },
+                        context,
+                    )?;
+                    if resolved_selections.is_empty() {
+                        select
+                    } else {
+                        &resolved_selections
+                    }
+                } else {
+                    select
+                };
             self.extract_with_selection_fallback(
                 handler.as_ref(),
                 &current_source,
                 SelectionExtract {
                     out_dir: &out_dir,
-                    selections: select,
+                    selections: select_for_extract,
                     kind_filter: options.kind_filter,
                     split_bin: false,
                     ignore_common_files: false,

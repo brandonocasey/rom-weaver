@@ -171,8 +171,11 @@ fn parse_selection_input_handles_cancel_and_invalid_values() {
 }
 
 #[test]
-fn extract_payload_selection_accepts_multiple_prompt_indexes() {
-    let app = test_app_with_prompt(vec![0, 2]);
+fn extract_payload_selection_keeps_one_rom_from_several() {
+    // Several loose ROMs are competing input candidates; the user keeps exactly ONE, so the
+    // resolver is single-select and returns only the chosen ROM (the prompter is primed with two
+    // indexes to prove only the first is honoured for a single-select ROM disambiguation).
+    let app = test_app_with_prompt(vec![2, 0]);
     let context = app.context(ThreadBudget::Fixed(1));
     let handler = TestListHandler {
         entries: vec![
@@ -205,7 +208,132 @@ fn extract_payload_selection_accepts_multiple_prompt_indexes() {
         )
         .expect("selection");
 
-    assert_eq!(selected, vec!["disc1.nes", "disc3.nes"]);
+    assert_eq!(selected, vec!["disc3.nes"]);
+}
+
+#[test]
+fn extract_payload_selection_keeps_one_disc_from_two() {
+    // Two complete discs (each a `.cue` + its `(Track N)` bins) are two logical ROMs. Keeping one
+    // returns the WHOLE chosen disc — its sheet and every track — so it extracts together.
+    let app = test_app_with_prompt(vec![1]);
+    let context = app.context(ThreadBudget::Fixed(1));
+    let handler = TestListHandler {
+        entries: vec![
+            ContainerListEntry {
+                path: "Alpha.cue".to_string(),
+                size: Some(1),
+            },
+            ContainerListEntry {
+                path: "Alpha (Track 1).bin".to_string(),
+                size: Some(10),
+            },
+            ContainerListEntry {
+                path: "Beta.cue".to_string(),
+                size: Some(1),
+            },
+            ContainerListEntry {
+                path: "Beta (Track 1).bin".to_string(),
+                size: Some(20),
+            },
+        ],
+    };
+
+    let selected = app
+        .resolve_extract_payload_selections(
+            &handler,
+            Path::new("two-discs.test"),
+            SelectionResolutionOptions {
+                kind_filter: ArchiveEntryKindFilter::new(false, false),
+                split_bin: false,
+                ignore_common_files: true,
+                source_label: "extract input",
+            },
+            &context,
+        )
+        .expect("selection");
+
+    // Index 1 is the Beta disc; both its sheet and track come along.
+    assert_eq!(selected, vec!["Beta.cue", "Beta (Track 1).bin"]);
+}
+
+#[test]
+fn extract_payload_selection_prompts_for_disc_plus_loose_rom() {
+    // A disc alongside a loose ROM is two logical ROMs even though only one carries a sheet; the
+    // resolver prompts and keeps the chosen unit (here the whole disc).
+    let app = test_app_with_prompt(vec![0]);
+    let context = app.context(ThreadBudget::Fixed(1));
+    let handler = TestListHandler {
+        entries: vec![
+            ContainerListEntry {
+                path: "Game.cue".to_string(),
+                size: Some(1),
+            },
+            ContainerListEntry {
+                path: "Game (Track 1).bin".to_string(),
+                size: Some(10),
+            },
+            ContainerListEntry {
+                path: "Bonus.nes".to_string(),
+                size: Some(5),
+            },
+        ],
+    };
+
+    let selected = app
+        .resolve_extract_payload_selections(
+            &handler,
+            Path::new("disc-plus-rom.test"),
+            SelectionResolutionOptions {
+                kind_filter: ArchiveEntryKindFilter::new(false, false),
+                split_bin: false,
+                ignore_common_files: true,
+                source_label: "extract input",
+            },
+            &context,
+        )
+        .expect("selection");
+
+    assert_eq!(selected, vec!["Game.cue", "Game (Track 1).bin"]);
+}
+
+#[test]
+fn extract_payload_selection_patch_filter_keeps_multiple() {
+    // Patches are not ROMs: a `--patch-filter` extract stays MULTI-select so several patches can be
+    // pulled at once (the prompter's full index list is honoured).
+    let app = test_app_with_prompt(vec![0, 2]);
+    let context = app.context(ThreadBudget::Fixed(1));
+    let handler = TestListHandler {
+        entries: vec![
+            ContainerListEntry {
+                path: "first.bps".to_string(),
+                size: Some(1),
+            },
+            ContainerListEntry {
+                path: "second.bps".to_string(),
+                size: Some(2),
+            },
+            ContainerListEntry {
+                path: "third.bps".to_string(),
+                size: Some(3),
+            },
+        ],
+    };
+
+    let selected = app
+        .resolve_extract_payload_selections(
+            &handler,
+            Path::new("patches.test"),
+            SelectionResolutionOptions {
+                kind_filter: ArchiveEntryKindFilter::new(false, true),
+                split_bin: false,
+                ignore_common_files: true,
+                source_label: "extract input",
+            },
+            &context,
+        )
+        .expect("selection");
+
+    assert_eq!(selected, vec!["first.bps", "third.bps"]);
 }
 
 #[test]
