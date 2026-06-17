@@ -622,11 +622,15 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 }
 .rw-app .cks.is-open { background: color-mix(in oklab, var(--well) 45%, transparent); }
 /* on the dark bench the well plates sink into the card — a stronger seam +
-   a touch more lift separates each section header from its container.
-   (light mode already reads well, so it's left alone) */
+   a touch more lift separates each section header from its container. */
 :root[data-theme="dark"] .cks { border-color: var(--seam-strong); background: color-mix(in oklab, var(--plate-2) 45%, var(--well)); }
 :root[data-theme="dark"] .cks.is-open { background: color-mix(in oklab, var(--plate-2) 30%, var(--well)); }
 :root[data-theme="dark"] .cks.is-open > .cks-head { border-block-end-color: var(--seam-strong); }
+/* on paper the open plate's 45%-transparent well washed into the cream card
+   (≈4/255 per channel apart) — keep the opened drawer a solid recessed well
+   with a stronger seam so it reads as a distinct panel, not a faint tint */
+:root[data-theme="light"] .cks.is-open { background: var(--well); border-color: var(--seam-strong); }
+:root[data-theme="light"] .cks.is-open > .cks-head { border-block-end-color: var(--seam-strong); }
 .rw-app .cks > .cks-head {
   appearance: none; border: 0; background: transparent; color: inherit; font: inherit; text-align: start;
   width: 100%; cursor: pointer; display: flex; align-items: center; gap: 5px;
