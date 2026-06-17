@@ -27,12 +27,12 @@ use rom_weaver_core::{Result, RomWeaverError};
 use serde_json::{Value, json};
 use tracing::{trace, warn};
 
-use crate::StreamingChecksum;
 use crate::rom_headers::{
     GBA_HEADER_MAGIC, KnownRomHeader, KnownRomHeaderMatch, N64_BIG_ENDIAN_MAGIC,
     N64_BYTE_SWAPPED_MAGIC, N64_LITTLE_ENDIAN_MAGIC, PCE_COPIER_HEADER_MODULUS, ROM_HEADER_BYTES,
     ROM_HEADER_SCAN_BYTES, SNES_COPIER_HEADER_MODULUS,
 };
+use crate::{StreamingChecksum, StreamingChecksumTiming};
 
 /// Largest prefix the `fix-header` variant will buffer in memory to keep the
 /// hash single-pass. Beyond this the variant is deferred to the caller. Sized
@@ -70,6 +70,10 @@ pub struct DeferredFixHeader {
 pub struct VariantOutput {
     pub rows: Vec<VariantRow>,
     pub deferred_fix_header: Option<DeferredFixHeader>,
+    /// Hashing timing for the `raw` variant (the file's primary checksum), so an
+    /// inline-extract caller can report how much of the checksum overlapped decode.
+    /// Default (not threaded) when the raw variant ran the synchronous fan-out.
+    pub raw_timing: StreamingChecksumTiming,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -188,13 +192,21 @@ impl VariantHasher {
     }
 
     fn finalize(self) -> Result<VariantRow> {
-        Ok(VariantRow {
-            id: self.id,
-            label: self.label,
-            checksums: self.checksum.finalize()?,
-            apply_compatibility: self.apply_compatibility,
-            transforms: self.transforms,
-        })
+        Ok(self.finalize_timed()?.0)
+    }
+
+    fn finalize_timed(self) -> Result<(VariantRow, StreamingChecksumTiming)> {
+        let (checksums, timing) = self.checksum.finalize_timed()?;
+        Ok((
+            VariantRow {
+                id: self.id,
+                label: self.label,
+                checksums,
+                apply_compatibility: self.apply_compatibility,
+                transforms: self.transforms,
+            },
+            timing,
+        ))
     }
 }
 
@@ -514,6 +526,9 @@ pub struct StreamingVariantChecksums {
     consumed: u64,
     header_buf: Vec<u8>,
     state: State,
+    /// Worker-thread budget for the `raw` variant's hasher so its crc32/md5/sha1 run
+    /// in parallel and overlap the producer. 1 (or non-threaded wasm) → synchronous.
+    raw_hash_threads: usize,
 }
 
 impl StreamingVariantChecksums {
@@ -523,7 +538,12 @@ impl StreamingVariantChecksums {
     /// `name_hint` is the source's file name (or path); its extension drives
     /// extension-ordered header candidate selection and the SNES/PCE copier
     /// size rules, matching the file-based detection used elsewhere.
-    pub fn new(algorithms: &[String], total_len: u64, name_hint: Option<&str>) -> Result<Self> {
+    pub fn new(
+        algorithms: &[String],
+        total_len: u64,
+        name_hint: Option<&str>,
+        raw_hash_threads: usize,
+    ) -> Result<Self> {
         let extension = name_hint
             .and_then(extension_with_dot)
             .map(|value| value.to_ascii_lowercase());
@@ -534,6 +554,7 @@ impl StreamingVariantChecksums {
             consumed: 0,
             header_buf: Vec::new(),
             state: State::Buffering,
+            raw_hash_threads: raw_hash_threads.max(1),
         })
     }
 
@@ -576,6 +597,7 @@ impl StreamingVariantChecksums {
             return Ok(VariantOutput {
                 rows: Vec::new(),
                 deferred_fix_header: None,
+                raw_timing: StreamingChecksumTiming::default(),
             });
         };
         let Planned {
@@ -586,7 +608,8 @@ impl StreamingVariantChecksums {
         } = *planned;
 
         let mut rows = Vec::new();
-        rows.push(raw.finalize()?);
+        let (raw_row, raw_timing) = raw.finalize_timed()?;
+        rows.push(raw_row);
         if let Some(remove_header) = remove_header {
             rows.push(remove_header.finalize()?);
         }
@@ -604,6 +627,7 @@ impl StreamingVariantChecksums {
         Ok(VariantOutput {
             rows,
             deferred_fix_header,
+            raw_timing,
         })
     }
 
@@ -628,7 +652,12 @@ impl StreamingVariantChecksums {
     /// then replay the buffered bytes through it.
     fn plan(&mut self, _offset: u64) -> Result<()> {
         let header = std::mem::take(&mut self.header_buf);
-        let Some(raw_checksum) = StreamingChecksum::new(&self.algorithms)? else {
+        // The raw variant is the file's primary checksum and is always present; give it the worker
+        // budget so crc32/md5/sha1 hash in parallel and overlap the producer. Other variants stay
+        // synchronous for now (bounded thread use); they are the follow-up.
+        let Some(raw_checksum) =
+            StreamingChecksum::new_parallel(&self.algorithms, self.raw_hash_threads)?
+        else {
             self.state = State::Empty;
             return Ok(());
         };

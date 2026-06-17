@@ -15,9 +15,9 @@ use rom_weaver_checksum::{
 use rom_weaver_core::{
     ContainerByteProgress, OperationContext, OperationFamily, OperationReport, OperationStatus,
     OrderedChunkWriter, OrderedStreamingMessages, ProgressEvent, Result, RomWeaverError,
-    SharedThreadPool, ThreadExecution, bounded_items_for_threads, create_extract_output_file,
-    emit_container_running_progress, maybe_emit_container_byte_progress,
-    ordered_streaming_compress,
+    SharedThreadPool, ThreadCapability, ThreadExecution, bounded_items_for_threads,
+    create_extract_output_file, emit_container_running_progress,
+    maybe_emit_container_byte_progress, ordered_streaming_compress,
 };
 use serde_json::{Map, Value, json};
 
@@ -148,6 +148,24 @@ pub(crate) struct ExtractedFileChecksum {
     /// Checksum variants (raw, remove-header, fix-header, n64 byte order) when
     /// computed inline during extract; empty for disc-image / unknown-size paths.
     pub(crate) variants: Vec<VariantRow>,
+    /// Decode/checksum/overlap split for this entry, when measured (currently the
+    /// single-file libarchive path). Surfaced in the report's `emitted_files` so the
+    /// UI can show where the extract's time went. `None` on paths not yet instrumented.
+    pub(crate) timing: Option<ExtractTiming>,
+}
+
+/// The wall-time split for one extracted entry, in milliseconds, surfaced to the UI.
+/// `checksum_ms` is the hashing cost (worker wall when threaded, else inline); `overlap_ms`
+/// is how much of it ran concurrently with decode.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExtractTiming {
+    pub(crate) total_ms: f64,
+    pub(crate) decode_ms: f64,
+    pub(crate) opfs_write_ms: f64,
+    pub(crate) checksum_ms: f64,
+    pub(crate) overlap_ms: f64,
+    pub(crate) threaded: bool,
+    pub(crate) workers: usize,
 }
 
 pub(crate) fn create_extract_checksum(
@@ -201,7 +219,14 @@ impl ExtractHasher {
             });
         };
         let name_hint = output_path.file_name().and_then(|name| name.to_str());
-        let engine = StreamingVariantChecksums::new(algorithms, total_len, name_hint)?;
+        // Plan the checksum's own worker budget against the full op budget, independent of the
+        // extract's decode-threading decision (negotiate is pure, so this does not consume it). A
+        // lone small ROM still parallelizes its hashing as long as the op has spare threads.
+        let raw_hash_threads = context
+            .plan_threads(ThreadCapability::parallel(Some(algorithms.len().max(1))))
+            .effective_threads;
+        let engine =
+            StreamingVariantChecksums::new(algorithms, total_len, name_hint, raw_hash_threads)?;
         Ok(Self::Variants {
             engine,
             algorithms: algorithms.to_vec(),
@@ -240,6 +265,7 @@ impl ExtractHasher {
                         path: output_path.to_path_buf(),
                         values,
                         variants: Vec::new(),
+                        timing: None,
                     }),
                     ExtractChecksumTiming {
                         threaded: timing.threaded,
@@ -252,6 +278,7 @@ impl ExtractHasher {
                 let VariantOutput {
                     mut rows,
                     deferred_fix_header,
+                    raw_timing,
                 } = engine.finalize()?;
                 if let Some(deferred) = deferred_fix_header {
                     let mut file = File::open(output_path)?;
@@ -274,8 +301,13 @@ impl ExtractHasher {
                         path: output_path.to_path_buf(),
                         values,
                         variants: rows,
+                        timing: None,
                     }),
-                    ExtractChecksumTiming::default(),
+                    ExtractChecksumTiming {
+                        threaded: raw_timing.threaded,
+                        workers: raw_timing.workers,
+                        hash_busy_ns: raw_timing.hash_busy_ns,
+                    },
                 ))
             }
         }
@@ -297,7 +329,12 @@ pub(crate) fn attach_extract_checksum_details(
     let emitted = checksums
         .into_iter()
         .filter_map(|entry| {
-            build_extract_checksum_emitted_file_detail(&entry.path, entry.values, entry.variants)
+            build_extract_checksum_emitted_file_detail(
+                &entry.path,
+                entry.values,
+                entry.variants,
+                entry.timing,
+            )
         })
         .collect::<Vec<_>>();
     if !emitted.is_empty() {
@@ -311,6 +348,7 @@ fn build_extract_checksum_emitted_file_detail(
     path: &Path,
     checksums: BTreeMap<String, String>,
     variants: Vec<VariantRow>,
+    timing: Option<ExtractTiming>,
 ) -> Option<Value> {
     if checksums.is_empty() {
         return None;
@@ -329,6 +367,20 @@ fn build_extract_checksum_emitted_file_detail(
     entry.insert("file_name".to_string(), json!(file_name));
     entry.insert("size_bytes".to_string(), json!(metadata.len()));
     entry.insert("checksums".to_string(), json!(checksums));
+    if let Some(timing) = timing {
+        entry.insert(
+            "timing".to_string(),
+            json!({
+                "total_ms": timing.total_ms,
+                "decode_ms": timing.decode_ms,
+                "opfs_write_ms": timing.opfs_write_ms,
+                "checksum_ms": timing.checksum_ms,
+                "overlap_ms": timing.overlap_ms,
+                "threaded": timing.threaded,
+                "workers": timing.workers,
+            }),
+        );
+    }
     if !variants.is_empty() {
         let variant_rows = variants
             .into_iter()
@@ -491,6 +543,7 @@ impl<'a> ExtractChunkWriter<'a> {
                 path: output_path.to_path_buf(),
                 values: checksum.finalize()?,
                 variants: Vec::new(),
+                timing: None,
             });
         }
         Ok(checksums)

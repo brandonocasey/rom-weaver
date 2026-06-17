@@ -340,6 +340,7 @@ impl ContainerHandlerOperations for RvzContainerHandler {
                     path: plan.output_path,
                     values,
                     variants: Vec::new(),
+                    timing: None,
                 }],
             ),
             None => report,

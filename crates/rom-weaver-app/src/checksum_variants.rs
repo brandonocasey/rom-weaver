@@ -23,8 +23,16 @@ impl CliApp {
             .collect::<Vec<_>>();
         let file_len = fs::metadata(&request.source)?.len();
         let name_hint = request.source.file_name().and_then(|name| name.to_str());
-        let mut engine = StreamingVariantChecksums::new(&algorithms, file_len, name_hint)?;
         let execution = context.plan_threads(ThreadCapability::single_threaded());
+        // The standalone checksum-variants command keeps its single-threaded streaming pass; pass its
+        // resolved thread count (1) so the raw variant stays synchronous here. Parallelizing this path
+        // is a separate follow-up; the inline extract path is what spends spare threads on hashing.
+        let mut engine = StreamingVariantChecksums::new(
+            &algorithms,
+            file_len,
+            name_hint,
+            execution.effective_threads,
+        )?;
 
         let mut file = File::open(&request.source)?;
         let mut buffer = vec![0_u8; CHECKSUM_VARIANT_CHUNK_SIZE];
@@ -53,6 +61,7 @@ impl CliApp {
         let VariantOutput {
             mut rows,
             deferred_fix_header,
+            ..
         } = engine.finalize()?;
         if let Some(deferred) = deferred_fix_header {
             // The repair dependency exceeded the in-memory prefix cap; the file

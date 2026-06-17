@@ -138,6 +138,33 @@ impl StreamingChecksum {
         }
     }
 
+    /// Like [`new_with_context`](Self::new_with_context) but takes an explicit worker-thread budget
+    /// instead of negotiating one from an [`OperationContext`], so an inline-extract caller can spend
+    /// its already-negotiated budget on hashing even when the extract itself decodes single-threaded.
+    /// Falls back to the synchronous fan-out when `max_threads <= 1` or on the non-threaded wasm build.
+    pub fn new_parallel(algorithms: &[String], max_threads: usize) -> Result<Option<Self>> {
+        let algorithms = resolve_algorithms(algorithms)?;
+        if algorithms.is_empty() {
+            return Ok(None);
+        }
+        #[cfg(all(target_family = "wasm", not(rom_weaver_wasi_threads)))]
+        {
+            let _ = max_threads;
+            Ok(Some(Self::from_algorithms_sync(algorithms)))
+        }
+
+        #[cfg(any(not(target_family = "wasm"), rom_weaver_wasi_threads))]
+        {
+            if max_threads > 1
+                && let Some(checksum) =
+                    Self::try_from_algorithms_async(algorithms.clone(), max_threads)
+            {
+                return Ok(Some(checksum));
+            }
+            Ok(Some(Self::from_algorithms_sync(algorithms)))
+        }
+    }
+
     pub(super) fn from_algorithms_sync(algorithms: Vec<Algorithm>) -> Self {
         Self {
             inner: StreamingChecksumInner::Sync(

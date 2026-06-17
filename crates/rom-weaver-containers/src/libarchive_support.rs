@@ -38,8 +38,8 @@ use crate::{
     constants::{LIBARCHIVE_EXTRACT_IO_BUFFER_BYTES, PARALLEL_COORDINATOR_STACK_SIZE_BYTES},
     container_reads_source_on_main_thread,
     extract_support::{
-        ContainerProgressContext, ExtractChecksumTiming, ExtractHasher, ExtractedFileChecksum,
-        attach_extract_checksum_details, emit_container_step_progress,
+        ContainerProgressContext, ExtractChecksumTiming, ExtractHasher, ExtractTiming,
+        ExtractedFileChecksum, attach_extract_checksum_details, emit_container_step_progress,
         ensure_extract_output_available,
     },
 };
@@ -965,7 +965,7 @@ where
                         written_bytes = written_bytes.saturating_add(copied);
                         let finalize_at = SystemTime::now();
                         let (finished, checksum_timing) = hasher.finish_timed(&task.output_path)?;
-                        ExtractChecksumTimingSample {
+                        let timing = ExtractChecksumTimingSample {
                             format: format_name,
                             file: task.archive_name.as_str(),
                             bytes: copied,
@@ -976,8 +976,9 @@ where
                             total: entry_started.elapsed().unwrap_or_default(),
                             checksum: checksum_timing,
                         }
-                        .emit_trace();
-                        if let Some(entry) = finished {
+                        .finish();
+                        if let Some(mut entry) = finished {
+                            entry.timing = Some(timing);
                             output_checksums.push(entry);
                         }
                     }
@@ -1013,11 +1014,13 @@ struct ExtractChecksumTimingSample<'a> {
 }
 
 impl ExtractChecksumTimingSample<'_> {
-    fn emit_trace(&self) {
+    /// Compute the displayable wall-time split, emit the trace line, and return the timing so the
+    /// caller can attach it to the entry's report detail for the UI.
+    fn finish(self) -> ExtractTiming {
         // Microsecond-rounded milliseconds keep sub-millisecond chunks from collapsing to zero.
         let ms = |duration: Duration| (duration.as_secs_f64() * 1_000_000.0).round() / 1000.0;
         let decode_ms = ms(self.decode);
-        let write_ms = ms(self.write);
+        let opfs_write_ms = ms(self.write);
         // The checksum's own cost: the parallel worker hashing wall when threaded, otherwise the
         // inline per-chunk feed time measured on the extract thread.
         let checksum_ms = if self.checksum.threaded {
@@ -1029,17 +1032,18 @@ impl ExtractChecksumTimingSample<'_> {
         // hashes inline between reads, so it never overlaps (its cost is already serial in the total);
         // the worker-backed path overlaps up to the decode+write window, any remainder paid as drain.
         let overlap_ms = if self.checksum.threaded {
-            checksum_ms.min(decode_ms + write_ms)
+            checksum_ms.min(decode_ms + opfs_write_ms)
         } else {
             0.0
         };
+        let total_ms = ms(self.total);
         trace!(
             format = self.format,
             file = self.file,
             bytes = self.bytes,
-            total_ms = ms(self.total),
+            total_ms,
             decode_ms,
-            opfs_write_ms = write_ms,
+            opfs_write_ms,
             checksum_ms,
             checksum_feed_ms = ms(self.hash_feed),
             checksum_drain_ms = ms(self.drain),
@@ -1048,6 +1052,15 @@ impl ExtractChecksumTimingSample<'_> {
             workers = self.checksum.workers,
             "extract+checksum timing"
         );
+        ExtractTiming {
+            total_ms,
+            decode_ms,
+            opfs_write_ms,
+            checksum_ms,
+            overlap_ms,
+            threaded: self.checksum.threaded,
+            workers: self.checksum.workers,
+        }
     }
 }
 
