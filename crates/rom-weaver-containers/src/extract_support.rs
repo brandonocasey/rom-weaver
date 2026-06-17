@@ -10,7 +10,8 @@ use std::{
 
 use rayon::prelude::*;
 use rom_weaver_checksum::{
-    StreamingChecksum, StreamingVariantChecksums, VariantOutput, VariantRow, overlay_checksums,
+    IdentityPrefix, RomIdentity, StreamingChecksum, StreamingVariantChecksums, VariantOutput,
+    VariantRow, overlay_checksums,
 };
 use rom_weaver_core::{
     ContainerByteProgress, OperationContext, OperationFamily, OperationReport, OperationStatus,
@@ -152,6 +153,10 @@ pub(crate) struct ExtractedFileChecksum {
     /// single-file libarchive path). Surfaced in the report's `emitted_files` so the
     /// UI can show where the extract's time went. `None` on paths not yet instrumented.
     pub(crate) timing: Option<ExtractTiming>,
+    /// Console + optical medium, detected from the streamed output (no extra read).
+    /// Every producing path captures this via [`IdentityPrefix`] (or the variant
+    /// engine), so it is always populated; empty when nothing matched.
+    pub(crate) rom_identity: RomIdentity,
 }
 
 /// The wall-time split for one extracted entry, in milliseconds, surfaced to the UI.
@@ -190,12 +195,25 @@ pub(crate) struct ExtractChecksumTiming {
 /// the full streaming variant engine (when the output's total length is known),
 /// so archive extracts emit the same `checksum_variants` as the `checksum`
 /// command without a second read of the output.
+/// Detect a decoded output's identity from an [`IdentityPrefix`] using the output
+/// file's extension, mirroring how the file-based detection derives it.
+fn detect_emitted_identity(identity: &IdentityPrefix, output_path: &Path) -> RomIdentity {
+    let extension = output_path
+        .extension()
+        .map(|ext| format!(".{}", ext.to_string_lossy()));
+    identity.detect(extension.as_deref())
+}
+
 pub(crate) enum ExtractHasher {
     None,
-    Plain(StreamingChecksum),
+    Plain {
+        checksum: StreamingChecksum,
+        identity: IdentityPrefix,
+    },
     Variants {
         engine: StreamingVariantChecksums,
         algorithms: Vec<String>,
+        identity: IdentityPrefix,
     },
 }
 
@@ -214,7 +232,10 @@ impl ExtractHasher {
         }
         let Some(total_len) = total_len else {
             return Ok(match create_extract_checksum(context)? {
-                Some(checksum) => Self::Plain(checksum),
+                Some(checksum) => Self::Plain {
+                    checksum,
+                    identity: IdentityPrefix::new(),
+                },
                 None => Self::None,
             });
         };
@@ -230,14 +251,23 @@ impl ExtractHasher {
         Ok(Self::Variants {
             engine,
             algorithms: algorithms.to_vec(),
+            identity: IdentityPrefix::new(),
         })
     }
 
     pub(crate) fn update(&mut self, bytes: &[u8]) -> Result<()> {
         match self {
             Self::None => Ok(()),
-            Self::Plain(checksum) => checksum.update(bytes),
-            Self::Variants { engine, .. } => engine.update(bytes),
+            Self::Plain { checksum, identity } => {
+                identity.push(bytes);
+                checksum.update(bytes)
+            }
+            Self::Variants {
+                engine, identity, ..
+            } => {
+                identity.push(bytes);
+                engine.update(bytes)
+            }
         }
     }
 
@@ -258,7 +288,8 @@ impl ExtractHasher {
     ) -> Result<(Option<ExtractedFileChecksum>, ExtractChecksumTiming)> {
         match self {
             Self::None => Ok((None, ExtractChecksumTiming::default())),
-            Self::Plain(checksum) => {
+            Self::Plain { checksum, identity } => {
+                let rom_identity = detect_emitted_identity(&identity, output_path);
                 let (values, timing) = checksum.finalize_timed()?;
                 Ok((
                     Some(ExtractedFileChecksum {
@@ -266,6 +297,7 @@ impl ExtractHasher {
                         values,
                         variants: Vec::new(),
                         timing: None,
+                        rom_identity,
                     }),
                     ExtractChecksumTiming {
                         threaded: timing.threaded,
@@ -274,7 +306,12 @@ impl ExtractHasher {
                     },
                 ))
             }
-            Self::Variants { engine, algorithms } => {
+            Self::Variants {
+                engine,
+                algorithms,
+                identity,
+            } => {
+                let rom_identity = detect_emitted_identity(&identity, output_path);
                 let VariantOutput {
                     mut rows,
                     deferred_fix_header,
@@ -302,6 +339,7 @@ impl ExtractHasher {
                         values,
                         variants: rows,
                         timing: None,
+                        rom_identity,
                     }),
                     ExtractChecksumTiming {
                         threaded: raw_timing.threaded,
@@ -334,6 +372,7 @@ pub(crate) fn attach_extract_checksum_details(
                 entry.values,
                 entry.variants,
                 entry.timing,
+                entry.rom_identity,
             )
         })
         .collect::<Vec<_>>();
@@ -349,6 +388,7 @@ fn build_extract_checksum_emitted_file_detail(
     checksums: BTreeMap<String, String>,
     variants: Vec<VariantRow>,
     timing: Option<ExtractTiming>,
+    rom_identity: RomIdentity,
 ) -> Option<Value> {
     if checksums.is_empty() {
         return None;
@@ -367,6 +407,14 @@ fn build_extract_checksum_emitted_file_detail(
     entry.insert("file_name".to_string(), json!(file_name));
     entry.insert("size_bytes".to_string(), json!(metadata.len()));
     entry.insert("checksums".to_string(), json!(checksums));
+    // Console + optical medium of this decoded entry (no exact-title lookup), detected
+    // from the streamed output by the producing path — no extra read here.
+    if let Some(platform) = rom_identity.platform {
+        entry.insert("platform".to_string(), json!(platform));
+    }
+    if let Some(disc_format) = rom_identity.disc_format {
+        entry.insert("disc_format".to_string(), json!(disc_format.label()));
+    }
     if let Some(timing) = timing {
         entry.insert(
             "timing".to_string(),
@@ -451,6 +499,9 @@ pub(crate) struct ExtractChunkWriter<'a> {
     total_bytes: u64,
     writer: OrderedChunkWriter<BufWriter<File>>,
     checksum: Option<StreamingChecksum>,
+    /// Identity prefix captured from the decoded output for detection at finish (the
+    /// plain checksum here doesn't retain bytes). No extra read.
+    identity: IdentityPrefix,
     progress_bytes: AtomicU64,
     progress_bucket: AtomicU8,
 }
@@ -478,6 +529,7 @@ impl<'a> ExtractChunkWriter<'a> {
             total_bytes,
             writer,
             checksum,
+            identity: IdentityPrefix::new(),
             progress_bytes: AtomicU64::new(0),
             progress_bucket: AtomicU8::new(0),
         })
@@ -508,6 +560,7 @@ impl<'a> ExtractChunkWriter<'a> {
         // ordered writer below.
         if let Some(checksum) = self.checksum.as_mut() {
             checksum.update(&data)?;
+            self.identity.push(&data);
         }
         self.writer.write_chunk(ordered_index, data)?;
         if self.total_bytes > 0 {
@@ -539,11 +592,13 @@ impl<'a> ExtractChunkWriter<'a> {
         self.writer.finish()?;
         let mut checksums = Vec::new();
         if let Some(checksum) = self.checksum {
+            let rom_identity = detect_emitted_identity(&self.identity, output_path);
             checksums.push(ExtractedFileChecksum {
                 path: output_path.to_path_buf(),
                 values: checksum.finalize()?,
                 variants: Vec::new(),
                 timing: None,
+                rom_identity,
             });
         }
         Ok(checksums)

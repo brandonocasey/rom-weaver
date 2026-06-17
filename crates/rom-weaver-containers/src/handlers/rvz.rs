@@ -1,5 +1,11 @@
 use super::*;
+use rom_weaver_checksum::IdentityPrefix;
 use tracing::{debug, trace};
+
+/// `(bytes_written, optional per-file checksums, identity prefix)` from the RVZ
+/// extract copy loop — the identity prefix is fed the same decoded stream as the
+/// checksum so the caller can detect platform/medium without a second read.
+type RvzExtractOutput = (u64, Option<BTreeMap<String, String>>, IdentityPrefix);
 
 const RVZ_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&RVZ, NodFormat::Rvz);
 const RVZ_INITIAL_EXTRACT_PROGRESS_DIVISOR: u64 = 1000;
@@ -145,8 +151,11 @@ impl RvzContainerHandler {
         total_bytes: u64,
         context: &OperationContext,
         execution: &ThreadExecution,
-    ) -> Result<(u64, Option<BTreeMap<String, String>>)> {
+    ) -> Result<RvzExtractOutput> {
         let buffer_size = copy_progress_buffer_size(total_bytes);
+        // Identity detection is a separate consumer of the same decoded stream as the
+        // checksum — fed alongside it, no extra read.
+        let mut identity = IdentityPrefix::new();
 
         let mut bytes_written = 0_u64;
         let mut last_emitted_percent = -1.0_f32;
@@ -182,6 +191,7 @@ impl RvzContainerHandler {
         if first_bytes_read > 0
             && let Some(checksum) = checksum.as_mut()
         {
+            identity.push(&first_buffer[..first_bytes_read]);
             first_buffer.truncate(first_bytes_read);
             checksum.update_owned(first_buffer)?;
         }
@@ -195,6 +205,7 @@ impl RvzContainerHandler {
                 }
                 writer.write_all(&buffer[..bytes_read])?;
                 if let Some(checksum) = checksum.as_mut() {
+                    identity.push(&buffer[..bytes_read]);
                     buffer.truncate(bytes_read);
                     checksum.update_owned(buffer)?;
                 }
@@ -229,8 +240,8 @@ impl RvzContainerHandler {
         }
 
         Ok(match checksum {
-            Some(checksum) => (bytes_written, Some(checksum.finalize()?)),
-            None => (bytes_written, None),
+            Some(checksum) => (bytes_written, Some(checksum.finalize()?), identity),
+            None => (bytes_written, None, identity),
         })
     }
 
@@ -316,7 +327,7 @@ impl ContainerHandlerOperations for RvzContainerHandler {
             output_file.seek(SeekFrom::Start(0))?;
         }
         let mut output = BufWriter::new(output_file);
-        let (bytes_written, checksums) = self.copy_extract_with_progress(
+        let (bytes_written, checksums, identity) = self.copy_extract_with_progress(
             &mut plan.disc,
             &mut output,
             plan.disc_size,
@@ -324,6 +335,12 @@ impl ContainerHandlerOperations for RvzContainerHandler {
             &plan.execution,
         )?;
         output.flush()?;
+        let rom_identity = identity.detect(
+            plan.output_path
+                .extension()
+                .map(|ext| format!(".{}", ext.to_string_lossy()))
+                .as_deref(),
+        );
 
         let report = RVZ_NOD_CORE.extracted_report(
             &request.source,
@@ -341,6 +358,7 @@ impl ContainerHandlerOperations for RvzContainerHandler {
                     values,
                     variants: Vec::new(),
                     timing: None,
+                    rom_identity,
                 }],
             ),
             None => report,

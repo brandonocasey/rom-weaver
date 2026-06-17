@@ -20,8 +20,8 @@ use rom_weaver_checksum::rom_headers::{
     SNES_COPIER_HEADER_MODULUS, StripHeaderResult,
 };
 use rom_weaver_checksum::{
-    ChecksumProgress, NativeChecksumEngine, StreamingVariantChecksums, VariantOutput, VariantRow,
-    checksum_file_values, overlay_checksums, supported_algorithms,
+    ChecksumProgress, IdentityPrefix, NativeChecksumEngine, StreamingVariantChecksums,
+    VariantOutput, VariantRow, checksum_file_values, overlay_checksums, supported_algorithms,
 };
 use rom_weaver_containers::{
     CompressFormatRecommendation, ContainerRegistry, extract_only_create_validation_message,

@@ -277,7 +277,48 @@ impl CliApp {
                 report.label
             );
         }
+        if !variants_enabled {
+            // The variant engine already detected identity from the streamed prefix
+            // (no extra read); only the range/plain path needs the fallback read.
+            Self::attach_rom_identity_details(&mut report, &request.source);
+        }
         Self::cleanup_temp_paths(&temp_paths);
         self.finish("checksum", report)
+    }
+
+    /// Augment a succeeded checksum report's `details` with the resolved source's
+    /// console + optical medium (a bounded prefix read; no exact-title lookup).
+    /// The resolved source is decoded bytes — a bare ROM or an extracted track —
+    /// so prefix-based detection sees real header/system-area data.
+    pub(super) fn attach_rom_identity_details(
+        report: &mut OperationReport,
+        source: &std::path::Path,
+    ) {
+        if report.status != OperationStatus::Succeeded {
+            return;
+        }
+        let identity = rom_weaver_checksum::detect_rom_identity_for_path(source);
+        if identity.is_empty() {
+            return;
+        }
+        let mut details = match report.details.take() {
+            Some(serde_json::Value::Object(map)) => map,
+            // Checksum details are always an object; leave anything else untouched.
+            Some(other) => {
+                report.details = Some(other);
+                return;
+            }
+            None => serde_json::Map::new(),
+        };
+        if let Some(platform) = identity.platform {
+            details.insert("platform".to_string(), serde_json::json!(platform));
+        }
+        if let Some(disc_format) = identity.disc_format {
+            details.insert(
+                "disc_format".to_string(),
+                serde_json::json!(disc_format.label()),
+            );
+        }
+        report.details = Some(serde_json::Value::Object(details));
     }
 }

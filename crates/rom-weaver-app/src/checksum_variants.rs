@@ -34,6 +34,9 @@ impl CliApp {
             execution.effective_threads,
         )?;
 
+        // Identity detection is a separate stream consumer fed the same bytes as the
+        // variant engine — neither embeds the other. No extra read.
+        let mut identity = IdentityPrefix::new();
         let mut file = File::open(&request.source)?;
         let mut buffer = vec![0_u8; CHECKSUM_VARIANT_CHUNK_SIZE];
         let mut processed = 0_u64;
@@ -45,6 +48,7 @@ impl CliApp {
                 break;
             }
             engine.update(&buffer[..read])?;
+            identity.push(&buffer[..read]);
             processed = processed.saturating_add(read as u64);
             Self::emit_checksum_variant_progress(
                 processed,
@@ -63,6 +67,11 @@ impl CliApp {
             deferred_fix_header,
             ..
         } = engine.finalize()?;
+        let extension = request
+            .source
+            .extension()
+            .map(|ext| format!(".{}", ext.to_string_lossy()));
+        let rom_identity = identity.detect(extension.as_deref());
         if let Some(deferred) = deferred_fix_header {
             // The repair dependency exceeded the in-memory prefix cap; the file
             // is on disk, so apply the overlay in one extra read to finish it.
@@ -100,10 +109,19 @@ impl CliApp {
             Some(100.0),
             Some(execution),
         );
-        report.details = Some(json!({
+        let mut details = json!({
             "checksums": primary_checksums,
             "checksum_variants": rows_json,
-        }));
+        });
+        if let Some(map) = details.as_object_mut() {
+            if let Some(platform) = rom_identity.platform {
+                map.insert("platform".to_string(), json!(platform));
+            }
+            if let Some(disc_format) = rom_identity.disc_format {
+                map.insert("disc_format".to_string(), json!(disc_format.label()));
+            }
+        }
+        report.details = Some(details);
         Ok(report)
     }
 
