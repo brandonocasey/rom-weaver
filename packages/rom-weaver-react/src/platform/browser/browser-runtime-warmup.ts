@@ -7,22 +7,33 @@ import { browserRuntime } from "./workflow-runtime.ts";
 const SCRATCH_DIRECTORY_NAME = ".rom-weaver-opfs-scratch";
 const WARMUP_ARTIFACT_MARKER = "rom-weaver-warmup";
 
+// Checksums the real first ROM-load op computes inline during extract (see `extractChecksumAlgorithms`
+// in workflow-runtime-archive.ts). The warmup requests them too so the inline StreamingChecksum decode
+// path is warm; measured on a prod build, that path is ~25ms of the first op and is NOT warmed by a
+// plain extract (`options: {}`).
+const WARMUP_CHECKSUM_ALGORITHMS = ["crc32", "md5", "sha1"];
+
 type OpfsDirectoryEntriesHandle = FileSystemDirectoryHandle & {
   entries: () => AsyncIterableIterator<[string, FileSystemHandle]>;
 };
 
-// A tiny pre-generated CHD CD image (cue + bin, 355 bytes) embedded as base64. It is used only to run
-// one silent end-to-end extraction on page load so the decode-path JIT, OPFS input/output sync-access
-// handles, and the scratch/finalize paths are warm before the user's first real extraction. Profiling
-// showed the first extract of a session pays ~20ms of this cold-path cost that runner init alone does
-// not cover; pre-paying it here makes the first real extract start at steady state.
-const WARMUP_CHD_BASE64 =
-  "TUNvbXBySEQAAAB8AAAABWNkbHpjZHpsY2RmbAAAAAAAAAAAAACZAAAAAAAAAAFJAAAAAAAAAHwAAEyAAAAJkJdNQG3EBHyGraS7aIcpQFWO3F74ZGlORPPp" +
-  "cYztSAcnZ/ftE4Tx2V8AAAAAAAAAAAAAAAAAAAAAAAAAAENIVDIBAABVAAAAAAAAAABUUkFDSzoxIFRZUEU6TU9ERTEgU1VCVFlQRTpOT05FIEZSQU1FUzox" +
-  "NiBQUkVHQVA6MCBQR1RZUEU6TU9ERTEgUEdTVUI6Tk9ORSBQT1NUR0FQOjAAAAAz7cGxCQAgDAAwZ3/xCCcpqIX+f4x/SJKsWHHnHpWnNwAAAAAAAAAAAAAA" +
-  "AAAAAAAAgP89Y2AYBaNg5AIA//h5GAAJL3YAAAAAAAA1h//4eRgBCS8dAAAAAAAAOCNjYBgFo2DkAgAAAAAKAAAAAADhAPoGAAAAARERCn+By6e8mA==";
+// A tiny deflate-compressed zip (one entry, 426 bytes) embedded as base64. It is used to run one silent
+// end-to-end extract+checksum on page load so every per-op code path is warm before the user's first
+// real op. The fixture is a zip-with-checksums rather than a CHD because the common first op is a
+// dropped ROM archive, and a prod-build measurement showed the first archive extract+checksum pays
+// ~50ms of one-time cost split roughly evenly between the shared thread-pool/OPFS/scratch spawn (which
+// any extraction warms) and the libarchive/DEFLATE + inline-checksum JIT (which only an archive extract
+// with checksums warms). A CHD warmup covered only the former half; this covers both, and being the
+// lighter extract it also finishes sooner, narrowing the window where a quick first drop beats it. A
+// disc-image (CHD) first op is rarer and still gets the shared-spawn half from this archive warmup.
+const WARMUP_ZIP_BASE64 =
+  "UEsDBBQAAAAIAHV70FxlzFsPNAEAAAAQAAAKAAAAd2FybXVwLmJpbuM2CK2af+Qln3FE7aLjbwTNohuWnnovYhnXvOLsJ3GbxLbVF75K2ad0rrv8Q9YpvWf" +
+  "jtd8Krln9W27+U/bInbT9DqOad8HUXfdZNP2KZ+x9xK4TWDb7wFMu/ZDKeYdf8BqF1yw89lrANKp+ycl3whaxTcvPfBSzTmhddf6LpF1yx9pL32Uc07o3XP" +
+  "0l75LZt/nGXyX3nInbbjOoeuVP2XmPWcO3aPqeh2zaAaWz9j/h1AuumHvoOY9hWPWCo6/4TSLrFp94K2Qe07js9AdRq/iWlec+S9gmta+5+E3aIbVr/ZWfcs" +
+  "4ZvZuu/1F0y56w9dZ/Fc+8yTvuMqn7FE7b/YBVy79k5r7HHLpB5XMOPuMe9f+o/0f9P+r/Uf+P+n8E+t/RydllFI/iUTyKR/EoHsUjCwMAUEsBAhQDFAAA" +
+  "AAgAdXvQXGXMWw80AQAAABAAAAoAAAAAAAAAAAAAAIABAAAAAHdhcm11cC5iaW5QSwUGAAAAAAEAAQA4AAAAXAEAAAAA";
 
-const WARMUP_CHD_FILE_NAME = "rom-weaver-warmup.chd";
+const WARMUP_ZIP_FILE_NAME = "rom-weaver-warmup.zip";
 
 let warmupExtractionStarted = false;
 
@@ -37,9 +48,9 @@ const decodeBase64ToBytes = (value: string): Uint8Array<ArrayBuffer> => {
   return bytes;
 };
 
-const createWarmupChdFile = (): File | null => {
+const createWarmupZipFile = (): File | null => {
   if (typeof File !== "function" || typeof atob !== "function") return null;
-  return new File([decodeBase64ToBytes(WARMUP_CHD_BASE64)], WARMUP_CHD_FILE_NAME);
+  return new File([decodeBase64ToBytes(WARMUP_ZIP_BASE64)], WARMUP_ZIP_FILE_NAME);
 };
 
 const cleanupWarmupOutputs = async (outputs: ReadonlyArray<{ cleanup?: () => Promise<void> | void }>) => {
@@ -48,11 +59,11 @@ const cleanupWarmupOutputs = async (outputs: ReadonlyArray<{ cleanup?: () => Pro
   }
 };
 
-// Removes warmup artifacts (staged input + extracted/cue outputs, all named with the warmup marker)
-// left in OPFS by a previous page load, while preserving the warm scratch pool. The current session's
-// staged input stays locked by the live worker pool and cannot be removed until the next load — this
-// runs at the start of warmup so each session cleans the prior session's now-unlocked leftovers,
-// bounding accumulation to a single ~700 byte generation.
+// Removes warmup artifacts (staged input + extracted outputs, all named with the warmup marker) left in
+// OPFS by a previous page load, while preserving the warm scratch pool. The current session's staged
+// input stays locked by the live worker pool and cannot be removed until the next load — this runs at
+// the start of warmup so each session cleans the prior session's now-unlocked leftovers, bounding
+// accumulation to a single generation.
 const sweepWarmupArtifacts = async (): Promise<void> => {
   const root = await getManagedOpfsDirectory().catch(() => null);
   if (!root) return;
@@ -72,25 +83,28 @@ const sweepWarmupArtifacts = async (): Promise<void> => {
   await sweep(root).catch(() => undefined);
 };
 
-// Runs one tiny CHD list + extract end-to-end so every per-extraction code path is warm. Best-effort
-// only: it is single-flight, swallows all errors, and sweeps prior-load warmup artifacts so warmup can
-// never surface to the user or grow OPFS storage without bound.
+// Runs one tiny zip list + extract end-to-end, computing the standard checksums inline, so every
+// per-extraction code path (decode JIT, inline checksum, OPFS input/output sync-access handles, the
+// scratch/finalize paths, and the shared worker pool) is warm before the user's first real op.
+// Best-effort only: it is single-flight, swallows all errors, and sweeps prior-load warmup artifacts so
+// warmup can never surface to the user or grow OPFS storage without bound.
 const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
   if (warmupExtractionStarted) return;
   warmupExtractionStarted = true;
   const compression = browserRuntime.compression;
   if (!compression?.extract) return;
-  const file = createWarmupChdFile();
+  const file = createWarmupZipFile();
   if (!file) return;
   await sweepWarmupArtifacts();
   const source = { fileName: file.name, source: file };
+  const options = { extractChecksumAlgorithms: [...WARMUP_CHECKSUM_ALGORITHMS] };
   logger.trace("warmup extraction start");
   try {
-    const listed = await compression.list?.({ format: "chd", options: {}, source });
+    const listed = await compression.list?.({ format: "zip", options, source });
     const entries = (listed?.entries || [])
       .map((entry) => entry.filename)
       .filter((entry): entry is string => typeof entry === "string" && !!entry);
-    const result = await compression.extract({ entries, format: "chd", options: {}, source });
+    const result = await compression.extract({ entries, format: "zip", options, source });
     await cleanupWarmupOutputs(result?.outputs || []);
     logger.trace("warmup extraction done", { entryCount: entries.length });
   } catch (error) {
@@ -98,8 +112,8 @@ const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
       message: error instanceof Error ? error.message : String(error),
     });
   }
-  // #1: still inside the idle warmup task, recycle the heap-dirtied worker to a fresh clean-heap one so
-  // the user's first real op starts clean and never pays an OOM-triggered worker recycle on the critical
+  // Still inside the idle warmup task, recycle the heap-dirtied worker to a fresh clean-heap one so the
+  // user's first real op starts clean and never pays an OOM-triggered worker recycle on the critical
   // path. Self-guards (no-op if disabled or a run is active). Best-effort, like the warmup itself.
   await recycleWarmRomWeaverRunner().catch((error) => {
     logger.trace("warmup runner recycle skipped", {
@@ -109,7 +123,10 @@ const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
 };
 
 // Defers the warmup extraction to browser idle time so it never competes with initial render or the
-// runner init it follows. Falls back to a macrotask when requestIdleCallback is unavailable.
+// runner init it follows. Falls back to a macrotask when requestIdleCallback is unavailable. Note: the
+// warmup is chained off preload completion (wasm compile + runner warm), by which point the main thread
+// is already idle, so the timeout below is a backstop, not the binding constraint — a measured sweep of
+// 50/250/2000ms showed no effect on when warmup starts.
 const scheduleBrowserRuntimeWarmupExtraction = (): void => {
   if (warmupExtractionStarted) return;
   const run = () => {
