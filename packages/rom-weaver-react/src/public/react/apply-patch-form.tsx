@@ -9,7 +9,6 @@ import { getErrorCode } from "../../presentation/errors.ts";
 import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
 import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime-types.ts";
-import { probeApplyArchiveHasRom } from "./apply-archive-probe.ts";
 import { createStageSettingsKey } from "./apply-session-settings.ts";
 import type { StagedInputInfo } from "./apply-session-types.ts";
 import { ApplyWorkflowFormView } from "./apply-workflow-form-view.tsx";
@@ -30,7 +29,7 @@ import type {
   InternalApplyPatchFormProps,
 } from "./public-types.ts";
 import { toApplyWorkflowSettings, useApplySettings, useRomWeaverAssetBaseUrl } from "./settings-context.tsx";
-import { routeByTypeProbed } from "./unified-drop-routing.ts";
+import { useUnifiedApplyDrop } from "./use-unified-apply-drop.ts";
 import { createWorkflowFormError, getReactBinarySourceFileName, toReactProgressEvent } from "./workflow-adapters.ts";
 import { usePageDropForwarder } from "./workflow-form-effects.ts";
 import { createReactWorkflowId, formatChecksumTiming } from "./workflow-form-utils.ts";
@@ -1305,19 +1304,17 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   const resolvedUiController = controllers?.ui || localUiController;
   const resolvedStackController = controllers?.patchStack || localStackController;
 
-  // Forward a page-level drop (dragging anywhere on the page) to the unified
-  // apply routing so the whole tab is a drop target, not just the dropzone box.
+  // Unified drop orchestration shared by the in-tab dropzone and the page-wide
+  // forwarder: bare files stage immediately, archives show an instant placeholder
+  // until their ROM-vs-patch bucket is classified.
+  const { onDrop: handleUnifiedDrop, pendingDrops } = useUnifiedApplyDrop(resolvedUiController);
+
+  // Forward a page-level drop (dragging anywhere on the page) to the same unified
+  // drop handler so the whole tab is a drop target, not just the dropzone box.
   const handledPageDropIdRef = useRef<number | null>(null);
   usePageDropForwarder(
     props.pageDrop,
-    (files, isCancelled) => {
-      // Same classification/routing the in-tab unified drop surface uses.
-      void routeByTypeProbed(files, probeApplyArchiveHasRom).then(({ inputs, patches }) => {
-        if (isCancelled()) return;
-        if (inputs.length) resolvedUiController.provideRomInputFiles?.(inputs);
-        if (patches.length) resolvedUiController.providePatchInputFiles?.(patches);
-      });
-    },
+    (files, isCancelled) => handleUnifiedDrop(files, isCancelled),
     handledPageDropIdRef,
   );
 
@@ -1355,11 +1352,13 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           ui: resolvedUiController,
         }}
         onTrace={emitApplyFormInputTrace}
+        onUnifiedDrop={handleUnifiedDrop}
         patchEnablement={{
           disabledIds: disabledPatchIds,
           getPatchIds: () => getBinarySourceListStableIds(currentPatchesRef.current),
           onToggle: togglePatchEnabled,
         }}
+        pendingDrops={pendingDrops}
         startup={startup}
       />
       {candidateSelectionDialog}

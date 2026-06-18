@@ -3,10 +3,9 @@ import { useEffect, useSyncExternalStore } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { createTiming, formatTiming } from "../../storage/shared/timing.ts";
-import { probeApplyArchiveHasRom } from "./apply-archive-probe.ts";
 import { ApplyPatchListStep } from "./apply-patch-list-step.tsx";
 import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./components/ds/compress-panel.tsx";
-import { Notice } from "./components/ds/feedback.tsx";
+import { FileProgress, Notice } from "./components/ds/feedback.tsx";
 import { useFlatTransitionFlag } from "./components/ds/flat-transition.ts";
 import { InfoPopover, NeedsInput, StepSection } from "./components/ds/layout.tsx";
 import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
@@ -30,7 +29,7 @@ import type { PatchStackItemState } from "./patcher-presentation.ts";
 import { ArchiveDialog as SharedArchiveDialog } from "./patcher-react-shared.tsx";
 import type { NoticeState, PatcherSectionNoticeKey, RomInputRowState } from "./patcher-ui-state.ts";
 import { useUiLocalizer } from "./settings-context.tsx";
-import { routeByTypeProbed } from "./unified-drop-routing.ts";
+import type { PendingDrop } from "./use-unified-apply-drop.ts";
 import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./workflow-run-hooks.ts";
 
 /**
@@ -372,7 +371,9 @@ type PatchEnablement = {
 
 function ApplyWorkflowFormView({
   controllers,
+  onUnifiedDrop,
   patchEnablement,
+  pendingDrops = [],
   startup = { message: "", status: "ready" },
 }: {
   controllers: {
@@ -383,7 +384,9 @@ function ApplyWorkflowFormView({
     dialog?: DialogController;
   };
   onTrace?: (message: string, details?: Record<string, unknown>) => void;
+  onUnifiedDrop?: (files: File[]) => void;
   patchEnablement?: PatchEnablement;
+  pendingDrops?: PendingDrop[];
   startup?: StartupState;
 }) {
   const uiController = controllers.ui || inertUiController;
@@ -452,19 +455,16 @@ function ApplyWorkflowFormView({
   const compressHeaderFormat = getOutputCompressionFormatLabel(outputState.compressionFormat, outputState.options);
   const compressionTypeOptions = createCompressionTypeOptions(outputState.options, "none");
 
-  // Combined drop surface (--rom-filter + --patch-filter): ROMs → the ROM
-  // bucket, patches → the patch bucket, and each archive is probed for a ROM —
-  // a ROM archive is an input (embedded patches are auto-discovered), one
-  // without a ROM is a patch container (see routeByTypeProbed).
-  const handleUnifiedDrop = (files: File[]) => {
-    void routeByTypeProbed(files, probeApplyArchiveHasRom).then(({ inputs, patches: patchFiles }) => {
-      if (inputs.length) uiController.provideRomInputFiles?.(inputs);
-      if (patchFiles.length) uiController.providePatchInputFiles?.(patchFiles);
-    });
-  };
+  // Combined drop surface (--rom-filter + --patch-filter): the parent's unified
+  // drop handler stages bare files immediately and shows an "identifying"
+  // placeholder per archive until its ROM-vs-patch bucket is classified.
+  const handleUnifiedDrop = onUnifiedDrop ?? (() => undefined);
   // The empty bench fills (or clears) inside a flat crossfade — the 0x01 hero
-  // shrinking into the add-row otherwise snaps.
-  const workflowEmpty = useFlatTransitionFlag(romInputs.length === 0 && patches.length === 0);
+  // shrinking into the add-row otherwise snaps. A pending placeholder also counts
+  // as "not empty" so the hero shrinks the instant something is dropped.
+  const workflowEmpty = useFlatTransitionFlag(
+    romInputs.length === 0 && patches.length === 0 && pendingDrops.length === 0,
+  );
   // "Needs input" directives forward to the 0x01 unified picker.
   const openUnifiedPicker = () => document.getElementById("rom-weaver-input-file-unified")?.click();
   // Each section keeps its empty fixture whenever its own list is empty — not
@@ -516,6 +516,20 @@ function ApplyWorkflowFormView({
         romHint={`roms (${ROM_INPUT_HINT})`}
         supported={APPLY_SUPPORTED_FILES}
       />
+      {pendingDrops.length ? (
+        <div className="cards workflow-file-list" id="rom-weaver-pending-drops">
+          {pendingDrops.map((drop) => (
+            <div className={drop.leaving ? "rw-pending rw-pending-leaving" : "rw-pending"} key={drop.id}>
+              <FileProgress
+                id={`rom-weaver-pending-${drop.id}`}
+                indeterminate
+                label={`${drop.name} — identifying…`}
+                value="…"
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
       {workflowEmpty ? (
         <>
           <StepSection num="0x02" title="ROM">
