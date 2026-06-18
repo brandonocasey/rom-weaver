@@ -215,9 +215,18 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
     const stage = this.createInitialSource("patch", patch, patchIndex);
     stage.outputLabel = createPatchOutputLabel(stage.state.fileName);
     this.patches.push(stage);
-    const stagedPromise = this.stageSource(stage).catch((error) => {
-      throw toRomWeaverError(error);
-    });
+    const stagedPromise = this.stageSource(stage)
+      .then((staged) => {
+        // The patch is extracted, but its addPatch mutation is queued behind the ROM's setInput
+        // (mutations run serially). Until that mutation runs and validation begins, the row would keep
+        // showing the patch's last staging label ("checking nested archives in extracted outputs"),
+        // so replace it with an accurate "waiting on the ROM" status while the input is still loading.
+        this.emitPatchAwaitingInputProgress(staged);
+        return staged;
+      })
+      .catch((error) => {
+        throw toRomWeaverError(error);
+      });
     void stagedPromise.catch(() => undefined);
     return this.mutate("addPatch", async () => {
       try {
@@ -927,9 +936,34 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
     return this.getPreparedInputAssets().filter((asset) => asset.patchable);
   }
 
+  /** Update a blocked patch's row to say it's waiting on the ROM, replacing the stale staging label
+   * ("checking nested archives in extracted outputs") that lingers while the input is still loading. */
+  private emitPatchAwaitingInputProgress(stage: StagedSource<TSource>): void {
+    const status = this.inputSession?.view.state.status;
+    // Only when a ROM is actually being prepared — if none was provided the row's normal "target
+    // selection required" warning is the right message, not a "waiting" one.
+    if (status !== "loading") return;
+    this.emitProgress({
+      details: {
+        fileName: stage.state.fileName,
+        order: stage.state.order,
+        sourceId: stage.state.id,
+      },
+      hasProgress: true,
+      id: `${this.id}:${stage.state.id}:patch-awaiting-input`,
+      indeterminate: true,
+      label: "Waiting for the ROM to finish so the patch can be verified…",
+      percent: null,
+      role: "patch",
+      stage: "verify",
+      workflow: "apply",
+    });
+  }
+
   private async evaluatePatchReadiness(stage: StagedSource<TSource>): Promise<boolean> {
     return evaluateApplyPatchReadiness(stage, {
       getPatchableInputAssets: () => this.getPatchableInputAssets(),
+      notifyAwaitingInputTarget: (patchStage) => this.emitPatchAwaitingInputProgress(patchStage),
       parsePatch: (patchStage) => this.parsePatch(patchStage),
       prepareSelectedSource: (patchStage) => this.prepareSelectedSource(patchStage),
       pushWarning: (patchStage, error) => this.pushWarning(patchStage, error),

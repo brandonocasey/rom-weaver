@@ -5,6 +5,10 @@ import { getInputAssetChecksums } from "./staged-source-checksums.ts";
 
 type PatchReadinessAdapters<TSource> = {
   getPatchableInputAssets: () => InputAsset[];
+  /** Invoked when the patch is staged and parsed but has no ROM to verify against yet (the input is
+   * still being prepared). Lets the row replace its lingering staging label with a "waiting on the
+   * ROM" status instead of the misleading "checking nested archives in extracted outputs". */
+  notifyAwaitingInputTarget?: (stage: StagedSource<TSource>) => void;
   parsePatch: (stage: StagedSource<TSource>) => Promise<void>;
   prepareSelectedSource: (stage: StagedSource<TSource>) => Promise<void>;
   pushWarning: (
@@ -184,6 +188,9 @@ const evaluateApplyPatchReadiness = async <TSource>(
   if (!(assets.length && stage.parsedPatch)) {
     clearApplyPatchTarget(stage);
     stage.state.status = "needsSelection";
+    // The patch itself is fully prepared — it's only blocked because no ROM is ready to verify
+    // against yet. Surface that explicitly so the row stops showing its stale extract label.
+    if (!assets.length && stage.parsedPatch && stage.preparedPatchFile) adapters.notifyAwaitingInputTarget?.(stage);
     return previousStatus !== stage.state.status;
   }
   try {
