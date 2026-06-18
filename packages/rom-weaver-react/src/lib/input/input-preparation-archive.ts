@@ -237,13 +237,17 @@ const listCompressionEntries = async (
   return result.entries || [];
 };
 
-// Memoize entry listings per (archive file, filter + overrides). One input load issues several list
-// passes over the same staged archive — chd-split detection, disc-group naming, and the limit
-// preflight all re-enumerate it — and each is a full worker round-trip that returns identical entries
-// (the archive is immutable). Keyed on the PatchFileInstance object so a *different* staged copy (e.g.
-// the drop-routing probe's transient copy) is never conflated with the prep copy. Parity-safe: listing
-// is a pure read that never affects extracted bytes. A transient failure is evicted so a retry re-lists.
+// Memoize entry listings per (source bytes, filter + overrides). One input load enumerates the same
+// archive several times — the drop-routing probe classifies it, then chd-split detection, disc-group
+// naming, and the limit preflight each re-list it — and every pass is a full worker round-trip that
+// returns identical entries (the archive is immutable). Key on the underlying File/Blob (`_file`) when
+// present so the probe's listing and the prep's descent share one result even though they wrap the
+// dropped file in different PatchFileInstances; fall back to the instance when there is no shared
+// blob. Parity-safe: listing is a pure read that never affects extracted bytes. A transient failure is
+// evicted so a retry re-lists.
 const listEntryResultCache = new WeakMap<object, Map<string, ReturnType<typeof computeListCompressionEntryResult>>>();
+
+const getListEntryCacheKeyObject = (file: PatchFileInstance): object => (file as { _file?: object })._file ?? file;
 
 const listCompressionEntryResult = (
   file: PatchFileInstance,
@@ -252,10 +256,11 @@ const listCompressionEntryResult = (
   kindFilter: CompressionEntryKindFilter = {},
   overrides: CompressionExtractOverrides = {},
 ): ReturnType<typeof computeListCompressionEntryResult> => {
-  let perFile = listEntryResultCache.get(file);
+  const keyObject = getListEntryCacheKeyObject(file);
+  let perFile = listEntryResultCache.get(keyObject);
   if (!perFile) {
     perFile = new Map();
-    listEntryResultCache.set(file, perFile);
+    listEntryResultCache.set(keyObject, perFile);
   }
   const cacheKey = `${!!kindFilter.romFilter}|${!!kindFilter.patchFilter}|${JSON.stringify(overrides ?? {})}`;
   const existing = perFile.get(cacheKey);
