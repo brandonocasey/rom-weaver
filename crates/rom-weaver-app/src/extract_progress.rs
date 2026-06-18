@@ -80,13 +80,11 @@ impl CliApp {
         // ROM input bucket so an ambiguous drop still lands somewhere sensible.
         let is_rom = has_rom || !has_patch;
         // A bare disc image / ROM source resolves its platform from a bounded prefix read of the
-        // source itself. For an archive that read sees only the container header, so when it comes
-        // back empty, fall back to reading a bounded prefix of the single ROM payload INSIDE the
-        // archive — giving the same early platform tag without waiting for the full extract.
-        let mut identity = rom_weaver_checksum::detect_rom_identity_for_path(source);
-        if identity.is_empty() {
-            identity = self.detect_archive_payload_identity(source, format, ignore_common_files);
-        }
+        // source itself — cheap, no decode. We deliberately do NOT decode a prefix of the inner ROM
+        // payload for archives here: that duplicated decode work ahead of the real extraction and
+        // measurably slowed every extract, for only a slightly-earlier platform tag (archives get
+        // their identity at completion as before).
+        let identity = rom_weaver_checksum::detect_rom_identity_for_path(source);
         let mut manifest = Map::new();
         manifest.insert("format".to_string(), json!(format));
         manifest.insert("is_rom".to_string(), json!(is_rom));
@@ -114,77 +112,6 @@ impl CliApp {
             status: OperationStatus::Running,
             ..ProgressEvent::from_thread_execution(None)
         });
-    }
-
-    /// Detect the platform identity of the single ROM payload inside a libarchive-backed container
-    /// (zip/7z/rar/tar/…) by reading a bounded prefix of just that entry — no full extraction. Used
-    /// for the early `probe-manifest` so an archived ROM/disc shows its platform tag immediately,
-    /// matching a bare dropped image. Returns an empty identity (handled at completion as before)
-    /// when the container is not libarchive-backed (chd/rvz/… error on listing), the payload is
-    /// ambiguous (more than one ROM entry → a later selection prompt owns it), or the read fails.
-    fn detect_archive_payload_identity(
-        &self,
-        source: &Path,
-        format_name: &str,
-        ignore_common_files: bool,
-    ) -> rom_weaver_checksum::RomIdentity {
-        use std::io::Read;
-        let entries = match list_regular_archive_file_entries(source, format_name) {
-            Ok(entries) => entries,
-            Err(error) => {
-                trace!(
-                    source = %source.display(),
-                    %error,
-                    "probe manifest: payload listing unavailable; leaving identity for completion"
-                );
-                return rom_weaver_checksum::RomIdentity::default();
-            }
-        };
-        let mut rom_payloads = entries.into_iter().filter(|entry| {
-            !(ignore_common_files && should_ignore_common_container_file(&entry.name))
-                && is_rom_filter_candidate_name(&entry.name)
-        });
-        // Only a single unambiguous ROM payload gets early identity; multiple candidates are left
-        // for the interactive selection that resolves which ROM the user keeps.
-        let Some(payload) = rom_payloads.next() else {
-            return rom_weaver_checksum::RomIdentity::default();
-        };
-        if rom_payloads.next().is_some() {
-            return rom_weaver_checksum::RomIdentity::default();
-        }
-        let extension = std::path::Path::new(&payload.name)
-            .extension()
-            .map(|ext| format!(".{}", ext.to_string_lossy()));
-        // `total_len` only steers the CD-vs-DVD medium label, so the entry's full size matters even
-        // though we read only the leading prefix.
-        let total_len = payload.size.unwrap_or(0);
-        let prefix = with_regular_archive_file_entry_reader(
-            source,
-            format_name,
-            payload.index,
-            &payload.name,
-            |reader| {
-                let mut prefix = Vec::new();
-                reader
-                    .take(rom_weaver_checksum::DETECT_PREFIX_BYTES as u64)
-                    .read_to_end(&mut prefix)?;
-                Ok(prefix)
-            },
-        );
-        match prefix {
-            Ok(prefix) => {
-                rom_weaver_checksum::detect_rom_identity(&prefix, total_len, extension.as_deref())
-            }
-            Err(error) => {
-                trace!(
-                    source = %source.display(),
-                    payload = %payload.name,
-                    %error,
-                    "probe manifest: payload prefix read failed; leaving identity for completion"
-                );
-                rom_weaver_checksum::RomIdentity::default()
-            }
-        }
     }
 
     /// Emits a structured per-level extract "step" event so the UI can render each descended level

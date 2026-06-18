@@ -1063,9 +1063,9 @@ fn extract_emits_early_probe_manifest_for_rom_archive() {
         .find(|entry| entry["file_name"] == "game.nes")
         .expect("rom entry present in manifest");
     assert_eq!(rom_entry["kind"], "rom");
-    // The early manifest reads a bounded prefix of the single ROM payload inside the archive, so its
-    // platform is identified before the full extraction runs — not just for bare dropped ROMs.
-    assert_eq!(manifest["platform"], "Nintendo Entertainment System");
+    // The early manifest classifies type + lists entries cheaply (no inner-payload decode); the
+    // archived ROM's platform is filled at completion (emitted_files), not in the early manifest.
+    assert!(manifest.get("platform").is_none());
 }
 
 #[test]
