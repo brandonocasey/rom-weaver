@@ -1069,6 +1069,63 @@ fn extract_emits_early_probe_manifest_for_rom_archive() {
 }
 
 #[test]
+fn extract_streams_payload_identity_before_completion() {
+    let temp = setup_temp_dir();
+    // A payload larger than the 2 MiB identity-detect prefix, so the identity becomes determinable
+    // mid-stream (before the whole file is extracted) and is surfaced in its own event.
+    fs::write(
+        temp.child("game.nes").path(),
+        with_nes_header(&vec![0x42u8; 3 * 1024 * 1024]),
+    )
+    .expect("rom fixture");
+
+    let archive = temp.child("big.zip");
+    command_stdout(
+        &[
+            "compress",
+            temp.child("game.nes").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            archive.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    let out_dir = temp.child("extract-stream-identity");
+    let events = run_json_events(
+        &[
+            "extract",
+            archive.path().to_str().expect("path"),
+            "--out-dir",
+            out_dir.path().to_str().expect("path"),
+            "--checksum-rom",
+            "crc32",
+            "--json",
+        ],
+        0,
+    );
+    // The platform is surfaced in a streaming `probe-identity` event that precedes the terminal report.
+    let identity_index = events
+        .iter()
+        .position(|event| event["stage"] == "probe-identity")
+        .expect("expected a streaming probe-identity event");
+    let terminal_index = events
+        .iter()
+        .rposition(|event| event["status"] == "succeeded")
+        .expect("expected a terminal succeeded event");
+    assert!(
+        identity_index < terminal_index,
+        "identity must stream before completion"
+    );
+    assert_eq!(
+        events[identity_index]["details"]["probe_manifest"]["platform"],
+        "Nintendo Entertainment System"
+    );
+}
+
+#[test]
 fn extract_probe_manifest_marks_patch_only_archive_as_not_rom() {
     let temp = setup_temp_dir();
     let original = temp.child("game.bin");

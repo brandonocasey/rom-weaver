@@ -56,6 +56,37 @@ pub(crate) fn emit_container_indeterminate_progress(
     });
 }
 
+/// Surface a decoded output's detected platform identity mid-extraction as a `probe-identity`
+/// progress event, the moment enough bytes have streamed to determine it (see
+/// [`ExtractHasher::take_ready_identity`]) — so the host can light up the ROM-type tag without
+/// waiting for the whole file. The payload mirrors the early `probe-manifest` shape
+/// (`details.probe_manifest.{platform,disc_format}`) so the host consumes it through one path.
+pub(crate) fn emit_extract_identity(
+    context: &OperationContext,
+    format: &str,
+    identity: &RomIdentity,
+) {
+    let mut manifest = Map::new();
+    identity.write_into(&mut manifest);
+    if manifest.is_empty() {
+        return;
+    }
+    let mut details = Map::new();
+    details.insert("probe_manifest".to_string(), Value::Object(manifest));
+    context.emit(ProgressEvent {
+        command: "extract".to_string(),
+        family: OperationFamily::Container,
+        format: Some(format.to_string()),
+        stage: "probe-identity".to_string(),
+        label: "identified payload".to_string(),
+        details: Some(Value::Object(details)),
+        percent: None,
+        elapsed_ms: None,
+        status: OperationStatus::Running,
+        ..ProgressEvent::from_thread_execution(None)
+    });
+}
+
 /// The stable descriptor of a container progress stream: everything that stays constant across
 /// per-step or per-byte progress calls for one create/extract operation.
 #[derive(Clone, Copy)]
@@ -209,11 +240,13 @@ pub(crate) enum ExtractHasher {
     Plain {
         checksum: StreamingChecksum,
         identity: IdentityPrefix,
+        identity_emitted: bool,
     },
     Variants {
         engine: StreamingVariantChecksums,
         algorithms: Vec<String>,
         identity: IdentityPrefix,
+        identity_emitted: bool,
     },
 }
 
@@ -252,6 +285,7 @@ impl ExtractHasher {
                 Some(checksum) => Self::Plain {
                     checksum,
                     identity: IdentityPrefix::new(),
+                    identity_emitted: false,
                 },
                 None => Self::None,
             });
@@ -272,13 +306,43 @@ impl ExtractHasher {
             engine,
             algorithms: algorithms.to_vec(),
             identity: IdentityPrefix::new(),
+            identity_emitted: false,
         })
+    }
+
+    /// Once the identity prefix has filled (enough bytes have streamed through to fully determine the
+    /// platform/medium), return the detected identity exactly ONCE so the caller can surface it
+    /// mid-extraction instead of waiting for the whole file. Returns `None` until it is ready, after
+    /// it has already been taken, or when nothing was detected.
+    pub(crate) fn take_ready_identity(&mut self, output_path: &Path) -> Option<RomIdentity> {
+        match self {
+            Self::None => None,
+            Self::Plain {
+                identity,
+                identity_emitted,
+                ..
+            }
+            | Self::Variants {
+                identity,
+                identity_emitted,
+                ..
+            } => {
+                if *identity_emitted || !identity.is_full() {
+                    return None;
+                }
+                *identity_emitted = true;
+                let detected = detect_emitted_identity(identity, output_path);
+                (!detected.is_empty()).then_some(detected)
+            }
+        }
     }
 
     pub(crate) fn update(&mut self, bytes: &[u8]) -> Result<()> {
         match self {
             Self::None => Ok(()),
-            Self::Plain { checksum, identity } => {
+            Self::Plain {
+                checksum, identity, ..
+            } => {
                 identity.push(bytes);
                 checksum.update(bytes)
             }
@@ -308,7 +372,9 @@ impl ExtractHasher {
     ) -> Result<(Option<ExtractedFileChecksum>, ExtractChecksumTiming)> {
         match self {
             Self::None => Ok((None, ExtractChecksumTiming::default())),
-            Self::Plain { checksum, identity } => {
+            Self::Plain {
+                checksum, identity, ..
+            } => {
                 let rom_identity = detect_emitted_identity(&identity, output_path);
                 let (values, timing) = checksum.finalize_timed()?;
                 Ok((
@@ -330,6 +396,7 @@ impl ExtractHasher {
                 engine,
                 algorithms,
                 identity,
+                ..
             } => {
                 let rom_identity = detect_emitted_identity(&identity, output_path);
                 let VariantOutput {

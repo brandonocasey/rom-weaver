@@ -180,6 +180,14 @@ impl IdentityPrefix {
     pub fn detect(&self, extension: Option<&str>) -> RomIdentity {
         detect_rom_identity(&self.buf, self.consumed, extension)
     }
+
+    /// Whether the bounded prefix has filled to [`DETECT_PREFIX_BYTES`] — i.e. enough bytes have
+    /// streamed through to detect every disc/cartridge signature without waiting for EOF. Lets a
+    /// streaming producer surface identity mid-extraction (once it is fully determinable) instead of
+    /// only at the end.
+    pub fn is_full(&self) -> bool {
+        self.buf.len() >= DETECT_PREFIX_BYTES
+    }
 }
 
 /// Read a bounded prefix from a decoded file on disk and detect its identity.

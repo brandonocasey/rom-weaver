@@ -40,7 +40,7 @@ use crate::{
     extract_support::{
         ContainerProgressContext, ExtractChecksumTiming, ExtractHasher, ExtractTiming,
         ExtractedFileChecksum, attach_extract_checksum_details, emit_container_step_progress,
-        ensure_extract_output_available,
+        emit_extract_identity, ensure_extract_output_available,
     },
 };
 
@@ -955,6 +955,11 @@ where
                             write += write_at.elapsed().unwrap_or_default();
                             let hash_at = SystemTime::now();
                             hasher.update(&buffer[..read])?;
+                            // Surface the payload's platform identity the moment enough bytes have
+                            // streamed to determine it, rather than waiting for the whole file.
+                            if let Some(identity) = hasher.take_ready_identity(&task.output_path) {
+                                emit_extract_identity(context, format_name, &identity);
+                            }
                             hash_feed += hash_at.elapsed().unwrap_or_default();
                             let read_u64 = read as u64;
                             copied = copied.saturating_add(read_u64);
@@ -1460,6 +1465,13 @@ pub(crate) fn extract_regular_archive_with_libarchive(
                             })?;
                             let delta = bytes.len() as u64;
                             output.hasher.update(&bytes)?;
+                            // Surface the payload's platform identity as soon as enough bytes have
+                            // streamed to determine it, rather than waiting for the whole file.
+                            if let Some(identity) =
+                                output.hasher.take_ready_identity(&output.output_path)
+                            {
+                                emit_extract_identity(context, format_name, &identity);
+                            }
                             written_bytes = written_bytes.saturating_add(delta);
                             if let Some(total_bytes) = total_file_bytes {
                                 copied_bytes = copied_bytes.saturating_add(delta).min(total_bytes);
