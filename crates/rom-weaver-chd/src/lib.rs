@@ -38,7 +38,14 @@ pub const CHD: FormatDescriptor = FormatDescriptor {
     extensions: &[".chd"],
 };
 
-const CHD_SIGNATURE: [u8; 8] = *b"MComprHD";
+/// CHD container file magic. Canonical source for the web UI's synchronous
+/// rom-specific magic probe (surfaced via typegen container metadata).
+pub const CHD_SIGNATURE: [u8; 8] = *b"MComprHD";
+/// Canonical CD/DVD logical sector sizes, shared with the web UI via typegen for
+/// the ambiguous-`.bin` disc-image heuristic: raw CD Mode1/Mode2 sectors are 2352
+/// bytes, cooked CD and DVD sectors are 2048. The disc codec's internal sector
+/// constants derive from this array so the two never drift.
+pub const CD_SECTOR_SIZES: [u32; 2] = [2352, 2048];
 const CHD_MAX_COMPRESSORS: usize = 4;
 const CHD_METADATA_FLAG_CHECKSUM: u8 = 0x01;
 const CD_FRAME_SIZE: u32 = 2352 + 96;

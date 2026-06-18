@@ -7,6 +7,11 @@ use tracing::{debug, trace};
 /// checksum so the caller can detect platform/medium without a second read.
 type RvzExtractOutput = (u64, Option<BTreeMap<String, String>>, IdentityPrefix);
 
+/// RVZ container file magic (`RVZ\x01`), mirroring `nod`'s `RVZ_MAGIC`. Canonical
+/// source for the web UI's synchronous rom-specific magic probe (surfaced via
+/// typegen container metadata).
+pub(crate) const RVZ_MAGIC: [u8; 4] = *b"RVZ\x01";
+
 const RVZ_NOD_CORE: NodHandlerCore = NodHandlerCore::new(&RVZ, NodFormat::Rvz);
 const RVZ_INITIAL_EXTRACT_PROGRESS_DIVISOR: u64 = 1000;
 const RVZ_INITIAL_EXTRACT_PROGRESS_MAX_PERCENT: f32 = 0.1;

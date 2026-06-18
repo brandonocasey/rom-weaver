@@ -827,6 +827,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".zip"
     ],
+    "magic": [],
     "name": "zip"
   },
   {
@@ -848,6 +849,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".zipx"
     ],
+    "magic": [],
     "name": "zipx"
   },
   {
@@ -886,6 +888,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".7z"
     ],
+    "magic": [],
     "name": "7z"
   },
   {
@@ -907,6 +910,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".rar"
     ],
+    "magic": [],
     "name": "rar"
   },
   {
@@ -928,6 +932,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".tar"
     ],
+    "magic": [],
     "name": "tar"
   },
   {
@@ -952,6 +957,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
       ".tar.gz",
       ".tgz"
     ],
+    "magic": [],
     "name": "tar.gz"
   },
   {
@@ -976,6 +982,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
       ".tar.bz2",
       ".tbz2"
     ],
+    "magic": [],
     "name": "tar.bz2"
   },
   {
@@ -1000,6 +1007,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
       ".tar.xz",
       ".txz"
     ],
+    "magic": [],
     "name": "tar.xz"
   },
   {
@@ -1023,6 +1031,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".gz"
     ],
+    "magic": [],
     "name": "gz"
   },
   {
@@ -1046,6 +1055,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".bz2"
     ],
+    "magic": [],
     "name": "bz2"
   },
   {
@@ -1070,6 +1080,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".xz"
     ],
+    "magic": [],
     "name": "xz"
   },
   {
@@ -1094,6 +1105,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".zst"
     ],
+    "magic": [],
     "name": "zst"
   },
   {
@@ -1118,6 +1130,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
       ".cso",
       ".ciso"
     ],
+    "magic": [],
     "name": "cso"
   },
   {
@@ -1139,6 +1152,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".pbp"
     ],
+    "magic": [],
     "name": "pbp"
   },
   {
@@ -1191,6 +1205,16 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".chd"
     ],
+    "magic": [
+      77,
+      67,
+      111,
+      109,
+      112,
+      114,
+      72,
+      68
+    ],
     "name": "chd"
   },
   {
@@ -1212,6 +1236,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".gcz"
     ],
+    "magic": [],
     "name": "gcz"
   },
   {
@@ -1233,6 +1258,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".wia"
     ],
+    "magic": [],
     "name": "wia"
   },
   {
@@ -1254,6 +1280,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".tgc"
     ],
+    "magic": [],
     "name": "tgc"
   },
   {
@@ -1275,6 +1302,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".nfs"
     ],
+    "magic": [],
     "name": "nfs"
   },
   {
@@ -1296,6 +1324,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     "extensions": [
       ".wbfs"
     ],
+    "magic": [],
     "name": "wbfs"
   },
   {
@@ -1341,6 +1370,12 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
     },
     "extensions": [
       ".rvz"
+    ],
+    "magic": [
+      82,
+      86,
+      90,
+      1
     ],
     "name": "rvz"
   },
@@ -1405,6 +1440,12 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
       ".zcia",
       ".z3dsx"
     ],
+    "magic": [
+      90,
+      51,
+      68,
+      83
+    ],
     "name": "z3ds"
   },
   {
@@ -1427,6 +1468,7 @@ export const ROM_WEAVER_CONTAINER_FORMATS = [
       ".xiso",
       ".xiso.iso"
     ],
+    "magic": [],
     "name": "xiso"
   }
 ] as const;
@@ -1461,12 +1503,79 @@ export const ROM_WEAVER_CREATE_CONTAINER_FORMATS = [
   "z3ds"
 ] as const;
 
+export const ROM_WEAVER_DISC_IMAGE_POLICY = {
+  "ambiguousDiscImageExtensions": [
+    "bin"
+  ],
+  "cdSectorSizes": [
+    2352,
+    2048
+  ]
+} as const;
+
+export const ROM_WEAVER_Z3DS_SUBTYPES = [
+  {
+    "compressedExtension": "zcia",
+    "underlyingAliases": [],
+    "underlyingExtension": "cia",
+    "underlyingMagic": [
+      67,
+      73,
+      65,
+      0
+    ]
+  },
+  {
+    "compressedExtension": "zcci",
+    "underlyingAliases": [],
+    "underlyingExtension": "cci",
+    "underlyingMagic": [
+      78,
+      67,
+      83,
+      68
+    ]
+  },
+  {
+    "compressedExtension": "zcxi",
+    "underlyingAliases": [
+      "app"
+    ],
+    "underlyingExtension": "cxi",
+    "underlyingMagic": [
+      78,
+      67,
+      67,
+      72
+    ]
+  },
+  {
+    "compressedExtension": "z3dsx",
+    "underlyingAliases": [],
+    "underlyingExtension": "3dsx",
+    "underlyingMagic": [
+      51,
+      68,
+      83,
+      88
+    ]
+  },
+  {
+    "compressedExtension": "z3ds",
+    "underlyingAliases": [],
+    "underlyingExtension": "3ds",
+    "underlyingMagic": null
+  }
+] as const;
+
 export const ROM_WEAVER_FORMAT_METADATA = {
   compression: ROM_WEAVER_COMPRESSION_METADATA,
   containerFormatAliases: ROM_WEAVER_CONTAINER_FORMAT_ALIASES,
   containerFormats: ROM_WEAVER_CONTAINER_FORMATS,
   createContainerFormats: ROM_WEAVER_CREATE_CONTAINER_FORMATS,
   createPatchFormatPolicy: ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY,
+  discImagePolicy: ROM_WEAVER_DISC_IMAGE_POLICY,
   fileFilters: ROM_WEAVER_FILE_FILTERS,
   patchFormats: ROM_WEAVER_PATCH_FORMATS,
+  z3dsSubtypes: ROM_WEAVER_Z3DS_SUBTYPES,
 } as const;

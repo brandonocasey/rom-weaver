@@ -9,7 +9,8 @@ use rom_weaver_app::{
 };
 use rom_weaver_containers::{
     ContainerDefaultOutputMetadata, ContainerFormatMetadata, ContainerOutputExtensionStrategy,
-    ContainerThreadCapabilityMetadata, container_format_metadata,
+    ContainerThreadCapabilityMetadata, container_format_metadata, disc_image_policy_metadata,
+    z3ds_subtype_metadata,
 };
 use rom_weaver_core::{
     CONTAINER_FILTER_FILE_EXTENSIONS, OperationFamily, OperationStatus,
@@ -177,7 +178,7 @@ fn export_decl<T: TS>(config: &ts_rs::Config) -> String {
 
 fn render_metadata() -> String {
     format!(
-        "{METADATA_HEADER}{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n",
+        "{METADATA_HEADER}{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n",
         render_ts_const(
             "ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY",
             create_patch_format_policy_value()
@@ -197,7 +198,9 @@ fn render_metadata() -> String {
             "ROM_WEAVER_CREATE_CONTAINER_FORMATS",
             create_container_formats_value()
         ),
-        "export const ROM_WEAVER_FORMAT_METADATA = {\n  compression: ROM_WEAVER_COMPRESSION_METADATA,\n  containerFormatAliases: ROM_WEAVER_CONTAINER_FORMAT_ALIASES,\n  containerFormats: ROM_WEAVER_CONTAINER_FORMATS,\n  createContainerFormats: ROM_WEAVER_CREATE_CONTAINER_FORMATS,\n  createPatchFormatPolicy: ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY,\n  fileFilters: ROM_WEAVER_FILE_FILTERS,\n  patchFormats: ROM_WEAVER_PATCH_FORMATS,\n} as const;",
+        render_ts_const("ROM_WEAVER_DISC_IMAGE_POLICY", disc_image_policy_value()),
+        render_ts_const("ROM_WEAVER_Z3DS_SUBTYPES", z3ds_subtypes_value()),
+        "export const ROM_WEAVER_FORMAT_METADATA = {\n  compression: ROM_WEAVER_COMPRESSION_METADATA,\n  containerFormatAliases: ROM_WEAVER_CONTAINER_FORMAT_ALIASES,\n  containerFormats: ROM_WEAVER_CONTAINER_FORMATS,\n  createContainerFormats: ROM_WEAVER_CREATE_CONTAINER_FORMATS,\n  createPatchFormatPolicy: ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY,\n  discImagePolicy: ROM_WEAVER_DISC_IMAGE_POLICY,\n  fileFilters: ROM_WEAVER_FILE_FILTERS,\n  patchFormats: ROM_WEAVER_PATCH_FORMATS,\n  z3dsSubtypes: ROM_WEAVER_Z3DS_SUBTYPES,\n} as const;",
     )
 }
 
@@ -444,7 +447,32 @@ fn container_format_value(metadata: ContainerFormatMetadata) -> Value {
             .default_output
             .map(container_default_output_value)
             .unwrap_or(Value::Null),
+        "magic": metadata.magic,
     })
+}
+
+fn disc_image_policy_value() -> Value {
+    let metadata = disc_image_policy_metadata();
+    json!({
+        "cdSectorSizes": metadata.cd_sector_sizes,
+        "ambiguousDiscImageExtensions": metadata.ambiguous_disc_image_extensions,
+    })
+}
+
+fn z3ds_subtypes_value() -> Value {
+    Value::Array(
+        z3ds_subtype_metadata()
+            .iter()
+            .map(|subtype| {
+                json!({
+                    "underlyingExtension": subtype.underlying_extension,
+                    "underlyingAliases": subtype.underlying_aliases,
+                    "compressedExtension": subtype.compressed_extension,
+                    "underlyingMagic": subtype.underlying_magic.map(|magic| magic.to_vec()),
+                })
+            })
+            .collect(),
+    )
 }
 
 fn thread_capability_value(metadata: ContainerThreadCapabilityMetadata) -> Value {

@@ -3,6 +3,65 @@ use tracing::{debug, trace};
 
 pub(crate) struct Z3dsContainerHandler;
 
+/// Z3DS container magic. Canonical source for the web UI's synchronous
+/// rom-specific magic probe (surfaced via typegen container metadata).
+pub(crate) const Z3DS_MAGIC: [u8; 4] = *b"Z3DS";
+
+/// One row of the Z3DS subtype table: how a 3DS payload variant maps between its
+/// raw extension, the compressed `.z*` extension the web UI assigns on create, and
+/// the payload's own container magic. Canonical source for the web UI's z3ds output
+/// and extracted extension resolution (surfaced via typegen).
+#[derive(Clone, Copy, Debug)]
+pub struct Z3dsSubtypeMetadata {
+    /// Raw payload extension, no leading dot (e.g. `cia`).
+    pub underlying_extension: &'static str,
+    /// Extra raw extensions that compress to the same subtype (e.g. `app` -> cxi).
+    pub underlying_aliases: &'static [&'static str],
+    /// Compressed extension the web UI assigns, no leading dot (e.g. `zcia`).
+    pub compressed_extension: &'static str,
+    /// The payload's container magic, when it has a distinguishing one.
+    pub underlying_magic: Option<[u8; 4]>,
+}
+
+/// The generic `.z3ds` subtype carries no distinguishing magic; its payload type is
+/// resolved from the underlying magic at extract time (else this row's default).
+pub(crate) const Z3DS_SUBTYPES: &[Z3dsSubtypeMetadata] = &[
+    Z3dsSubtypeMetadata {
+        underlying_extension: "cia",
+        underlying_aliases: &[],
+        compressed_extension: "zcia",
+        underlying_magic: Some(*b"CIA\0"),
+    },
+    Z3dsSubtypeMetadata {
+        underlying_extension: "cci",
+        underlying_aliases: &[],
+        compressed_extension: "zcci",
+        underlying_magic: Some(*b"NCSD"),
+    },
+    Z3dsSubtypeMetadata {
+        underlying_extension: "cxi",
+        underlying_aliases: &["app"],
+        compressed_extension: "zcxi",
+        underlying_magic: Some(*b"NCCH"),
+    },
+    Z3dsSubtypeMetadata {
+        underlying_extension: "3dsx",
+        underlying_aliases: &[],
+        compressed_extension: "z3dsx",
+        underlying_magic: Some(*b"3DSX"),
+    },
+    Z3dsSubtypeMetadata {
+        underlying_extension: "3ds",
+        underlying_aliases: &[],
+        compressed_extension: "z3ds",
+        underlying_magic: None,
+    },
+];
+
+pub fn z3ds_subtype_metadata() -> &'static [Z3dsSubtypeMetadata] {
+    Z3DS_SUBTYPES
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Z3dsFileHeader {
     underlying_magic: [u8; 4],
@@ -12,7 +71,7 @@ struct Z3dsFileHeader {
 }
 
 impl Z3dsFileHeader {
-    const MAGIC: [u8; 4] = *b"Z3DS";
+    const MAGIC: [u8; 4] = Z3DS_MAGIC;
     const VERSION: u16 = 1;
     const HEADER_SIZE: u16 = 0x20;
 
@@ -316,19 +375,21 @@ impl Z3dsContainerHandler {
         }
     }
 
+    /// The raw payload extension (no leading dot) for a payload's container magic,
+    /// driven by [`Z3DS_SUBTYPES`].
     fn decompressed_extension_for_underlying_magic(
         &self,
         underlying_magic: [u8; 4],
     ) -> Option<&'static str> {
-        match underlying_magic {
-            [b'C', b'I', b'A', 0] => Some(".cia"),
-            [b'N', b'C', b'S', b'D'] => Some(".cci"),
-            [b'N', b'C', b'C', b'H'] => Some(".cxi"),
-            [b'3', b'D', b'S', b'X'] => Some(".3dsx"),
-            _ => None,
-        }
+        Z3DS_SUBTYPES
+            .iter()
+            .find(|subtype| subtype.underlying_magic == Some(underlying_magic))
+            .map(|subtype| subtype.underlying_extension)
     }
 
+    /// The raw payload extension (no leading dot). A specific compressed subtype
+    /// (`.zcci`/`.zcxi`/`.zcia`/`.z3dsx`) fixes the payload type by extension; the
+    /// generic `.z3ds` (or an unknown name) resolves from the payload magic.
     fn decompressed_extension_for_source(
         &self,
         source: &Path,
@@ -338,18 +399,18 @@ impl Z3dsContainerHandler {
             .file_name()
             .and_then(|value| value.to_str())
             .map(str::to_ascii_lowercase);
-        match source_name.as_deref() {
-            Some(name) if name.ends_with(".zcci") => ".cci",
-            Some(name) if name.ends_with(".zcxi") => ".cxi",
-            Some(name) if name.ends_with(".zcia") => ".cia",
-            Some(name) if name.ends_with(".z3dsx") => ".3dsx",
-            Some(name) if name.ends_with(".z3ds") => underlying_magic
-                .and_then(|magic| self.decompressed_extension_for_underlying_magic(magic))
-                .unwrap_or(".3ds"),
-            _ => underlying_magic
-                .and_then(|magic| self.decompressed_extension_for_underlying_magic(magic))
-                .unwrap_or(".3ds"),
+        if let Some(name) = source_name.as_deref() {
+            for subtype in Z3DS_SUBTYPES {
+                if subtype.underlying_magic.is_some()
+                    && name.ends_with(&format!(".{}", subtype.compressed_extension))
+                {
+                    return subtype.underlying_extension;
+                }
+            }
         }
+        underlying_magic
+            .and_then(|magic| self.decompressed_extension_for_underlying_magic(magic))
+            .unwrap_or("3ds")
     }
 
     pub(crate) fn extract_name_with_underlying_magic(
@@ -363,7 +424,7 @@ impl Z3dsContainerHandler {
             .filter(|value| !value.is_empty())
             .unwrap_or("output");
         format!(
-            "{stem}{}",
+            "{stem}.{}",
             self.decompressed_extension_for_source(source, underlying_magic)
         )
     }

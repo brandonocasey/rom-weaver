@@ -2,14 +2,14 @@ use super::*;
 
 impl ChdContainerHandler {
     pub(super) const DEFAULT_HUNK_BYTES: u32 = 4096;
-    pub(super) const DVD_SECTOR_BYTES: u32 = 2048;
+    pub(super) const DVD_SECTOR_BYTES: u32 = crate::CD_SECTOR_SIZES[1];
     pub(super) const HD_SECTOR_BYTES: u32 = 512;
     pub(super) const CD_FRAME_BYTES: u32 = CD_FRAME_SIZE;
     pub(super) const CD_HUNK_BYTES: u32 = CD_FRAME_SIZE * 8;
     pub(super) const FLAC_CHANNELS: usize = 2;
     pub(super) const FLAC_BITS_PER_SAMPLE: usize = 16;
     pub(super) const FLAC_SAMPLE_RATE_HZ: usize = 44_100;
-    pub(super) const CD_SECTOR_DATA_BYTES: usize = 2352;
+    pub(super) const CD_SECTOR_DATA_BYTES: usize = crate::CD_SECTOR_SIZES[0] as usize;
     pub(super) const CD_SUBCODE_BYTES: usize = 96;
     // MAME's CHD CD format pads every track's hunk-stream frame count up to a
     // multiple of this many frames; the per-track metadata keeps the unpadded

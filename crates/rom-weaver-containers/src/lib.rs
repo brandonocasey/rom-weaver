@@ -70,8 +70,8 @@ use formats::SEVEN_Z;
 pub use formats::{
     CompressFormatRecommendation, ContainerCapabilitiesMetadata, ContainerDefaultOutputMetadata,
     ContainerFormatMetadata, ContainerOutputExtensionStrategy, ContainerRegistry,
-    ContainerThreadCapabilityMetadata, container_format_metadata, extract_only_create_error,
-    extract_only_create_validation_message,
+    ContainerThreadCapabilityMetadata, DiscImagePolicyMetadata, container_format_metadata,
+    disc_image_policy_metadata, extract_only_create_error, extract_only_create_validation_message,
 };
 use formats::{GCZ, NFS, PBP, RVZ, TGC, WBFS, WIA, XISO, Z3DS};
 use libarchive_support::{
@@ -81,6 +81,7 @@ use libarchive_support::{
     probe_regular_archive_details_with_libarchive, probe_regular_archive_with_libarchive,
     probe_stream_with_libarchive, write_archive_with_libarchive,
 };
+pub use z3ds::{Z3dsSubtypeMetadata, z3ds_subtype_metadata};
 
 const GZIP_SIGNATURE: [u8; 2] = [0x1F, 0x8B];
 const BZIP2_SIGNATURE: [u8; 3] = [b'B', b'Z', b'h'];

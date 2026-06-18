@@ -189,6 +189,10 @@ pub struct ContainerFormatMetadata {
     pub extensions: &'static [&'static str],
     pub capabilities: ContainerCapabilitiesMetadata,
     pub default_output: Option<ContainerDefaultOutputMetadata>,
+    /// File magic prefix for rom-specific single-payload codec containers (CHD /
+    /// RVZ / Z3DS), empty for archives whose detection goes through libarchive.
+    /// Canonical source for the web UI's synchronous magic probe (via typegen).
+    pub magic: &'static [u8],
 }
 
 const SEVEN_Z_DEFAULT_OUTPUT: ContainerDefaultOutputMetadata = ContainerDefaultOutputMetadata {
@@ -348,6 +352,18 @@ impl ContainerHandlerKind {
         )
     }
 
+    /// File magic prefix for rom-specific single-payload codec containers, sourced
+    /// from each handler's canonical magic constant. Archives return an empty slice
+    /// (their detection runs through libarchive, not a fixed prefix).
+    fn magic_signature(self) -> &'static [u8] {
+        match self {
+            Self::Chd => &rom_weaver_chd::CHD_SIGNATURE,
+            Self::Rvz => &crate::rvz::RVZ_MAGIC,
+            Self::Z3ds => &crate::z3ds::Z3DS_MAGIC,
+            _ => &[],
+        }
+    }
+
     fn build(self, descriptor: &'static FormatDescriptor) -> Arc<dyn ContainerHandlerOperations> {
         match self {
             Self::Zip(flavor) => Arc::new(ZipContainerHandler::new(descriptor, flavor)),
@@ -408,6 +424,7 @@ impl ContainerFormatRegistration {
             extensions: self.descriptor.extensions,
             capabilities: self.capabilities.metadata(),
             default_output: self.default_output,
+            magic: self.handler.magic_signature(),
         }
     }
 }
@@ -585,6 +602,28 @@ pub fn container_format_metadata() -> Vec<ContainerFormatMetadata> {
         .iter()
         .map(ContainerFormatRegistration::metadata)
         .collect()
+}
+
+/// Extensions that are ambiguous between a CD/DVD disc image and a bare console ROM
+/// dump. A `.bin` whose size is not a whole number of CD/DVD sectors is treated as a
+/// plain ROM rather than auto-resolved to a disc container.
+const AMBIGUOUS_DISC_IMAGE_EXTENSIONS: &[&str] = &["bin"];
+
+/// Heuristics the web UI uses to disambiguate disc images from plain ROM dumps
+/// without decoding the file. Canonical source surfaced via typegen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiscImagePolicyMetadata {
+    /// Valid CD/DVD logical sector sizes; a disc image's length is a multiple of one.
+    pub cd_sector_sizes: &'static [u32],
+    /// Extensions shared by disc images and bare ROM dumps (see size heuristic).
+    pub ambiguous_disc_image_extensions: &'static [&'static str],
+}
+
+pub fn disc_image_policy_metadata() -> DiscImagePolicyMetadata {
+    DiscImagePolicyMetadata {
+        cd_sector_sizes: &rom_weaver_chd::CD_SECTOR_SIZES,
+        ambiguous_disc_image_extensions: AMBIGUOUS_DISC_IMAGE_EXTENSIONS,
+    }
 }
 
 pub fn supported_create_format_names() -> Vec<&'static str> {
