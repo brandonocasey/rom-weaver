@@ -17,10 +17,10 @@ import { routeByTypeProbed } from "./unified-drop-routing.ts";
 
 const logger = createLogger("unified-apply-drop");
 
-// How long the placeholder lingers (fading out) after its real card stages. Kept in
-// sync with the `.rw-pending-leaving` CSS exit so the chip finishes its fade before it
-// is dropped from state. This only delays the placeholder's removal — never staging.
-const PLACEHOLDER_EXIT_MS = 180;
+// How long the placeholder lingers (sliding toward its bucket) after its real card stages. Kept in
+// sync with the `.rw-pending-leaving` CSS exit so the chip finishes its move before it is dropped
+// from state. This only delays the placeholder's removal — never staging.
+const PLACEHOLDER_EXIT_MS = 260;
 
 /** A dropped archive awaiting ROM-vs-patch classification, rendered as a placeholder card. */
 type PendingDrop = { id: string; name: string; leaving?: boolean };

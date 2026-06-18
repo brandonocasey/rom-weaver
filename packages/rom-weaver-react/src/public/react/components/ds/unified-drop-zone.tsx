@@ -43,9 +43,13 @@ type UnifiedDropZoneProps = {
   title?: ReactNode;
   hintCoarse?: ReactNode;
   onFiles: (files: File[]) => void;
+  /** Extra content rendered inside the 0x01 step body, below the drop target (e.g. the
+   * "identifying…" placeholders for dropped archives) so it shares the step's content width. */
+  afterDropZone?: ReactNode;
 };
 
 const UnifiedDropZone = ({
+  afterDropZone,
   archiveHint,
   formats,
   info,
@@ -91,6 +95,7 @@ const UnifiedDropZone = ({
       title={title}
     >
       <DropZone {...dropZoneProps} bare formats={formats} hint={hint} multiple onFiles={emit} />
+      {afterDropZone}
     </StepSection>
   );
 };

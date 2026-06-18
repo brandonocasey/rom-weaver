@@ -496,6 +496,22 @@ function ApplyWorkflowFormView({
     <section className="panel" id="rom-weaver-container">
       <UnifiedDropZone
         accept={fileInputAccept.unifiedApply}
+        afterDropZone={
+          pendingDrops.length ? (
+            <div className="cards workflow-file-list" id="rom-weaver-pending-drops">
+              {pendingDrops.map((drop) => (
+                <div className={drop.leaving ? "rw-pending rw-pending-leaving" : "rw-pending"} key={drop.id}>
+                  <FileProgress
+                    id={`rom-weaver-pending-${drop.id}`}
+                    indeterminate
+                    label={`${drop.name} — identifying…`}
+                    value="…"
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null
+        }
         archiveHint={`archives (${ARCHIVE_INPUT_HINT})`}
         big={workflowEmpty}
         formats={APPLY_HERO_FORMATS}
@@ -516,20 +532,6 @@ function ApplyWorkflowFormView({
         romHint={`roms (${ROM_INPUT_HINT})`}
         supported={APPLY_SUPPORTED_FILES}
       />
-      {pendingDrops.length ? (
-        <div className="cards workflow-file-list" id="rom-weaver-pending-drops">
-          {pendingDrops.map((drop) => (
-            <div className={drop.leaving ? "rw-pending rw-pending-leaving" : "rw-pending"} key={drop.id}>
-              <FileProgress
-                id={`rom-weaver-pending-${drop.id}`}
-                indeterminate
-                label={`${drop.name} — identifying…`}
-                value="…"
-              />
-            </div>
-          ))}
-        </div>
-      ) : null}
       {workflowEmpty ? (
         <>
           <StepSection num="0x02" title="ROM">
