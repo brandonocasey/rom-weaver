@@ -98,13 +98,14 @@ Patterns that matter when touching this code:
   compressed data through bounded channels: a reader stage feeds worker
   decoders/encoders, and an ordered writer reassembles output. Memory is
   bounded (~1 GiB cap on CHD decode batches).
-- **Read-on-main under WASM.** Spawned reader threads cannot open OPFS-backed
-  files in the browser (WASI `os error 44`, worst on Safari). Container and
-  patch pipelines therefore read source bytes on the main wasm thread and keep
-  only compute on workers. Gated by `ROM_WEAVER_CONTAINER_MAIN_THREAD_READER`
-  (containers; see `rom-weaver-containers/src/constants.rs`) and
-  `ROM_WEAVER_PATCH_MAIN_THREAD_READER` (patch apply/create; see
-  `rom-weaver-patches/src/lib.rs`).
+- **Per-worker reads under WASM (via the OPFS proxy).** Spawned wasm threads
+  cannot `path_open` an OPFS file directly (WASI `os error 44`, worst on Safari).
+  The dedicated OPFS proxy worker resolves this — threads open and read through
+  it — so container/patch decode reads per-worker like native does, and the old
+  read-on-main gates (`ROM_WEAVER_CONTAINER_MAIN_THREAD_READER` /
+  `ROM_WEAVER_PATCH_MAIN_THREAD_READER`) are retired. (Lone remaining
+  read-on-main: RVZ *create* in the vendored `nod` fork.) See **Browser I/O
+  paths** below for the full picture.
 - **Browser thread budgets.** "auto" is resolved on the JS side
   (`packages/rom-weaver-react/src/wasm/workers/browser-thread-budget.ts` and the
   React `toThreadBudget` path) before it reaches wasm — the wasm fallback is a
@@ -115,6 +116,76 @@ Patterns that matter when touching this code:
 
 `docs/browser-concurrency.md` covers the browser-side concurrency rules in
 more depth.
+
+## Browser I/O paths
+
+Every wasm file read/write goes through one stack; only the bottom backend
+differs:
+
+```
+wasm (Rust std::fs)
+  -> WASI import (fd_read / fd_pread / fd_write ...)
+    -> WasiRandomAccessFileInode / OpenWasiRandomAccessFile   (wasm/browser-opfs-wasi-file-inode.ts)
+      -> a RandomAccessFileLike adapter (.readAt / .writeAt)
+        -> ONE of the backends below
+```
+
+`OpenWasiRandomAccessFile` adds sequential **write coalescing** (8 MiB buffer;
+direct writes >=2 MiB bypass it) so per-sector decode output doesn't become
+round-trip-bound. Note the WASI contract gotcha: a `readAt` of **0 bytes is
+success**, which Rust `read_exact` surfaces as a generic "read error".
+
+**Input reads** — chosen per source in `workers/protocol/browser-opfs-source-ref.ts`:
+
+| source | backend | notes |
+| --- | --- | --- |
+| already on OPFS (extracted file, patch output) | `BrowserProxyRandomAccessFile` by path | no copy; how multi-step workflows chain |
+| Blob/File, fast path (`useProxyHandle=false`) | `BrowserVirtualRandomAccessFile` + per-thread `FileReaderSync` + 16 MiB LRU | N readers run at once |
+| Blob/File, proxy handle (`useProxyHandle=true`) | `BrowserProxyRandomAccessFile` -> OPFS proxy worker (Blob-backed handle) | exactly one reader, over SAB |
+| in-memory `Uint8Array`/`ArrayBuffer` | `BrowserVirtualRandomAccessFile` in-memory | defensive only — no current caller |
+
+The fast-path/proxy choice is browser-gated:
+`useProxyHandle = isWebKitInputRuntime() && size >= ~64 MiB`. Concurrent reads of
+one File parallelize on Chrome/Firefox (fast path scales ~Nx) but serialize at
+WebKit's file layer (one proxy reader avoids the contention; measured RVZ
+extract ~5747 ms stalled vs ~4612 ms balanced). Small inputs are single-threaded
+(no contention), so they take the lower-overhead fast path even on Safari. OPFS
+input *staging* (copying a Blob into OPFS up front) is fully retired.
+
+**Output writes** — wasm-produced files (extracted ISO, created CHD/RVZ, patched
+ROM) write through `BrowserProxyRandomAccessFile.writeAt` (4 MiB write-back
+coalescing) -> `OpfsProxyClient.write` -> proxy server `SyncAccessHandle.write`.
+A separate storage worker (`workers/storage/browser-opfs-staging.worker.ts`,
+actions `write`/`truncate`/`cleanup`) backs the app-side large-file VFS and path
+cleanup, not the per-op wasm output.
+
+**Output -> user** — `storage/browser/browser-large-file-vfs.ts`
+`createOutputRef()` exposes the OPFS result as a lazy `getFile()` plus `saveAs()`
+(browser download, or write into a user-picked `FileSystemFileHandle`) — the
+bytes stay OPFS-backed instead of round-tripping the JS heap.
+
+**OPFS proxy topology** — one **dedicated** proxy worker per runner
+(`wasm/browser-opfs-proxy-runtime.ts` spawns `wasm/workers/browser-opfs-proxy-worker.ts`).
+It is the single owner of every `SyncAccessHandle` (and Blob input handle); its
+loop is async (`Atomics.waitAsync` doorbell) while **consumers block
+synchronously** (`Atomics.wait`) — that free event loop is what makes the
+Blob-handle reads deadlock-free. The SAB channel is forwarded into every spawned
+WASI thread so they share the one proxy; the mount
+(`wasm/browser-opfs-mount.ts`) builds proxy vs virtual inodes and caches inode
+trees across runs.
+
+**Native (CLI)** — plain `std::fs::File` + `BufReader`/`BufWriter`,
+`SplitFileReader` for split inputs, `create_extract_output_file` for outputs
+(`rom-weaver-core`). Container decode uses the same **per-worker** reader shape
+as wasm (each worker opens its own range), differing only in backend (`File` vs
+proxy) — there is no read-on-main on native.
+
+**Constraints that shape all of this:** `SharedArrayBuffer` needs
+crossOriginIsolation (COOP/COEP headers from `scripts/dev-server.mjs` / the prod
+service worker) — no SAB means no proxy and no threads; OPFS is dedicated-worker
+only (no main-thread `window`); WebKit allows **one `SyncAccessHandle` per file**
+(the proxy refcounts to one) and serializes concurrent `FileReaderSync` of one
+File (the reason for the input-read gate).
 
 ## Dreamcast `.dcp` patches (the filesystem-level apply path)
 
