@@ -48,20 +48,32 @@ const registerBrowserVirtualFile = ({
   path,
   source,
   trace,
+  useProxyHandle,
 }: {
   path: string;
   source: BrowserVirtualFileSource;
   trace?: BrowserVirtualFileTraceContext;
+  // When true the runner hands `source` to the OPFS proxy worker (served by guest path) and the mount
+  // builds a BrowserProxyRandomAccessFile; when false the mount builds a per-thread FileReaderSync
+  // BrowserVirtualRandomAccessFile (the "fast path" where parallel reads scale, e.g. Chrome).
+  useProxyHandle?: boolean;
 }): (() => void) => {
   const sourceSize = getVirtualSourceSize(source);
   const sourceKind = getVirtualSourceKind(source);
-  // The runner forwards this source to the OPFS proxy worker (served by guest path); we just carry it +
-  // the flag so getActiveBrowserVirtualFiles hands it to the run and the mount builds a proxy inode.
-  const file: BrowserVirtualFile = { path, source, useProxyHandle: true };
+  const proxyHandle = Boolean(useProxyHandle);
+  const file: BrowserVirtualFile = { path, source, useProxyHandle: proxyHandle };
   activeVirtualFiles.set(path, file);
-  emitVirtualFileTrace(trace, "registered proxy-handle virtual file", { path, sourceKind, sourceSize });
+  emitVirtualFileTrace(trace, proxyHandle ? "registered proxy-handle virtual file" : "registered direct virtual file", {
+    path,
+    sourceKind,
+    sourceSize,
+  });
   return () => {
-    emitVirtualFileTrace(trace, "unregistered proxy-handle virtual file", { path, sourceKind, sourceSize });
+    emitVirtualFileTrace(
+      trace,
+      proxyHandle ? "unregistered proxy-handle virtual file" : "unregistered direct virtual file",
+      { path, sourceKind, sourceSize },
+    );
     if (activeVirtualFiles.get(path) === file) activeVirtualFiles.delete(path);
   };
 };
