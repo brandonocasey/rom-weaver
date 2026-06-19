@@ -100,7 +100,6 @@ impl PatchHandler for ApsGbaPatchHandler {
             source_size = patch.source_size,
             target_size = patch.target_size,
             in_memory,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
             "apsgba parsed; apply path chosen"
         );
         let execution = if in_memory {
@@ -128,10 +127,7 @@ impl PatchHandler for ApsGbaPatchHandler {
             let (execution, prepared) = run_with_optional_pool(
                 context,
                 thread_capability,
-                // Parallel prepare reads the source from worker threads, which cannot
-                // open OPFS files in wasm (os error 44); use the serial main-thread
-                // path there. Native keeps parallel.
-                !crate::patches_reads_source_on_main_thread(),
+                true,
                 |pool| {
                     prepare_apsgba_writes_parallel(
                         &patch,
@@ -234,7 +230,6 @@ impl PatchHandler for ApsGbaPatchHandler {
             format = self.descriptor.name,
             source_size = source_size_u64,
             target_size = target_size_u64,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
             "apsgba patch create start"
         );
         let thread_capability =
@@ -242,10 +237,7 @@ impl PatchHandler for ApsGbaPatchHandler {
         let (execution, created) = run_with_optional_pool(
             context,
             thread_capability,
-            // Parallel create reads the source from worker threads, which cannot open
-            // OPFS files in wasm (os error 44); use the serial main-thread streaming
-            // create there. Native keeps parallel.
-            !crate::patches_reads_source_on_main_thread(),
+            true,
             |pool| {
                 create_apsgba_patch_parallel(
                     &request.original,

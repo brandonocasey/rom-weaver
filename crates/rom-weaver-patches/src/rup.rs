@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use md5::{Digest, Md5};
 use rayon::prelude::*;
@@ -124,7 +124,6 @@ impl PatchHandler for RupPatchHandler {
             undo,
             source_size = file.source_file_size,
             target_size = file.target_file_size,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
             "rup parsed; selected variant"
         );
 
@@ -160,7 +159,7 @@ impl PatchHandler for RupPatchHandler {
         let (execution, prepared) = run_with_optional_pool(
             context,
             thread_capability,
-            !crate::patches_reads_source_on_main_thread(),
+            true,
             |pool| {
                 let tasks = build_rup_prepared_tasks(file.records.len());
                 pool.install(|| {
@@ -1745,43 +1744,13 @@ fn collect_rup_records_parallel(
         return Ok(Vec::new());
     }
 
-    if crate::create_exceeds_main_thread_cap(source_size.saturating_add(target_size)) {
-        info!(
-            source_size,
-            target_size,
-            "RUP create: combined size exceeds in-memory limit; falling back to serial path"
-        );
-        return create_rup_patch_streaming(source_path, target_path)
-            .map(|p| {
-                // Extract records from the created patch by re-parsing
-                parse_rup_bytes(&p.bytes)
-                    .map(|parsed| parsed.files.into_iter().flat_map(|f| f.records).collect())
-            })
-            .and_then(|r| r);
-    }
-
     let chunk_size = CREATE_THREAD_SCAN_CHUNK_BYTES as u64;
     // Each chunk scan is wrapped in `Ok(...)` so the shared fail-fast collect
     // never engages: RUP keeps collecting every chunk and surfaces scan
     // errors in chunk order from the merge loop below, exactly as before.
     let per_chunk = scan_create_chunks(
-        crate::PatchCreateSources {
-            original_path: source_path,
-            original_len: source_size,
-            modified_path: target_path,
-            modified_len: target_size,
-        },
-        shared_len,
-        chunk_size,
         chunk_count_for_len(shared_len, chunk_size),
         pool,
-        |start, source_bytes, target_bytes| {
-            Ok(collect_rup_chunk_records_from_bytes(
-                start,
-                source_bytes,
-                target_bytes,
-            ))
-        },
         |chunk_index| {
             let start = chunk_index as u64 * chunk_size;
             let end = start.saturating_add(chunk_size).min(shared_len);
@@ -1872,46 +1841,6 @@ fn collect_rup_chunk_records(
                 .checked_add(1)
                 .ok_or_else(|| RomWeaverError::Validation("RUP scan offset overflowed".into()))?;
         }
-    }
-
-    if !pending_xor.is_empty() {
-        let offset = pending_start.expect("pending start exists");
-        records.push(RupRecord {
-            offset,
-            xor: pending_xor,
-        });
-    }
-    Ok(records)
-}
-
-fn collect_rup_chunk_records_from_bytes(
-    start: u64,
-    source_bytes: &[u8],
-    target_bytes: &[u8],
-) -> Result<Vec<RupRecord>> {
-    let mut records = Vec::new();
-    let mut pending_start: Option<u64> = None;
-    let mut pending_xor = Vec::<u8>::new();
-    let mut absolute = start;
-
-    for (index, &target_byte) in target_bytes.iter().enumerate() {
-        let source_byte = source_bytes.get(index).copied().unwrap_or(0);
-        if source_byte != target_byte {
-            if pending_start.is_none() {
-                pending_start = Some(absolute);
-            }
-            pending_xor.push(source_byte ^ target_byte);
-        } else if !pending_xor.is_empty() {
-            let offset = pending_start.expect("pending start exists");
-            records.push(RupRecord {
-                offset,
-                xor: std::mem::take(&mut pending_xor),
-            });
-            pending_start = None;
-        }
-        absolute = absolute
-            .checked_add(1)
-            .ok_or_else(|| RomWeaverError::Validation("RUP scan offset overflowed".into()))?;
     }
 
     if !pending_xor.is_empty() {

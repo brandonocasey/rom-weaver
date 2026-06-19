@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use rayon::prelude::*;
 use rom_weaver_core::{
@@ -86,14 +86,13 @@ impl PatchHandler for GdiffPatchHandler {
             commands = commands.len(),
             source_len,
             output_bytes = summary.output_bytes,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
-            "gdiff parsed; apply prepares via worker pool unless read-on-main"
+            "gdiff parsed; apply prepares via worker pool"
         );
 
         let (execution, ()) = run_with_optional_pool(
             context,
             thread_capability,
-            !crate::patches_reads_source_on_main_thread(),
+            true,
             |pool| {
                 let tasks = build_gdiff_apply_tasks(&commands);
                 let prepared = pool.install(|| {
@@ -513,14 +512,6 @@ fn create_gdiff_patch(
     output: &mut dyn Write,
 ) -> Result<(usize, u64)> {
     if use_parallel_scan {
-        let modified_len = fs::metadata(modified_path)?.len();
-        if crate::create_exceeds_main_thread_cap(modified_len) {
-            info!(
-                modified_len,
-                "GDIFF create: modified size exceeds in-memory limit; falling back to serial path"
-            );
-            return create_gdiff_patch_streaming(modified_path, output);
-        }
         create_gdiff_patch_parallel(modified_path, pool, output)
     } else {
         create_gdiff_patch_streaming(modified_path, output)
@@ -582,24 +573,7 @@ fn create_gdiff_patch_parallel(
         .collect::<Result<Vec<_>>>()?;
 
     let command_count = chunk_ranges.len();
-    let command_bytes = if crate::patches_reads_source_on_main_thread() {
-        let buffered = chunk_ranges
-            .iter()
-            .map(|&(offset, len)| {
-                let mut f = File::open(modified_path)?;
-                f.seek(SeekFrom::Start(offset))?;
-                let mut chunk = vec![0u8; len];
-                f.read_exact(&mut chunk)?;
-                Ok(chunk)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        pool.install(|| {
-            buffered
-                .into_par_iter()
-                .map(|chunk| encode_data_command_bytes(&chunk))
-                .collect::<Result<Vec<_>>>()
-        })?
-    } else {
+    let command_bytes = {
         pool.install(|| {
             chunk_ranges
                 .into_par_iter()

@@ -156,14 +156,13 @@ impl PatchHandler for IpsPatchHandler {
             format = self.descriptor.name,
             chunk_tasks = tasks.len(),
             max_parallel_chunks,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
             "ips apply chunk plan"
         );
 
         let render_result = run_with_optional_pool(
             context,
             thread_capability,
-            !crate::patches_reads_source_on_main_thread(),
+            true,
             |pool| {
                 pool.install(|| {
                     tasks
@@ -846,23 +845,6 @@ fn create_ips_patch_parallel(
         modified_path,
         modified_len,
     } = sources;
-    let combined_bytes = original_len.saturating_add(modified_len);
-    if crate::create_exceeds_main_thread_cap(combined_bytes) {
-        tracing::info!(
-            combined_bytes,
-            cap = crate::IN_MEMORY_APPLY_LIMIT_BYTES,
-            "IPS parallel create: combined size exceeds cap, falling back to streaming"
-        );
-        return create_ips_patch_streaming(
-            original_path,
-            original_len,
-            modified_path,
-            modified_len,
-            output,
-            context,
-            flavor,
-        );
-    }
     let chunk_count = ips_create_chunk_count(modified_len)?;
     trace!(
         chunk_count,
@@ -870,28 +852,16 @@ fn create_ips_patch_parallel(
         pool_threads = pool.size(),
         "ips create parallel scan"
     );
-    let chunk_runs = scan_create_chunks(
-        sources,
-        modified_len,
-        CREATE_SCAN_CHUNK_BYTES as u64,
-        chunk_count,
-        pool,
-        // NOTE: the buffered scan deliberately has no cancel check (and the
-        // by-index scan deliberately has one), matching the previous code.
-        |start, original_bytes, modified_bytes| {
-            collect_ips_diff_runs_from_bytes(start, original_bytes, modified_bytes, original_len)
-        },
-        |chunk_index| {
-            context.cancel().check()?;
-            collect_ips_diff_runs_for_chunk(
-                chunk_index,
-                original_path,
-                original_len,
-                modified_path,
-                modified_len,
-            )
-        },
-    )?;
+    let chunk_runs = scan_create_chunks(chunk_count, pool, |chunk_index| {
+        context.cancel().check()?;
+        collect_ips_diff_runs_for_chunk(
+            chunk_index,
+            original_path,
+            original_len,
+            modified_path,
+            modified_len,
+        )
+    })?;
     let runs = merge_adjacent_runs(chunk_runs)?;
     let runs = coalesce_ips_diff_runs(runs, modified_path, flavor)?;
     write_ips_runs_to_output(runs, original_len, modified_len, output, flavor)

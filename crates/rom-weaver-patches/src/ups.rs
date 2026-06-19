@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use crate::checksum_validation_suffix;
 use crate::shared::checksum_io::{crc32_path_cached, crc32_prefix, read_u32_le};
@@ -87,8 +87,7 @@ impl PatchHandler for UpsPatchHandler {
             source_size = patch.source_size,
             target_size = patch.target_size,
             output_size,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
-            "ups parsed; apply prepares via worker pool unless read-on-main"
+            "ups parsed; apply prepares via worker pool"
         );
 
         if let Some(parent) = request.output.parent() {
@@ -102,10 +101,7 @@ impl PatchHandler for UpsPatchHandler {
             let (execution, prepared) = run_with_optional_pool(
                 context,
                 thread_capability,
-                // Parallel prepare reads the source from worker threads, which cannot
-                // open OPFS files in wasm (os error 44); use the serial main-thread
-                // path there.
-                !crate::patches_reads_source_on_main_thread(),
+                true,
                 |pool| {
                     prepare_ups_writes_parallel(
                         &patch,
@@ -569,15 +565,6 @@ fn create_ups_patch_parallel(
     let source_size = fs::metadata(source_path)?.len();
     let target_size = fs::metadata(target_path)?.len();
 
-    if crate::create_exceeds_main_thread_cap(source_size.saturating_add(target_size)) {
-        info!(
-            source_size,
-            target_size,
-            "UPS create: combined size exceeds in-memory limit; falling back to serial path"
-        );
-        return create_ups_patch_streaming(source_path, target_path);
-    }
-
     let source_checksum = crc32_path_cached(source_path, context)?;
     let target_checksum = crc32_path_cached(target_path, context)?;
     let changes =
@@ -613,11 +600,11 @@ fn collect_ups_changes_parallel(
         })
         .collect::<Vec<_>>();
 
-    let per_chunk_changes = if crate::patches_reads_source_on_main_thread() {
-        let buffered = chunk_ranges
-            .iter()
+    let per_chunk_changes = pool.install(|| {
+        chunk_ranges
+            .into_par_iter()
             .map(|range| {
-                read_ups_create_chunk(
+                collect_ups_chunk_changes(
                     source_path,
                     source_size,
                     target_path,
@@ -626,33 +613,8 @@ fn collect_ups_changes_parallel(
                     range.end,
                 )
             })
-            .collect::<Result<Vec<_>>>()?;
-        pool.install(|| {
-            buffered
-                .into_par_iter()
-                .zip(chunk_ranges.into_par_iter())
-                .map(|((source_bytes, target_bytes), range)| {
-                    collect_ups_chunk_changes_from_bytes(range.start, &source_bytes, &target_bytes)
-                })
-                .collect::<Vec<_>>()
-        })
-    } else {
-        pool.install(|| {
-            chunk_ranges
-                .into_par_iter()
-                .map(|range| {
-                    collect_ups_chunk_changes(
-                        source_path,
-                        source_size,
-                        target_path,
-                        target_size,
-                        range.start,
-                        range.end,
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-    };
+            .collect::<Vec<_>>()
+    });
 
     let mut merged: Vec<UpsChange> = Vec::new();
     for changes in per_chunk_changes {
@@ -673,43 +635,6 @@ fn collect_ups_changes_parallel(
         }
     }
     Ok(merged)
-}
-
-fn read_ups_create_chunk(
-    source_path: &Path,
-    source_size: u64,
-    target_path: &Path,
-    target_size: u64,
-    start: u64,
-    end: u64,
-) -> Result<(Vec<u8>, Vec<u8>)> {
-    let chunk_len = usize::try_from(end - start)
-        .map_err(|_| RomWeaverError::Validation("UPS create chunk length exceeded usize".into()))?;
-    let source_bytes = read_ups_file_chunk(source_path, source_size, start, chunk_len)?;
-    let target_bytes = read_ups_file_chunk(target_path, target_size, start, chunk_len)?;
-    Ok((source_bytes, target_bytes))
-}
-
-fn read_ups_file_chunk(
-    path: &Path,
-    file_size: u64,
-    start: u64,
-    chunk_len: usize,
-) -> Result<Vec<u8>> {
-    let mut bytes = vec![0u8; chunk_len];
-    if start >= file_size {
-        return Ok(bytes);
-    }
-
-    let readable = usize::try_from((file_size - start).min(chunk_len as u64)).map_err(|_| {
-        RomWeaverError::Validation("UPS create readable length exceeded usize".into())
-    })?;
-    if readable > 0 {
-        let mut file = File::open(path)?;
-        file.seek(SeekFrom::Start(start))?;
-        file.read_exact(&mut bytes[..readable])?;
-    }
-    Ok(bytes)
 }
 
 fn collect_ups_chunk_changes(
@@ -786,47 +711,6 @@ fn collect_ups_chunk_changes(
             }
             absolute = checked_add(absolute, 1, "UPS chunk scan offset")?;
         }
-    }
-
-    if !pending_xor.is_empty() {
-        let offset = pending_start.expect("pending start exists");
-        changes.push(UpsChange {
-            offset,
-            xor_bytes: pending_xor,
-        });
-    }
-
-    Ok(changes)
-}
-
-fn collect_ups_chunk_changes_from_bytes(
-    start: u64,
-    source_bytes: &[u8],
-    target_bytes: &[u8],
-) -> Result<Vec<UpsChange>> {
-    let mut changes = Vec::new();
-    let mut pending_start: Option<u64> = None;
-    let mut pending_xor = Vec::<u8>::new();
-    let mut absolute = start;
-    let scan_len = source_bytes.len().max(target_bytes.len());
-
-    for index in 0..scan_len {
-        let source_byte = source_bytes.get(index).copied().unwrap_or(0);
-        let target_byte = target_bytes.get(index).copied().unwrap_or(0);
-        if source_byte != target_byte {
-            if pending_start.is_none() {
-                pending_start = Some(absolute);
-            }
-            pending_xor.push(source_byte ^ target_byte);
-        } else if !pending_xor.is_empty() {
-            let offset = pending_start.expect("pending start exists");
-            changes.push(UpsChange {
-                offset,
-                xor_bytes: std::mem::take(&mut pending_xor),
-            });
-            pending_start = None;
-        }
-        absolute = checked_add(absolute, 1, "UPS chunk scan offset")?;
     }
 
     if !pending_xor.is_empty() {

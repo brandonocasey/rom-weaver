@@ -94,28 +94,6 @@ pub(crate) fn can_apply_in_memory_on_apply(context: &OperationContext, a: u64, b
     a <= limit && b <= limit
 }
 
-/// On wasm32, spawned worker threads cannot open OPFS-backed files (Safari iOS
-/// returns os error 44). I/O must happen on the main runner thread; workers receive
-/// in-memory byte slices. Native: the same path is exercised via the env var for tests.
-///
-/// Delegates to the shared [`rom_weaver_core::reads_source_on_main_thread`] gate.
-pub(crate) fn patches_reads_source_on_main_thread() -> bool {
-    rom_weaver_core::reads_source_on_main_thread("ROM_WEAVER_PATCH_MAIN_THREAD_READER")
-}
-
-/// Whether a threaded create must fall back to the serial streaming path instead of buffering
-/// source bytes on the main thread. We only buffer on the main thread when main-thread reads are
-/// required (wasm/Safari OPFS) AND the bytes to buffer fit under [`IN_MEMORY_APPLY_LIMIT_BYTES`];
-/// past the cap the source is streamed serially. When workers can open the source themselves this
-/// is always `false` (size is irrelevant — no main-thread buffering happens).
-///
-/// `scan_len` is the number of bytes buffered on the main thread for the scan: the combined
-/// original+modified length for diff formats, or the single scanned file length for whole-file
-/// formats. Centralizes the gate + cap so future read-on-main changes are one edit, not several.
-pub(crate) fn create_exceeds_main_thread_cap(scan_len: u64) -> bool {
-    patches_reads_source_on_main_thread() && scan_len > in_memory_apply_limit_bytes()
-}
-
 /// Reads a chunk of bytes from both `original_path` and `modified_path` on the calling
 /// (main) thread. `original_bytes` is zero-filled past `original_len`. Caller must
 /// ensure `end <= modified_len`.

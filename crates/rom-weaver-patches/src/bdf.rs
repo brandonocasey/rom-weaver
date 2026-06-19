@@ -70,8 +70,7 @@ impl BdfPatchHandler {
             writes = plan.writes.len(),
             source_len,
             output_len = plan.output_len,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
-            "bdf parsed; apply prepares via worker pool unless read-on-main"
+            "bdf parsed; apply prepares via worker pool"
         );
         let mut output = OpenOptions::new()
             .write(true)
@@ -82,20 +81,11 @@ impl BdfPatchHandler {
         let planned_execution = context.plan_threads(thread_capability.clone());
         let (execution, writes) = if planned_execution.used_parallelism {
             let (execution, pool) = context.build_pool(thread_capability)?;
-            // In wasm/OPFS, spawned worker threads cannot open the source file
-            // (Safari returns os error 44). Read the source on the main thread
-            // into a shared buffer and serve workers in-memory slices; the
-            // parallel diff application is unchanged. Native default keeps the
-            // lazy disk-backed reader (no whole-source buffering).
-            let source = if crate::patches_reads_source_on_main_thread() {
-                ParallelBsdiffSource::Memory(Arc::from(fs::read(&request.input)?))
-            } else {
-                ParallelBsdiffSource::Disk(Arc::new(SharedBlockCacheReader::open(
-                    &request.input,
-                    DEFAULT_BLOCK_CACHE_SIZE_BYTES,
-                    DEFAULT_BLOCK_CACHE_MAX_BLOCKS,
-                )?))
-            };
+            let source = ParallelBsdiffSource::Disk(Arc::new(SharedBlockCacheReader::open(
+                &request.input,
+                DEFAULT_BLOCK_CACHE_SIZE_BYTES,
+                DEFAULT_BLOCK_CACHE_MAX_BLOCKS,
+            )?));
             let writes = prepare_bsdiff_writes_parallel(
                 &plan.writes,
                 &source,
@@ -194,33 +184,18 @@ impl PatchHandler for BdfPatchHandler {
         let target_len_usize = usize::try_from(target_len).map_err(|_| {
             RomWeaverError::Validation("BSDIFF40 target exceeded addressable memory".into())
         })?;
-        let (mut execution, pool) =
-            context.build_pool(qbsdiff_thread_capability(target_len_usize))?;
+        let (execution, pool) = context.build_pool(qbsdiff_thread_capability(target_len_usize))?;
 
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        // create_qbsdiff_patch reads the source AND writes the patch inside the
-        // closure; pool.install runs that on a worker thread, which cannot open OPFS
-        // files in wasm (os error 44). Run it serially on the main thread there
-        // (qbsdiff is deterministic, so the patch still round-trips). Native keeps
-        // the parallel suffix sort.
-        if crate::patches_reads_source_on_main_thread() {
-            trace!(
-                format = self.descriptor.name,
-                "bdf create: read-on-main, running qbsdiff serially on main thread"
-            );
-            create_qbsdiff_patch(request, context, 1)?;
-            execution.force_serial();
-        } else {
-            trace!(
-                format = self.descriptor.name,
-                threads = execution.effective_threads,
-                "bdf create: running qbsdiff on worker pool"
-            );
-            pool.install(|| create_qbsdiff_patch(request, context, execution.effective_threads))?;
-        }
+        trace!(
+            format = self.descriptor.name,
+            threads = execution.effective_threads,
+            "bdf create: running qbsdiff on worker pool"
+        );
+        pool.install(|| create_qbsdiff_patch(request, context, execution.effective_threads))?;
         let patch_len = fs::metadata(&request.output)?.len();
 
         Ok(crate::patch_success_report(
@@ -543,33 +518,15 @@ fn collect_bsdiff_write_plans(
 }
 
 /// Source bytes for the parallel BSDIFF40 apply path. `Disk` reads lazily from
-/// the file on whatever thread calls it (native default); `Memory` serves slices
-/// from a buffer read on the main thread (wasm/OPFS, where workers cannot open
-/// the source — see the apply path).
+/// the file on whatever thread calls it.
 enum ParallelBsdiffSource {
     Disk(Arc<SharedBlockCacheReader>),
-    Memory(Arc<[u8]>),
 }
 
 impl ParallelBsdiffSource {
     fn read_exact_at(&self, offset: u64, output: &mut [u8]) -> Result<()> {
         match self {
             Self::Disk(reader) => reader.read_exact_at(offset, output),
-            Self::Memory(bytes) => {
-                let start = usize::try_from(offset).map_err(|_| {
-                    RomWeaverError::Validation(
-                        "BSDIFF40 source offset exceeded addressable memory".into(),
-                    )
-                })?;
-                let end = start.checked_add(output.len()).ok_or_else(|| {
-                    RomWeaverError::Validation("BSDIFF40 source range overflowed".into())
-                })?;
-                let slice = bytes.get(start..end).ok_or_else(|| {
-                    RomWeaverError::Validation("BSDIFF40 source range exceeded input bounds".into())
-                })?;
-                output.copy_from_slice(slice);
-                Ok(())
-            }
         }
     }
 }

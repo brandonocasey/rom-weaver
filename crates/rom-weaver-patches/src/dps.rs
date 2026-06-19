@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use rom_weaver_core::{
     DEFAULT_BLOCK_CACHE_MAX_BLOCKS, DEFAULT_BLOCK_CACHE_SIZE_BYTES, FormatDescriptor,
@@ -145,16 +145,13 @@ impl PatchHandler for DpsPatchHandler {
             records = parsed.records.len(),
             source_len,
             output_len,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
-            "dps patch apply start; prepares via worker pool unless read-on-main"
+            "dps patch apply start; prepares via worker pool"
         );
         let thread_capability = parallel_per_record_capability(parsed.records.len());
         let (execution, prepared) = run_with_optional_pool(
             context,
             thread_capability,
-            // Parallel prepare reads the source from worker threads, which cannot open
-            // OPFS files in wasm (os error 44); use the serial main-thread path there.
-            !crate::patches_reads_source_on_main_thread(),
+            true,
             |pool| {
                 prepare_dps_writes_parallel(
                     &parsed.records,
@@ -929,37 +926,12 @@ fn collect_dps_records_parallel(
     }
 
     let chunk_size = CREATE_THREAD_SCAN_CHUNK_BYTES as u64;
-    if crate::create_exceeds_main_thread_cap(source_len.saturating_add(target_len)) {
-        info!(
-            source_len,
-            target_len,
-            "DPS create: combined size exceeds in-memory limit; falling back to serial path"
-        );
-        let records = create_dps_records_streaming(source_path, target_path)?;
-        return Ok(records);
-    }
-
     // Each chunk scan is wrapped in `Ok(...)` so the shared fail-fast collect
     // never engages: DPS keeps collecting every chunk and surfaces scan
     // errors in chunk order from the merge loop below, exactly as before.
     let per_chunk = scan_create_chunks(
-        crate::PatchCreateSources {
-            original_path: source_path,
-            original_len: source_len,
-            modified_path: target_path,
-            modified_len: target_len,
-        },
-        target_len,
-        chunk_size,
         chunk_count_for_len(target_len, chunk_size),
         pool,
-        |start, source_bytes, target_bytes| {
-            Ok(collect_dps_chunk_records_from_bytes(
-                start,
-                source_bytes,
-                target_bytes,
-            ))
-        },
         |chunk_index| {
             let start = chunk_index as u64 * chunk_size;
             let end = start.saturating_add(chunk_size).min(target_len);
@@ -1093,93 +1065,6 @@ fn collect_dps_chunk_records(
         })?;
         records.push(DpsRecord::EmbeddedData {
             output_offset: start,
-            data: pending_data,
-        });
-    }
-    Ok(records)
-}
-
-fn collect_dps_chunk_records_from_bytes(
-    start: u64,
-    source_bytes: &[u8],
-    target_bytes: &[u8],
-) -> Result<Vec<DpsRecord>> {
-    let mut records = Vec::<DpsRecord>::new();
-    let mut pending_copy_start: Option<u32> = None;
-    let mut pending_copy_len = 0u32;
-    let mut pending_data_start: Option<u32> = None;
-    let mut pending_data = Vec::<u8>::new();
-    let mut absolute = start;
-
-    for (index, &target) in target_bytes.iter().enumerate() {
-        let equal = source_bytes.get(index).is_some_and(|s| *s == target);
-        let current_offset = u32::try_from(absolute).map_err(|_| {
-            RomWeaverError::Validation("DPS create offset exceeded 32-bit range".into())
-        })?;
-        if equal {
-            if !pending_data.is_empty() {
-                let chunk_start = pending_data_start.ok_or_else(|| {
-                    RomWeaverError::Validation(
-                        "internal DPS state error: pending data missing start offset".into(),
-                    )
-                })?;
-                records.push(DpsRecord::EmbeddedData {
-                    output_offset: chunk_start,
-                    data: std::mem::take(&mut pending_data),
-                });
-                pending_data_start = None;
-            }
-            if pending_copy_start.is_none() {
-                pending_copy_start = Some(current_offset);
-            }
-            pending_copy_len = pending_copy_len.checked_add(1).ok_or_else(|| {
-                RomWeaverError::Validation("DPS copy record length overflowed".into())
-            })?;
-        } else {
-            if pending_copy_len > 0 {
-                let chunk_start = pending_copy_start.ok_or_else(|| {
-                    RomWeaverError::Validation(
-                        "internal DPS state error: pending copy missing start offset".into(),
-                    )
-                })?;
-                records.push(DpsRecord::CopyFromSource {
-                    output_offset: chunk_start,
-                    source_offset: chunk_start,
-                    length: pending_copy_len,
-                });
-                pending_copy_start = None;
-                pending_copy_len = 0;
-            }
-            if pending_data_start.is_none() {
-                pending_data_start = Some(current_offset);
-            }
-            pending_data.push(target);
-        }
-        absolute = absolute
-            .checked_add(1)
-            .ok_or_else(|| RomWeaverError::Validation("DPS output offset overflowed".into()))?;
-    }
-
-    if pending_copy_len > 0 {
-        let chunk_start = pending_copy_start.ok_or_else(|| {
-            RomWeaverError::Validation(
-                "internal DPS state error: trailing pending copy missing start offset".into(),
-            )
-        })?;
-        records.push(DpsRecord::CopyFromSource {
-            output_offset: chunk_start,
-            source_offset: chunk_start,
-            length: pending_copy_len,
-        });
-    }
-    if !pending_data.is_empty() {
-        let chunk_start = pending_data_start.ok_or_else(|| {
-            RomWeaverError::Validation(
-                "internal DPS state error: trailing pending data missing start offset".into(),
-            )
-        })?;
-        records.push(DpsRecord::EmbeddedData {
-            output_offset: chunk_start,
             data: pending_data,
         });
     }

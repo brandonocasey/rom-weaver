@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
@@ -341,20 +341,6 @@ fn create_ppf3_patch(
     output: &mut impl Write,
 ) -> Result<CreatedPpfPatch> {
     if use_parallel_scan {
-        if crate::create_exceeds_main_thread_cap(original_len.saturating_add(modified_len)) {
-            info!(
-                original_len,
-                modified_len,
-                "PPF create: combined size exceeds in-memory limit; falling back to serial path"
-            );
-            return create_ppf3_patch_streaming(
-                original_path,
-                original_len,
-                modified_path,
-                modified_len,
-                output,
-            );
-        }
         create_ppf3_patch_parallel(
             original_path,
             original_len,
@@ -677,37 +663,17 @@ fn collect_ppf_diff_runs_parallel(
     // Each chunk scan is wrapped in `Ok(...)` so the shared fail-fast collect
     // never engages: PPF keeps collecting every chunk and surfaces scan
     // errors in chunk order from the merge loop below, exactly as before.
-    let per_chunk_runs = scan_create_chunks(
-        crate::PatchCreateSources {
+    let per_chunk_runs = scan_create_chunks(chunk_count, pool, |chunk_index| {
+        let start = chunk_index as u64 * chunk_size;
+        let end = start.saturating_add(chunk_size).min(modified_len);
+        Ok(collect_ppf_chunk_diff_runs(
             original_path,
             original_len,
             modified_path,
-            modified_len,
-        },
-        modified_len,
-        chunk_size,
-        chunk_count,
-        pool,
-        |start, original_bytes, modified_bytes| {
-            Ok(collect_ppf_chunk_diff_runs_from_bytes(
-                start,
-                original_bytes,
-                modified_bytes,
-                original_len,
-            ))
-        },
-        |chunk_index| {
-            let start = chunk_index as u64 * chunk_size;
-            let end = start.saturating_add(chunk_size).min(modified_len);
-            Ok(collect_ppf_chunk_diff_runs(
-                original_path,
-                original_len,
-                modified_path,
-                start,
-                end,
-            ))
-        },
-    )?;
+            start,
+            end,
+        ))
+    })?;
 
     let mut merged: Vec<PpfDiffRun> = Vec::new();
     for runs in per_chunk_runs {
@@ -830,6 +796,7 @@ fn collect_ppf_chunk_diff_runs(
     Ok(runs)
 }
 
+#[cfg(test)]
 fn collect_ppf_chunk_diff_runs_from_bytes(
     start: u64,
     original_bytes: &[u8],

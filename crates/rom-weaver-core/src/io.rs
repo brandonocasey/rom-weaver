@@ -642,26 +642,6 @@ impl Drop for TempPathAllocator {
     }
 }
 
-/// Whether a threaded pipeline must read its source on the calling (main) runner thread
-/// instead of opening it from spawned worker threads.
-///
-/// In the browser/wasm runtime only the main runner thread can open OPFS-backed files;
-/// spawned worker threads cannot `path_open` the OPFS source (the open fails with
-/// `No such file or directory (os error 44)` on Safari iOS). Reading on the main thread and
-/// handing workers in-memory byte slices keeps the CPU-bound work parallel while avoiding
-/// worker-thread OPFS access. On native targets each worker opens the source independently
-/// for read/compute overlap; `env_override` (set to `"1"`) is an escape hatch so tests can
-/// exercise the main-thread reader path.
-#[cfg(target_arch = "wasm32")]
-pub fn reads_source_on_main_thread(_env_override: &str) -> bool {
-    true
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn reads_source_on_main_thread(env_override: &str) -> bool {
-    crate::env_bool(env_override)
-}
-
 #[cfg(test)]
 #[path = "../tests/unit/io.rs"]
 mod tests;

@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchApplyRequest,
@@ -921,53 +921,22 @@ fn create_aps_patch_parallel(
     })?;
     let chunk_count = aps_create_chunk_count(modified_len_usize)?;
 
-    if crate::create_exceeds_main_thread_cap(original_len.saturating_add(modified_len)) {
-        info!(
-            original_len,
-            modified_len,
-            "APS create: combined size exceeds in-memory limit; falling back to serial path"
-        );
-        return create_aps_patch_from_files(
-            original_path,
-            original_len,
-            modified_path,
-            modified_len,
-            context,
-        );
-    }
-
     trace!(
         chunk_count,
         modified_len,
         pool_threads = pool.size(),
         "aps create parallel scan"
     );
-    let chunk_runs = scan_create_chunks(
-        crate::PatchCreateSources {
+    let chunk_runs = scan_create_chunks(chunk_count, pool, |chunk_index| {
+        context.cancel().check()?;
+        collect_diff_runs_for_chunk(
+            chunk_index,
             original_path,
             original_len,
             modified_path,
             modified_len,
-        },
-        modified_len,
-        APS_CREATE_CHUNK_BYTES as u64,
-        chunk_count,
-        pool,
-        |start, original_bytes, modified_bytes| {
-            context.cancel().check()?;
-            collect_diff_runs_from_bytes(start, original_bytes, modified_bytes)
-        },
-        |chunk_index| {
-            context.cancel().check()?;
-            collect_diff_runs_for_chunk(
-                chunk_index,
-                original_path,
-                original_len,
-                modified_path,
-                modified_len,
-            )
-        },
-    )?;
+        )
+    })?;
     let runs = merge_adjacent_runs(chunk_runs)?;
     let records = encode_runs_as_aps_records(runs)?;
     create_aps_patch_with_records(n64_header, modified_len, records)

@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use crc32fast::Hasher;
 use rayon::prelude::*;
@@ -98,7 +98,6 @@ impl PatchHandler for PmsrPatchHandler {
             output_len,
             in_memory,
             records_non_overlapping,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
             "pmsr parsed; apply path chosen"
         );
         let execution = if in_memory {
@@ -121,7 +120,7 @@ impl PatchHandler for PmsrPatchHandler {
             let (mut execution, ()) = run_with_optional_pool(
                 context,
                 thread_capability,
-                records_non_overlapping && !crate::patches_reads_source_on_main_thread(),
+                records_non_overlapping,
                 |pool| {
                     // `pool.size()` always matches the negotiated
                     // `effective_threads` for pools built by `build_pool`.
@@ -691,15 +690,6 @@ fn create_pmsr_patch_parallel(
         )));
     }
 
-    if crate::create_exceeds_main_thread_cap(original_len.saturating_add(modified_len)) {
-        info!(
-            original_len,
-            modified_len,
-            "PMSR create: combined size exceeds in-memory limit; falling back to serial path"
-        );
-        return create_pmsr_patch_streaming(original_path, modified_path);
-    }
-
     let chunk_count = pmsr_create_chunk_count(modified_len)?;
     trace!(
         chunk_count,
@@ -707,32 +697,16 @@ fn create_pmsr_patch_parallel(
         pool_threads = pool.size(),
         "pmsr create parallel scan"
     );
-    let chunk_records = scan_create_chunks(
-        crate::PatchCreateSources {
+    let chunk_records = scan_create_chunks(chunk_count, pool, |chunk_index| {
+        context.cancel().check()?;
+        collect_pmsr_records_for_chunk(
+            chunk_index,
             original_path,
             original_len,
             modified_path,
             modified_len,
-        },
-        modified_len,
-        CREATE_SCAN_CHUNK_BYTES as u64,
-        chunk_count,
-        pool,
-        |start, original_bytes, modified_bytes| {
-            context.cancel().check()?;
-            collect_pmsr_records_from_bytes(start, original_bytes, modified_bytes)
-        },
-        |chunk_index| {
-            context.cancel().check()?;
-            collect_pmsr_records_for_chunk(
-                chunk_index,
-                original_path,
-                original_len,
-                modified_path,
-                modified_len,
-            )
-        },
-    )?;
+        )
+    })?;
     let records = merge_adjacent_runs(chunk_records)?;
     finalize_created_pmsr_patch(records, modified_len)
 }

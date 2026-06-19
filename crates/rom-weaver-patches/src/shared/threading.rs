@@ -63,7 +63,7 @@ pub(crate) fn parallel_chunked_capability(len: u64, chunk_bytes: u64) -> ThreadC
 /// handlers byte-for-byte: plan first, branch on `used_parallelism`, build the
 /// pool (which re-plans and may fall back) only on the parallel path, and
 /// surface the planned execution unchanged on the serial path. `allow_parallel`
-/// carries per-site gates such as `!crate::patches_reads_source_on_main_thread()`.
+/// carries per-site gates that disable parallelism for specific patch shapes.
 pub(crate) fn run_with_optional_pool<T>(
     context: &OperationContext,
     capability: ThreadCapability,
@@ -115,53 +115,15 @@ pub(crate) fn pool_map<I: Sync, T: Send>(
     pool.install(|| items.par_iter().map(&map).collect::<Result<Vec<_>>>())
 }
 
-/// Scans the original/modified pair in `chunk_bytes`-sized chunks of
-/// `scan_len` on `pool`, producing one `T` per chunk.
-///
-/// Branches on the RUNTIME `crate::patches_reads_source_on_main_thread()`
-/// gate (wasm/Safari OPFS): when main-thread reads are required, every chunk
-/// is buffered serially via [`crate::read_original_modified_chunk`] and
-/// `scan_buffered_chunk` runs over the buffered bytes in parallel; otherwise
-/// `scan_chunk_by_index` opens the files itself per chunk in parallel. Both
-/// branches fail fast on the first error. Cancellation checks and per-format
-/// fallback `info!` messages stay at the call sites.
+/// Scans the create input in `chunk_count` chunks on `pool`, producing one `T`
+/// per chunk. `scan_chunk_by_index` opens the files itself per chunk in
+/// parallel and fails fast on the first error. Cancellation checks and
+/// per-format fallback `info!` messages stay at the call sites.
 pub(crate) fn scan_create_chunks<T: Send>(
-    sources: crate::PatchCreateSources,
-    scan_len: u64,
-    chunk_bytes: u64,
     chunk_count: usize,
     pool: &SharedThreadPool,
-    scan_buffered_chunk: impl Fn(u64, &[u8], &[u8]) -> Result<T> + Sync + Send,
     scan_chunk_by_index: impl Fn(usize) -> Result<T> + Sync + Send,
 ) -> Result<Vec<T>> {
-    if crate::patches_reads_source_on_main_thread() {
-        let chunk_starts: Vec<u64> = (0..chunk_count as u64)
-            .map(|i| i * chunk_bytes)
-            .filter(|&s| s < scan_len)
-            .collect();
-        let buffered = chunk_starts
-            .iter()
-            .map(|&start| {
-                let end = start.saturating_add(chunk_bytes).min(scan_len);
-                crate::read_original_modified_chunk(
-                    sources.original_path,
-                    sources.original_len,
-                    sources.modified_path,
-                    start,
-                    end,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
-        return pool.install(|| {
-            buffered
-                .into_par_iter()
-                .zip(chunk_starts.into_par_iter())
-                .map(|((original_bytes, modified_bytes), start)| {
-                    scan_buffered_chunk(start, &original_bytes, &modified_bytes)
-                })
-                .collect::<Result<Vec<_>>>()
-        });
-    }
     pool.install(|| {
         (0..chunk_count)
             .into_par_iter()

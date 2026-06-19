@@ -175,17 +175,12 @@ impl PatchHandler for DldiPatchHandler {
             modified_len_usize,
         ))?;
 
-        // find_dldi_slot_in_path opens the file; under pool.install/join it runs on
-        // worker threads, which cannot open OPFS files in wasm (os error 44). Scan on
-        // the main thread there; native keeps the parallel scan.
-        let scan_on_main = crate::patches_reads_source_on_main_thread();
         trace!(
             format = self.descriptor.name,
             parallel = execution.used_parallelism,
-            scan_on_main,
             "dldi create slot scan plan"
         );
-        let (original_slot, modified_slot) = if execution.used_parallelism && !scan_on_main {
+        let (original_slot, modified_slot) = if execution.used_parallelism {
             let (left, right) = pool.install(|| {
                 join(
                     || find_dldi_slot_in_path(&request.original),

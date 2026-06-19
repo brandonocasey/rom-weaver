@@ -958,7 +958,7 @@ fn build_created_primitives_with_threads_from_paths(
         modified_path,
         modified_len,
     } = sources;
-    let effective_parallel = use_parallel_scan && !crate::patches_reads_source_on_main_thread();
+    let effective_parallel = use_parallel_scan;
     let chunks = if effective_parallel {
         collect_created_chunks_parallel_from_paths(
             original_path,

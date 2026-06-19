@@ -116,7 +116,6 @@ impl PatchHandler for BpsPatchHandler {
             format = self.descriptor.name,
             in_memory,
             has_target_copy,
-            read_on_main = crate::patches_reads_source_on_main_thread(),
             source_size = patch.source_size,
             target_size = patch.target_size,
             "bps apply path chosen"
@@ -142,10 +141,7 @@ impl PatchHandler for BpsPatchHandler {
             let (mut execution, prepared) = run_with_optional_pool(
                 context,
                 thread_capability,
-                // The parallel path reads the source from worker threads, which cannot
-                // open OPFS files in wasm (os error 44); fall back to the serial path
-                // that reads the source on the main thread there. Native keeps parallel.
-                !has_target_copy && !crate::patches_reads_source_on_main_thread(),
+                !has_target_copy,
                 |pool| {
                     prepare_bps_writes_parallel(
                         &patch,

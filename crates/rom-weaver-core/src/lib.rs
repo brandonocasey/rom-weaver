@@ -41,7 +41,7 @@ pub use io::{
     DEFAULT_BLOCK_CACHE_SIZE_BYTES, DEFAULT_CHUNK_SIZE_BYTES, FileChunk, IoWatermark,
     OrderedChunkWriter, OrderedStreamingMessages, SharedBlockCacheReader, TempPathAllocator,
     bounded_items_for_threads, create_extract_output_file, file_starts_with,
-    ordered_streaming_compress, reads_source_on_main_thread,
+    ordered_streaming_compress,
 };
 pub use patch_support::{checksum_validation_suffix, require_single_patch_file};
 pub use progress::{

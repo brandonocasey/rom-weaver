@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use rayon::prelude::*;
 use rom_weaver_core::{
@@ -559,39 +559,10 @@ fn create_pat_patch_parallel(
         });
     }
 
-    if crate::create_exceeds_main_thread_cap(original_len.saturating_add(modified_len)) {
-        info!(
-            original_len,
-            modified_len,
-            "PAT create: combined size exceeds in-memory limit; falling back to serial path"
-        );
-        return create_pat_patch_streaming(original_path, modified_path);
-    }
-
     let chunk_count = pat_create_chunk_count(original_len);
-    let per_chunk_records = scan_create_chunks(
-        crate::PatchCreateSources {
-            original_path,
-            original_len,
-            modified_path,
-            modified_len,
-        },
-        original_len,
-        CREATE_THREAD_SCAN_CHUNK_BYTES as u64,
-        chunk_count,
-        pool,
-        |start, original_bytes, modified_bytes| {
-            collect_pat_chunk_records_from_bytes(start, original_bytes, modified_bytes)
-        },
-        |chunk_index| {
-            collect_pat_chunk_records_for_chunk(
-                chunk_index,
-                original_path,
-                modified_path,
-                original_len,
-            )
-        },
-    )?;
+    let per_chunk_records = scan_create_chunks(chunk_count, pool, |chunk_index| {
+        collect_pat_chunk_records_for_chunk(chunk_index, original_path, modified_path, original_len)
+    })?;
 
     let mut records = Vec::new();
     for mut chunk_records in per_chunk_records {
