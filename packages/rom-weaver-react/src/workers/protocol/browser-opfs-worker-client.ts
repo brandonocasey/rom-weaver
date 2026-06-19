@@ -1,32 +1,28 @@
 import { whenOpfsCleanupSettled } from "../../storage/browser/opfs-cleanup-gate.ts";
 import { createWorkerRequestId } from "../shared/worker-request-id.ts";
-import type { WorkerStorageBucket } from "../shared/worker-storage/storage-layout.ts";
 
 type WorkerAssetRoot = typeof globalThis & {
   __romWeaverWorkerBaseUrl?: string;
 };
 
-type BrowserOpfsStorageAction = "cleanup" | "stage" | "truncate" | "write";
+// Input staging is retired (browser inputs read directly — see browser-opfs-source-ref), so this client
+// only drives output-side OPFS writes/truncates and path cleanup. "stage-error" remains the generic
+// failure reply for every action.
+type BrowserOpfsStorageAction = "cleanup" | "truncate" | "write";
 
 type BrowserOpfsStorageRequest = {
   action: BrowserOpfsStorageAction;
-  bucket?: WorkerStorageBucket;
   bytes?: Uint8Array;
-  file?: Blob;
-  fileName?: string;
   filePath?: string;
   filePaths?: string[];
-  mountPoint?: string;
-  pathPrefix?: string;
   position?: number;
   requestId?: string;
   size?: number;
 };
 
 type BrowserOpfsStorageResponse = {
-  action: "cleanup-complete" | "stage-complete" | "stage-error" | "truncate-complete" | "write-complete";
+  action: "cleanup-complete" | "stage-error" | "truncate-complete" | "write-complete";
   error?: { message?: string };
-  fileName?: string;
   filePath?: string;
   requestId?: string;
   size?: number;
