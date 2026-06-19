@@ -1,5 +1,5 @@
 use super::*;
-use tracing::{debug, trace};
+use tracing::debug;
 
 pub(crate) struct Z3dsContainerHandler;
 
@@ -254,17 +254,6 @@ struct Z3dsExtractTask {
 struct Z3dsDecodedExtractChunk {
     index: usize,
     data: Vec<u8>,
-}
-
-/// Owned per-task input for the wasm streaming extract: the compressed bytes for the frame
-/// group a task spans (`compressed[comp_start..comp_end]`), read on the main thread. The
-/// worker wraps `bytes` in a windowed [`Z3dsPayloadReader`] (base `comp_start`, len
-/// `comp_end`) so the decoder's absolute payload-offset seeks land inside `bytes`.
-#[derive(Debug)]
-struct Z3dsExtractInput {
-    bytes: Vec<u8>,
-    comp_start: u64,
-    comp_end: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -905,7 +894,6 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
             tasks = tasks.len(),
             used_parallelism = execution.used_parallelism,
             effective_threads = execution.effective_threads,
-            read_on_main = execution.used_parallelism && container_reads_source_on_main_thread(),
             "z3ds extract start"
         );
         let extract_progress_label = format!("extracting `{}`", Z3DS.name);
@@ -923,77 +911,14 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         )?;
         let source = request.source.clone();
 
-        let decode_result: Result<()> = if execution.used_parallelism
-            && container_reads_source_on_main_thread()
-        {
-            // Streaming read-on-main pipeline (browser/wasm): the OPFS source is opened only on
-            // the main runner thread. Instead of buffering the whole compressed payload, the
-            // reader reads ONLY each task's frame-group compressed bytes here and hands the
-            // worker an owned buffer to decompress. Peak memory is bounded to the in-flight
-            // window (~2×threads × per-task bytes) instead of the whole payload, so a multi-GiB
-            // 3DS image no longer needs one giant allocation (which iOS Safari cannot sustain).
-            // Bytes written are identical to the buffered/native path: tasks are frame-aligned,
-            // and the worker decodes the same frames with the same seek table and offsets.
-            let mut payload_file = BufReader::new(File::open(&source)?);
-            stream_decode_tasks_ordered(
-                &tasks,
-                execution.effective_threads,
-                Self::extract_pipeline_messages(),
-                |task: &Z3dsExtractTask| task.len,
-                |task: &Z3dsExtractTask| -> Result<Z3dsExtractInput> {
-                    let last_byte = task.offset.saturating_add(task.len).saturating_sub(1);
-                    let first_frame = seek_table.frame_index_decomp(task.offset);
-                    let last_frame = seek_table.frame_index_decomp(last_byte);
-                    let comp_start = seek_table
-                        .frame_start_comp(first_frame)
-                        .map_err(|error| self.map_zstd_error("extract frame range start", error))?;
-                    let comp_end = seek_table
-                        .frame_end_comp(last_frame)
-                        .map_err(|error| self.map_zstd_error("extract frame range end", error))?;
-                    let span = comp_end.checked_sub(comp_start).ok_or_else(|| {
-                        RomWeaverError::Validation(
-                            "z3ds extract frame range produced a negative span".into(),
-                        )
-                    })?;
-                    let span = usize::try_from(span).map_err(|_| {
-                        RomWeaverError::Validation(
-                            "z3ds extract frame range exceeded addressable memory".into(),
-                        )
-                    })?;
-                    let read_at = payload_start.checked_add(comp_start).ok_or_else(|| {
-                        RomWeaverError::Validation("z3ds extract read offset overflowed".into())
-                    })?;
-                    let mut bytes = vec![0_u8; span];
-                    payload_file.seek(SeekFrom::Start(read_at))?;
-                    payload_file.read_exact(&mut bytes)?;
-                    trace!(
-                        format = Z3DS.name,
-                        task = task.index,
-                        comp_start,
-                        comp_end,
-                        span,
-                        "z3ds read-on-main streamed frame range"
-                    );
-                    Ok(Z3dsExtractInput {
-                        bytes,
-                        comp_start,
-                        comp_end,
-                    })
-                },
-                |task: &Z3dsExtractTask, input: Z3dsExtractInput| {
-                    let reader = Z3dsPayloadReader::with_window(
-                        io::Cursor::new(input.bytes),
-                        0,
-                        input.comp_start,
-                        input.comp_end,
-                    )?;
-                    self.extract_chunk_from_reader(reader, &seek_table, task)
-                },
-                |chunk: Z3dsDecodedExtractChunk, task_len| {
-                    extract_writer.write(chunk.index, chunk.data, task_len)
-                },
-            )
-        } else if execution.used_parallelism {
+        let decode_result: Result<()> = if execution.used_parallelism {
+            // Each worker opens its own windowed reader over the source and decodes its assigned
+            // frame-aligned task range (the zeekstd seek table + offset limits make it read only
+            // those frames, so peak memory is one task's working set per worker — not the whole
+            // payload). In the browser the OPFS proxy worker owns the source handle, so a spawned
+            // wasm thread's `path_open` is marshalled to it and succeeds; the old streaming
+            // read-on-main pipeline that read each frame range on the main thread is no longer
+            // needed. A multi-GiB 3DS image still never needs a whole-payload allocation.
             decode_tasks_ordered(
                 &tasks,
                 execution.effective_threads,

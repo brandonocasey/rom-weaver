@@ -447,12 +447,15 @@ fn z3ds_extract_reports_parallel_threads_for_large_file() {
     );
 }
 
-// The wasm/browser path reads the compressed payload on the main runner thread and streams each
-// task's frame-group bytes to the decode workers (bounded memory). Default CI exercises the
-// per-worker-open path, so this forces the read-on-main streaming path via the env override and
-// asserts it decodes byte-for-byte identically to the default extraction.
+// z3ds extract no longer streams the compressed payload on the main runner thread: each worker
+// opens its own windowed reader over the source and decodes its frame-aligned task range (the
+// OPFS proxy makes worker `path_open` work in the browser; the zeekstd seek table keeps each
+// worker reading only its frames, so memory stays bounded). The legacy read-on-main env knob
+// (`ROM_WEAVER_CONTAINER_MAIN_THREAD_READER`) is now a no-op here. This asserts that, even with
+// that knob set, extract still runs in parallel per-worker and decodes byte-for-byte identically
+// to the default extraction.
 #[test]
-fn z3ds_extract_streaming_read_on_main_matches_default() {
+fn z3ds_extract_parallel_matches_default_with_legacy_env() {
     let temp = setup_temp_dir();
     let source = (0..(10 * 1024 * 1024))
         .map(|index| ((index * 7) % 251) as u8)
@@ -494,18 +497,30 @@ fn z3ds_extract_streaming_read_on_main_matches_default() {
         0,
     );
 
-    let streamed_dir = temp.child("streamed");
-    let streamed_args = extract_args(streamed_dir.path().to_str().expect("path"));
-    command_stdout_with_env(
-        &streamed_args.iter().map(String::as_str).collect::<Vec<_>>(),
+    let legacy_dir = temp.child("legacy-env");
+    let legacy_args = extract_args(legacy_dir.path().to_str().expect("path"));
+    let legacy_output = command_stdout_with_env(
+        &legacy_args.iter().map(String::as_str).collect::<Vec<_>>(),
         &[("ROM_WEAVER_CONTAINER_MAIN_THREAD_READER", "1")],
         0,
     );
+    let legacy_json = parse_json_lines(&legacy_output)
+        .last()
+        .cloned()
+        .expect("extract terminal event");
+    // The legacy knob no longer diverts to a serial main-thread read: extract still parallelizes.
+    assert_eq!(legacy_json["used_parallelism"], true);
+    assert!(
+        legacy_json["effective_threads"]
+            .as_u64()
+            .expect("effective_threads")
+            >= 2
+    );
 
     let default_bytes = fs::read(default_dir.child("large.3ds").path()).expect("default 3ds");
-    let streamed_bytes = fs::read(streamed_dir.child("large.3ds").path()).expect("streamed 3ds");
+    let legacy_bytes = fs::read(legacy_dir.child("large.3ds").path()).expect("legacy 3ds");
     assert_eq!(default_bytes, source);
-    assert_eq!(streamed_bytes, source);
+    assert_eq!(legacy_bytes, source);
 }
 
 #[test]
