@@ -16,8 +16,14 @@ import type { OpfsProxyClient } from "./browser-opfs-proxy-client.ts";
 import { OpfsProxyError } from "./browser-opfs-proxy-client.ts";
 import type { RandomAccessFileLike } from "./browser-opfs-wasi-file-inode.ts";
 
-/** Block size for the consumer read cache; large reads above this bypass the cache and stream. */
-const PROXY_READ_CACHE_BLOCK_BYTES = 1024 * 1024;
+/** Block size for the consumer read cache; large reads above this bypass the cache and stream. Bigger
+ * than the slot buffer on purpose: a miss fills the whole block in slot-sized chunks, so a 4 MiB block is
+ * one cache fill spanning ~2 backend reads instead of 4 separate 1 MiB fills. This matters most on the
+ * Safari Blob-handle path — WebKit pays a high fixed per-call cost on `blob.slice().arrayBuffer()`, so
+ * fewer, larger backend reads win (4 MiB mirrors the retired SAB virtual-file proxy's Safari-tuned
+ * chunk). Decode reads are scattered but locally sequential (CHD hunks within a thread's range), so the
+ * extra prefetch is reused, not wasted. Per-handle JS-heap cost; the SAB slot buffer is unchanged. */
+const PROXY_READ_CACHE_BLOCK_BYTES = 4 * 1024 * 1024;
 /** Requests larger than this are streamed directly rather than cached. */
 const PROXY_READ_CACHE_MAX_REQUEST_BYTES = 256 * 1024;
 /**
