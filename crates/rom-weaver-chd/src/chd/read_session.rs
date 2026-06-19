@@ -14,41 +14,6 @@ pub(super) struct ChdReadSession {
     backend: ChdReadBackend,
 }
 
-// CHD v5 stores a CRC-16/IBM-3740 (CCITT-FALSE) of each hunk's decompressed data; the threaded
-// WASM decode workers verify it to match the `verify_block_crc` integrity check the single-thread
-// path performs.
-#[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-const CHD_HUNK_CRC16: crc::Crc<u16> = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740);
-
-// Bound on copy-from-self chain following while resolving a hunk to a concrete source hunk.
-#[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-const CHD_MAX_SELF_FOLLOW: usize = 64;
-
-// One decode unit handed from the main thread to a worker in the threaded WASM decode path.
-#[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-enum WasmHunkJob {
-    // Heavy compressed hunk: decompress `input` with codec slot `codec_index`, verify `crc`.
-    Decode {
-        codec_index: usize,
-        input: Vec<u8>,
-        crc: u16,
-        write_len: usize,
-    },
-    // Bytes already resolved on the main thread (uncompressed, parent-referenced, legacy, or
-    // otherwise decoded inline): the worker passes them straight through.
-    Ready {
-        data: Vec<u8>,
-        write_len: usize,
-    },
-}
-
-#[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-struct WasmDecodedHunk {
-    hunk_index: u32,
-    data: Vec<u8>,
-    write_len: u64,
-}
-
 impl ChdReadSession {
     pub(super) fn open(source: &Path, parent_source: Option<&Path>) -> Result<Self> {
         Self::open_rust(source, parent_source).map_err(|rust_error| {
@@ -203,393 +168,6 @@ impl ChdReadSession {
             .map_err(|error| format!("failed to parse `{}`: {error}", source.display()))
     }
 
-    // Browser worker threads cannot open OPFS-backed files (only the main runner thread holds
-    // the filesystem access handles), so the threaded WASM decode paths use a producer/consumer
-    // split: the main thread reads each hunk's compressed bytes from the file and worker threads
-    // only run the CPU-bound decompression. Peak memory is bounded to the in-flight batch
-    // instead of a whole-file copy, and there is no contiguous multi-GiB allocation (which
-    // wasm32 caps at isize::MAX), so arbitrarily large CHDs decode in parallel.
-
-    // Reads `len` bytes at `file_offset` from the CHD's underlying reader. Used by the main
-    // thread to pull a hunk's raw compressed bytes without decompressing them.
-    #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-    fn read_raw_block(
-        chd: &mut chd::Chd<BufReader<File>>,
-        file_offset: u64,
-        len: usize,
-        source: &Path,
-    ) -> std::result::Result<Vec<u8>, String> {
-        let reader = chd.inner();
-        reader.seek(SeekFrom::Start(file_offset)).map_err(|error| {
-            format!(
-                "failed to seek `{}` to offset {file_offset}: {error}",
-                source.display()
-            )
-        })?;
-        let mut buffer = vec![0u8; len];
-        reader.read_exact(&mut buffer).map_err(|error| {
-            format!(
-                "failed to read compressed hunk bytes from `{}`: {error}",
-                source.display()
-            )
-        })?;
-        Ok(buffer)
-    }
-
-    // Classifies hunk `hunk_index` into a `WasmHunkJob`, reading its compressed bytes on the main
-    // thread. Copy-from-self chains are followed to the concrete source hunk so the worker can
-    // decode independently; uncompressed/parent/legacy entries are resolved inline on the main
-    // thread (which holds an open reader) and handed over as ready bytes. Returns `None` for
-    // hunks that begin past `logical_bytes` (nothing to write).
-    #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-    fn build_wasm_hunk_job(
-        chd: &mut chd::Chd<BufReader<File>>,
-        hunk_index: u32,
-        hunk_bytes: u64,
-        logical_bytes: u64,
-        source: &Path,
-    ) -> std::result::Result<Option<WasmHunkJob>, String> {
-        use chd::map::{CompressionTypeV5, MapEntry};
-
-        let offset = u64::from(hunk_index).saturating_mul(hunk_bytes);
-        if offset >= logical_bytes {
-            return Ok(None);
-        }
-        let write_len = usize::try_from(logical_bytes.saturating_sub(offset).min(hunk_bytes))
-            .map_err(|_| "decoded CHD hunk exceeded addressable memory".to_string())?;
-
-        enum Action {
-            Decode {
-                codec_index: usize,
-                file_offset: u64,
-                len: usize,
-                crc: u16,
-            },
-            Raw {
-                file_offset: u64,
-                len: usize,
-            },
-            FollowSelf(u32),
-            Inline,
-        }
-
-        let mut current = hunk_index;
-        for _ in 0..CHD_MAX_SELF_FOLLOW {
-            let action = {
-                let entry = chd.map().get_entry(current as usize).ok_or_else(|| {
-                    format!(
-                        "CHD hunk {current} is out of range in `{}`",
-                        source.display()
-                    )
-                })?;
-                match entry {
-                    MapEntry::V5Compressed(entry) => {
-                        let comptype = entry.hunk_type().map_err(|error| {
-                            format!("failed to read CHD hunk {current} type: {error:?}")
-                        })?;
-                        let codec_index = match comptype {
-                            CompressionTypeV5::CompressionType0 => Some(0usize),
-                            CompressionTypeV5::CompressionType1 => Some(1),
-                            CompressionTypeV5::CompressionType2 => Some(2),
-                            CompressionTypeV5::CompressionType3 => Some(3),
-                            _ => None,
-                        };
-                        match (codec_index, comptype) {
-                            (Some(codec_index), _) => Action::Decode {
-                                codec_index,
-                                file_offset: entry.block_offset().map_err(|error| {
-                                    format!("failed to read CHD hunk {current} offset: {error:?}")
-                                })?,
-                                len: entry.block_size().map_err(|error| {
-                                    format!("failed to read CHD hunk {current} size: {error:?}")
-                                })? as usize,
-                                crc: entry.hunk_crc().map_err(|error| {
-                                    format!("failed to read CHD hunk {current} crc: {error:?}")
-                                })?,
-                            },
-                            (None, CompressionTypeV5::CompressionNone) => Action::Raw {
-                                file_offset: entry.block_offset().map_err(|error| {
-                                    format!("failed to read CHD hunk {current} offset: {error:?}")
-                                })?,
-                                len: entry.block_size().map_err(|error| {
-                                    format!("failed to read CHD hunk {current} size: {error:?}")
-                                })? as usize,
-                            },
-                            (None, CompressionTypeV5::CompressionSelf) => {
-                                Action::FollowSelf(entry.block_offset().map_err(|error| {
-                                    format!("failed to read CHD hunk {current} self ref: {error:?}")
-                                })? as u32)
-                            }
-                            _ => Action::Inline,
-                        }
-                    }
-                    _ => Action::Inline,
-                }
-            };
-            match action {
-                Action::Decode {
-                    codec_index,
-                    file_offset,
-                    len,
-                    crc,
-                } => {
-                    let input = Self::read_raw_block(chd, file_offset, len, source)?;
-                    return Ok(Some(WasmHunkJob::Decode {
-                        codec_index,
-                        input,
-                        crc,
-                        write_len,
-                    }));
-                }
-                Action::Raw { file_offset, len } => {
-                    let mut data = Self::read_raw_block(chd, file_offset, len, source)?;
-                    data.truncate(write_len);
-                    return Ok(Some(WasmHunkJob::Ready { data, write_len }));
-                }
-                Action::FollowSelf(source_hunk) => {
-                    current = source_hunk;
-                    continue;
-                }
-                Action::Inline => break,
-            }
-        }
-
-        // Fallback (parent reference, legacy map, uncompressed v5 map, or an over-long self
-        // chain): decode this hunk on the main thread, which already holds an open reader.
-        let mut compressed_buffer = Vec::new();
-        let mut hunk_buffer = chd.get_hunksized_buffer();
-        let mut hunk = chd.hunk(hunk_index).map_err(|error| {
-            format!(
-                "failed to decode hunk {hunk_index} of `{}`: {error:?}",
-                source.display()
-            )
-        })?;
-        hunk.read_hunk_in(&mut compressed_buffer, &mut hunk_buffer)
-            .map_err(|error| {
-                format!(
-                    "failed to read hunk {hunk_index} of `{}`: {error:?}",
-                    source.display()
-                )
-            })?;
-        hunk_buffer.truncate(write_len);
-        Ok(Some(WasmHunkJob::Ready {
-            data: hunk_buffer,
-            write_len,
-        }))
-    }
-
-    // Producer/consumer batched decode for the threaded WASM target. The main thread reads each
-    // batch's compressed hunk bytes (workers cannot open the OPFS-backed file), worker threads
-    // decompress in parallel, and decoded hunks are emitted in order via `write_hunk`.
-    #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-    fn wasm_parallel_decode_hunks<W>(
-        source: &Path,
-        parent_source: Option<&Path>,
-        logical_bytes: u64,
-        effective_threads: usize,
-        on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
-        mut write_hunk: W,
-    ) -> std::result::Result<(), String>
-    where
-        W: FnMut(u32, &[u8], u64) -> std::result::Result<(), String>,
-    {
-        let mut chd = Self::open_rust_chd(source, parent_source)
-            .map_err(|error| format!("failed to decode `{}`: {error}", source.display()))?;
-        let header = chd.header().clone();
-        let hunk_count = chd.header().hunk_count();
-        let hunk_bytes = chd.header().hunk_size() as u64;
-        let hunk_bytes_usize = usize::try_from(hunk_bytes)
-            .ok()
-            .filter(|bytes| *bytes > 0)
-            .unwrap_or(usize::MAX);
-        let target_batch_hunks = (64 * 1024 * 1024_usize) / hunk_bytes_usize;
-        let batch_hunks = target_batch_hunks
-            .max(effective_threads.saturating_mul(16))
-            .max(effective_threads);
-        debug!(
-            hunk_count,
-            hunk_bytes = hunk_bytes_usize,
-            effective_threads,
-            batch_hunks,
-            "chd wasm parallel decode start"
-        );
-
-        // Browser wasi-threads guard against a V8 shared-memory growth race.
-        //
-        // V8 propagates a shared `memory.grow` to already-running thread instances without
-        // synchronizing it against their in-flight bounds checks, so a `memory.grow` triggered
-        // while sibling decode threads are running can make one of them read a stale (smaller)
-        // size and trap with "memory access out of bounds"; the trapped thread never signals its
-        // join and the main thread wedges forever. wasmtime uses guard-page bounds checks and is
-        // immune, so the same module decodes fine natively.
-        //
-        // dlmalloc starts its heap at the initial `memory.size` and only ever grows above it, so
-        // a large shared-memory maximum (or a larger initial size) does not help — every batch's
-        // first allocations still call `memory.grow`. The observed pattern matches exactly: only
-        // the first batch traps (its stacks/buffers grow the heap while threads run), while later
-        // batches reuse the now-large freed heap and never grow. Make the first batch behave like
-        // the later ones by growing the heap once here, on the main thread, to cover a full
-        // batch's concurrent working set (per-thread stacks + the batch's decoded output). The
-        // parallel decode below then reuses committed memory and performs no `memory.grow`.
-        {
-            const STACK_RESERVE_PER_THREAD: usize = 4 * 1024 * 1024;
-            const HEAP_RESERVE_MARGIN: usize = 32 * 1024 * 1024;
-            const HEAP_RESERVE_MAX: usize = 768 * 1024 * 1024;
-            // During the parallel scope the live set is the batch's decoded output plus the
-            // already-read compressed jobs (held until the batch finishes) plus the per-thread
-            // stacks. Reserve ~2x the batch's logical size to cover decoded + compressed, plus
-            // stacks and a margin for allocator overhead.
-            let batch_bytes = batch_hunks.saturating_mul(hunk_bytes_usize);
-            let reserve = batch_bytes
-                .saturating_mul(2)
-                .saturating_add(effective_threads.saturating_mul(STACK_RESERVE_PER_THREAD))
-                .saturating_add(HEAP_RESERVE_MARGIN)
-                .min(HEAP_RESERVE_MAX);
-            trace!(
-                reserve,
-                batch_bytes,
-                effective_threads,
-                "chd wasm decode pregrow heap to avoid memory.grow race"
-            );
-            // Touch the allocation so the compiler cannot elide the grow, then drop it; wasm
-            // memory never shrinks, so the committed pages stay in dlmalloc's free list for the
-            // decode threads to reuse without growing.
-            let mut heap_warm: Vec<u8> = Vec::with_capacity(reserve);
-            heap_warm.push(0);
-            std::hint::black_box(heap_warm.as_ptr());
-            drop(heap_warm);
-        }
-
-        let hunk_indices: Vec<u32> = (0..hunk_count).collect();
-        for batch in hunk_indices.chunks(batch_hunks) {
-            // Read this batch's compressed bytes on the main thread (worker threads cannot open
-            // the OPFS-backed file); the parallel decode below works only from these bytes.
-            let mut jobs: Vec<(u32, WasmHunkJob)> = Vec::with_capacity(batch.len());
-            for &hunk_index in batch {
-                if let Some(job) = Self::build_wasm_hunk_job(
-                    &mut chd,
-                    hunk_index,
-                    hunk_bytes,
-                    logical_bytes,
-                    source,
-                )? {
-                    jobs.push((hunk_index, job));
-                }
-            }
-            if jobs.is_empty() {
-                continue;
-            }
-
-            let chunk_size = jobs.len().div_ceil(effective_threads).max(1);
-            let header_ref = &header;
-            // Decode chunks on one-shot scoped threads. The node wasi-threads runtime maps one
-            // Worker per thread-spawn, so `std::thread::scope` matches that model and
-            // `JoinHandle::join` surfaces a worker panic instead of hanging.
-            std::thread::scope(|scope| -> std::result::Result<(), String> {
-                let (decoded_tx, decoded_rx) =
-                    std::sync::mpsc::channel::<std::result::Result<WasmDecodedHunk, String>>();
-                let handles: Vec<_> = jobs
-                        .chunks(chunk_size)
-                        .map(|chunk| {
-                            let decoded_tx = decoded_tx.clone();
-                            scope.spawn(move || -> std::result::Result<(), String> {
-                                let mut codecs: Option<chd::Codecs> = None;
-                                let mut hunk_buffer = vec![0u8; hunk_bytes_usize];
-                                for (hunk_index, job) in chunk {
-                                    let decoded = match job {
-                                        WasmHunkJob::Decode {
-                                            codec_index,
-                                            input,
-                                            crc,
-                                            write_len,
-                                        } => {
-                                            if codecs.is_none() {
-                                                codecs = Some(header_ref.create_compression_codecs().map_err(
-                                                    |error| format!("failed to build CHD codecs: {error:?}"),
-                                                )?);
-                                            }
-                                            let codec = codecs
-                                                .as_mut()
-                                                .expect("codecs initialized above")
-                                                .get_mut(*codec_index)
-                                                .ok_or_else(|| {
-                                                    format!(
-                                                        "CHD hunk {hunk_index} uses unconfigured codec slot {codec_index}"
-                                                    )
-                                                })?;
-                                            codec.decompress(input, &mut hunk_buffer).map_err(|error| {
-                                                format!("failed to decompress hunk {hunk_index}: {error:?}")
-                                            })?;
-                                            if CHD_HUNK_CRC16.checksum(&hunk_buffer) != *crc {
-                                                return Err(format!("CHD hunk {hunk_index} failed CRC validation"));
-                                            }
-                                            WasmDecodedHunk {
-                                                hunk_index: *hunk_index,
-                                                data: hunk_buffer[..*write_len].to_vec(),
-                                                write_len: *write_len as u64,
-                                            }
-                                        }
-                                        WasmHunkJob::Ready { data, write_len } => WasmDecodedHunk {
-                                            hunk_index: *hunk_index,
-                                            data: data.clone(),
-                                            write_len: *write_len as u64,
-                                        },
-                                    };
-                                    if decoded_tx.send(Ok(decoded)).is_err() {
-                                        return Ok(());
-                                    }
-                                }
-                                Ok(())
-                            })
-                        })
-                        .collect();
-                drop(decoded_tx);
-
-                let mut first_error: Option<String> = None;
-                let mut pending = BTreeMap::<u32, WasmDecodedHunk>::new();
-                let mut next_hunk_index =
-                    jobs.first().map(|(hunk_index, _)| *hunk_index).unwrap_or(0);
-                let mut written_hunks = 0usize;
-
-                for result in decoded_rx {
-                    match result {
-                        Ok(decoded) => {
-                            pending.insert(decoded.hunk_index, decoded);
-                            while let Some(decoded) = pending.remove(&next_hunk_index) {
-                                write_hunk(decoded.hunk_index, &decoded.data, decoded.write_len)?;
-                                if let Some(on_progress) = on_progress {
-                                    on_progress(decoded.write_len);
-                                }
-                                written_hunks = written_hunks.saturating_add(1);
-                                next_hunk_index = next_hunk_index.saturating_add(1);
-                            }
-                        }
-                        Err(error) => {
-                            if first_error.is_none() {
-                                first_error = Some(error);
-                            }
-                        }
-                    }
-                }
-
-                for handle in handles {
-                    handle
-                        .join()
-                        .unwrap_or_else(|_| Err("CHD decode worker thread panicked".to_string()))?;
-                }
-                if let Some(error) = first_error {
-                    return Err(error);
-                }
-                if written_hunks != jobs.len() || !pending.is_empty() {
-                    return Err("CHD decode workers did not produce every hunk".to_string());
-                }
-                Ok(())
-            })?;
-        }
-
-        Ok(())
-    }
-
     #[allow(dead_code)]
     pub(super) fn extract_to_file_with_progress(
         &self,
@@ -658,6 +236,45 @@ impl ChdReadSession {
                 )
             })?;
         Ok(())
+    }
+
+    /// Browser wasi-threads guard: pre-grow the heap once on the main thread to cover a full
+    /// batch's concurrent working set (per-thread stacks + decoded output + in-flight compressed
+    /// bytes), so the parallel decode reuses committed memory and performs no `memory.grow` while
+    /// sibling threads run. dlmalloc only grows above the initial `memory.size`, so without this the
+    /// first batch's allocations grow the heap mid-decode and V8 can race that into an OOB trap that
+    /// wedges the join. No-op off wasm.
+    #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
+    fn pregrow_decode_heap(batch_hunks: usize, hunk_bytes_usize: usize, effective_threads: usize) {
+        const STACK_RESERVE_PER_THREAD: usize = 4 * 1024 * 1024;
+        const HEAP_RESERVE_MARGIN: usize = 32 * 1024 * 1024;
+        const HEAP_RESERVE_MAX: usize = 768 * 1024 * 1024;
+        let batch_bytes = batch_hunks.saturating_mul(hunk_bytes_usize);
+        let reserve = batch_bytes
+            .saturating_mul(2)
+            .saturating_add(effective_threads.saturating_mul(STACK_RESERVE_PER_THREAD))
+            .saturating_add(HEAP_RESERVE_MARGIN)
+            .min(HEAP_RESERVE_MAX);
+        trace!(
+            reserve,
+            batch_bytes,
+            effective_threads,
+            "chd wasm decode pregrow heap to avoid memory.grow race"
+        );
+        // Touch the allocation so the grow cannot be elided, then drop it; wasm memory never
+        // shrinks, so the committed pages stay in dlmalloc's free list for the decode threads.
+        let mut heap_warm: Vec<u8> = Vec::with_capacity(reserve);
+        heap_warm.push(0);
+        std::hint::black_box(heap_warm.as_ptr());
+        drop(heap_warm);
+    }
+
+    #[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
+    fn pregrow_decode_heap(
+        _batch_hunks: usize,
+        _hunk_bytes_usize: usize,
+        _effective_threads: usize,
+    ) {
     }
 
     fn stream_with_rust<F>(
@@ -762,32 +379,10 @@ impl ChdReadSession {
         let source = source.to_path_buf();
         let parent_source = parent_source.map(Path::to_path_buf);
 
-        // Threaded WASM uses the producer/consumer helper because workers cannot open the OPFS
-        // file. Native opens one reader per scoped worker and decodes directly.
-        #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-        let result = {
-            let _ = hunk_bytes;
-            trace!(
-                effective_threads,
-                "chd parallel decode using wasm read-on-main producer/consumer path"
-            );
-            Self::wasm_parallel_decode_hunks(
-                &source,
-                parent_source.as_deref(),
-                logical_bytes,
-                effective_threads,
-                on_progress,
-                |_hunk_index, bytes, _write_len| {
-                    on_bytes(bytes).map_err(|error| match error {
-                        RomWeaverError::Validation(message) => message,
-                        other => other.to_string(),
-                    })
-                },
-            )
-        };
-
-        #[cfg(not(all(target_family = "wasm", rom_weaver_wasi_threads)))]
-        let result = {
+        // Every wasm thread can do OPFS I/O through the proxy worker (it refcounts to a single
+        // handle per path), so worker threads open their own reader and read+decode directly --
+        // the same scoped-reader path native uses. No read-on-main producer is needed.
+        {
             let hunk_indices: Vec<u32> = (0..hunk_count).collect();
             let hunk_bytes_usize = usize::try_from(hunk_bytes)
                 .ok()
@@ -801,8 +396,12 @@ impl ChdReadSession {
                 batch_hunks,
                 target_batch_hunks,
                 effective_threads,
-                "chd parallel decode native scoped-reader batch sizing"
+                "chd parallel decode scoped-reader batch sizing"
             );
+            // Pre-grow the heap once before any worker spawns: on browser wasi-threads a
+            // `memory.grow` while sibling decode threads run can race V8's bounds checks into an
+            // OOB trap. No-op off wasm.
+            Self::pregrow_decode_heap(batch_hunks, hunk_bytes_usize, effective_threads);
             let mut remaining = logical_bytes;
 
             for batch in hunk_indices.chunks(batch_hunks) {
@@ -890,9 +489,7 @@ impl ChdReadSession {
             }
 
             Ok(())
-        };
-
-        result
+        }
     }
 
     #[allow(dead_code)]
@@ -904,24 +501,12 @@ impl ChdReadSession {
         thread_count: usize,
         on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
     ) -> std::result::Result<(), String> {
-        #[cfg(not(any(unix, windows, all(target_family = "wasm", rom_weaver_wasi_threads))))]
+        #[cfg(not(any(unix, windows)))]
         let _ = thread_count;
 
         #[cfg(any(unix, windows))]
         if thread_count > 1 {
             return Self::extract_to_file_with_rust_parallel(
-                source,
-                parent_source,
-                logical_bytes,
-                output_path,
-                thread_count,
-                on_progress,
-            );
-        }
-
-        #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-        if thread_count > 1 {
-            return Self::extract_to_file_with_rust_parallel_portable(
                 source,
                 parent_source,
                 logical_bytes,
@@ -962,81 +547,6 @@ impl ChdReadSession {
         }
 
         Ok(())
-    }
-
-    #[cfg(all(target_family = "wasm", rom_weaver_wasi_threads))]
-    #[allow(dead_code)]
-    fn extract_to_file_with_rust_parallel_portable(
-        source: &Path,
-        parent_source: Option<&Path>,
-        logical_bytes: u64,
-        output_path: &Path,
-        thread_count: usize,
-        on_progress: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
-    ) -> std::result::Result<(), String> {
-        // Read the header cheaply from the file on the calling (main) thread; the full
-        // in-memory copy is only loaded below once we commit to the parallel path.
-        let chd = Self::open_rust_chd(source, parent_source)
-            .map_err(|error| format!("failed to decode `{}`: {error}", source.display()))?;
-        let hunk_count = chd.header().hunk_count();
-        let hunk_bytes = chd.header().hunk_size() as u64;
-        drop(chd);
-
-        let mut output = File::create(output_path)
-            .map_err(|error| format!("failed to create `{}`: {error}", output_path.display()))?;
-        output.set_len(logical_bytes).map_err(|error| {
-            format!(
-                "failed to size `{}` to {} bytes: {error}",
-                output_path.display(),
-                logical_bytes
-            )
-        })?;
-
-        let hunk_count_usize = usize::try_from(hunk_count)
-            .map_err(|_| "CHD hunk count exceeded addressable memory".to_string())?;
-        if hunk_count_usize == 0 {
-            return Ok(());
-        }
-        let effective_threads = thread_count.max(1).min(hunk_count_usize);
-        if effective_threads <= 1 {
-            return Self::extract_to_file_with_rust(
-                source,
-                parent_source,
-                logical_bytes,
-                output_path,
-                1,
-                on_progress,
-            );
-        }
-
-        // The producer/consumer helper reads each hunk's compressed bytes on the main thread and
-        // decodes them on its own scoped worker threads (which cannot open the OPFS-backed file).
-        // Decoded hunks arrive in order; write each to its logical offset in the pre-sized output.
-        Self::wasm_parallel_decode_hunks(
-            source,
-            parent_source,
-            logical_bytes,
-            effective_threads,
-            on_progress,
-            |hunk_index, bytes, _write_len| {
-                let offset = u64::from(hunk_index).saturating_mul(hunk_bytes);
-                output.seek(SeekFrom::Start(offset)).map_err(|error| {
-                    format!(
-                        "failed to seek `{}` to offset {}: {error}",
-                        output_path.display(),
-                        offset
-                    )
-                })?;
-                output.write_all(bytes).map_err(|error| {
-                    format!(
-                        "failed to write `{}` at offset {}: {error}",
-                        output_path.display(),
-                        offset
-                    )
-                })?;
-                Ok(())
-            },
-        )
     }
 
     #[cfg(any(unix, windows))]
