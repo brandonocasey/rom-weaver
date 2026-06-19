@@ -249,8 +249,8 @@ impl CsoContainerHandler {
         source: &Path,
         task: &CsoExtractTask,
     ) -> Result<CsoDecodedExtractChunk> {
-        let reader = self.open_reader(source)?;
-        self.decode_extract_task_from_reader(source, reader, task)
+        let mut reader = self.open_reader(source)?;
+        self.decode_extract_task_from_reader(source, &mut reader, task)
     }
 
     fn decode_extract_task_from_buffer(
@@ -259,14 +259,14 @@ impl CsoContainerHandler {
         bytes: Arc<Vec<u8>>,
         task: &CsoExtractTask,
     ) -> Result<CsoDecodedExtractChunk> {
-        let reader = self.open_reader_from_buffer(source, bytes)?;
-        self.decode_extract_task_from_reader(source, reader, task)
+        let mut reader = self.open_reader_from_buffer(source, bytes)?;
+        self.decode_extract_task_from_reader(source, &mut reader, task)
     }
 
     fn decode_extract_task_from_reader(
         &self,
         source: &Path,
-        mut reader: CsoImageReader,
+        reader: &mut CsoImageReader,
         task: &CsoExtractTask,
     ) -> Result<CsoDecodedExtractChunk> {
         let read_len = usize::try_from(task.len).map_err(|_| {
@@ -388,34 +388,61 @@ impl ContainerHandlerOperations for CsoContainerHandler {
         let source = request.source.clone();
         let decode_result = if execution.used_parallelism && container_reads_source_on_main_thread()
         {
-            // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
-            // runner thread, so the entire compressed cso file is read here once into a shared
-            // buffer. Worker threads then decode from that in-memory buffer (never the file).
-            // Compressed cso is much smaller than the decompressed output, so buffering it is
-            // acceptable; output bytes are identical to the native path.
-            let source_bytes = Arc::new(fs::read(&source).map_err(|error| {
-                RomWeaverError::Validation(format!(
-                    "cso extract failed while reading source `{}`: {error}",
-                    source.display()
-                ))
-            })?);
-            trace!(
-                format = self.descriptor.name,
-                source_bytes = source_bytes.len(),
-                "cso read-on-main source buffered"
-            );
-            decode_tasks_ordered(
-                &tasks,
-                execution.effective_threads,
-                Self::extract_pipeline_messages(),
-                |task: &CsoExtractTask| task.len,
-                |task| {
-                    self.decode_extract_task_from_buffer(&source, Arc::clone(&source_bytes), &task)
-                },
-                |chunk: CsoDecodedExtractChunk, task_len| {
-                    extract_writer.write(chunk.index, chunk.data, task_len)
-                },
-            )
+            let compressed_len = fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
+            if container_exceeds_main_thread_cap(compressed_len) {
+                // Over-cap serial fallback (browser/wasm): the compressed source is too large to
+                // buffer whole on the main thread (e.g. a multi-GiB PS2 disc on iOS). Open a
+                // file-backed reader on the main thread (the only thread allowed to open OPFS) and
+                // decode tasks serially, reusing the one reader so each task reads only the blocks
+                // it needs. Peak memory is one task's decoded output instead of the whole file.
+                // Worker parallelism is given up for these inputs (they cannot be buffered anyway),
+                // but the decode is the same `ciso` path, so output bytes are identical.
+                trace!(
+                    format = self.descriptor.name,
+                    compressed_len,
+                    limit = crate::constants::container_in_memory_limit_bytes(),
+                    "cso read-on-main serial fallback (source exceeds buffer cap)"
+                );
+                let mut serial_reader = self.open_reader(&source)?;
+                tasks.iter().try_for_each(|task| {
+                    let chunk =
+                        self.decode_extract_task_from_reader(&source, &mut serial_reader, task)?;
+                    extract_writer.write(chunk.index, chunk.data, task.len)
+                })
+            } else {
+                // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
+                // runner thread, so the entire compressed cso file is read here once into a shared
+                // buffer. Worker threads then decode from that in-memory buffer (never the file).
+                // Compressed cso is much smaller than the decompressed output, so buffering it is
+                // acceptable; output bytes are identical to the native path.
+                let source_bytes = Arc::new(fs::read(&source).map_err(|error| {
+                    RomWeaverError::Validation(format!(
+                        "cso extract failed while reading source `{}`: {error}",
+                        source.display()
+                    ))
+                })?);
+                trace!(
+                    format = self.descriptor.name,
+                    source_bytes = source_bytes.len(),
+                    "cso read-on-main source buffered"
+                );
+                decode_tasks_ordered(
+                    &tasks,
+                    execution.effective_threads,
+                    Self::extract_pipeline_messages(),
+                    |task: &CsoExtractTask| task.len,
+                    |task| {
+                        self.decode_extract_task_from_buffer(
+                            &source,
+                            Arc::clone(&source_bytes),
+                            &task,
+                        )
+                    },
+                    |chunk: CsoDecodedExtractChunk, task_len| {
+                        extract_writer.write(chunk.index, chunk.data, task_len)
+                    },
+                )
+            }
         } else if execution.used_parallelism {
             decode_tasks_ordered(
                 &tasks,

@@ -7,6 +7,25 @@ pub(crate) const PARALLEL_COORDINATOR_STACK_SIZE_BYTES: usize = 8 * 1024 * 1024;
 /// main-thread reader path so it can be exercised outside the browser/wasm runtime.
 pub(crate) const MAIN_THREAD_READER_ENV: &str = "ROM_WEAVER_CONTAINER_MAIN_THREAD_READER";
 
+/// Default cap (bytes) on the compressed source a container extract will buffer whole on the
+/// main thread for the parallel read-on-main path (browser/wasm). Past this, extract falls back
+/// to a serial single-pass decode that opens a file-backed reader on the main thread and reads
+/// only what each task needs, bounding peak memory instead of allocating the whole compressed
+/// file (which iOS Safari cannot sustain). Mirrors the patch crate's `IN_MEMORY_APPLY_LIMIT_BYTES`.
+pub(crate) const CONTAINER_IN_MEMORY_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Override (in bytes) for [`CONTAINER_IN_MEMORY_LIMIT_BYTES`]; set to `0` to force the serial
+/// fallback for regression/benchmark runs.
+pub(crate) const CONTAINER_IN_MEMORY_LIMIT_ENV: &str = "ROM_WEAVER_CONTAINER_IN_MEMORY_LIMIT";
+
+/// Effective compressed-source buffer cap for the container read-on-main path.
+pub(crate) fn container_in_memory_limit_bytes() -> u64 {
+    rom_weaver_core::env_u64(
+        CONTAINER_IN_MEMORY_LIMIT_ENV,
+        CONTAINER_IN_MEMORY_LIMIT_BYTES,
+    )
+}
+
 const COPY_PROGRESS_DEFAULT_BUFFER_BYTES: usize = 64 * 1024;
 const COPY_PROGRESS_MIN_BUFFER_BYTES: u64 = 16 * 1024;
 const COPY_PROGRESS_MAX_BUFFER_BYTES: u64 = 4 * 1024 * 1024;

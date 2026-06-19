@@ -63,7 +63,7 @@ use extract_support::{
     ContainerProgressContext, ExtractChunkWriter, ExtractedFileChecksum,
     attach_extract_checksum_details, copy_reader_with_progress, create_extract_checksum,
     decode_tasks_ordered, emit_container_indeterminate_progress, emit_container_step_progress,
-    stream_extract_identity, write_decoded_chunks_from_workers,
+    stream_decode_tasks_ordered, stream_extract_identity, write_decoded_chunks_from_workers,
 };
 #[cfg(test)]
 use formats::SEVEN_Z;
@@ -219,7 +219,9 @@ pub(crate) use rvz::RvzContainerHandler;
 
 #[path = "handlers/z3ds.rs"]
 mod z3ds;
-pub(crate) use z3ds::{Z3dsContainerHandler, container_reads_source_on_main_thread};
+pub(crate) use z3ds::{
+    Z3dsContainerHandler, container_exceeds_main_thread_cap, container_reads_source_on_main_thread,
+};
 
 #[cfg(test)]
 #[path = "../tests/unit/handlers.rs"]

@@ -36,7 +36,7 @@ use crate::{
     archive_entries::{ArchiveInputEntry, sanitize_archive_relative_path_from_str},
     attach_emitted_file_paths, attach_extraction_details,
     constants::{LIBARCHIVE_EXTRACT_IO_BUFFER_BYTES, PARALLEL_COORDINATOR_STACK_SIZE_BYTES},
-    container_reads_source_on_main_thread,
+    container_exceeds_main_thread_cap, container_reads_source_on_main_thread,
     extract_support::{
         ContainerProgressContext, ExtractChecksumTiming, ExtractHasher, ExtractTiming,
         ExtractedFileChecksum, attach_extract_checksum_details, emit_container_step_progress,
@@ -1242,7 +1242,30 @@ pub(crate) fn extract_regular_archive_with_libarchive(
         duplicate_output_paths |= !output_paths.insert(task.output_path.clone());
     }
 
-    let (execution, written_bytes, output_checksums) = if tasks.is_empty() || duplicate_output_paths
+    // Over-cap serial fallback (browser/wasm): when the source must be read on the main thread and
+    // is too large to buffer whole (the parallel path below does `fs::read` of the entire archive),
+    // extract single-pass from the file path on the calling thread instead. libarchive reads the
+    // archive sequentially with a bounded I/O buffer, so peak memory is one entry's working set
+    // rather than the whole archive — at the cost of parallelism for inputs that could not be
+    // buffered anyway. Output is identical (same libarchive decode, same entry order).
+    let force_serial_over_cap = {
+        let compressed_len = fs::metadata(&request.source)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        let over_cap = container_exceeds_main_thread_cap(compressed_len);
+        if over_cap {
+            trace!(
+                format = format_name,
+                compressed_len,
+                limit = crate::constants::container_in_memory_limit_bytes(),
+                "libarchive read-on-main serial fallback (source exceeds buffer cap)"
+            );
+        }
+        over_cap
+    };
+    let (execution, written_bytes, output_checksums) = if tasks.is_empty()
+        || duplicate_output_paths
+        || force_serial_over_cap
     {
         let execution = context.plan_threads(ThreadCapability::single_threaded());
         let emitted_progress_bucket = AtomicU8::new(0);

@@ -597,6 +597,59 @@ where
     )
 }
 
+/// Like [`decode_tasks_ordered`], but each task's source bytes are READ ON THE CALLING
+/// (main) thread by `read_task` and handed to the worker `decode` closure as owned data, so
+/// worker threads never open the source file.
+///
+/// This is the browser/wasm "read-on-main" variant for seekable single-file extracts: the
+/// reader produces only the bytes a task needs (e.g. one frame group), so peak memory is
+/// bounded to the in-flight window (`bounded_items_for_threads` = `2×threads`) instead of a
+/// whole-file buffer, and OPFS is only ever opened on the main runner thread. Output is
+/// identical to [`decode_tasks_ordered`] — same tasks, same decode, same ascending-order
+/// writes; only *where* the source read happens differs.
+pub(crate) fn stream_decode_tasks_ordered<
+    TTask,
+    TWork,
+    TChunk,
+    TaskLen,
+    ReadTask,
+    Decode,
+    WriteChunk,
+>(
+    tasks: &[TTask],
+    effective_threads: usize,
+    messages: OrderedStreamingMessages,
+    task_len: TaskLen,
+    mut read_task: ReadTask,
+    decode: Decode,
+    mut write_chunk: WriteChunk,
+) -> Result<()>
+where
+    TTask: Clone + Send,
+    TWork: Send,
+    TChunk: Send,
+    TaskLen: Fn(&TTask) -> u64 + Sync,
+    ReadTask: FnMut(&TTask) -> Result<TWork>,
+    Decode: Fn(&TTask, TWork) -> Result<TChunk> + Sync,
+    WriteChunk: FnMut(TChunk, u64) -> Result<()>,
+{
+    ordered_streaming_compress(
+        tasks,
+        effective_threads,
+        messages,
+        |_, task: &TTask| {
+            let work = read_task(task)?;
+            Ok((task.clone(), work))
+        },
+        || (),
+        |_, _, (task, work): (TTask, TWork)| {
+            let len = task_len(&task);
+            decode(&task, work).map(|chunk| (len, chunk))
+        },
+        |_, (len, chunk)| write_chunk(chunk, len),
+    )
+}
+
 /// Ordered, checksum-and-progress aware sink for decoded extract chunks.
 ///
 /// Wraps the write half shared by the seekable single-file extract handlers (cso, z3ds): each

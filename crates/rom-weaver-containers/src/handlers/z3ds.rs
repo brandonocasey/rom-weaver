@@ -238,6 +238,7 @@ impl Z3dsMetadata {
 struct Z3dsPayloadReader<R> {
     inner: R,
     start: u64,
+    base: u64,
     len: u64,
     pos: u64,
 }
@@ -253,6 +254,17 @@ struct Z3dsExtractTask {
 struct Z3dsDecodedExtractChunk {
     index: usize,
     data: Vec<u8>,
+}
+
+/// Owned per-task input for the wasm streaming extract: the compressed bytes for the frame
+/// group a task spans (`compressed[comp_start..comp_end]`), read on the main thread. The
+/// worker wraps `bytes` in a windowed [`Z3dsPayloadReader`] (base `comp_start`, len
+/// `comp_end`) so the decoder's absolute payload-offset seeks land inside `bytes`.
+#[derive(Debug)]
+struct Z3dsExtractInput {
+    bytes: Vec<u8>,
+    comp_start: u64,
+    comp_end: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -278,13 +290,27 @@ struct Z3dsCreateTotals {
 }
 
 impl<R: Read + Seek> Z3dsPayloadReader<R> {
-    fn new(mut inner: R, start: u64, len: u64) -> io::Result<Self> {
+    /// Reader over an entire compressed payload that begins at `start` inside `inner` and is
+    /// `len` bytes long. Logical payload offset `o` maps to inner position `start + o`.
+    fn new(inner: R, start: u64, len: u64) -> io::Result<Self> {
+        Self::with_window(inner, start, 0, len)
+    }
+
+    /// Reader over a *window* of the compressed payload: `inner` holds only payload offsets
+    /// `[base, len)` and its physical byte 0 corresponds to logical payload offset `base`.
+    /// The decoder seeks using absolute payload offsets (from the seek table), so this maps a
+    /// logical offset `o` to inner position `start + (o - base)`. Used by the wasm streaming
+    /// extract, where `inner` is a `Cursor` over just one task's frame-group compressed bytes
+    /// and `base` is that group's `frame_start_comp`. With `base = 0` and `start = payload
+    /// offset`, this is exactly the whole-payload reader behavior.
+    fn with_window(mut inner: R, start: u64, base: u64, len: u64) -> io::Result<Self> {
         inner.seek(SeekFrom::Start(start))?;
         Ok(Self {
             inner,
             start,
+            base,
             len,
-            pos: 0,
+            pos: base,
         })
     }
 }
@@ -323,9 +349,15 @@ impl<R: Read + Seek> Seek for Z3dsPayloadReader<R> {
                 "seek offset exceeds z3ds payload",
             ));
         }
+        if target < self.base {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek offset precedes z3ds payload window",
+            ));
+        }
         let absolute = self
             .start
-            .checked_add(target)
+            .checked_add(target - self.base)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "seek offset overflow"))?;
         self.inner.seek(SeekFrom::Start(absolute))?;
         self.pos = target;
@@ -342,6 +374,18 @@ impl<R: Read + Seek> Seek for Z3dsPayloadReader<R> {
 /// can exercise the main-thread reader path.
 pub(crate) fn container_reads_source_on_main_thread() -> bool {
     rom_weaver_core::reads_source_on_main_thread(crate::constants::MAIN_THREAD_READER_ENV)
+}
+
+/// Whether a read-on-main container extract must fall back to a serial single-pass decode instead
+/// of buffering the whole compressed source on the main thread. Only relevant when main-thread
+/// reads are required (wasm/Safari OPFS) AND the compressed source exceeds
+/// [`crate::constants::container_in_memory_limit_bytes`]; below the cap the parallel
+/// buffer-then-decode path is used. When workers can open the source themselves this is always
+/// `false` (no main-thread buffering happens, so size is irrelevant). z3ds does not use this — it
+/// streams per-task frame ranges unconditionally — so this guards cso and libarchive.
+pub(crate) fn container_exceeds_main_thread_cap(compressed_len: u64) -> bool {
+    container_reads_source_on_main_thread()
+        && compressed_len > crate::constants::container_in_memory_limit_bytes()
 }
 
 thread_local! {
@@ -879,81 +923,108 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         )?;
         let source = request.source.clone();
 
-        let decode_result: Result<()> =
-            if execution.used_parallelism && container_reads_source_on_main_thread() {
-                // Read-on-main pipeline (browser/wasm): the OPFS source is opened only on the main
-                // runner thread, so the compressed payload range is read here into a single shared
-                // buffer. Worker threads then decompress from that in-memory buffer (never the
-                // file). The payload buffer already begins at `payload_start`, so each reader uses
-                // start 0. Bytes written are identical to the native path.
-                let payload_len = usize::try_from(header.compressed_size).map_err(|_| {
-                    RomWeaverError::Validation(
-                        "z3ds compressed payload exceeded addressable memory".into(),
-                    )
-                })?;
-                let mut payload = vec![0_u8; payload_len];
-                {
-                    let mut payload_file = BufReader::new(File::open(&source)?);
-                    payload_file.seek(SeekFrom::Start(payload_start))?;
-                    payload_file.read_exact(&mut payload)?;
-                }
-                trace!(
-                    format = Z3DS.name,
-                    payload_bytes = payload_len,
-                    payload_start,
-                    "z3ds read-on-main payload buffered"
-                );
-                let payload = payload.as_slice();
-
-                decode_tasks_ordered(
-                    &tasks,
-                    execution.effective_threads,
-                    Self::extract_pipeline_messages(),
-                    |task: &Z3dsExtractTask| task.len,
-                    |task| {
-                        let reader = Z3dsPayloadReader::new(
-                            io::Cursor::new(payload),
-                            0,
-                            header.compressed_size,
-                        )?;
-                        self.extract_chunk_from_reader(reader, &seek_table, &task)
-                    },
-                    |chunk: Z3dsDecodedExtractChunk, task_len| {
-                        extract_writer.write(chunk.index, chunk.data, task_len)
-                    },
-                )
-            } else if execution.used_parallelism {
-                decode_tasks_ordered(
-                    &tasks,
-                    execution.effective_threads,
-                    Self::extract_pipeline_messages(),
-                    |task: &Z3dsExtractTask| task.len,
-                    |task| {
-                        self.extract_chunk_task(
-                            &source,
-                            payload_start,
-                            header.compressed_size,
-                            &seek_table,
-                            &task,
+        let decode_result: Result<()> = if execution.used_parallelism
+            && container_reads_source_on_main_thread()
+        {
+            // Streaming read-on-main pipeline (browser/wasm): the OPFS source is opened only on
+            // the main runner thread. Instead of buffering the whole compressed payload, the
+            // reader reads ONLY each task's frame-group compressed bytes here and hands the
+            // worker an owned buffer to decompress. Peak memory is bounded to the in-flight
+            // window (~2×threads × per-task bytes) instead of the whole payload, so a multi-GiB
+            // 3DS image no longer needs one giant allocation (which iOS Safari cannot sustain).
+            // Bytes written are identical to the buffered/native path: tasks are frame-aligned,
+            // and the worker decodes the same frames with the same seek table and offsets.
+            let mut payload_file = BufReader::new(File::open(&source)?);
+            stream_decode_tasks_ordered(
+                &tasks,
+                execution.effective_threads,
+                Self::extract_pipeline_messages(),
+                |task: &Z3dsExtractTask| task.len,
+                |task: &Z3dsExtractTask| -> Result<Z3dsExtractInput> {
+                    let last_byte = task.offset.saturating_add(task.len).saturating_sub(1);
+                    let first_frame = seek_table.frame_index_decomp(task.offset);
+                    let last_frame = seek_table.frame_index_decomp(last_byte);
+                    let comp_start = seek_table
+                        .frame_start_comp(first_frame)
+                        .map_err(|error| self.map_zstd_error("extract frame range start", error))?;
+                    let comp_end = seek_table
+                        .frame_end_comp(last_frame)
+                        .map_err(|error| self.map_zstd_error("extract frame range end", error))?;
+                    let span = comp_end.checked_sub(comp_start).ok_or_else(|| {
+                        RomWeaverError::Validation(
+                            "z3ds extract frame range produced a negative span".into(),
                         )
-                    },
-                    |chunk: Z3dsDecodedExtractChunk, task_len| {
-                        extract_writer.write(chunk.index, chunk.data, task_len)
-                    },
-                )
-            } else {
-                for task in &tasks {
-                    let chunk = self.extract_chunk_task(
+                    })?;
+                    let span = usize::try_from(span).map_err(|_| {
+                        RomWeaverError::Validation(
+                            "z3ds extract frame range exceeded addressable memory".into(),
+                        )
+                    })?;
+                    let read_at = payload_start.checked_add(comp_start).ok_or_else(|| {
+                        RomWeaverError::Validation("z3ds extract read offset overflowed".into())
+                    })?;
+                    let mut bytes = vec![0_u8; span];
+                    payload_file.seek(SeekFrom::Start(read_at))?;
+                    payload_file.read_exact(&mut bytes)?;
+                    trace!(
+                        format = Z3DS.name,
+                        task = task.index,
+                        comp_start,
+                        comp_end,
+                        span,
+                        "z3ds read-on-main streamed frame range"
+                    );
+                    Ok(Z3dsExtractInput {
+                        bytes,
+                        comp_start,
+                        comp_end,
+                    })
+                },
+                |task: &Z3dsExtractTask, input: Z3dsExtractInput| {
+                    let reader = Z3dsPayloadReader::with_window(
+                        io::Cursor::new(input.bytes),
+                        0,
+                        input.comp_start,
+                        input.comp_end,
+                    )?;
+                    self.extract_chunk_from_reader(reader, &seek_table, task)
+                },
+                |chunk: Z3dsDecodedExtractChunk, task_len| {
+                    extract_writer.write(chunk.index, chunk.data, task_len)
+                },
+            )
+        } else if execution.used_parallelism {
+            decode_tasks_ordered(
+                &tasks,
+                execution.effective_threads,
+                Self::extract_pipeline_messages(),
+                |task: &Z3dsExtractTask| task.len,
+                |task| {
+                    self.extract_chunk_task(
                         &source,
                         payload_start,
                         header.compressed_size,
                         &seek_table,
-                        task,
-                    )?;
-                    extract_writer.write(chunk.index, chunk.data, task.len)?;
-                }
-                Ok(())
-            };
+                        &task,
+                    )
+                },
+                |chunk: Z3dsDecodedExtractChunk, task_len| {
+                    extract_writer.write(chunk.index, chunk.data, task_len)
+                },
+            )
+        } else {
+            for task in &tasks {
+                let chunk = self.extract_chunk_task(
+                    &source,
+                    payload_start,
+                    header.compressed_size,
+                    &seek_table,
+                    task,
+                )?;
+                extract_writer.write(chunk.index, chunk.data, task.len)?;
+            }
+            Ok(())
+        };
         if let Err(error) = decode_result {
             let _ = fs::remove_file(&output_path);
             return Err(error);
