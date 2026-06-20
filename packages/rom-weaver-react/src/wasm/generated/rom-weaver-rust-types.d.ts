@@ -5,6 +5,8 @@ export type OperationFamily = "command" | "container" | "patch" | "checksum" | "
 
 export type OperationStatus = "pending" | "running" | "succeeded" | "unsupported" | "failed" | "cancelled";
 
+export type RomWeaverErrorKind = "validation" | "unknown_format" | "unsupported" | "cancelled" | "io" | "thread_pool_build";
+
 export type ThreadMode = "auto" | "fixed";
 
 export type ThreadBudget = "auto" | number;

@@ -32,8 +32,8 @@ pub use disc_sheet::{
 };
 pub use env::{env_bool, env_u64, env_u64_opt};
 pub use error::{
-    ChdMediaScope, FormatOperationKind, Result, RomWeaverError, UnsupportedOp, ValidationCodeError,
-    ValidationField, ValidationFieldValue,
+    ChdMediaScope, FormatOperationKind, Result, RomWeaverError, RomWeaverErrorKind, UnsupportedOp,
+    ValidationCodeError, ValidationField, ValidationFieldValue,
 };
 pub use formatting::format_human_bytes;
 pub use io::{

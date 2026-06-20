@@ -14,8 +14,8 @@ use rom_weaver_containers::{
 };
 use rom_weaver_core::{
     CONTAINER_FILTER_FILE_EXTENSIONS, OperationFamily, OperationStatus,
-    PATCH_FILTER_FILE_EXTENSIONS, ProgressEvent, ROM_FILTER_FILE_EXTENSIONS, ThreadBudget,
-    ThreadExecution, ThreadMode,
+    PATCH_FILTER_FILE_EXTENSIONS, ProgressEvent, ROM_FILTER_FILE_EXTENSIONS, RomWeaverErrorKind,
+    ThreadBudget, ThreadExecution, ThreadMode,
 };
 use rom_weaver_patches::PatchRegistry;
 use serde_json::{Map, Value, json};
@@ -139,6 +139,7 @@ fn render_types() -> String {
     let mut declarations = vec![
         export_decl::<OperationFamily>(&config),
         export_decl::<OperationStatus>(&config),
+        export_decl::<RomWeaverErrorKind>(&config),
         export_decl::<ThreadMode>(&config),
         export_decl::<ThreadBudget>(&config),
         export_decl::<ThreadExecution>(&config),

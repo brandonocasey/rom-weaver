@@ -4,6 +4,7 @@ import type {
   OperationFamily,
   OperationStatus,
   RomWeaverCommand,
+  RomWeaverErrorKind,
   RomWeaverRunJsonEvent,
   RomWeaverRunOutputOptions,
   RomWeaverRunRequest,
@@ -240,16 +241,20 @@ export interface RomWeaverBrowserOpfsRunOptions extends RomWeaverRunOptions {
   debugWasi?: boolean;
 }
 
-export type RomWeaverWorkerErrorKind =
-  | "validation"
-  | "unknown_format"
-  | "unsupported"
-  | "cancelled"
-  | "io"
-  | "thread_pool_build"
-  | "worker"
-  | "panic"
-  | "unknown";
+/** Re-exported from the generated Rust types so the worker-error layer can
+ * source the core kinds (and a compile-time exhaustiveness guard) from the same
+ * single source of truth as `RomWeaverWorkerErrorKind`. */
+export type { RomWeaverErrorKind } from "./generated/rom-weaver-rust-types.d.ts";
+
+/**
+ * Worker-error classification surfaced to the webapp. The core kinds are
+ * sourced from the generated {@link RomWeaverErrorKind} (one per
+ * `RomWeaverError` bucket); `worker`, `panic`, and `unknown` are
+ * JS-transport-only kinds with no Rust variant. A future Rust kind widens this
+ * union automatically; the compile-time guard in worker-error-utils.ts forces
+ * the runtime `WORKER_ERROR_KINDS` set to keep up.
+ */
+export type RomWeaverWorkerErrorKind = RomWeaverErrorKind | "worker" | "panic" | "unknown";
 
 export interface RomWeaverWorkerErrorContext {
   command?: string;

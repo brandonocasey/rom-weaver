@@ -1,8 +1,34 @@
 use std::{fmt, io, path::PathBuf};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(feature = "typescript-types")]
+use ts_rs::TS;
 
 pub type Result<T> = std::result::Result<T, RomWeaverError>;
+
+/// Canonical, stable classification of a [`RomWeaverError`], generated into
+/// TypeScript so the webapp's worker-error layer can key off the same set of
+/// kinds the Rust side defines. The string spelling of each variant (snake_case
+/// via serde) is part of the JS contract — see
+/// `packages/rom-weaver-react/src/wasm/workers/worker-error-utils.ts`.
+///
+/// This is a coarse bucket, not a 1:1 mirror of every `RomWeaverError` variant:
+/// both `Validation` and `ValidationCode` map to `Validation`. The
+/// message-prefix ⇄ kind mapping is locked by the contract test at the bottom
+/// of this module; do not change a variant's `#[error("...")]` prefix or a
+/// `kind()` arm without updating both sides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+#[serde(rename_all = "snake_case")]
+pub enum RomWeaverErrorKind {
+    Validation,
+    UnknownFormat,
+    Unsupported,
+    Cancelled,
+    Io,
+    ThreadPoolBuild,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationCodeError {
@@ -164,6 +190,22 @@ pub enum RomWeaverError {
     ThreadPoolBuild(String),
 }
 
+impl RomWeaverError {
+    /// The canonical [`RomWeaverErrorKind`] for this error. The mapping (and
+    /// each variant's `Display` prefix) is locked by the contract test in this
+    /// module so the JS worker-error classifier cannot silently drift.
+    pub fn kind(&self) -> RomWeaverErrorKind {
+        match self {
+            Self::Validation(_) | Self::ValidationCode(_) => RomWeaverErrorKind::Validation,
+            Self::UnknownFormat { .. } => RomWeaverErrorKind::UnknownFormat,
+            Self::Unsupported(_) => RomWeaverErrorKind::Unsupported,
+            Self::Cancelled => RomWeaverErrorKind::Cancelled,
+            Self::Io(_) => RomWeaverErrorKind::Io,
+            Self::ThreadPoolBuild(_) => RomWeaverErrorKind::ThreadPoolBuild,
+        }
+    }
+}
+
 /// A specific reason an operation could not be carried out. Each variant is a
 /// distinct, matchable case carrying typed fields rather than a free-form
 /// string; the `Display` impl renders the user-facing message.
@@ -315,3 +357,7 @@ impl fmt::Display for UnsupportedOp {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/error.rs"]
+mod tests;

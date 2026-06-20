@@ -1,16 +1,33 @@
-import type { RomWeaverWorkerErrorContext, RomWeaverWorkerErrorKind } from "../rom-weaver-types.d.ts";
+import type {
+  RomWeaverErrorKind,
+  RomWeaverWorkerErrorContext,
+  RomWeaverWorkerErrorKind,
+} from "../rom-weaver-types.d.ts";
 
-const WORKER_ERROR_KINDS = new Set([
-  "validation",
-  "unknown_format",
-  "unsupported",
-  "cancelled",
-  "io",
-  "thread_pool_build",
-  "worker",
-  "panic",
-  "unknown",
-] satisfies RomWeaverWorkerErrorKind[]);
+/**
+ * Compile-time exhaustiveness guard for the core (Rust) error kinds. Keyed by
+ * the generated {@link RomWeaverErrorKind}, so adding a new Rust kind (which
+ * regenerates that union) makes tsc fail here until the new kind is handled —
+ * the loud signal that keeps the JS classifier from silently missing a kind.
+ * Its keys also seed WORKER_ERROR_KINDS below, so it is load-bearing, not dead
+ * code.
+ */
+const CORE_ERROR_KINDS = {
+  cancelled: true,
+  io: true,
+  thread_pool_build: true,
+  unknown_format: true,
+  unsupported: true,
+  validation: true,
+} satisfies Record<RomWeaverErrorKind, true>;
+
+// JS-transport-only kinds with no Rust variant (see RomWeaverWorkerErrorKind).
+const WORKER_ONLY_ERROR_KINDS = ["worker", "panic", "unknown"] satisfies RomWeaverWorkerErrorKind[];
+
+const WORKER_ERROR_KINDS = new Set<RomWeaverWorkerErrorKind>([
+  ...(Object.keys(CORE_ERROR_KINDS) as RomWeaverErrorKind[]),
+  ...WORKER_ONLY_ERROR_KINDS,
+]);
 
 export function resolveWorkerErrorKind(
   error: unknown,
