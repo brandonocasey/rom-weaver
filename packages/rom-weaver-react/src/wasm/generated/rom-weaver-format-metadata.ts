@@ -85,6 +85,13 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".ips"
     ],
     "label": "IPS",
+    "magic": [
+      80,
+      65,
+      84,
+      67,
+      72
+    ],
     "name": "ips"
   },
   {
@@ -101,6 +108,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".ips32"
     ],
     "label": "IPS32",
+    "magic": [],
     "name": "ips32"
   },
   {
@@ -120,6 +128,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".solid"
     ],
     "label": "SOLID",
+    "magic": [],
     "name": "solid"
   },
   {
@@ -136,6 +145,12 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".bps"
     ],
     "label": "BPS",
+    "magic": [
+      66,
+      80,
+      83,
+      49
+    ],
     "name": "bps"
   },
   {
@@ -152,6 +167,12 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".ups"
     ],
     "label": "UPS",
+    "magic": [
+      85,
+      80,
+      83,
+      49
+    ],
     "name": "ups"
   },
   {
@@ -170,6 +191,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".vcdiff"
     ],
     "label": "VCDIFF",
+    "magic": [],
     "name": "vcdiff"
   },
   {
@@ -190,6 +212,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".dat"
     ],
     "label": "xdelta",
+    "magic": [],
     "name": "xdelta"
   },
   {
@@ -209,6 +232,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".gdf"
     ],
     "label": "GDIFF",
+    "magic": [],
     "name": "gdiff"
   },
   {
@@ -231,6 +255,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".hpatchz"
     ],
     "label": "HDiffPatch/HPatchZ",
+    "magic": [],
     "name": "hdiffpatch"
   },
   {
@@ -247,6 +272,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".aps"
     ],
     "label": "APS",
+    "magic": [],
     "name": "aps"
   },
   {
@@ -265,6 +291,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".apsgba"
     ],
     "label": "APSGBA",
+    "magic": [],
     "name": "apsgba"
   },
   {
@@ -281,6 +308,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
     },
     "extensions": [],
     "label": "NINJA1",
+    "magic": [],
     "name": "ninja1"
   },
   {
@@ -297,6 +325,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".rup"
     ],
     "label": "RUP",
+    "magic": [],
     "name": "rup"
   },
   {
@@ -313,6 +342,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".ppf"
     ],
     "label": "PPF",
+    "magic": [],
     "name": "ppf"
   },
   {
@@ -333,6 +363,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".ffp"
     ],
     "label": "PAT",
+    "magic": [],
     "name": "pat"
   },
   {
@@ -349,6 +380,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".ebp"
     ],
     "label": "EBP",
+    "magic": [],
     "name": "ebp"
   },
   {
@@ -371,6 +403,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".bsdiff40"
     ],
     "label": "BDF/BSDIFF40",
+    "magic": [],
     "name": "bdf"
   },
   {
@@ -390,6 +423,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".bspatch"
     ],
     "label": "BSP",
+    "magic": [],
     "name": "bsp"
   },
   {
@@ -409,6 +443,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".pmsr"
     ],
     "label": "MOD",
+    "magic": [],
     "name": "mod"
   },
   {
@@ -425,6 +460,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".dldi"
     ],
     "label": "DLDI",
+    "magic": [],
     "name": "dldi"
   },
   {
@@ -441,6 +477,7 @@ export const ROM_WEAVER_PATCH_FORMATS = [
       ".dps"
     ],
     "label": "DPS",
+    "magic": [],
     "name": "dps"
   }
 ] as const;

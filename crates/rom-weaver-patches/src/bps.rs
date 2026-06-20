@@ -53,6 +53,10 @@ impl PatchHandler for BpsPatchHandler {
         self.descriptor
     }
 
+    fn header_magic(&self) -> Option<&'static [u8]> {
+        Some(BPS_MAGIC)
+    }
+
     fn probe(&self, _patch_path: &Path) -> ProbeConfidence {
         ProbeConfidence::Extension
     }

@@ -441,6 +441,12 @@ pub trait ContainerHandler: ContainerHandlerOperations {
 
 pub trait PatchHandler: Send + Sync {
     fn descriptor(&self) -> &'static FormatDescriptor;
+    /// Fixed leading magic of a valid patch file, for the web UI's lightweight
+    /// header validation. `None` when the format has no single leading signature
+    /// the UI validates against.
+    fn header_magic(&self) -> Option<&'static [u8]> {
+        None
+    }
     fn probe(&self, patch_path: &Path) -> ProbeConfidence {
         let _ = patch_path;
         ProbeConfidence::Extension
@@ -765,6 +771,10 @@ struct TracingPatchHandler {
 impl PatchHandler for TracingPatchHandler {
     fn descriptor(&self) -> &'static FormatDescriptor {
         self.inner.descriptor()
+    }
+
+    fn header_magic(&self) -> Option<&'static [u8]> {
+        self.inner.header_magic()
     }
 
     fn probe(&self, patch_path: &Path) -> ProbeConfidence {

@@ -11,6 +11,7 @@ import {
 } from "../input/binary-service.ts";
 import type { InputAsset } from "../input/input-assets.ts";
 import { verifyPatchedOutputChecksum } from "../output/output-checksum-verification.ts";
+import { getExpectedPatchHeaderMagic } from "../patch-header-magic.ts";
 import { getFileNameExtension } from "../path-utils.ts";
 import { normalizeApplyProgressInput, reportProgress } from "../progress/progress-reporting.ts";
 
@@ -37,12 +38,6 @@ const PATCH_PROBE_REQUIREMENTS_KEY = "__romWeaverPatchProbeRequirements";
 const HEX_PREFIX_REGEX = /^0x/i;
 const HEX_DIGITS_REGEX = /^[0-9a-f]+$/i;
 const DECIMAL_DIGITS_REGEX = /^\d+$/;
-
-const PATCH_MAGIC_BY_EXTENSION = {
-  bps: "BPS1",
-  ips: "PATCH",
-  ups: "UPS1",
-} as const;
 
 const isXdeltaCompatiblePatchExtension = (extension: string | undefined) => {
   return extension === "xdelta" || extension === "delta" || extension === "dat" || extension === "vcdiff";
@@ -145,7 +140,7 @@ const createParsedPatchProxy = async (
 ): Promise<ParsedPatchLike | null> => {
   const extension = getPatchFileExtension(patchFile.fileName);
   if (!extension) return null;
-  const expectedMagic = PATCH_MAGIC_BY_EXTENSION[extension as keyof typeof PATCH_MAGIC_BY_EXTENSION];
+  const expectedMagic = getExpectedPatchHeaderMagic(extension);
   if (expectedMagic) {
     const header = await readPatchHeader(patchFile, Math.max(8, expectedMagic.length));
     if (header !== null && !header.startsWith(expectedMagic)) return null;

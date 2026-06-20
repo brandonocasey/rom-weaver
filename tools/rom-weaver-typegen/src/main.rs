@@ -333,6 +333,7 @@ fn patch_formats_value() -> Value {
                     },
                     "extensions": descriptor.extensions,
                     "label": descriptor.name,
+                    "magic": handler.header_magic().unwrap_or_default(),
                     "name": patch_format_command_name(descriptor.name, descriptor.aliases),
                 })
             })

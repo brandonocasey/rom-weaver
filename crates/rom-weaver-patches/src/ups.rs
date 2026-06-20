@@ -46,6 +46,10 @@ impl PatchHandler for UpsPatchHandler {
         self.descriptor
     }
 
+    fn header_magic(&self) -> Option<&'static [u8]> {
+        Some(UPS_MAGIC)
+    }
+
     fn probe(&self, _patch_path: &Path) -> ProbeConfidence {
         ProbeConfidence::Extension
     }

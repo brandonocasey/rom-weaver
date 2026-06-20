@@ -110,6 +110,15 @@ impl PatchHandler for IpsPatchHandler {
         self.descriptor
     }
 
+    fn header_magic(&self) -> Option<&'static [u8]> {
+        // Only base IPS is header-validated by the web UI; ebp/ips32 share this
+        // handler but are not validated by leading magic there.
+        match self.flavor {
+            IpsFlavor::Ips => Some(IPS_MAGIC),
+            IpsFlavor::Ebp | IpsFlavor::Ips32 => None,
+        }
+    }
+
     fn probe(&self, _patch_path: &Path) -> ProbeConfidence {
         ProbeConfidence::Extension
     }

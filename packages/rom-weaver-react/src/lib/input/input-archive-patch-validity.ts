@@ -1,3 +1,4 @@
+import { getExpectedPatchHeaderMagic } from "../patch-header-magic.ts";
 import { attachPatchFileCleanup, getPatchFileCleanup, type PatchFileInstance } from "./binary-service.ts";
 import {
   type ArchiveEntryLike,
@@ -16,12 +17,6 @@ import { DEFAULT_INPUT_PREPARATION_RUNTIME } from "./input-preparation-compressi
 // (keyed by entry name) on a WeakMap so re-entrant selection can reuse them without re-extracting.
 
 type ValidatedPatchArchiveEntryCache = Map<string, PatchFileInstance>;
-
-const PATCH_MAGIC_BY_EXTENSION = {
-  bps: "BPS1",
-  ips: "PATCH",
-  ups: "UPS1",
-} as const;
 
 const validatedPatchArchiveEntriesByFile = new WeakMap<PatchFileInstance, ValidatedPatchArchiveEntryCache>();
 const patchArchiveValidationCleanupAttached = new WeakSet<PatchFileInstance>();
@@ -65,7 +60,7 @@ const isValidPatchPatchFile = async (patchFile: PatchFileInstance): Promise<bool
       .match(/\.([^.]+?)(?:\d+)?$/)?.[1]
       ?.toLowerCase();
     if (!extension) return false;
-    const expectedMagic = PATCH_MAGIC_BY_EXTENSION[extension as keyof typeof PATCH_MAGIC_BY_EXTENSION];
+    const expectedMagic = getExpectedPatchHeaderMagic(extension);
     return expectedMagic ? header.startsWith(expectedMagic) : true;
   } catch (_error) {
     return false;
