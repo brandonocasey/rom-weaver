@@ -80,6 +80,17 @@ const getRomTypeFromProgressDetails = (details: Record<string, unknown>): Staged
   return platform || discFormat ? { discFormat, platform } : undefined;
 };
 
+// Rust's `is_rom` verdict from the same probe-manifest event (`is_rom = has_rom || !has_patch`): an
+// archive that carries only patches reports false, which the unified drop uses to move it from the ROM
+// bucket to the patch bucket. Only container/archive sources emit this manifest, so a bare ROM yields
+// `undefined` (never reclassified).
+const getIsRomFromProgressDetails = (details: Record<string, unknown>): boolean | undefined => {
+  const manifest = details.probe_manifest;
+  if (!manifest || typeof manifest !== "object") return undefined;
+  const value = (manifest as Record<string, unknown>).is_rom;
+  return typeof value === "boolean" ? value : undefined;
+};
+
 const getProgressStagedInputInfo = (event: ProgressEvent): StagedInputInfo => {
   const details = getProgressDetails(event);
   const fileName = typeof details.fileName === "string" ? details.fileName : "";
@@ -92,6 +103,7 @@ const getProgressStagedInputInfo = (event: ProgressEvent): StagedInputInfo => {
     decompressionTimeMs: typeof details.decompressionTimeMs === "number" ? details.decompressionTimeMs : undefined,
     fileName: getInputDisplayFileName(fileName, isPreparedFileName),
     id: typeof details.sourceId === "string" ? details.sourceId : "",
+    isRom: getIsRomFromProgressDetails(details),
     order: typeof details.order === "number" ? details.order : undefined,
     parentCompressions: getArchivePathEntriesFromProgressDetails(details),
     romType: getRomTypeFromProgressDetails(details),

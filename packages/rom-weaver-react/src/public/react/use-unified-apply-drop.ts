@@ -1,23 +1,24 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback } from "react";
 import { createLogger } from "../../lib/logging.ts";
-import { probeApplyArchiveHasRom } from "./apply-archive-probe.ts";
 import { classifyDroppedFiles } from "./file-classification.ts";
-import { routeByTypeProbed } from "./unified-drop-routing.ts";
 
 /**
- * Drop orchestration for the Apply tab that makes dropped files appear instantly.
+ * Drop orchestration for the Apply tab.
  *
- * Bare ROMs/patches are known from their extension and route immediately. An
- * archive needs a listing to tell a ROM source from a patch container, so it gets
- * a lightweight "identifying…" placeholder the instant it lands — pure UI, not
- * staged — which is dropped once `routeByTypeProbed` resolves its bucket and the
- * real staging card takes over. Both the in-tab dropzone and the page-wide drop
- * forwarder funnel through one `onDrop` so they share placeholder behavior.
+ * Bare ROMs/patches route by extension. An archive is NOT pre-classified by a
+ * filename probe — that duplicated (and mis-judged) Rust's own ROM/container
+ * classification. Instead every archive stages straight into the ROM bucket and
+ * lets Rust's nested extract drive: a real ROM (single, or a keep-one pick when
+ * several compete) stays in the ROM bucket, while a patch-only bundle is
+ * reclassified to the patch bucket when Rust's probe-manifest reports
+ * `is_rom === false` (see `reclassifyArchiveToPatch` in the session). Both the
+ * in-tab dropzone and the page-wide drop forwarder funnel through one `onDrop`.
  */
 
 const logger = createLogger("unified-apply-drop");
 
-/** A dropped archive awaiting ROM-vs-patch classification, rendered as a placeholder card. */
+/** Retained for API compatibility — the routing no longer needs placeholder cards because an archive's
+ * real ROM staging card appears instantly in the ROM bucket. */
 type PendingDrop = {
   id: string;
   name: string;
@@ -33,46 +34,29 @@ type UnifiedApplyDrop = {
   onDrop: (files: File[], isCancelled?: () => boolean) => void;
 };
 
-const useUnifiedApplyDrop = (controller: UnifiedDropController): UnifiedApplyDrop => {
-  const [pendingDrops, setPendingDrops] = useState<PendingDrop[]>([]);
-  // Monotonic id source — stable React keys without Math.random/Date.now churn.
-  const nextIdRef = useRef(0);
+const NO_PENDING_DROPS: PendingDrop[] = [];
 
+const useUnifiedApplyDrop = (controller: UnifiedDropController): UnifiedApplyDrop => {
   const onDrop = useCallback(
     (files: File[], isCancelled?: () => boolean) => {
-      const { archives } = classifyDroppedFiles(files);
-      // Show one placeholder per archive immediately; bare files carry no placeholder
-      // because their bucket is already known and they stage without a listing wait.
-      const pending = archives.map((archive) => {
-        nextIdRef.current += 1;
-        return { id: `pending-${nextIdRef.current}`, name: archive.name };
-      });
-      if (pending.length) setPendingDrops((current) => [...current, ...pending]);
-      const pendingIds = new Set(pending.map((entry) => entry.id));
-      const removePending = () =>
-        pendingIds.size
-          ? setPendingDrops((current) => current.filter((entry) => !pendingIds.has(entry.id)))
-          : undefined;
+      if (isCancelled?.()) return;
+      const { archives, inputs, patches } = classifyDroppedFiles(files);
+      // Archives join the ROM bucket alongside bare ROMs; Rust's nested extract reclassifies any
+      // patch-only bundle to the patch bucket on identify.
+      const romInputs = [...inputs, ...archives];
       logger.trace("unified apply drop received files", {
         archiveCount: archives.length,
         fileCount: files.length,
+        patchCount: patches.length,
+        romInputCount: romInputs.length,
       });
-      void routeByTypeProbed(files, probeApplyArchiveHasRom).then(({ inputs, patches }) => {
-        if (isCancelled?.()) {
-          removePending();
-          return;
-        }
-        // Stage immediately so extraction starts with no delay, then drop the placeholder — the real
-        // staging card replaces it. Staging is never gated on the placeholder.
-        if (inputs.length) controller.provideRomInputFiles?.(inputs);
-        if (patches.length) controller.providePatchInputFiles?.(patches);
-        removePending();
-      });
+      if (romInputs.length) controller.provideRomInputFiles?.(romInputs);
+      if (patches.length) controller.providePatchInputFiles?.(patches);
     },
     [controller],
   );
 
-  return { onDrop, pendingDrops };
+  return { onDrop, pendingDrops: NO_PENDING_DROPS };
 };
 
 export { type PendingDrop, useUnifiedApplyDrop };

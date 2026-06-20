@@ -404,6 +404,51 @@ const runRomWeaverProbePatchWorker = async (
   return getPatchDetailsFromProbe(result);
 };
 
+type LibretroSidecarMatch = { name: string; order: number };
+
+const getSidecarMatchesFromResult = (result: RomWeaverRunJsonResult): LibretroSidecarMatch[] => {
+  const terminal = getTerminalEvent(result);
+  const details = asRecord(terminal ? getRomWeaverRunEventDetails(terminal) : null);
+  const raw = details?.sidecar_matches;
+  if (!Array.isArray(raw)) return [];
+  const matches: LibretroSidecarMatch[] = [];
+  for (const entry of raw) {
+    const record = asRecord(entry);
+    const name = typeof record?.name === "string" ? record.name : "";
+    if (!name) continue;
+    const order = Number(record?.order);
+    matches.push({ name, order: Number.isFinite(order) ? order : 0 });
+  }
+  return matches;
+};
+
+// Match RetroArch/libretro sidecar patches against a ROM via Rust's `match-sidecars` command, so the
+// browser shares the native matcher instead of re-implementing the `<rom-stem>.<patch-ext>` rule. Pure
+// name logic — no I/O — returning the matched patches in Rust's apply order.
+const runRomWeaverMatchSidecarsWorker = async (
+  input: { romName: string; patchNames: string[]; logLevel?: LogLevel | string; signal?: AbortSignal },
+  onLog?: (log: WorkflowRuntimeLog) => void,
+): Promise<LibretroSidecarMatch[]> => {
+  const romName = String(input.romName || "").trim();
+  if (!(romName && input.patchNames.length)) return [];
+  const command = createRomWeaverCommand("match-sidecars", {
+    patch_names: input.patchNames,
+    rom_name: romName,
+  });
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson match-sidecars dispatch", {
+    patchCount: input.patchNames.length,
+    romName,
+  });
+  const result = await runRomWeaverJson(
+    command,
+    toRomWeaverOptions({ logLevel: input.logLevel, onLog, signal: input.signal }),
+  );
+  if (!(result.ok && result.exitCode === 0)) {
+    throw new Error(getRomWeaverFailureMessage(result, "Sidecar match failed"));
+  }
+  return getSidecarMatchesFromResult(result);
+};
+
 const normalizeN64ByteOrder = (value: unknown): "big-endian" | "little-endian" | "byte-swapped" | undefined => {
   const normalized = String(value || "")
     .trim()
@@ -923,6 +968,7 @@ export {
   resolvePatchApplyThreadArg,
   runRomWeaverChecksumWorker,
   runRomWeaverListWorker,
+  runRomWeaverMatchSidecarsWorker,
   runRomWeaverProbePatchWorker,
   selectRomWeaverOutputPath,
 };

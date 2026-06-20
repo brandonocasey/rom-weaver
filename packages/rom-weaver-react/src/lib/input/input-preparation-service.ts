@@ -38,6 +38,7 @@ import {
   resolveCompressedInputFile,
 } from "./input-decompression.ts";
 import {
+  archiveHasSelectablePatches,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
   prepareAutoPatchInputs,
@@ -626,6 +627,7 @@ const prepareInputFile = async (
 };
 
 export {
+  archiveHasSelectablePatches,
   getBinarySourceSize,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,

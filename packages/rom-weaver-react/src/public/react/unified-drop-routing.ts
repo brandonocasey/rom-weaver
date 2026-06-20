@@ -9,44 +9,6 @@ import { classifyDroppedFiles } from "./file-classification.ts";
 
 const logger = createLogger("unified-drop-routing");
 
-type ByTypeRouting = {
-  /** Files destined for a tab's ROM/input bucket. */
-  inputs: File[];
-  /** Files destined for a tab's patch bucket. */
-  patches: File[];
-};
-
-/** Probe whether a dropped archive holds a ROM (true) or is a patch container (false). */
-type ArchiveRomProbe = (archive: File) => boolean | Promise<boolean>;
-
-/**
- * Apply-tab strategy with true `--rom-filter` + `--patch-filter`: ROMs/unknown →
- * inputs, patches → patches, and every archive is probed for a ROM. An archive
- * that contains a ROM is the ROM source (any embedded patches are surfaced by
- * implicit-patch discovery); one without a ROM is a patch container. A failed
- * probe defaults to the ROM bucket, matching the legacy "extract as input"
- * behavior.
- */
-const routeByTypeProbed = async (files: File[], probeArchiveHasRom: ArchiveRomProbe): Promise<ByTypeRouting> => {
-  const { archives, inputs, patches } = classifyDroppedFiles(files);
-  const routed: ByTypeRouting = { inputs: [...inputs], patches: [...patches] };
-  for (const archive of archives) {
-    let hasRom = true;
-    try {
-      hasRom = await probeArchiveHasRom(archive);
-    } catch (error) {
-      logger.warn("archive ROM probe failed — treating as ROM source", { error, name: archive.name });
-    }
-    if (hasRom) routed.inputs.push(archive);
-    else routed.patches.push(archive);
-  }
-  logger.trace("routed unified drop by probed type", {
-    inputCount: routed.inputs.length,
-    patchCount: routed.patches.length,
-  });
-  return routed;
-};
-
 /**
  * ROM-only tabs (Create/Trim) have no patch bucket. Drop patches silently (with
  * a log) and keep ROMs + archives, which the workflow extracts into ROMs.
@@ -101,5 +63,4 @@ const routeSingleRom = (files: File[]): File | null => {
   return first;
 };
 
-export type { ArchiveRomProbe };
-export { collectRomDropFiles, routeByOrder, routeByTypeProbed, routeSingleRom };
+export { collectRomDropFiles, routeByOrder, routeSingleRom };

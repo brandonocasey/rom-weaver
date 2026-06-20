@@ -96,7 +96,9 @@ const createZipFile = (entries, outputName) => {
   return new File([...localParts, centralDirectory, end], outputName, { type: "application/zip" });
 };
 
-test("sidecar resolver matches RetroArch patch basename and numeric order", () => {
+// Delegates to Rust's `match-sidecars` command (the single source of truth); the matcher itself is
+// also covered natively in `crates/rom-weaver-app/src/tests.rs` with the same golden cases.
+test("sidecar resolver matches RetroArch patch basename and numeric order (via Rust match-sidecars)", async () => {
   const entries = [
     { filename: "bundle/other.ips" },
     { filename: "bundle/game [Hack].ips2" },
@@ -106,7 +108,8 @@ test("sidecar resolver matches RetroArch patch basename and numeric order", () =
     { filename: "elsewhere/game.ips" },
   ];
 
-  expect(resolveSidecarPatchEntries("bundle/game.bin", entries).map((entry) => entry.fileName)).toEqual([
+  const resolved = await resolveSidecarPatchEntries("bundle/game.bin", entries);
+  expect(resolved.map((entry) => entry.fileName)).toEqual([
     "bundle/game.ips",
     "bundle/game.bin.ips1",
     "bundle/game [Hack].ips2",

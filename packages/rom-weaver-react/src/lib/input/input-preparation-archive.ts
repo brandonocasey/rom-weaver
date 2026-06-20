@@ -754,7 +754,7 @@ const prepareAutoPatchInputs = async (
   }
   if (!selectedRomEntryName) return [];
 
-  const sidecarPatches = resolveSidecarPatchEntries(selectedRomEntryName, patchEntries);
+  const sidecarPatches = await resolveSidecarPatchEntries(selectedRomEntryName, patchEntries);
   const patchFiles: PatchFileInstance[] = [];
   for (const sidecarPatch of sidecarPatches) {
     const entryName = sidecarPatch.entry.filename;
@@ -776,39 +776,23 @@ const prepareAutoPatchInputs = async (
   return patchFiles;
 };
 
-/** Retrieve the already-extracted leaf patch file for a candidate of an emitted patch-selection
- * request, so the controller can stage the user's pick(s) without re-extracting. */
-/** Retrieve the archive-nesting chain (source archive › nested archives) for a registered patch
- * leaf so a fanned-out patch entry keeps its "extract section" in the patch stack row. */
 /**
- * Probe whether an archive/container holds a pickable ROM. The unified Apply
- * drop surface uses this to route a dropped archive: one with a ROM is a ROM
- * source (embedded patches are surfaced separately by {@link prepareAutoPatchInputs}),
- * while one without a ROM is treated as a patch container. Path-backed disc
- * images (chd/rvz/z3ds) are always ROM sources and never carry sidecar patches.
+ * Whether an archive holds at least one valid, selectable patch — the gate the UI's implicit-patch
+ * discovery uses to decide a ROM-bearing archive should surface its patches through the patch
+ * selection flow (1 auto-adds, 2+ prompts). Unlike {@link prepareAutoPatchInputs} (which name-matches
+ * sidecars for the non-interactive apply execution), this never attributes by name — the user picks.
+ * Path-backed disc images (chd/rvz/z3ds) never carry sidecar patches, so they short-circuit to false.
  */
-const archiveContainsRomEntry = async (
+const archiveHasSelectablePatches = async (
   source: SourceRef,
   options: ApplyWorkflowOptions | undefined,
   runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
 ): Promise<boolean> => {
   const archiveFile = await createPatchFile(source, "input.bin");
-  if (!isCompressionFile(archiveFile)) return false;
-  if (PATH_BACKED_COMPRESSION_FORMATS.has(getCompressionFormat(archiveFile))) return true;
-  const romEntries = await listCompressionEntries(archiveFile, options, runtime, { romFilter: true }).catch(() => []);
-  if (!romEntries.length) return false;
-  // When every candidate is itself a nested container, the listing proves nothing about ROM
-  // content at this level. Route such bundles to the patch flow: its extract-all descends nested
-  // archives (the designed nested-patch-bundle path) and surfaces a clear error when no patch
-  // exists, whereas the ROM flow would dead-end on an ambiguous container pick.
-  const directRomEntries = romEntries.filter(
-    (entry) => !(typeof entry.filename === "string" && isCompressionEntryFileName(entry.filename)),
-  );
-  // A direct (non-nested-container) ROM entry means the archive HOLDS a ROM, so it routes to the ROM
-  // bucket — exactly the `is_rom` classification Rust streams in the probe-manifest. The single-payload
-  // descent then auto-resolves a lone ROM or prompts the user to keep one of several; routing no longer
-  // duplicates that disc-grouping/auto-pick probe just to answer a yes/no question.
-  return directRomEntries.length > 0;
+  if (options?.input?.containerInputsEnabled === false || !isCompressionFile(archiveFile)) return false;
+  if (PATH_BACKED_COMPRESSION_FORMATS.has(getCompressionFormat(archiveFile))) return false;
+  const patchEntries = await filterValidPatchArchiveEntriesForSource(archiveFile, options, runtime).catch(() => []);
+  return patchEntries.length > 0;
 };
 
 // Shared low-level archive primitives consumed by the sibling modules split out of this orchestrator
@@ -825,7 +809,7 @@ export type {
   InputPreparationRuntimeLike,
 };
 export {
-  archiveContainsRomEntry,
+  archiveHasSelectablePatches,
   describeArchiveFileForTrace,
   extractArchiveEntry,
   extractArchiveEntryBytes,

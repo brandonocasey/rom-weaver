@@ -33,3 +33,25 @@ describe("getProgressStagedInputInfo romType from probe-manifest", () => {
     expect(info.romType).toBeUndefined();
   });
 });
+
+describe("getProgressStagedInputInfo isRom from probe-manifest", () => {
+  it("surfaces is_rom=true for a ROM-bearing archive (stays in the ROM bucket)", () => {
+    const info = getProgressStagedInputInfo(event({ probe_manifest: { is_rom: true }, sourceId: "input-1" }));
+    expect(info.isRom).toBe(true);
+  });
+
+  it("surfaces is_rom=false for a patch-only bundle (drives reclassification to the patch bucket)", () => {
+    const info = getProgressStagedInputInfo(event({ probe_manifest: { is_rom: false }, sourceId: "input-1" }));
+    expect(info.isRom).toBe(false);
+  });
+
+  it("leaves isRom undefined when the manifest omits the flag", () => {
+    const info = getProgressStagedInputInfo(event({ probe_manifest: { platform: "Sony PlayStation" }, sourceId: "1" }));
+    expect(info.isRom).toBeUndefined();
+  });
+
+  it("leaves isRom undefined for non-manifest progress events (bare ROMs never reclassify)", () => {
+    const info = getProgressStagedInputInfo(event({ sourceId: "input-1", stage: "checksum" }));
+    expect(info.isRom).toBeUndefined();
+  });
+});

@@ -13,6 +13,7 @@ import { RomWeaverError, toRomWeaverError, withAbortSignal } from "../errors.ts"
 import { getPatchFileBlob, getPatchFileBytes } from "../input/binary-service.ts";
 import type { InputAsset, InputParentCompression } from "../input/input-assets.ts";
 import {
+  archiveHasSelectablePatches,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
   prepareAutoPatchInputs,
@@ -303,6 +304,33 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
 
   private async discoverImplicitPatches(): Promise<void> {
     if (this.patches.length || !this.inputs.length) return;
+    // No interactive selection handler — headless / libretro-style automatic soft-patching — so keep the
+    // name-matched sidecar auto-apply: a patch named after the ROM applies with no prompt, and ambiguous
+    // bundles are left for an explicit add. With a handler (the webapp) every patch the archive carries
+    // is surfaced through the selection dialog instead, so nothing is silently dropped.
+    if (!this.selectFile) {
+      await this.discoverNameMatchedSidecarPatches();
+      return;
+    }
+    const options = this.createExecutionOptions();
+    for (const source of this.inputs) {
+      let hasPatches = false;
+      try {
+        hasPatches = await archiveHasSelectablePatches(source as never, options, this.runtime);
+      } catch (error) {
+        this.trace("patch.implicit.discovery-failed", { error });
+        continue;
+      }
+      if (!hasPatches) continue;
+      // A lone patch auto-adds; two or more open the select dialog. The user picks — nothing is
+      // attributed by name or dropped. (The apply execution skips its own discovery once rows exist.)
+      await this.surfaceArchivePatchSelection(this.cloneArchiveAsPatchSource(source as never));
+    }
+  }
+
+  // Headless/libretro path: apply the sidecar patch(es) whose name matches the ROM, with no selection
+  // prompt (matching the non-interactive apply execution and RetroArch soft-patch conventions).
+  private async discoverNameMatchedSidecarPatches(): Promise<void> {
     const options = this.createExecutionOptions();
     const discovered: PatchFileInstance[] = [];
     for (const source of this.inputs) {
@@ -313,12 +341,10 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       }
     }
     if (!discovered.length) return;
-
     this.trace("patch.implicit.discovered", {
       patchCount: discovered.length,
       patches: discovered.map((patch) => patch.fileName || "patch.bin"),
     });
-
     for (const patchFile of discovered) {
       const stage = this.createInitialSource("patch", this.createImplicitPatchSource(patchFile), this.patches.length);
       stage.preparedPatchFile = patchFile;
@@ -336,13 +362,43 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       this.addDirectCandidate(stage, "patch", stage.index, stage.state.id);
       stage.state.selectedCandidateId = stage.state.candidates[0]?.id;
       if (stage.outputLabel)
-        (
-          stage.preparedPatchFile as PatchFileInstance & {
-            _generatedPatchName?: string;
-          }
-        )._generatedPatchName = stage.outputLabel;
+        (stage.preparedPatchFile as PatchFileInstance & { _generatedPatchName?: string })._generatedPatchName =
+          stage.outputLabel;
       await this.evaluatePatchReadiness(stage);
       this.patches.push(stage);
+    }
+  }
+
+  // Hand the patch flow a fresh File over the same bytes (lazy, no copy) instead of the original input
+  // source, which is already claimed by the staged input session.
+  private cloneArchiveAsPatchSource(source: TSource): TSource {
+    if (typeof File !== "undefined" && source instanceof File) {
+      return new File([source], source.name, {
+        lastModified: source.lastModified,
+        type: source.type || "application/octet-stream",
+      }) as TSource;
+    }
+    return source;
+  }
+
+  // Stage a ROM-bearing archive as a patch source through the same machinery as a dropped patch
+  // archive (enumerate → 1 auto-prepares, 2+ → selection dialog → fan-out). Inlined without `mutate`
+  // because this runs inside `setInput`'s mutation; awaiting `addPatch` here would deadlock the queue.
+  private async surfaceArchivePatchSelection(patchSource: TSource): Promise<void> {
+    const stage = this.createInitialSource("patch", patchSource, this.patches.length);
+    stage.outputLabel = createPatchOutputLabel(stage.state.fileName);
+    this.patches.push(stage);
+    this.trace("patch.implicit.surface-archive-patches", { fileName: stage.state.fileName });
+    try {
+      const staged = await this.stageSource(stage);
+      await this.maybeResolveBlockingPatchSelection(staged);
+      await this.evaluatePatchReadiness(staged);
+    } catch (error) {
+      const index = this.patches.indexOf(stage);
+      if (index !== -1) this.patches.splice(index, 1);
+      await releasePreparedSourceAndWait(stage);
+      await this.releaseRuntimeSources([stage.source]);
+      this.trace("patch.implicit.surface-failed", { error });
     }
   }
 

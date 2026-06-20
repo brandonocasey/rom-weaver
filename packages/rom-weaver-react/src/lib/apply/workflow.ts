@@ -316,7 +316,7 @@ const runApplyWorkflow = async (
           const sourcePath = getNamedSourcePath(source as Parameters<typeof getNamedSourcePath>[0]);
           if (sourcePath) {
             const siblingSources = await listSiblingFiles(sourcePath);
-            const sidecarPatches = resolveSidecarPatchEntries(
+            const sidecarPatches = await resolveSidecarPatchEntries(
               getBaseFileName(getInputSourceFileName(source) || sourcePath),
               siblingSources.map((siblingSource) => ({
                 fileName: getBaseFileName(getInputSourceFileName(siblingSource)),

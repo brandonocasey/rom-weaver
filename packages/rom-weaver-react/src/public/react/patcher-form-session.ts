@@ -791,11 +791,33 @@ const useLocalApplyPatchFormSession = ({
       setChecksumOverrideChecked,
     ],
   );
+  // Move a dropped archive that Rust identified as a patch-only container out of the ROM bucket and into
+  // the patch bucket. The unified drop stages every archive to the ROM bucket optimistically (no
+  // pre-extract probe); the staging run reports `is_rom === false` from Rust's probe-manifest, and this
+  // re-homes the source so the patch bucket's extract-all fans its bundled patches into the stack. Both
+  // list mutations supersede the in-flight ROM staging via the stage-generation guards.
+  const reclassifyArchiveToPatch = useCallback(
+    (source: BinarySource) => {
+      const sourceKey = getInputKey(source, effectiveInputs);
+      const remainingInputs = effectiveInputs.filter((input) => getInputKey(input, effectiveInputs) !== sourceKey);
+      const nextPatches = [...activePatches, source];
+      const sourcePatchKey = getPatchKey(source, nextPatches);
+      const alreadyStagedAsPatch = activePatches.some((patch) => getPatchKey(patch, nextPatches) === sourcePatchKey);
+      emitSessionTrace("reclassify archive from ROM bucket to patch bucket", {
+        alreadyStagedAsPatch,
+        remainingInputCount: remainingInputs.length,
+        sources: getTraceSourceSummaries([source], "Patch"),
+      });
+      updateInputs(remainingInputs);
+      if (!alreadyStagedAsPatch) updatePatches(nextPatches);
+    },
+    [activePatches, effectiveInputs, emitSessionTrace, getInputKey, getPatchKey, updateInputs, updatePatches],
+  );
   const { syncPatchFiles, syncRomInput } = useInputStaging({
     machines: { inputStageMachine, patchStageMachine },
     refs: { busyRef, disabledRef },
     report: { emitSessionTrace, onError, setSectionErrorMessage },
-    rows: { getInputKey, getPatchKey, getStableInputInfo, mergeRomInput, updatePatches },
+    rows: { getInputKey, getPatchKey, getStableInputInfo, mergeRomInput, reclassifyArchiveToPatch, updatePatches },
     session: {
       setInputStaging,
       setPatchInfoByKey,

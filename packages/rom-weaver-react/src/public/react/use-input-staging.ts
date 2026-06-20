@@ -44,6 +44,9 @@ interface InputStagingContext {
     getPatchKey: (source: BinarySource, sources?: BinarySource[]) => string;
     getStableInputInfo: (info: StagedInputInfo, sources: BinarySource[]) => StagedInputInfo;
     mergeRomInput: (info: StagedInputInfo, patch?: RomInputPatch) => void;
+    /** Move a staged archive out of the ROM bucket into the patch bucket — invoked when Rust's
+     * probe-manifest identifies it as a patch-only container (`is_rom === false`). */
+    reclassifyArchiveToPatch: (source: BinarySource) => void;
     updatePatches: (nextPatches: BinarySource[]) => void;
   };
   session: Pick<
@@ -179,10 +182,14 @@ const useInputStaging = (context: InputStagingContext) => {
       const inputProgressGenerationRef = inputStageMachine.progressGenerationRef;
       const { busyRef, disabledRef } = refs;
       const { emitSessionTrace, onError, setSectionErrorMessage } = report;
-      const { getInputKey, getPatchKey, getStableInputInfo, mergeRomInput, updatePatches } = rows;
+      const { getInputKey, getPatchKey, getStableInputInfo, mergeRomInput, reclassifyArchiveToPatch, updatePatches } =
+        rows;
       const { setInputStaging, setPatchInfoByKey, setRomInputs } = session;
       const { stageInput } = stage;
       const { generation, progressGeneration } = inputStageMachine.nextRunGeneration();
+      // An archive Rust identifies as patch-only (`is_rom === false`) is moved to the patch bucket once;
+      // the move supersedes this run, so a per-run guard is enough to fire a single reclassify.
+      const reclassifiedInputKeys = new Set<string>();
       const retainedInputKeys = new Set(previousInputs.map((input) => getInputKey(input, previousInputs)));
       emitSessionTrace("input staging sync started", {
         generation,
@@ -331,6 +338,23 @@ const useInputStaging = (context: InputStagingContext) => {
           }
           const info = getStableInputInfo(getProgressStagedInputInfo(event), snapshot.inputs);
           const source = typeof info.order === "number" ? snapshot.inputs[info.order] : undefined;
+          // Rust's probe-manifest identified this archive as a patch-only container — move it to the
+          // patch bucket instead of dead-ending the ROM extract. The move re-stages without this source
+          // (superseding this run), and the patch bucket's extract-all fans the bundle's patches out.
+          if (source && info.isRom === false) {
+            const inputKey = getInputKey(source, snapshot.inputs);
+            if (!reclassifiedInputKeys.has(inputKey)) {
+              reclassifiedInputKeys.add(inputKey);
+              emitSessionTrace("stageInput reclassify archive to patch bucket", {
+                fileName: info.fileName,
+                generation,
+                order: info.order,
+                sourceId,
+              });
+              reclassifyArchiveToPatch(source);
+            }
+            return;
+          }
           if (source && retainedInputKeys.has(getInputKey(source, snapshot.inputs))) {
             emitSessionTrace("stageInput progress ignored", {
               generation,
