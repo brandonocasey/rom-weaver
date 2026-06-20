@@ -2,23 +2,6 @@ use std::{io, path::PathBuf};
 
 use super::{RomWeaverError, RomWeaverErrorKind, UnsupportedOp, ValidationCodeError};
 
-/// Canonical `Display` prefix the JS worker-error classifier
-/// (`inferCoreWorkerErrorKind`) keys on for each [`RomWeaverErrorKind`]. Both
-/// sides MUST agree on these strings; the JS contract test in
-/// `packages/rom-weaver-react/tests/unit/worker-error-kind-contract.test.ts`
-/// locks the same prefixes from the other direction.
-fn canonical_prefix(kind: RomWeaverErrorKind) -> &'static str {
-    match kind {
-        RomWeaverErrorKind::Validation => "validation failed:",
-        RomWeaverErrorKind::UnknownFormat => "unknown format for path",
-        RomWeaverErrorKind::Unsupported => "unsupported operation:",
-        // Cancelled renders an exact, argument-free message.
-        RomWeaverErrorKind::Cancelled => "operation cancelled",
-        RomWeaverErrorKind::Io => "i/o error:",
-        RomWeaverErrorKind::ThreadPoolBuild => "thread pool build failed:",
-    }
-}
-
 fn assert_error_contract(error: RomWeaverError, expected: RomWeaverErrorKind) {
     assert_eq!(
         error.kind(),
@@ -26,11 +9,16 @@ fn assert_error_contract(error: RomWeaverError, expected: RomWeaverErrorKind) {
         "kind() mismatch for `{error}`: expected {expected:?}, got {:?}",
         error.kind()
     );
+    // The production classifier must round-trip this variant's `Display` back to
+    // the same kind. `classify_message` is what populates the typed `error_kind`
+    // on failed `ProgressEvent`s, so this locks Display ⇄ classify_message ⇄
+    // kind() together: a changed `#[error("...")]` prefix breaks this assertion
+    // unless `classify_message` is updated in lock-step.
     let rendered = error.to_string();
-    let prefix = canonical_prefix(expected);
-    assert!(
-        rendered.starts_with(prefix),
-        "Display for {expected:?} must start with the canonical JS prefix `{prefix}`; got `{rendered}`"
+    assert_eq!(
+        RomWeaverErrorKind::classify_message(&rendered),
+        Some(expected),
+        "classify_message must map Display `{rendered}` to {expected:?}"
     );
 }
 
@@ -70,6 +58,27 @@ fn cancelled_maps_to_cancelled_kind_and_exact_message() {
     assert_eq!(error.kind(), RomWeaverErrorKind::Cancelled);
     // Cancelled has no arguments; lock the whole message, not just the prefix.
     assert_eq!(error.to_string(), "operation cancelled");
+    assert_eq!(
+        RomWeaverErrorKind::classify_message("operation cancelled"),
+        Some(RomWeaverErrorKind::Cancelled)
+    );
+}
+
+#[test]
+fn classify_message_ignores_non_core_and_context_wrapped_messages() {
+    // A message that is not a bare `RomWeaverError` rendering must classify to
+    // `None` so the event omits `error_kind` and the JS side falls back to its
+    // own inference, exactly as before this typed field existed.
+    assert_eq!(
+        RomWeaverErrorKind::classify_message("totally unrelated"),
+        None
+    );
+    // Context-wrapped failures (`format!("...: {error}")`) are intentionally not
+    // classified here: the prefix is the wrapper, not the error kind.
+    assert_eq!(
+        RomWeaverErrorKind::classify_message("failed to prepare output path `/x`: i/o error: nope"),
+        None
+    );
 }
 
 #[test]
@@ -120,6 +129,14 @@ fn every_variant_is_covered_by_the_contract() {
     ];
 
     for error in samples {
-        assert_eq!(error.kind(), expected_kind(&error));
+        let expected = expected_kind(&error);
+        assert_eq!(error.kind(), expected);
+        // Every variant's Display must round-trip through the production
+        // classifier that feeds the typed event field.
+        assert_eq!(
+            RomWeaverErrorKind::classify_message(&error.to_string()),
+            Some(expected),
+            "classify_message lost the kind for `{error}`"
+        );
     }
 }

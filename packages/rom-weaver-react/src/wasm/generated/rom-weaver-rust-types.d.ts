@@ -15,7 +15,15 @@ export type ThreadExecution = { requested_threads: number, effective_threads: nu
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null;
 
-export type ProgressEvent = { command: string, family: OperationFamily, format: string | null, stage: string, label: string, details: JsonValue | null, percent: number | null, requested_threads: number | null, effective_threads: number | null, thread_mode: ThreadMode | null, used_parallelism: boolean | null, thread_fallback: boolean | null, thread_fallback_reason?: string | null, elapsed_ms?: number | null, status: OperationStatus, };
+export type ProgressEvent = { command: string, family: OperationFamily, format: string | null, stage: string, label: string, details: JsonValue | null, percent: number | null, requested_threads: number | null, effective_threads: number | null, thread_mode: ThreadMode | null, used_parallelism: boolean | null, thread_fallback: boolean | null, thread_fallback_reason?: string | null, elapsed_ms?: number | null,
+/**
+ * Typed error classification for a `Failed` event, derived from the failure
+ * message via [`crate::RomWeaverErrorKind::classify_message`]. Lets the
+ * webapp read the generated `RomWeaverErrorKind` directly instead of
+ * re-inferring it from `label`; `None` (and omitted) for non-failure events
+ * and for failures whose message is not a bare `RomWeaverError` rendering.
+ */
+error_kind?: RomWeaverErrorKind | null, status: OperationStatus, };
 
 export type ExtractedFileEntry = {
 /**

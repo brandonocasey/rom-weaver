@@ -69,6 +69,13 @@ pub struct ProgressEvent {
     pub thread_fallback_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elapsed_ms: Option<u32>,
+    /// Typed error classification for a `Failed` event, derived from the failure
+    /// message via [`crate::RomWeaverErrorKind::classify_message`]. Lets the
+    /// webapp read the generated `RomWeaverErrorKind` directly instead of
+    /// re-inferring it from `label`; `None` (and omitted) for non-failure events
+    /// and for failures whose message is not a bare `RomWeaverError` rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<crate::RomWeaverErrorKind>,
     pub status: OperationStatus,
 }
 
@@ -104,6 +111,7 @@ impl ProgressEvent {
             thread_fallback_reason: execution
                 .and_then(|value| value.thread_fallback_reason.clone()),
             elapsed_ms: None,
+            error_kind: None,
             status: OperationStatus::Pending,
         }
     }

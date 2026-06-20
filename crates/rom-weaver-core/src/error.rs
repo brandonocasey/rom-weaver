@@ -30,6 +30,41 @@ pub enum RomWeaverErrorKind {
     ThreadPoolBuild,
 }
 
+impl RomWeaverErrorKind {
+    /// Classify a [`RomWeaverError`] `Display` string back into its kind by the
+    /// canonical message prefix. This is the single Rust source of truth for the
+    /// prefix ⇄ kind mapping: it populates the typed `error_kind` on a failed
+    /// `ProgressEvent` (see `OperationReport::into_event`) so the webapp keys off
+    /// the generated [`RomWeaverErrorKind`] rather than re-deriving the kind from
+    /// the message at runtime. The JS `inferCoreWorkerErrorKind` regex mirrors
+    /// these prefixes only as a *fallback*, for error messages that reach JS
+    /// without a typed kind (worker/panic strings, or messages wrapped in
+    /// additional context). Returns `None` for any message that is not a bare
+    /// `RomWeaverError` `Display` rendering.
+    ///
+    /// The `Display` ⇄ `classify_message` ⇄ [`RomWeaverError::kind`] round-trip
+    /// is locked for every variant by the contract test in this module, so a
+    /// `#[error("...")]` prefix cannot change without this classifier (and the
+    /// failing test) catching it.
+    pub fn classify_message(message: &str) -> Option<Self> {
+        const PREFIXES: &[(&str, RomWeaverErrorKind)] = &[
+            ("validation failed:", RomWeaverErrorKind::Validation),
+            ("unknown format for path", RomWeaverErrorKind::UnknownFormat),
+            ("unsupported operation:", RomWeaverErrorKind::Unsupported),
+            ("operation cancelled", RomWeaverErrorKind::Cancelled),
+            ("i/o error:", RomWeaverErrorKind::Io),
+            (
+                "thread pool build failed:",
+                RomWeaverErrorKind::ThreadPoolBuild,
+            ),
+        ];
+        PREFIXES
+            .iter()
+            .find(|(prefix, _)| message.starts_with(prefix))
+            .map(|(_, kind)| *kind)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationCodeError {
     code: &'static str,

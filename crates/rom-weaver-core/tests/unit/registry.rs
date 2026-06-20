@@ -29,6 +29,55 @@ fn into_event_preserves_thread_fallback_metadata() {
     );
 }
 
+#[test]
+fn into_event_classifies_failed_report_error_kind() {
+    // A failure whose label is a bare RomWeaverError rendering carries the typed
+    // kind on the emitted event, so the webapp keys off the generated enum
+    // instead of re-deriving the kind from the message.
+    let report = OperationReport::failed(
+        OperationFamily::Patch,
+        Some("BPS".to_string()),
+        "apply",
+        crate::RomWeaverError::Validation("bad checksum".to_string()).to_string(),
+        None,
+    );
+    let event = report.into_event("patch-apply");
+    assert_eq!(event.status, OperationStatus::Failed);
+    assert_eq!(
+        event.error_kind,
+        Some(crate::RomWeaverErrorKind::Validation)
+    );
+}
+
+#[test]
+fn into_event_omits_error_kind_for_success_and_context_wrapped_failures() {
+    // Succeeded events never carry an error kind.
+    let ok = OperationReport::succeeded(
+        OperationFamily::Patch,
+        None,
+        "apply",
+        "done",
+        Some(100.0),
+        None,
+    );
+    assert_eq!(ok.into_event("patch-apply").error_kind, None);
+
+    // A failure message wrapped in extra context is not a bare RomWeaverError
+    // rendering, so it stays unclassified here and falls back to JS-side
+    // inference, exactly as before the typed field existed.
+    let wrapped = OperationReport::failed(
+        OperationFamily::Patch,
+        None,
+        "prepare",
+        format!(
+            "failed to prepare output path `/x`: {}",
+            crate::RomWeaverError::Cancelled
+        ),
+        None,
+    );
+    assert_eq!(wrapped.into_event("patch-apply").error_kind, None);
+}
+
 // ---------------------------------------------------------------------------
 // Container wrapper forwarding guard.
 //

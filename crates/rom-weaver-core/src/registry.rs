@@ -136,6 +136,15 @@ impl OperationReport {
 
     pub fn into_event(self, command: impl Into<String>) -> crate::ProgressEvent {
         let thread_execution = self.thread_execution.as_ref();
+        // Terminal failures carry a typed error kind derived once here, from the
+        // single point every command finalizes through (`CliApp::finish`), so the
+        // webapp keys off the generated `RomWeaverErrorKind` instead of pattern
+        // matching `label`. Messages wrapped in extra context classify to `None`
+        // and fall back to JS-side inference, exactly as before.
+        let error_kind = match self.status {
+            OperationStatus::Failed => crate::RomWeaverErrorKind::classify_message(&self.label),
+            _ => None,
+        };
         crate::ProgressEvent {
             command: command.into(),
             family: self.family,
@@ -145,6 +154,7 @@ impl OperationReport {
             details: self.details,
             percent: self.percent,
             elapsed_ms: None,
+            error_kind,
             status: self.status,
             ..crate::ProgressEvent::from_thread_execution(thread_execution)
         }
