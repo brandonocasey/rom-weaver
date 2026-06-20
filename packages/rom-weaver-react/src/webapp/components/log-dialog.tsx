@@ -54,19 +54,38 @@ const getEmptyEntries = () => EMPTY_ENTRIES;
 const noopUnsubscribe = () => undefined;
 const noopSubscribe = () => noopUnsubscribe;
 
+const lineClassName = (copied: boolean, failed: boolean) => {
+  if (failed) return "ln copy-failed";
+  if (copied) return "ln copied";
+  return "ln";
+};
+
+const copyAllLabel = (localizer: ReturnType<typeof useUiLocalizer>, copied: boolean, failed: boolean) => {
+  if (failed) return localizer.message("ui.common.copyFailed");
+  if (copied) return localizer.message("ui.announce.copied");
+  return localizer.message("ui.common.copy");
+};
+
 const TraceLine = ({ entry }: { entry: LogStoreEntry }) => {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
   const details = formatDetails(entry.details);
   return (
     <button
-      className={copied ? "ln copied" : "ln"}
+      className={lineClassName(copied, failed)}
       onClick={() => {
         copyToClipboard(formatLine(entry))
           .then(() => {
+            setFailed(false);
             setCopied(true);
             window.setTimeout(() => setCopied(false), 1200);
           })
-          .catch((error) => logger.trace("Log line copy failed", { message: String(error) }));
+          .catch((error) => {
+            logger.warn("Log line copy failed", { message: String(error) });
+            setCopied(false);
+            setFailed(true);
+            window.setTimeout(() => setFailed(false), 1600);
+          });
       }}
       type="button"
     >
@@ -98,6 +117,7 @@ const LogDialog = ({
   const currentLevel = normalizeLevel(level);
   const [filter, setFilter] = useState("");
   const [copiedAll, setCopiedAll] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const entries = useSyncExternalStore(
     open ? subscribeLogEntries : noopSubscribe,
     open ? getLogEntries : getEmptyEntries,
@@ -166,18 +186,24 @@ const LogDialog = ({
               </select>
             </label>
             <button
-              className="btn slim ghost"
+              className={copyFailed ? "btn slim ghost copy-failed" : "btn slim ghost"}
               onClick={() => {
                 copyToClipboard(visible.map(formatLine).join("\n"))
                   .then(() => {
+                    setCopyFailed(false);
                     setCopiedAll(true);
                     window.setTimeout(() => setCopiedAll(false), 1300);
                   })
-                  .catch((error) => logger.trace("Log copy failed", { message: String(error) }));
+                  .catch((error) => {
+                    logger.warn("Log copy failed", { message: String(error) });
+                    setCopiedAll(false);
+                    setCopyFailed(true);
+                    window.setTimeout(() => setCopyFailed(false), 1600);
+                  });
               }}
               type="button"
             >
-              {copiedAll ? localizer.message("ui.announce.copied") : localizer.message("ui.common.copy")}
+              {copyAllLabel(localizer, copiedAll, copyFailed)}
             </button>
           </div>
           <button aria-label={localizer.message("ui.common.close")} className="dlg-x" onClick={onClose} type="button">

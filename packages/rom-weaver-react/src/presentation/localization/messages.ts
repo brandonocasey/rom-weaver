@@ -101,6 +101,7 @@ const MESSAGES: Record<MessageId, MessageDescriptor> = {
   "ui.common.cancel": msg({ id: "ui.common.cancel", message: "Cancel" }),
   "ui.common.close": msg({ id: "ui.common.close", message: "Close" }),
   "ui.common.copy": msg({ id: "ui.common.copy", message: "Copy" }),
+  "ui.common.copyFailed": msg({ id: "ui.common.copyFailed", message: "Copy failed" }),
   "ui.common.dismiss": msg({ id: "ui.common.dismiss", message: "Dismiss" }),
   "ui.common.remove": msg({ id: "ui.common.remove", message: "Remove" }),
   "ui.common.retry": msg({ id: "ui.common.retry", message: "Retry" }),

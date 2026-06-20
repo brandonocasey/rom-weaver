@@ -305,6 +305,11 @@ msgstr "Copy"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.common.copyFailed"
+msgstr "Copy failed"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.fault.copy"
 msgstr "Copy report"
 

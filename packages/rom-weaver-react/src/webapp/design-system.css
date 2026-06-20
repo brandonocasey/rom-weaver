@@ -1232,6 +1232,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .tracelog .ln:last-child { border-block-end: 0; }
 .rw-app .tracelog .ln:hover { background: color-mix(in oklab, var(--thread) 8%, transparent); }
 .rw-app .tracelog .ln.copied { background: color-mix(in oklab, var(--verified) 16%, transparent); }
+.rw-app .tracelog .ln.copy-failed { background: color-mix(in oklab, var(--fault) 16%, transparent); }
 .rw-app .tracelog .ts { color: #6aa8c0; flex: none; }
 .rw-app .tracelog .caller { color: #b594d6; flex: none; font-stretch: 90%; }
 :root[data-theme="light"] .tracelog .ts { color: #2a6f8a; }
@@ -1320,6 +1321,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .log-dlg { max-width: min(960px, calc(100vw - 32px)); }
 .rw-app .log-dlg .dlg-frame { max-height: min(90dvh, 940px); height: min(90dvh, 940px); }
 .rw-app .log-actions { display: inline-flex; gap: 8px; align-items: center; margin-inline-start: auto; }
+.rw-app .log-actions .btn.copy-failed { color: var(--fault); border-color: color-mix(in oklab, var(--fault) 55%, transparent); }
 .rw-app .log-actions .loglevel { display: inline-flex; }
 .rw-app .log-actions .loglevel .select { height: 30px; font-size: .76rem; padding-block: 0; }
 .rw-app .log-actions .log-filter { height: 30px; width: min(180px, 28vw); font-size: .76rem; padding-block: 0; }
