@@ -898,6 +898,14 @@ const runRomWeaverChecksumWorker = async (
   // checksum that won't use it (see CHECKSUM_THREAD_POOL_FLOOR_BYTES).
   const suppressDefaultThreadPool =
     typeof input.fileSize === "number" && input.fileSize >= 0 && input.fileSize < CHECKSUM_THREAD_POOL_FLOOR_BYTES;
+  // Cap the worker pool at the algorithm count. A checksum fans its algorithms across threads (and the
+  // variant engine caps each variant at the algorithm count), so it can never use more than one worker
+  // per algorithm — warming the full core count ("auto") just stands up wasm worker instances the hash
+  // can't use, and each reserves a thread stack in shared linear memory. On memory-constrained
+  // WebKit/iOS tabs that extra pile of instances OOMs the worker, which tears the runner down and
+  // rebuilds it (the "page reloaded / lost my work" symptom). Extract escapes this because it runs
+  // through the memory/thread-aware scheduler, which throttles its pool to a fraction of the cores.
+  const checksumThreadBudget = suppressDefaultThreadPool ? 0 : Math.max(1, algorithms.length);
   const command = createRomWeaverCommand("checksum", {
     algo: algorithms,
     no_extract: true,
@@ -915,7 +923,7 @@ const runRomWeaverChecksumWorker = async (
   const result = await runRomWeaverJson(
     command,
     toRomWeaverOptions({
-      ...(suppressDefaultThreadPool ? { defaultThreads: 0 } : {}),
+      defaultThreads: checksumThreadBudget,
       logLevel: input.logLevel,
       onEvent: (event) => {
         const progress = toSimpleProgress(event);
