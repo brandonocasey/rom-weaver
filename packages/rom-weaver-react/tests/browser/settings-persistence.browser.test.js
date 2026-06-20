@@ -26,8 +26,8 @@ test("development webapp defaults enable trace logging", () => {
   const developmentEnvironment = { DEV: true, MODE: "development" };
   expect(getDefaultWebappLogLevel(developmentEnvironment)).toBe("trace");
 
-  expect(getDefaultWebappLogLevel({ DEV: true, MODE: "test" })).toBe("warn");
-  expect(getDefaultWebappLogLevel({ DEV: false, MODE: "production" })).toBe("warn");
+  expect(getDefaultWebappLogLevel({ DEV: true, MODE: "test" })).toBe("info");
+  expect(getDefaultWebappLogLevel({ DEV: false, MODE: "production" })).toBe("info");
 });
 
 test("settings persistence round-trips every visible settings field", () => {
