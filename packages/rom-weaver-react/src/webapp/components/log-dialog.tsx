@@ -189,7 +189,7 @@ const LogDialog = ({
                 <legend className="sr-only">{localizer.message("ui.log.viewLabel")}</legend>
                 <button
                   aria-pressed={!showingPrevious}
-                  className={showingPrevious ? "btn slim ghost" : "btn slim"}
+                  className="seg-btn"
                   onClick={() => setView("current")}
                   type="button"
                 >
@@ -197,7 +197,7 @@ const LogDialog = ({
                 </button>
                 <button
                   aria-pressed={showingPrevious}
-                  className={showingPrevious ? "btn slim" : "btn slim ghost"}
+                  className="seg-btn"
                   onClick={() => setView("previous")}
                   type="button"
                 >
