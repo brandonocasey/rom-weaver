@@ -456,7 +456,17 @@ export const ROM_WEAVER_COMPRESSION_METADATA = {
         "cdfl"
       ],
       "defaultCodec": null,
-      "defaultCodecs": "cdlz,cdzl,cdfl"
+      "defaultCodecs": "cdlz,cdzl,cdfl",
+      "presets": [
+        {
+          "codecs": "cdzs,cdzl,cdfl",
+          "kind": "zstd"
+        },
+        {
+          "codecs": "cdlz,cdzl,cdfl",
+          "kind": "lzma"
+        }
+      ]
     },
     "chdCreateDvdCodecs": {
       "allowMultiple": true,
@@ -468,7 +478,17 @@ export const ROM_WEAVER_COMPRESSION_METADATA = {
         "flac"
       ],
       "defaultCodec": null,
-      "defaultCodecs": "lzma,zlib,huff,flac"
+      "defaultCodecs": "lzma,zlib,huff,flac",
+      "presets": [
+        {
+          "codecs": "zstd,zlib,huff,flac",
+          "kind": "zstd"
+        },
+        {
+          "codecs": "lzma,zlib,huff,flac",
+          "kind": "lzma"
+        }
+      ]
     },
     "rvzCodec": {
       "allowMultiple": false,
@@ -476,7 +496,8 @@ export const ROM_WEAVER_COMPRESSION_METADATA = {
         "zstd"
       ],
       "defaultCodec": "zstd",
-      "defaultCodecs": null
+      "defaultCodecs": null,
+      "presets": []
     },
     "sevenZipCodec": {
       "allowMultiple": false,
@@ -484,7 +505,8 @@ export const ROM_WEAVER_COMPRESSION_METADATA = {
         "lzma2"
       ],
       "defaultCodec": "lzma2",
-      "defaultCodecs": null
+      "defaultCodecs": null,
+      "presets": []
     },
     "zipCodec": {
       "allowMultiple": false,
@@ -494,7 +516,8 @@ export const ROM_WEAVER_COMPRESSION_METADATA = {
         "zstd"
       ],
       "defaultCodec": "deflate",
-      "defaultCodecs": null
+      "defaultCodecs": null,
+      "presets": []
     }
   },
   "codecs": {

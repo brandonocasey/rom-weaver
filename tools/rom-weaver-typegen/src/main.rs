@@ -393,6 +393,11 @@ fn compression_metadata_value() -> Value {
                 "codecs": field.codecs,
                 "defaultCodec": field.default_codec,
                 "defaultCodecs": field.default_codecs,
+                "presets": field
+                    .presets
+                    .iter()
+                    .map(|preset| json!({ "codecs": preset.codecs, "kind": preset.kind }))
+                    .collect::<Vec<_>>(),
             }),
         );
     }

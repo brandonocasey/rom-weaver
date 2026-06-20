@@ -9,11 +9,16 @@ type CompressionCodecMetadataEntry = {
   readonly level: CompressionCodecLevelRange | null;
   readonly profileKind: string;
 };
+type CompressionCodecFieldPreset = {
+  readonly kind: string;
+  readonly codecs: string;
+};
 type CompressionCodecFieldMetadataEntry = {
   readonly allowMultiple: boolean;
   readonly codecs: readonly string[];
   readonly defaultCodec: string | null;
   readonly defaultCodecs: string | null;
+  readonly presets: readonly CompressionCodecFieldPreset[];
 };
 
 const COMPRESSION_METADATA = ROM_WEAVER_COMPRESSION_METADATA;
@@ -106,6 +111,10 @@ const getGeneratedCompressionCodecFieldCodecs = (fieldKey: string): string[] => 
   ...(getGeneratedCompressionCodecField(fieldKey)?.codecs ?? []),
 ];
 
+const getGeneratedCompressionCodecFieldPresets = (fieldKey: string): CompressionCodecFieldPreset[] => [
+  ...(getGeneratedCompressionCodecField(fieldKey)?.presets ?? []),
+];
+
 const getGeneratedCompressionCodecFieldDefault = (fieldKey: string): string => {
   const field = getGeneratedCompressionCodecField(fieldKey);
   return field?.defaultCodecs || field?.defaultCodec || "";
@@ -134,6 +143,7 @@ export {
   type GeneratedCompressionProfile,
   getGeneratedCompressionCodecFieldCodecs,
   getGeneratedCompressionCodecFieldDefault,
+  getGeneratedCompressionCodecFieldPresets,
   getGeneratedCompressionCodecLevelMax,
   getGeneratedCompressionCodecLevelMin,
   getGeneratedCompressionCodecProfileKind,

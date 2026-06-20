@@ -7,6 +7,7 @@ import {
 import {
   type GeneratedCompressionCodecFieldKey,
   getGeneratedCompressionCodecFieldCodecs,
+  getGeneratedCompressionCodecFieldPresets,
   getGeneratedCompressionCodecLevelMax,
   getGeneratedCompressionCodecLevelMin,
   isGeneratedCompressionCodecFieldKey,
@@ -44,16 +45,13 @@ const codecPresetOption = (label: string, value: string, searchText: string): Co
   value,
 });
 
-const CHD_CODEC_PRESETS: Partial<Record<CompressionCodecFieldKey, CompressionCodecOption[]>> = {
-  chdCreateCdCodecs: [
-    codecPresetOption("zstd preset: cdzs,cdzl,cdfl", "cdzs,cdzl,cdfl", "zstd cdzs cdzl cdfl"),
-    codecPresetOption("lzma preset: cdlz,cdzl,cdfl", "cdlz,cdzl,cdfl", "lzma cdlz cdzl cdfl"),
-  ],
-  chdCreateDvdCodecs: [
-    codecPresetOption("zstd preset: zstd,zlib,huff,flac", "zstd,zlib,huff,flac", "zstd zlib huff flac"),
-    codecPresetOption("lzma preset: lzma,zlib,huff,flac", "lzma,zlib,huff,flac", "lzma zlib huff flac"),
-  ],
-};
+// Preset combos come from the generated compression metadata (Rust owns the codec
+// knowledge). searchText makes a preset findable by its family name and each codec;
+// the Set dedupes the family when it is already one of the codecs (e.g. DVD zstd).
+const getCompressionCodecPresetOptions = (fieldKey: CompressionCodecFieldKey): CompressionCodecOption[] =>
+  getGeneratedCompressionCodecFieldPresets(fieldKey).map(({ codecs, kind }) =>
+    codecPresetOption(`${kind} preset: ${codecs}`, codecs, [...new Set([kind, ...codecs.split(",")])].join(" ")),
+  );
 
 const isCompressionCodecFieldKey = (fieldKey: string): fieldKey is CompressionCodecFieldKey =>
   isGeneratedCompressionCodecFieldKey(fieldKey);
@@ -65,7 +63,7 @@ const getCompressionCodecOptions = (fieldKey: string): CompressionCodecOption[] 
 
 const getCompressionCodecSuggestions = (fieldKey: string): CompressionCodecOption[] =>
   isCompressionCodecFieldKey(fieldKey)
-    ? [...(CHD_CODEC_PRESETS[fieldKey] ?? []), ...getCompressionCodecOptions(fieldKey)]
+    ? [...getCompressionCodecPresetOptions(fieldKey), ...getCompressionCodecOptions(fieldKey)]
     : [];
 
 const getCompressionCodecValues = (fieldKey: string): string[] =>

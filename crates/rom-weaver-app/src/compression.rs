@@ -67,12 +67,22 @@ pub struct CompressionCodecMetadata {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompressionCodecPresetMetadata {
+    /// Short codec-family label for the preset (e.g. "zstd", "lzma").
+    pub kind: &'static str,
+    /// Comma-joined codec list the preset commits as the field value.
+    pub codecs: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CompressionCodecFieldMetadata {
     pub name: &'static str,
     pub codecs: &'static [&'static str],
     pub default_codec: Option<&'static str>,
     pub default_codecs: Option<&'static str>,
     pub allow_multiple: bool,
+    /// Suggested multi-codec combos surfaced as dropdown presets.
+    pub presets: &'static [CompressionCodecPresetMetadata],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -228,6 +238,16 @@ const COMPRESSION_CODEC_FIELDS: &[CompressionCodecFieldMetadata] = &[
         default_codec: None,
         default_codecs: Some("cdlz,cdzl,cdfl"),
         allow_multiple: true,
+        presets: &[
+            CompressionCodecPresetMetadata {
+                kind: "zstd",
+                codecs: "cdzs,cdzl,cdfl",
+            },
+            CompressionCodecPresetMetadata {
+                kind: "lzma",
+                codecs: "cdlz,cdzl,cdfl",
+            },
+        ],
     },
     CompressionCodecFieldMetadata {
         name: "chdCreateDvdCodecs",
@@ -235,6 +255,16 @@ const COMPRESSION_CODEC_FIELDS: &[CompressionCodecFieldMetadata] = &[
         default_codec: None,
         default_codecs: Some("lzma,zlib,huff,flac"),
         allow_multiple: true,
+        presets: &[
+            CompressionCodecPresetMetadata {
+                kind: "zstd",
+                codecs: "zstd,zlib,huff,flac",
+            },
+            CompressionCodecPresetMetadata {
+                kind: "lzma",
+                codecs: "lzma,zlib,huff,flac",
+            },
+        ],
     },
     CompressionCodecFieldMetadata {
         name: "rvzCodec",
@@ -242,6 +272,7 @@ const COMPRESSION_CODEC_FIELDS: &[CompressionCodecFieldMetadata] = &[
         default_codec: Some("zstd"),
         default_codecs: None,
         allow_multiple: false,
+        presets: &[],
     },
     CompressionCodecFieldMetadata {
         name: "sevenZipCodec",
@@ -249,6 +280,7 @@ const COMPRESSION_CODEC_FIELDS: &[CompressionCodecFieldMetadata] = &[
         default_codec: Some("lzma2"),
         default_codecs: None,
         allow_multiple: false,
+        presets: &[],
     },
     CompressionCodecFieldMetadata {
         name: "zipCodec",
@@ -256,6 +288,7 @@ const COMPRESSION_CODEC_FIELDS: &[CompressionCodecFieldMetadata] = &[
         default_codec: Some("deflate"),
         default_codecs: None,
         allow_multiple: false,
+        presets: &[],
     },
 ];
 
