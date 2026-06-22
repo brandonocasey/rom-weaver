@@ -100,8 +100,6 @@ const SectionNotice = ({ id, onDismiss, state }: { id?: string; onDismiss?: () =
   );
 };
 
-const getHeaderFixLabel = (checked: boolean) => (checked ? "Will fix internal checksum" : "No change");
-
 const ROM_CHECKSUM_HEX_LENGTHS: Record<number, "crc32" | "md5" | "sha1"> = { 8: "crc32", 32: "md5", 40: "sha1" };
 
 /**
@@ -151,7 +149,6 @@ const buildRomVerificationStates = (patches: PatchStackItemState[], romInputs: R
 /** Dependencies threaded into the ROM-row renderers. */
 type RomRowDeps = {
   romInputs: RomInputRowState[];
-  alterHeaderChecked: boolean;
   verificationStates: Map<string, "bad" | "ok">;
   ui: PatcherUiController;
 };
@@ -195,7 +192,7 @@ const groupRomInputs = (rows: RomInputRowState[]): RomInputGroup[] => {
 
 /** Render a single (non-disc) ROM input row. */
 const renderRomInputRow = (romInput: RomInputRowState, index: number, deps: RomRowDeps): WorkflowRomInputStepItem => {
-  const { romInputs, alterHeaderChecked, verificationStates, ui } = deps;
+  const { romInputs, verificationStates, ui } = deps;
   const state = verificationStates.get(romInput.id);
   // ── Input staging treatment (CLS) ──────────────────────────────────────────
   // The resolved card structure stays mounted through staging: a slim determinate
@@ -260,13 +257,6 @@ const renderRomInputRow = (romInput: RomInputRowState, index: number, deps: RomR
         else ui.removeRomInput?.(romInput.id);
       },
       panels: {
-        fixes: {
-          headerSummary: alterHeaderChecked ? "header will be fixed" : "header unchanged",
-          headerValue: getHeaderFixLabel(alterHeaderChecked),
-          lead: romInput.info.romInfo ? <p className="pdesc">{romInput.info.romInfo}</p> : undefined,
-          romInfoText: romInput.info.romInfo,
-          trim: romInput.info.romProbe?.trim,
-        },
         info: {
           bytes: romBytes,
           checksums: staging
@@ -278,6 +268,7 @@ const renderRomInputRow = (romInput: RomInputRowState, index: number, deps: RomR
           open: staging ? true : romInput.info.checksumsExpanded,
           pending: staging ? pendingGroups : undefined,
           timing: staging ? undefined : CHECKSUM_TIMING_LABEL(romInput.info.checksumTiming),
+          trim: staging ? undefined : romInput.info.romProbe?.trim,
         },
         ...(romInput.cueText ? { cue: { cueText: romInput.cueText } } : {}),
       },
@@ -474,7 +465,6 @@ function ApplyWorkflowFormView({
 
   const romVerificationStates = buildRomVerificationStates(patches, romInputs);
   const romRowDeps: RomRowDeps = {
-    alterHeaderChecked: uiState.romInfo.alterHeaderChecked,
     romInputs,
     ui: uiController,
     verificationStates: romVerificationStates,

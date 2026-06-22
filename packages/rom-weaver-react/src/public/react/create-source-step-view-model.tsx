@@ -101,7 +101,6 @@ const buildCreateSourceStep = ({
                   },
                   onRemove: onClear,
                   panels: {
-                    fixes: {},
                     info: {
                       bytes: displayInfo?.size ?? displayInfo?.sourceSize,
                       checksums: getDisplaySourceChecksums(sourceState),

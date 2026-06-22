@@ -31,7 +31,6 @@ import { CandidateSelectionDialog } from "../../src/public/react/candidate-selec
 import { ChecksumList, ChecksumRow } from "../../src/public/react/components/ds/checksum-list.tsx";
 import { FileProgress, InlineProgress, Notice, RunButton } from "../../src/public/react/components/ds/feedback.tsx";
 import { FileCard } from "../../src/public/react/components/ds/file-card.tsx";
-import { FixesPanel } from "../../src/public/react/components/ds/fixes-panel.tsx";
 import { ConfirmDialog, Modal } from "../../src/public/react/components/ds/modal.tsx";
 import { DiscTracksPanel, SourceInfoList } from "../../src/public/react/components/ds/source-info-list.tsx";
 import { CreatePatchFormView } from "../../src/public/react/create-patch-form-view.tsx";
@@ -292,6 +291,7 @@ const SectionsGallery = () =>
         defaultOpen: true,
         label: "Source",
         timing: "8 ms",
+        trim: { detected: true, mode: "auto", trimmedInputBytes: 1_048_576 },
       }),
       createElement(DiscTracksPanel, {
         open: true,
@@ -306,12 +306,6 @@ const SectionsGallery = () =>
           { bytes: 2_345_678, checksums: { crc32: "BBBB2222" }, id: "t2", label: "Track 02" },
         ],
       }),
-      createElement(FixesPanel, {
-        defaultOpen: true,
-        headerValue: "No change",
-        romInfoText: "GBA ROM",
-        trim: { detected: true, mode: "auto", trimmedInputBytes: 1_048_576 },
-      }),
     ),
   );
 
@@ -320,7 +314,7 @@ describe("design-system sections + states (expanded)", () => {
     test(`every section open + progress/error primitives pass WCAG 2.1 A/AA (${theme} theme)`, async () => {
       await renderNode(createElement(SectionsGallery), theme);
       // sanity: the sections really are open (axe skips visibility:hidden content)
-      expect(host.querySelectorAll(".cks.is-open").length).toBeGreaterThanOrEqual(4);
+      expect(host.querySelectorAll(".cks.is-open").length).toBeGreaterThanOrEqual(3);
       expect(await scanViolations(host)).toEqual([]);
     });
   }
@@ -508,9 +502,9 @@ const emptyTrimPage = () =>
 // Create/Trim are stateful forms with no inert controller, but their markup is
 // owned by presentational views (Create/TrimPatchFormView) that the controllers
 // feed prop bundles. Mounting those views directly with a staged model exercises
-// the loaded source cards (Extract + Info open + Fixes) + swap row + output step
-// without booting wasm — the coverage gap the empty-bench pages can't reach.
-const stagedSourceStep = ({ fixes = {}, id, num, title }) => ({
+// the loaded source cards (Extract + Info open, incl. the trim group) + swap row
+// + output step without booting wasm — the coverage gap empty benches can't reach.
+const stagedSourceStep = ({ id, num, title, trim }) => ({
   id,
   items: [
     {
@@ -518,8 +512,7 @@ const stagedSourceStep = ({ fixes = {}, id, num, title }) => ({
         extract: { fileName: "Pokemon Emerald.gba", fileSize: 8_388_608, timing: "8 ms" },
         onRemove: noop,
         panels: {
-          fixes,
-          info: { bytes: 8_388_608, checksums: ROM_CHECKSUMS, defaultOpen: true, timing: "Checksum 12 ms" },
+          info: { bytes: 8_388_608, checksums: ROM_CHECKSUMS, defaultOpen: true, timing: "Checksum 12 ms", trim },
         },
         removeLabel: `Clear ${title} ROM`,
         state: "ok",
@@ -602,10 +595,10 @@ const stagedTrimPage = () =>
       }),
       sourceEmpty: false,
       sourceStep: stagedSourceStep({
-        fixes: { defaultOpen: true, trim: { detected: true, mode: "auto", trimmedInputBytes: 1_048_576 } },
         id: "trim-builder-row-source",
         num: "0x02",
         title: "ROM",
+        trim: { detected: true, mode: "auto", trimmedInputBytes: 1_048_576 },
       }),
     }),
   );

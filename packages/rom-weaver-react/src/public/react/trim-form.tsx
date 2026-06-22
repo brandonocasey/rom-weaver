@@ -898,15 +898,13 @@ function TrimPatchForm(props: TrimPatchFormProps) {
                     },
                     onRemove: () => updateSource(null),
                     panels: {
-                      fixes: {
-                        trim: sourceState?.romProbe?.trim,
-                      },
                       info: {
                         bytes: sourceState?.size ?? sourceState?.sourceSize,
                         checksums: sourceState?.checksums,
                         defaultOpen: false,
                         progress: toWorkflowChecksumProgressProps(checksumProgress),
                         timing: formatOptionalElapsedMs(sourceState?.checksumTimeMs),
+                        trim: sourceState?.romProbe?.trim,
                       },
                     },
                     removeLabel: "Clear ROM",

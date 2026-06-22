@@ -1,7 +1,37 @@
 import type { ReactNode } from "react";
+import { formatByteSize } from "../../../../presentation/workflow-presentation.ts";
 import type { ChecksumVariant, ExtractTiming } from "../../../../types/checksum.ts";
 import { ChecksumList, type ChecksumPendingGroup, ChecksumRow, PendingChecks } from "./checksum-list.tsx";
 import { FileProgress } from "./feedback.tsx";
+
+type TrimFixDetails = {
+  detected?: boolean;
+  mode?: string;
+  preservedDownloadPlayCert?: boolean;
+  trimmedInputBytes?: number;
+};
+
+const getTrimFixLabel = (trim: TrimFixDetails | null | undefined) => {
+  if (!trim?.detected) return "";
+  const details = [
+    typeof trim.trimmedInputBytes === "number" ? formatByteSize(trim.trimmedInputBytes) : "",
+    trim.mode ? `mode ${trim.mode}` : "",
+    trim.preservedDownloadPlayCert ? "download-play cert preserved" : "",
+  ].filter(Boolean);
+  return details.length ? `Detected (${details.join(" · ")})` : "Detected";
+};
+
+/* Trim padding detail (bytes/mode/cert), shown as a labeled sub-group inside the
+   Checks drawer only when trim padding was actually detected. */
+const TrimFixGroup = ({ trim }: { trim?: TrimFixDetails | null }) => {
+  if (!trim?.detected) return null;
+  return (
+    <div className="ck-group">
+      <div className="ck-group-head">Trim</div>
+      <ChecksumRow label="TRIM" value={getTrimFixLabel(trim)} />
+    </div>
+  );
+};
 
 const formatExtractTimingMs = (ms?: number): string | undefined =>
   typeof ms === "number" && Number.isFinite(ms) ? `${Math.round(ms)}ms` : undefined;
@@ -94,6 +124,7 @@ const SourceInfoList = ({
   pending,
   progress,
   timing,
+  trim,
 }: {
   bytes?: number;
   checksums?: SourceInfoChecksums | null;
@@ -110,12 +141,14 @@ const SourceInfoList = ({
   pending?: ChecksumPendingGroup[];
   progress?: SourceInfoProgress | null;
   timing?: ReactNode;
+  /** Trim-padding probe; surfaces a "Trim" group only when padding is detected. */
+  trim?: TrimFixDetails | null;
 }) => {
   if (pending?.length) {
     return <PendingChecks defaultOpen={defaultOpen} groups={pending} label={label} onToggle={onToggle} open={open} />;
   }
   const hasBytes = typeof bytes === "number" && Number.isFinite(bytes);
-  if (!(hasBytes || checksums || lead || progress)) return null;
+  if (!(hasBytes || checksums || lead || progress || trim?.detected)) return null;
   const byteValue = hasBytes ? String(Math.floor(bytes as number)) : "";
   // When transform variants (headerless, auto-trimmed…) are present, the base
   // checksums become one of several groups, so they get their own labeled head
@@ -149,6 +182,7 @@ const SourceInfoList = ({
         baseRows
       )}
       <VariantGroups bytes={bytes} variants={checksumVariants} />
+      <TrimFixGroup trim={trim} />
       <ExtractTimingGroup timing={extractTiming} />
     </ChecksumList>
   );
@@ -211,4 +245,5 @@ export {
   type SourceInfoChecksums,
   SourceInfoList,
   type SourceInfoProgress,
+  type TrimFixDetails,
 };
