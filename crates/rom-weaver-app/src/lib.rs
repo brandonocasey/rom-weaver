@@ -102,6 +102,14 @@ pub enum Commands {
         )
     )]
     MatchSidecars(MatchSidecarsCommand),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(
+            name = "group-disc-entries",
+            about = "Group container entries into discs + standalones and auto-pick (no I/O)"
+        )
+    )]
+    GroupDiscEntries(GroupDiscEntriesCommand),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -914,6 +922,9 @@ mod checksum_command;
 mod ingest_command;
 pub use ingest_command::{IngestKind, IngestResult, IngestRomAsset, PatchDescriptor};
 
+mod disc_grouping_command;
+pub use disc_grouping_command::{DiscAutoPick, DiscGroup, DiscGroupingEntry, DiscGroupingResult};
+
 #[path = "source_resolution.rs"]
 mod source_resolution;
 use source_resolution::*;
@@ -966,9 +977,9 @@ use patch_filename_checksum::{embed_checksum_in_filename, parse_filename_require
 
 mod command_args;
 pub use command_args::{
-    ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, ListCommand,
-    MatchSidecarsCommand, PatchApplyCommand, PatchCreateCandidatesCommand, PatchCreateCommand,
-    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
+    ChecksumCommand, CompressCommand, ExtractCommand, GroupDiscEntriesCommand, IngestCommand,
+    ListCommand, MatchSidecarsCommand, PatchApplyCommand, PatchCreateCandidatesCommand,
+    PatchCreateCommand, PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -19,12 +19,6 @@ const normalizeArchiveEntryPath = (fileName: FileNameValue): string =>
 const normalizeArchiveEntryName = (fileName: FileNameValue): string =>
   stripFileNameQuery(normalizeArchiveEntryPath(fileName));
 
-const getDirectoryPath = (fileName: FileNameValue): string => {
-  const normalized = normalizePathSeparators(fileName);
-  const index = normalized.lastIndexOf("/");
-  return index === -1 ? "" : normalized.slice(0, index + 1);
-};
-
 const hasFileNameExtension = (fileName: FileNameValue): boolean => hasSharedFileNameExtension(fileName);
 
 const replaceFileNameExtension = (fileName: string, extension: FileNameValue): string => {
@@ -45,7 +39,6 @@ const getBaseFileName = (fileName: FileNameValue): string => getBaseName(fileNam
 export {
   appendFileNameExtension,
   getBaseFileName,
-  getDirectoryPath,
   getFileNameWithoutExtension,
   hasFileNameExtension,
   normalizeArchiveEntryName,

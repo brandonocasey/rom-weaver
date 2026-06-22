@@ -1,52 +1,24 @@
 import { reportProgress } from "../progress/progress-reporting.ts";
-import {
-  findArchiveEntryByFileName,
-  isCueEntryFileName,
-  isGdiEntryFileName,
-  parseCueFileReferences,
-} from "./archive.ts";
+import { type DiscGroupingEntryInput, runRomWeaverGroupDiscEntriesWorker } from "../runtime/wasm-command-runtime.ts";
+import { isCueEntryFileName, isGdiEntryFileName } from "./archive.ts";
 import { decodeUtf8, type PatchFileInstance } from "./binary-service.ts";
 import {
   type ArchiveEntryLike,
   type ChdCodecMode,
   type CompressionEntryKindFilter,
-  type CompressionRomCueGroup,
-  type CompressionRomProbe,
-  type CueGroupSelectionMatch,
   describeArchiveFileForTrace,
   extractArchiveEntryBytes,
-  filterNestedContainerEntries,
   type InputPreparationOptions,
   type InputPreparationRuntimeLike,
   listCompressionEntryResult,
   traceArchivePreparation,
 } from "./input-preparation-archive.ts";
 import { DEFAULT_INPUT_PREPARATION_RUNTIME } from "./input-preparation-compression.ts";
-import { getBaseFileName, getDirectoryPath } from "./path-utils.ts";
 
 const CHD_MERGED_SELECTION_PREFIX = "rom-weaver:chd-merged:";
 const CHD_SPLIT_SELECTION_PREFIX = "rom-weaver:chd-split:";
 
-const isCueGroupSelectionMatch = (group: CueGroupSelectionMatch, selectedEntryName: string) =>
-  group.cueFileName === selectedEntryName ||
-  group.trackFileNames.indexOf(selectedEntryName) !== -1 ||
-  getBaseFileName(group.cueFileName).toLowerCase() === getBaseFileName(selectedEntryName).toLowerCase();
-
-const isCompleteCueGroup = (group: Pick<CompressionRomCueGroup, "missingReferences" | "trackFileNames">) =>
-  group.missingReferences.length === 0 &&
-  group.trackFileNames.length > 0 &&
-  group.trackFileNames.some((fileName) => !isCueEntryFileName(fileName));
-
-const getSyntheticCueTrackEntries = (entries: ArchiveEntryLike[], cueFileName: string) =>
-  entries.filter(
-    (entry) =>
-      entry.archiveEntryType === "track" &&
-      !isCueEntryFileName(entry.filename) &&
-      !isGdiEntryFileName(entry.filename) &&
-      (!getDirectoryPath(cueFileName) || getDirectoryPath(entry.filename) === getDirectoryPath(cueFileName)),
-  );
-
-const isBinEntryFileName = (fileName: string) => /\.bin$/i.test(getBaseFileName(fileName));
+const isBinEntryFileName = (fileName: string) => /\.bin$/i.test(String(fileName || ""));
 
 const parseChdSplitSelection = (
   entryName: string | undefined,
@@ -131,144 +103,69 @@ const resolveChdSplitBinSelection = async ({
   return { chdMode: chdMode || "cd", chdSplitBin: true };
 };
 
-const probeCompressionRomEntriesForSource = async (
+// Build the entry list Rust's `group-disc-entries` consumes: each listed entry's name + coarse type,
+// plus the raw `.cue` text for cue sheets (Rust is no-I/O, so the host extracts the sheet bytes once
+// here and passes the text). `.gdi` sheets carry no text — Rust groups them from sibling `track`
+// entries. Unreadable cue text is left absent so Rust marks the group as an unreadable CUE.
+const buildDiscGroupingEntries = async (
+  archiveFile: PatchFileInstance,
+  entries: ArchiveEntryLike[],
+  options: InputPreparationOptions,
+  runtime: InputPreparationRuntimeLike,
+): Promise<DiscGroupingEntryInput[]> => {
+  const groupingEntries: DiscGroupingEntryInput[] = [];
+  for (const entry of entries) {
+    const filename = String(entry.filename || "");
+    if (!filename) continue;
+    const groupingEntry: DiscGroupingEntryInput = { filename };
+    if (entry.archiveEntryType) groupingEntry.archiveEntryType = entry.archiveEntryType;
+    // Only read `.cue` text — and only when there are no synthetic track entries already (those
+    // produce a synthetic group in Rust without parsing). A `.gdi` is never read here.
+    const isSheetThatNeedsText =
+      isCueEntryFileName(filename) && entry.archiveEntryType !== "cue" && entry.archiveEntryType !== "gdi";
+    if (isSheetThatNeedsText) {
+      try {
+        groupingEntry.sheetText = decodeUtf8(
+          await extractArchiveEntryBytes(archiveFile, filename, options, runtime, undefined, { romFilter: true }),
+        );
+      } catch (_error) {
+        // Leave sheetText absent so Rust reports an unreadable CUE.
+      }
+    }
+    groupingEntries.push(groupingEntry);
+  }
+  return groupingEntries;
+};
+
+// Resolve the single ROM entry to auto-select from a container's ROM entries when no explicit
+// selection was given, delegating the disc grouping (CUE/GDI reference resolution, identical
+// track-set dedup) and the auto-pick decision tree to Rust's `group-disc-entries` command. Throws
+// when Rust reports the source is ambiguous (multiple competing input candidates), matching the
+// prior behavior so the caller falls through to the interactive ROM descent prompt.
+const resolveCompressionRomAutoPickEntryName = async (
   archiveFile: PatchFileInstance,
   entries: ArchiveEntryLike[],
   options: InputPreparationOptions,
   runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
-): Promise<CompressionRomProbe> => {
-  const nestedCompressionEntries = filterNestedContainerEntries(entries);
-  const directRomEntries = entries.filter(
-    (entry) => !nestedCompressionEntries.some((candidate) => candidate.filename === entry.filename),
-  );
-  const romEntries = entries;
-  const cueGroups: CompressionRomCueGroup[] = [];
-  const referencedTrackNames = new Set<string>();
-  for (const entry of romEntries) {
-    const cueFileName = String(entry.filename || "");
-    const sheetIsCue = isCueEntryFileName(cueFileName);
-    const sheetIsGdi = isGdiEntryFileName(cueFileName);
-    // A CHD CD/GD-ROM lists a `.cue`/`.gdi` sheet plus per-track `.bin`s; both
-    // describe one disc, so group the tracks under the sheet (a GD-ROM `.gdi`
-    // gets a synthetic disc group exactly like a `.cue`).
-    if (!(sheetIsCue || sheetIsGdi)) continue;
-    const syntheticTrackEntries =
-      entry.archiveEntryType === "cue" || entry.archiveEntryType === "gdi"
-        ? getSyntheticCueTrackEntries(entries, cueFileName)
-        : [];
-    if (syntheticTrackEntries.length) {
-      const references = syntheticTrackEntries.map((trackEntry, index) => ({
-        fileName: trackEntry.filename,
-        mode: "MODE1/2048",
-        patchable: true,
-        trackNumber: index + 1,
-        type: "BINARY",
-      }));
-      cueGroups.push({
-        cueFileName,
-        missingReferences: [],
-        references,
-        trackFileNames: syntheticTrackEntries.map((trackEntry) => {
-          referencedTrackNames.add(trackEntry.filename);
-          return trackEntry.filename;
-        }),
-      });
-      continue;
-    }
-    // Only `.cue` text is read+parsed for references; a `.gdi` without synthetic
-    // track entries is left for standalone handling rather than mis-parsed.
-    if (!sheetIsCue) continue;
-    try {
-      const cueText = decodeUtf8(
-        await extractArchiveEntryBytes(archiveFile, cueFileName, options, runtime, undefined, {
-          romFilter: true,
-        }),
-      );
-      const references = parseCueFileReferences(cueText);
-      const trackFileNames: string[] = [];
-      const missingReferences: string[] = [];
-      for (const reference of references) {
-        const trackEntry = findArchiveEntryByFileName(entries, cueFileName, reference.fileName) as
-          | { filename: string }
-          | undefined;
-        if (!trackEntry) {
-          missingReferences.push(reference.fileName);
-          continue;
-        }
-        trackFileNames.push(trackEntry.filename);
-        referencedTrackNames.add(trackEntry.filename);
-      }
-      cueGroups.push({
-        cueFileName,
-        cueText,
-        missingReferences,
-        references,
-        trackFileNames,
-      });
-    } catch (_error) {
-      cueGroups.push({
-        cueFileName,
-        missingReferences: ["Invalid or unreadable CUE"],
-        trackFileNames: [],
-      });
-    }
+): Promise<string | null> => {
+  if (!entries.length) return null;
+  const groupingEntries = await buildDiscGroupingEntries(archiveFile, entries, options, runtime);
+  const result = await runRomWeaverGroupDiscEntriesWorker({
+    entries: groupingEntries,
+    logLevel: options?.logging?.level,
+    sourceName: archiveFile.fileName,
+  });
+  traceArchivePreparation(options, "input.archive.disc-grouping", {
+    ambiguous: result.autoPick.ambiguous,
+    autoPick: result.autoPick.entryName || "",
+    discGroups: result.discGroups.length,
+    file: describeArchiveFileForTrace(archiveFile),
+    standalones: result.standaloneEntries.length,
+  });
+  if (result.autoPick.ambiguous) {
+    throw new Error(`${archiveFile.fileName || "Archive"} contains multiple input candidates`);
   }
-  // A single disc can ship both a `.cue` and a `.gdi` describing the same tracks
-  // (e.g. a GD-ROM with a low-density CUE alongside its GDI). Each sheet builds its
-  // own group above, so collapse sheets covering an identical track set into one
-  // disc group — otherwise the disc reads as two competing candidates and prompts.
-  const trackSetKey = (group: CompressionRomCueGroup) => JSON.stringify([...group.trackFileNames].sort());
-  const dedupedCueGroups: CompressionRomCueGroup[] = [];
-  const seenTrackSets = new Set<string>();
-  for (const group of cueGroups) {
-    const key = trackSetKey(group);
-    if (key && seenTrackSets.has(key)) continue;
-    if (key) seenTrackSets.add(key);
-    dedupedCueGroups.push(group);
-  }
-  const standaloneEntries = romEntries.filter(
-    (entry) =>
-      !(
-        isCueEntryFileName(entry.filename) ||
-        isGdiEntryFileName(entry.filename) ||
-        referencedTrackNames.has(entry.filename)
-      ),
-  );
-  return {
-    cueGroups: dedupedCueGroups,
-    directRomEntries,
-    nestedCompressionEntries,
-    referencedTrackNames,
-    romEntries,
-    standaloneEntries,
-  };
+  return result.autoPick.entryName;
 };
 
-const resolveCompressionRomCueGroup = (
-  cueGroups: CompressionRomCueGroup[],
-  selectedEntryName: string,
-): CompressionRomCueGroup | null =>
-  cueGroups.find((group) => isCueGroupSelectionMatch(group, selectedEntryName)) || null;
-
-const resolveCompressionRomAutoPickEntryName = (
-  archiveFileName: string | undefined,
-  probe: CompressionRomProbe,
-  selectedEntryName: string,
-): string | null => {
-  const completeCueGroups = probe.cueGroups.filter((group) => isCompleteCueGroup(group));
-  if (selectedEntryName) {
-    const selectedGroup = resolveCompressionRomCueGroup(completeCueGroups, selectedEntryName);
-    if (selectedGroup) return selectedGroup.cueFileName;
-    const selectedEntry = probe.romEntries.find((entry) => entry.filename === selectedEntryName);
-    return selectedEntry?.filename || selectedEntryName;
-  }
-  if (!probe.romEntries.length) return null;
-  if (completeCueGroups.length === 1 && probe.standaloneEntries.length === 0)
-    return completeCueGroups[0]?.cueFileName || null;
-  if (completeCueGroups.length === 0 && probe.standaloneEntries.length === 1)
-    return probe.standaloneEntries[0]?.filename || null;
-  if (completeCueGroups.length === 0 && probe.romEntries.length === 1) return probe.romEntries[0]?.filename || null;
-  throw new Error(`${archiveFileName || "Archive"} contains multiple input candidates`);
-};
-
-export { probeCompressionRomEntriesForSource, resolveChdSplitBinSelection, resolveCompressionRomAutoPickEntryName };
+export { resolveChdSplitBinSelection, resolveCompressionRomAutoPickEntryName };

@@ -22,11 +22,7 @@ import {
   normalizeArchiveEntryBytes,
 } from "./binary-service.ts";
 import { buildDescentParentCompressions, type DescentExtractStep } from "./input-archive-descent-chain.ts";
-import {
-  probeCompressionRomEntriesForSource,
-  resolveChdSplitBinSelection,
-  resolveCompressionRomAutoPickEntryName,
-} from "./input-archive-disc-groups.ts";
+import { resolveChdSplitBinSelection, resolveCompressionRomAutoPickEntryName } from "./input-archive-disc-groups.ts";
 import {
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
@@ -58,26 +54,6 @@ type ArchiveEntryLike = {
   fileName?: string;
   filename: string;
   size?: number;
-};
-type CueGroupSelectionMatch = {
-  cueFileName: string;
-  trackFileNames: string[];
-};
-type CompressionRomCueGroup = CueGroupSelectionMatch & {
-  cueText?: string;
-  missingReferences: string[];
-  references?: Array<{
-    fileName: string;
-    patchable?: boolean;
-  }>;
-};
-type CompressionRomProbe = {
-  cueGroups: CompressionRomCueGroup[];
-  directRomEntries: ArchiveEntryLike[];
-  nestedCompressionEntries: ArchiveEntryLike[];
-  referencedTrackNames: Set<string>;
-  romEntries: ArchiveEntryLike[];
-  standaloneEntries: ArchiveEntryLike[];
 };
 type InputPreparationOptions = ApplyWorkflowOptions | CreateWorkflowOptions | undefined;
 type InputPreparationRuntimeLike = InputPreparationRuntime | Pick<WorkflowRuntime, "name">;
@@ -758,12 +734,11 @@ const prepareAutoPatchInputs = async (
   // entire input), so skip auto-patch discovery for them entirely.
   if (PATH_BACKED_COMPRESSION_FORMATS.has(getCompressionFormat(archiveFile))) return [];
   const romEntries = await listCompressionEntries(archiveFile, options, runtime, { romFilter: true }).catch(() => []);
-  const romProbe = await probeCompressionRomEntriesForSource(archiveFile, romEntries, options, runtime);
   const patchEntries = await filterValidPatchArchiveEntriesForSource(archiveFile, options, runtime);
   if (!patchEntries.length) return [];
   let selectedRomEntryName: string | null;
   try {
-    selectedRomEntryName = resolveCompressionRomAutoPickEntryName(archiveFile.fileName, romProbe, "");
+    selectedRomEntryName = await resolveCompressionRomAutoPickEntryName(archiveFile, romEntries, options, runtime);
   } catch {
     // Multiple competing ROMs: sidecar patches cannot be attributed to one ROM until the user
     // keeps a single ROM, so skip implicit patch discovery and let the ROM descent prompt first.
@@ -843,9 +818,6 @@ export type {
   ArchiveEntryLike,
   ChdCodecMode,
   CompressionEntryKindFilter,
-  CompressionRomCueGroup,
-  CompressionRomProbe,
-  CueGroupSelectionMatch,
   InputPreparationOptions,
   InputPreparationRuntimeLike,
 };

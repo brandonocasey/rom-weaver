@@ -11,7 +11,8 @@ export const KNOWN_COMMAND_TYPES = [
   "trim",
   "patch",
   "plan-extract-batch",
-  "match-sidecars"
+  "match-sidecars",
+  "group-disc-entries"
 ] as const;
 
 export const KNOWN_PATCH_COMMAND_TYPES = [

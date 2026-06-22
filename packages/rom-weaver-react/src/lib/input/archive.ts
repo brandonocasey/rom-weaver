@@ -1,12 +1,8 @@
-import { getBaseFileName, getDirectoryPath, normalizeArchiveEntryPath, stripFileNameQuery } from "./path-utils.ts";
+import { normalizeArchiveEntryPath, stripFileNameQuery } from "./path-utils.ts";
 import { parseCueFile } from "./rom-specific-file-utils.ts";
 
 const PATCHABLE_DISC_MODE_REGEX = /^MODE\d\//i;
 const CUE_EXTENSION_REGEX = /\.cue$/i;
-
-type ArchiveEntry = {
-  filename?: string;
-};
 
 type CueReference = {
   fileName: string;
@@ -19,10 +15,6 @@ type CueReference = {
 const isPatchableDiscTrack = (mode?: string | null) => !mode || PATCHABLE_DISC_MODE_REGEX.test(String(mode));
 
 type ArchivePathValue = string | number | boolean | null | undefined;
-
-const getArchiveEntryBaseName = (fileName: ArchivePathValue): string => getBaseFileName(fileName);
-
-const getArchiveEntryDirectory = (fileName: ArchivePathValue): string => getDirectoryPath(fileName);
 
 const isCueEntryFileName = (fileName: ArchivePathValue): boolean =>
   CUE_EXTENSION_REGEX.test(stripFileNameQuery(fileName));
@@ -63,29 +55,4 @@ const parseCueFileReferences = (cueText: string): CueReference[] => {
   });
 };
 
-const findArchiveEntryByFileName = (
-  archiveEntries: ArchiveEntry[],
-  parentEntryName: ArchivePathValue,
-  referencedFileName: ArchivePathValue,
-): ArchiveEntry | undefined => {
-  const parentDirectory = getArchiveEntryDirectory(parentEntryName);
-  const normalizedReference = normalizeArchiveEntryPath(referencedFileName);
-  const expectedEntryName = parentDirectory + normalizedReference;
-  const expectedBaseName = getArchiveEntryBaseName(normalizedReference).toLowerCase();
-  return (
-    archiveEntries.find((candidate) => candidate.filename === expectedEntryName) ||
-    archiveEntries.find(
-      (candidate) =>
-        String(candidate.filename || "").slice(0, parentDirectory.length) === parentDirectory &&
-        getArchiveEntryBaseName(candidate.filename).toLowerCase() === expectedBaseName,
-    )
-  );
-};
-
-export {
-  findArchiveEntryByFileName,
-  isCueEntryFileName,
-  isGdiEntryFileName,
-  parseCueFileReferences,
-  parseGdiFileReferences,
-};
+export { isCueEntryFileName, isGdiEntryFileName, parseCueFileReferences, parseGdiFileReferences };

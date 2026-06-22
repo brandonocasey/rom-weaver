@@ -76,6 +76,23 @@ pub fn enumerate_disc_sheet_refs(path: &Path) -> Result<DiscSheetRefs> {
     })
 }
 
+/// Parse disc-sheet `text` of the given `kind` into its ordered, de-duplicated
+/// referenced-file list — the text-only half of [`enumerate_disc_sheet_refs`]
+/// for callers that already hold the sheet bytes (e.g. a browser extracted the
+/// `.cue` from an archive) and must not touch the filesystem. `label` is used in
+/// error messages only. Same `FILE`/track grammar, no disc geometry, no I/O.
+pub fn parse_disc_sheet_refs_from_text(
+    kind: DiscSheetKind,
+    text: &str,
+    label: &str,
+) -> Result<Vec<String>> {
+    let path = Path::new(label);
+    match kind {
+        DiscSheetKind::Cue => enumerate_cue_refs(text, path),
+        DiscSheetKind::Gdi => enumerate_gdi_refs(text, path),
+    }
+}
+
 /// Return the `.gdi` sitting next to a `.cue` (same stem) when it exists. A
 /// `.cue` with a sibling `.gdi` is treated as a GD-ROM whose referenced files
 /// are the union of both sheets, so callers stage both sheets and both file
@@ -278,6 +295,23 @@ mod tests {
         let error =
             enumerate_gdi_refs("notanumber\n", Path::new("game.gdi")).expect_err("should reject");
         assert!(matches!(error, RomWeaverError::Validation(_)));
+    }
+
+    #[test]
+    fn parse_from_text_matches_cue_and_gdi_grammar() {
+        let cue = "FILE \"a.bin\" BINARY\n  TRACK 01 MODE1/2352\nFILE \"b.bin\" BINARY\n";
+        assert_eq!(
+            parse_disc_sheet_refs_from_text(DiscSheetKind::Cue, cue, "game.cue").expect("cue"),
+            vec!["a.bin".to_string(), "b.bin".to_string()]
+        );
+        let gdi = "1\n1 0 4 2352 track01.bin 0\n";
+        assert_eq!(
+            parse_disc_sheet_refs_from_text(DiscSheetKind::Gdi, gdi, "game.gdi").expect("gdi"),
+            vec!["track01.bin".to_string()]
+        );
+        assert!(
+            parse_disc_sheet_refs_from_text(DiscSheetKind::Cue, "REM only\n", "game.cue").is_err()
+        );
     }
 
     #[test]
