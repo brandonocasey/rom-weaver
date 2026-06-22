@@ -337,6 +337,72 @@ pub struct ChecksumCommand {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct IngestCommand {
+    pub source: PathBuf,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    pub out_dir: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "select",
+            help = "Select a payload by exact name, prefix, or glob when an archive carries more than one ROM (repeatable)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub select: Vec<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Disable default common-file ignore filtering during classification and extraction"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_ignore: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "no-nested-extract",
+            help = "Do not recursively extract nested containers emitted while ingesting"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_nested_extract: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "split-bin",
+            num_args = 0..=1,
+            default_missing_value = "true",
+            help = "For a multi-track CHD CD, force split per-track BIN (`--split-bin`/`--split-bin true`) or a single merged BIN (`--split-bin false`). Omit to ask the host interactively when the disc offers the choice"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub split_bin: Option<bool>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "checksum",
+            value_name = "ALGO",
+            help = "ROM checksum algorithm to compute (repeatable); defaults to crc32, md5, sha1 when omitted"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub checksum: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct CompressCommand {
     #[cfg_attr(not(target_arch = "wasm32"), arg(required = true))]
     pub input: Vec<PathBuf>,
@@ -1041,6 +1107,16 @@ pub struct PlanExtractBatchCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub total_memory_bytes: Option<u64>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "memory-ceiling-bytes",
+            help = "Combined working-set ceiling to plan against, used verbatim (no fraction/clamp). The browser passes its own resolved, mobile-capped ceiling here; when set it overrides --total-memory-bytes"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub memory_ceiling_bytes: Option<u64>,
 }
 
 /// Match RetroArch/libretro sidecar patches against a ROM by name — the single source of truth for the

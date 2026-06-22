@@ -80,6 +80,145 @@ extract_time_ms?: number | null,
  */
 outputs: Array<ExtractedFileEntry>, };
 
+export type IngestKind = "rom" | "patch";
+
+export type IngestRomAsset = {
+/**
+ * Absolute path of the asset (forward-slash normalized). For a bare ROM this is the source
+ * itself (checksummed in place, never copied); for an extracted leaf it is the `out_dir` output.
+ */
+path: string,
+/**
+ * File name component of `path`.
+ */
+file_name: string,
+/**
+ * Size of the asset in bytes.
+ */
+size_bytes: bigint,
+/**
+ * Coarse kind (`rom`/`bin`/`cue`/…) when known.
+ */
+kind?: string | null,
+/**
+ * The `raw` variant's checksums keyed by algorithm.
+ */
+checksums: { [key in string]: string },
+/**
+ * Every applicable checksum variant (raw, remove-header, fix-header, byte-order), as the
+ * `checksum` command's `checksum_variants` rows.
+ */
+checksum_variants: Array<JsonValue>,
+/**
+ * Console/platform identity from the decoded prefix, when detected.
+ */
+platform?: string | null,
+/**
+ * Optical medium (CD/GD-ROM/DVD) for disc images, when detected.
+ */
+disc_format?: string | null,
+/**
+ * Disc-group id shared by a `.cue`/`.gdi` sheet and its tracks (multi-track disc grouping).
+ */
+disc_group_id?: string | null,
+/**
+ * 1-based track number for a disc track asset.
+ */
+track_number?: number | null,
+/**
+ * Full `.cue` text for a cue-sheet asset.
+ */
+cue_text?: string | null,
+/**
+ * Full `.gdi` text for a gdi-sheet asset.
+ */
+gdi_text?: string | null,
+/**
+ * `true` when this was a bare ROM checksummed in place (no extraction, no OPFS copy).
+ */
+copied_in_place: boolean, };
+
+export type PatchDescriptor = {
+/**
+ * Absolute path of the patch (forward-slash normalized) — the bare source or an extracted leaf.
+ */
+leaf_path: string,
+/**
+ * File name component of `leaf_path`.
+ */
+file_name: string,
+/**
+ * Size of the patch file in bytes (the bare source or extracted leaf).
+ */
+size_bytes: bigint,
+/**
+ * Patch format name (handler descriptor, else the file extension when unsupported).
+ */
+format: string,
+/**
+ * CRC32 of the patch file itself (byuu formats).
+ */
+patch_crc32?: number | null,
+/**
+ * Embedded expected source size in bytes (byuu formats).
+ */
+source_size?: bigint | null,
+/**
+ * Embedded produced target size in bytes (byuu + xdelta).
+ */
+target_size?: bigint | null,
+/**
+ * Embedded expected source CRC32 (byuu formats).
+ */
+source_crc32?: number | null,
+/**
+ * Embedded produced target CRC32 (byuu formats).
+ */
+target_crc32?: number | null,
+/**
+ * Embedded minimum required source size (xdelta).
+ */
+minimum_source_size?: bigint | null,
+/**
+ * Record/window/command count when the format reports one.
+ */
+record_count?: bigint | null,
+/**
+ * Expected input checksums parsed from the file name, keyed by algorithm.
+ */
+filename_checksums: { [key in string]: string },
+/**
+ * Expected exact input size parsed from the file name.
+ */
+filename_size?: bigint | null,
+/**
+ * Libretro sidecar apply order, set only when matched against a known ROM in the same source.
+ */
+sidecar_order?: number | null, };
+
+export type IngestResult = {
+/**
+ * Primary bucket the host routes the source into.
+ */
+kind: IngestKind,
+/**
+ * File name of the dropped source (no directory).
+ */
+source_file_name: string,
+/**
+ * Mirrors the probe-manifest routing signal (`has_rom || !has_patch`); `true` for `kind: rom`.
+ */
+is_rom: boolean,
+/**
+ * ROM leaves (checksummed, with variants + platform identity). Empty for a pure patch source.
+ */
+assets: Array<IngestRomAsset>,
+/**
+ * Patch descriptors. Non-empty for a patch source, and for a ROM source that also bundled
+ * sidecar patches.
+ */
+patches: Array<PatchDescriptor>, };
+
 export type CompressionLevelProfile = "min" | "very-low" | "low" | "medium" | "high" | "very-high" | "max";
 
 export type N64ByteOrder = "big-endian" | "little-endian" | "byte-swapped";
@@ -91,6 +230,8 @@ export type ListCommand = { source: string, select?: Array<string>, rom_filter?:
 export type ExtractCommand = { source: string, select?: Array<string>, rom_filter?: boolean, patch_filter?: boolean, out_dir: string, split_bin?: boolean, no_ignore?: boolean, no_nested_extract?: boolean, no_overwrite?: boolean, checksum?: Array<string>, checksum_rom?: Array<string>, probe?: boolean, threads?: ThreadBudget, };
 
 export type ChecksumCommand = { source: string, algo: Array<string>, select?: Array<string>, rom_filter?: boolean, patch_filter?: boolean, no_extract?: boolean, no_ignore?: boolean, no_trim_fix?: boolean, start?: bigint, length?: bigint, probe?: boolean, threads?: ThreadBudget, };
+
+export type IngestCommand = { source: string, out_dir: string, select?: Array<string>, no_ignore?: boolean, no_nested_extract?: boolean, split_bin?: boolean, checksum?: Array<string>, threads?: ThreadBudget, };
 
 export type CompressCommand = { input: Array<string>, format?: string, output: string, codec?: Array<string>, level?: CompressionLevelProfile, threads?: ThreadBudget, };
 
@@ -106,11 +247,11 @@ export type PatchCreateCommand = { original: string, modified?: string, format?:
 
 export type PatchCommands = { "type": "apply", "args": PatchApplyCommand } | { "type": "validate", "args": PatchValidateCommand } | { "type": "create-candidates", "args": PatchCreateCandidatesCommand } | { "type": "create", "args": PatchCreateCommand };
 
-export type PlanExtractBatchCommand = { job_sizes?: Array<bigint>, threads?: ThreadBudget, max_concurrency?: number | null, total_memory_bytes?: bigint | null, };
+export type PlanExtractBatchCommand = { job_sizes?: Array<bigint>, threads?: ThreadBudget, max_concurrency?: number | null, total_memory_bytes?: bigint | null, memory_ceiling_bytes?: bigint | null, };
 
 export type MatchSidecarsCommand = { rom_name: string, patch_names?: Array<string>, };
 
-export type Commands = { "type": "probe", "args": ProbeCommand } | { "type": "list", "args": ListCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "patch", "args": PatchCommands } | { "type": "plan-extract-batch", "args": PlanExtractBatchCommand } | { "type": "match-sidecars", "args": MatchSidecarsCommand };
+export type Commands = { "type": "probe", "args": ProbeCommand } | { "type": "list", "args": ListCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "ingest", "args": IngestCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "patch", "args": PatchCommands } | { "type": "plan-extract-batch", "args": PlanExtractBatchCommand } | { "type": "match-sidecars", "args": MatchSidecarsCommand };
 
 export type RomWeaverRunOutputOptions = { json?: boolean, progress?: boolean, trace?: boolean, interactive_selection_enabled?: boolean, };
 

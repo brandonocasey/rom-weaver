@@ -75,7 +75,7 @@ impl CliApp {
                     .unwrap_or(0)
             })
             .collect();
-        let plan = plan_extract_batch(&job_sizes, budget_threads, max_concurrency, None);
+        let plan = plan_extract_batch(&job_sizes, budget_threads, max_concurrency, None, None);
         trace!(
             job_count,
             budget_threads,

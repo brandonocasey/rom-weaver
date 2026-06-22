@@ -91,6 +91,50 @@ pub(super) struct ExtractStepEvent<'a> {
 }
 
 impl CliApp {
+    /// Classify a container's listed entries into the early-routing signal the host (and the
+    /// `ingest` command) consume: whether the bundle routes to the ROM input bucket
+    /// (`is_rom = has_rom || !has_patch`), the per-entry `rom`/`patch`/`common`/`other` summaries,
+    /// and the raw `has_rom`/`has_patch` flags (the latter two let a caller detect a *mixed*
+    /// archive that carries both a ROM and sidecar patches). Pure (no I/O, no events) so it is
+    /// shared by `emit_probe_manifest` and `run_ingest` without re-listing the container.
+    pub(super) fn classify_container_entries(
+        entries: &[ContainerListEntry],
+        ignore_common_files: bool,
+    ) -> (bool, Vec<ExtractedFileEntry>, bool, bool) {
+        let mut has_rom = false;
+        let mut has_patch = false;
+        let entry_summaries = entries
+            .iter()
+            .map(|entry| {
+                // Common sidecar files only count as "ignored" when the run honors the ignore list;
+                // with `--no-ignore` they are real extractable payloads and classify normally.
+                let is_common =
+                    ignore_common_files && should_ignore_common_container_file(&entry.path);
+                let kind = if is_common {
+                    "common"
+                } else if is_rom_filter_candidate_name(&entry.path) {
+                    has_rom = true;
+                    "rom"
+                } else if is_patch_filter_candidate_name(&entry.path) {
+                    has_patch = true;
+                    "patch"
+                } else {
+                    "other"
+                };
+                ExtractedFileEntry {
+                    file_name: entry.path.clone(),
+                    size_bytes: entry.size,
+                    kind: Some(kind.to_string()),
+                }
+            })
+            .collect::<Vec<_>>();
+        // Mirror the host's default-to-ROM routing: only a bundle that carries patches and no ROM
+        // payload is a patch source; everything else (unclassifiable, mixed, or empty) routes to the
+        // ROM input bucket so an ambiguous drop still lands somewhere sensible.
+        let is_rom = has_rom || !has_patch;
+        (is_rom, entry_summaries, has_rom, has_patch)
+    }
+
     /// Emit an early `probe-manifest` event the instant the container is listed — before any
     /// heavy extraction — so the host can route a dropped file (ROM input vs patch bundle) and
     /// render its identity card right away instead of awaiting a separate probe roundtrip. The
@@ -128,37 +172,8 @@ impl CliApp {
                 return;
             }
         };
-        let mut has_rom = false;
-        let mut has_patch = false;
-        let entry_summaries = entries
-            .iter()
-            .map(|entry| {
-                // Common sidecar files only count as "ignored" when the run honors the ignore list;
-                // with `--no-ignore` they are real extractable payloads and classify normally.
-                let is_common =
-                    ignore_common_files && should_ignore_common_container_file(&entry.path);
-                let kind = if is_common {
-                    "common"
-                } else if is_rom_filter_candidate_name(&entry.path) {
-                    has_rom = true;
-                    "rom"
-                } else if is_patch_filter_candidate_name(&entry.path) {
-                    has_patch = true;
-                    "patch"
-                } else {
-                    "other"
-                };
-                ExtractedFileEntry {
-                    file_name: entry.path.clone(),
-                    size_bytes: entry.size,
-                    kind: Some(kind.to_string()),
-                }
-            })
-            .collect::<Vec<_>>();
-        // Mirror the host's default-to-ROM routing: only a bundle that carries patches and no ROM
-        // payload is a patch source; everything else (unclassifiable, mixed, or empty) routes to the
-        // ROM input bucket so an ambiguous drop still lands somewhere sensible.
-        let is_rom = has_rom || !has_patch;
+        let (is_rom, entry_summaries, _has_rom, _has_patch) =
+            Self::classify_container_entries(&entries, ignore_common_files);
         // A bare disc image / ROM source resolves its platform from a bounded prefix read of the
         // source itself — cheap, no decode. We deliberately do NOT decode a prefix of the inner ROM
         // payload for archives here: that duplicated decode work ahead of the real extraction and

@@ -26,6 +26,7 @@ impl CliApp {
             Commands::List(args) => self.run_list(args),
             Commands::Extract(args) => self.run_extract(args),
             Commands::Checksum(args) => self.run_checksum(args),
+            Commands::Ingest(args) => self.run_ingest(args),
             Commands::Compress(args) => self.run_compress(args),
             Commands::Trim(args) => self.run_trim(args),
             Commands::Patch(command) => match command {
@@ -45,6 +46,7 @@ impl CliApp {
             Commands::List(_) => "list",
             Commands::Extract(_) => "extract",
             Commands::Checksum(_) => "checksum",
+            Commands::Ingest(_) => "ingest",
             Commands::Compress(_) => "compress",
             Commands::Trim(_) => "trim",
             Commands::Patch(PatchCommands::Apply(_)) => "patch-apply",

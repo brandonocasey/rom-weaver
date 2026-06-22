@@ -94,35 +94,31 @@ impl CliApp {
         // payload paths instead of every entry: keep unambiguous payloads whole, otherwise prompt the
         // host (the same resolution is applied per nested level during the descent below). This is
         // what lets the browser "just extract" with no separate `list` command.
-        let selections = if self.interactive_selection_enabled && selections.is_empty() {
-            match self.resolve_extract_payload_selections(
-                handler.as_ref(),
-                &source,
-                SelectionResolutionOptions {
-                    kind_filter,
-                    split_bin: extract_split_bin,
-                    ignore_common_files: !no_ignore,
-                    source_label: "extract input",
-                },
-                &context,
-            ) {
-                Ok(entries) if entries.is_empty() => selections,
-                Ok(entries) => entries,
-                Err(error) => {
-                    return self.finish(
+        let selections = match self.resolved_extract_selections(
+            handler.as_ref(),
+            &source,
+            selections,
+            SelectionResolutionOptions {
+                kind_filter,
+                split_bin: extract_split_bin,
+                ignore_common_files: !no_ignore,
+                source_label: "extract input",
+            },
+            &context,
+        ) {
+            Ok(selections) => selections,
+            Err(error) => {
+                return self.finish(
+                    "extract",
+                    OperationReport::failed(
+                        OperationFamily::Container,
+                        Some(handler.descriptor().name.to_string()),
                         "extract",
-                        OperationReport::failed(
-                            OperationFamily::Container,
-                            Some(handler.descriptor().name.to_string()),
-                            "extract",
-                            error.to_string(),
-                            extract_threads.clone(),
-                        ),
-                    );
-                }
+                        error.to_string(),
+                        extract_threads.clone(),
+                    ),
+                );
             }
-        } else {
-            selections
         };
         self.emit_running(
             OperationLabel {
@@ -179,106 +175,42 @@ impl CliApp {
         if !warnings.is_empty() {
             report.label = format!("{}; warning={}", report.label, warnings.join("; "));
         }
-        // Container handlers report their COMPLETE output set in `report.details["emitted_files"]`, so
-        // that report is authoritative: it is exactly what THIS extract wrote. There is deliberately no
-        // out_dir filesystem scan — a scan can't tell this op's outputs from a concurrent sibling op's
-        // files written into a shared out_dir, so a blind diff would mis-claim a sibling's file as an
-        // emitted output and feed it to the nested-extract candidate list. Trusting the handler report
-        // removes that whole class (and the need for callers to isolate out_dirs to defend against it).
-        let primary_emitted_files = if report.status == OperationStatus::Succeeded {
-            Self::emitted_file_detail_paths(report.details.as_ref())
-        } else {
-            Vec::new()
-        };
         if report.status == OperationStatus::Succeeded {
             let format_name = handler.descriptor().name;
-            // Level 0 (the input container itself). Its outputs carry the inline checksums computed
-            // by the handler when `--checksum` was requested.
-            let primary_details = Self::build_or_existing_emitted_file_detail_values(
-                report.details.as_ref(),
-                &primary_emitted_files,
-                None,
-            );
             let primary_extract_elapsed_ms = primary_extract_started
                 .elapsed()
                 .as_millis()
                 .min(u32::MAX as u128) as u32;
-            self.emit_extract_step(ExtractStepEvent {
-                format: format_name,
-                depth: 0,
-                source: &source,
-                out_dir: &out_dir,
-                step_status: "succeeded",
-                outputs: &primary_details,
-                elapsed_ms: Some(primary_extract_elapsed_ms),
-                thread_execution: report.thread_execution.clone(),
-            });
-            let mut all_emitted_details = primary_details;
-            // Canonical paths (normalized) of every container we descended into; these are the
-            // intermediate archives, so they are excluded from the final leaf output set.
-            let mut descended: HashSet<String> = HashSet::new();
-            if !no_nested_extract {
-                self.emit_running(
-                    OperationLabel {
-                        command: "extract",
-                        family: OperationFamily::Container,
-                        format: Some(format_name),
-                    },
-                    "nested-extract",
-                    "checking nested archives in extracted outputs".to_string(),
-                    None,
-                    context.single_thread_execution(),
-                );
-                match self.extract_nested_archives(
-                    &source,
-                    &primary_emitted_files,
-                    kind_filter,
-                    !no_ignore,
-                    !no_overwrite,
-                    &context,
-                ) {
-                    Ok(outcome) => {
-                        descended = outcome.descended;
-                        all_emitted_details.extend(outcome.emitted_details);
-                        if outcome.count > 0 {
-                            report.label = format!(
-                                "{}; recursively extracted {} nested container(s)",
-                                report.label, outcome.count
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        report = OperationReport::failed(
-                            OperationFamily::Container,
-                            Some(format_name.to_string()),
-                            "extract",
-                            error.to_string(),
-                            context.single_thread_execution(),
+            match self.assemble_extracted_leaves(
+                format_name,
+                &source,
+                &out_dir,
+                &report,
+                primary_extract_elapsed_ms,
+                kind_filter,
+                !no_ignore,
+                !no_overwrite,
+                no_nested_extract,
+                &context,
+            ) {
+                Ok((leaves, nested_count)) => {
+                    if nested_count > 0 {
+                        report.label = format!(
+                            "{}; recursively extracted {nested_count} nested container(s)",
+                            report.label
                         );
                     }
+                    report = Self::set_emitted_files_detail(report, leaves);
                 }
-            }
-            if report.status == OperationStatus::Succeeded {
-                // Report only the bottom/leaf outputs: any emitted file we did not further descend
-                // into. For a non-nested extract `descended` is empty, so every primary output is a
-                // leaf and the result is identical to the previous single-level behaviour.
-                let leaves = all_emitted_details
-                    .into_iter()
-                    .filter(|value| {
-                        match value
-                            .as_object()
-                            .and_then(|map| map.get("path"))
-                            .and_then(Value::as_str)
-                        {
-                            Some(path) => !descended.contains(path),
-                            None => true,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                // Fold disc structure (sheet text + per-track grouping) into the leaves so the host
-                // renders a multi-track disc as one card without re-parsing the cue/gdi itself.
-                let leaves = Self::attach_disc_group_details(leaves);
-                report = Self::set_emitted_files_detail(report, leaves);
+                Err(error) => {
+                    report = OperationReport::failed(
+                        OperationFamily::Container,
+                        Some(format_name.to_string()),
+                        "extract",
+                        error.to_string(),
+                        context.single_thread_execution(),
+                    );
+                }
             }
         }
         if probe {
@@ -296,6 +228,125 @@ impl CliApp {
                 self.attach_extract_probe_identity(report, handler.is_single_payload_disc_image());
         }
         self.finish("extract", report)
+    }
+
+    /// Resolve which container entries to extract when interactive selection is enabled and the
+    /// caller pinned none: keep 0/1 logical payloads whole, otherwise prompt the host to pick (the
+    /// "keep one ROM" / multi-patch dialog). Returns the caller's selections verbatim when
+    /// interactive selection is off or the caller already pinned entries. Shared by `extract` and
+    /// `ingest` so the browser gets identical "just extract the right payload" behavior.
+    pub(super) fn resolved_extract_selections(
+        &self,
+        handler: &dyn ContainerHandler,
+        source: &Path,
+        raw_selections: Vec<String>,
+        options: SelectionResolutionOptions<'_>,
+        context: &OperationContext,
+    ) -> Result<Vec<String>> {
+        if !(self.interactive_selection_enabled && raw_selections.is_empty()) {
+            return Ok(raw_selections);
+        }
+        let resolved =
+            self.resolve_extract_payload_selections(handler, source, options, context)?;
+        if resolved.is_empty() {
+            Ok(raw_selections)
+        } else {
+            Ok(resolved)
+        }
+    }
+
+    /// From a succeeded primary extract report, emit the level-0 extract step, recursively extract
+    /// any nested containers among the outputs, and return the bottom/leaf `emitted_files` detail
+    /// objects (folding in disc-group structure) plus the count of nested containers descended.
+    /// Shared by `extract` (which wraps the leaves into its report) and `ingest` (which checksums
+    /// each leaf). Reuses [`Self::extract_nested_archives`] so nested provenance/read-on-main rules
+    /// are preserved identically.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn assemble_extracted_leaves(
+        &self,
+        format_name: &str,
+        source: &Path,
+        out_dir: &Path,
+        primary_report: &OperationReport,
+        primary_extract_elapsed_ms: u32,
+        kind_filter: ArchiveEntryKindFilter,
+        ignore_common_files: bool,
+        overwrite: bool,
+        no_nested_extract: bool,
+        context: &OperationContext,
+    ) -> Result<(Vec<Value>, usize)> {
+        // Container handlers report their COMPLETE output set in `report.details["emitted_files"]`, so
+        // that report is authoritative: it is exactly what THIS extract wrote. There is deliberately no
+        // out_dir filesystem scan — a scan can't tell this op's outputs from a concurrent sibling op's
+        // files written into a shared out_dir, so a blind diff would mis-claim a sibling's file as an
+        // emitted output and feed it to the nested-extract candidate list.
+        let primary_emitted_files =
+            Self::emitted_file_detail_paths(primary_report.details.as_ref());
+        // Level 0 (the input container itself). Its outputs carry the inline checksums computed
+        // by the handler when `--checksum` was requested.
+        let primary_details = Self::build_or_existing_emitted_file_detail_values(
+            primary_report.details.as_ref(),
+            &primary_emitted_files,
+            None,
+        );
+        self.emit_extract_step(ExtractStepEvent {
+            format: format_name,
+            depth: 0,
+            source,
+            out_dir,
+            step_status: "succeeded",
+            outputs: &primary_details,
+            elapsed_ms: Some(primary_extract_elapsed_ms),
+            thread_execution: primary_report.thread_execution.clone(),
+        });
+        let mut all_emitted_details = primary_details;
+        // Canonical paths (normalized) of every container we descended into; these are the
+        // intermediate archives, so they are excluded from the final leaf output set.
+        let mut descended: HashSet<String> = HashSet::new();
+        let mut nested_count = 0usize;
+        if !no_nested_extract {
+            self.emit_running(
+                OperationLabel {
+                    command: "extract",
+                    family: OperationFamily::Container,
+                    format: Some(format_name),
+                },
+                "nested-extract",
+                "checking nested archives in extracted outputs".to_string(),
+                None,
+                context.single_thread_execution(),
+            );
+            let outcome = self.extract_nested_archives(
+                source,
+                &primary_emitted_files,
+                kind_filter,
+                ignore_common_files,
+                overwrite,
+                context,
+            )?;
+            descended = outcome.descended;
+            nested_count = outcome.count;
+            all_emitted_details.extend(outcome.emitted_details);
+        }
+        // Report only the bottom/leaf outputs: any emitted file we did not further descend into. For a
+        // non-nested extract `descended` is empty, so every primary output is a leaf.
+        let leaves = all_emitted_details
+            .into_iter()
+            .filter(|value| {
+                match value
+                    .as_object()
+                    .and_then(|map| map.get("path"))
+                    .and_then(Value::as_str)
+                {
+                    Some(path) => !descended.contains(path),
+                    None => true,
+                }
+            })
+            .collect::<Vec<_>>();
+        // Fold disc structure (sheet text + per-track grouping) into the leaves so the host renders a
+        // multi-track disc as one card without re-parsing the cue/gdi itself.
+        let leaves = Self::attach_disc_group_details(leaves);
+        Ok((leaves, nested_count))
     }
 
     /// Ensure a `--probe` extract carries the decoded payload's platform identity and,

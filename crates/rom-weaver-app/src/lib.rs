@@ -75,6 +75,13 @@ pub enum Commands {
     List(ListCommand),
     Extract(ExtractCommand),
     Checksum(ChecksumCommand),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(
+            about = "Classify a dropped source as ROM or patch, nested-extract + checksum ROMs (in place for bare ROMs), and describe patches"
+        )
+    )]
+    Ingest(IngestCommand),
     Compress(CompressCommand),
     Trim(TrimCommand),
     #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
@@ -903,6 +910,10 @@ mod extract_command;
 #[path = "checksum_command.rs"]
 mod checksum_command;
 
+#[path = "ingest_command.rs"]
+mod ingest_command;
+pub use ingest_command::{IngestKind, IngestResult, IngestRomAsset, PatchDescriptor};
+
 #[path = "source_resolution.rs"]
 mod source_resolution;
 use source_resolution::*;
@@ -955,9 +966,9 @@ use patch_filename_checksum::{embed_checksum_in_filename, parse_filename_require
 
 mod command_args;
 pub use command_args::{
-    ChecksumCommand, CompressCommand, ExtractCommand, ListCommand, MatchSidecarsCommand,
-    PatchApplyCommand, PatchCreateCandidatesCommand, PatchCreateCommand, PatchValidateCommand,
-    PlanExtractBatchCommand, ProbeCommand, TrimCommand,
+    ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, ListCommand,
+    MatchSidecarsCommand, PatchApplyCommand, PatchCreateCandidatesCommand, PatchCreateCommand,
+    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
