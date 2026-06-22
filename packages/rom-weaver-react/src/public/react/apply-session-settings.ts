@@ -20,7 +20,6 @@ const createStageSettingsKey = ({
   return JSON.stringify(
     {
       input,
-      limits: settings.limits,
       workers: {
         ...settings.workers,
         threads: settings.workers?.threads ?? getLegacyCompressionWorkerThreads(settings) ?? workerThreads,

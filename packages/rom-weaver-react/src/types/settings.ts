@@ -27,17 +27,6 @@ type StorageSettings = {
   tempDirectory?: string;
 };
 
-type DecompressionLimits = {
-  allowEncryptedArchives?: boolean;
-  allowSymlinks?: boolean;
-  maxArchiveDepth?: number;
-  maxCandidateEntries?: number;
-  maxEntries?: number;
-  maxOutputBytes?: number;
-  maxSingleFileBytes?: number;
-  maxTotalUncompressedBytes?: number;
-};
-
 type LoggingSettings = {
   level?: LogLevel;
   sink?: LogSink;
@@ -46,7 +35,6 @@ type LoggingSettings = {
 type CommonSettings = {
   defaultCompression?: DefaultCompression;
   input?: InputSettings;
-  limits?: DecompressionLimits;
   logging?: LoggingSettings;
   storage?: StorageSettings;
   workers?: WorkerSettings;
@@ -108,12 +96,4 @@ type CreateSettings = CommonSettings & {
   };
 };
 
-export type {
-  ApplySettings,
-  CommonSettings,
-  CompressionFormat,
-  CreateSettings,
-  DecompressionLimits,
-  PatchFormat,
-  WorkerSettings,
-};
+export type { ApplySettings, CommonSettings, CompressionFormat, CreateSettings, PatchFormat, WorkerSettings };

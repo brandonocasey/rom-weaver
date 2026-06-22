@@ -10,7 +10,7 @@ import type { ChecksumVariant, RomTypeTag } from "./checksum.ts";
 import type { LogLevel, LogRecord } from "./logging.ts";
 import type { RuntimeTiming } from "./output.ts";
 import type { CandidateSelectionRequest } from "./selection.ts";
-import type { ApplySettings, CreateSettings, DecompressionLimits } from "./settings.ts";
+import type { ApplySettings, CreateSettings } from "./settings.ts";
 import type { SourceRef } from "./source.ts";
 import type { ChdCompressionCodecs } from "./workflow-compression.ts";
 
@@ -162,7 +162,6 @@ type CompressionEntryInput = RuntimeCompressionEntryInput;
 type CompressionWorkflowOptions = {
   workerThreads?: number | string;
   chdSplitBin?: boolean;
-  limits?: DecompressionLimits;
   romFilter?: boolean;
   patchFilter?: boolean;
   /** When false, suppress the host selection prompt for ambiguous containers so a multi-branch

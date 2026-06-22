@@ -322,7 +322,6 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     () =>
       createSettingsDependencyKey({
         input: settings.input,
-        limits: settings.limits,
         loggingLevel: settings.logging?.level,
         workers: settings.workers,
         workerThreads: props.workerThreads,
@@ -334,7 +333,6 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       toCreateWorkflowSettings(
         {
           input: settings.input,
-          limits: settings.limits,
           logging: settings.logging,
           output: { compression: "none" },
           workers: settings.workers,
@@ -342,7 +340,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
         "",
         props.workerThreads,
       ),
-    [props.workerThreads, settings.input, settings.limits, settings.logging, settings.workers],
+    [props.workerThreads, settings.input, settings.logging, settings.workers],
   );
   const stagingSettingsRef = useRef(stagingSettings);
   useEffect(() => {

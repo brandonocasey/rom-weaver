@@ -454,13 +454,6 @@ const createArchiveEntriesFromOutputAssets = (
   return createDefaultEntries();
 };
 
-const assertOutputSizeLimit = (rawOutputSize: number, options: ApplyWorkflowOptions | undefined) => {
-  const maxOutputBytes = Number(options?.limits?.maxOutputBytes);
-  if (Number.isFinite(maxOutputBytes) && maxOutputBytes >= 0 && rawOutputSize > maxOutputBytes) {
-    throw new Error("Output size exceeds configured limit");
-  }
-};
-
 const getPatchFileRuntimeTimingMs = (file: PatchFileInstance | undefined): number | undefined =>
   roundElapsedMs((file as RuntimeTimedPatchFile | undefined)?._runtimeTiming);
 
@@ -504,7 +497,6 @@ const buildSessionOutputFiles = async (
         compression === "none"
           ? resolveRawRequestedOutputName(requestedOutputName, onlyOutput.asset.file)
           : requestedOutputName;
-    assertOutputSizeLimit(onlyFile.fileSize, options);
     if (compression === "none") return { files: [onlyFile], rawOutputSize: onlyFile.fileSize };
     const builtFiles = await buildOutputFiles(onlyOutput.asset.file, onlyFile, options, runtime);
     return {
@@ -517,7 +509,6 @@ const buildSessionOutputFiles = async (
   const baseName = requestedOutputName || getOutputBaseName(assets);
   const entries = createArchiveEntriesFromOutputAssets(outputAssets, baseName);
   const rawOutputSize = entries.reduce((total, entry) => total + entry.size, 0);
-  assertOutputSizeLimit(rawOutputSize, options);
 
   const archiveCompression = compression === "none" ? "zip" : compression;
   const archiveOverrides: ArchiveCompressionOverrides | undefined =

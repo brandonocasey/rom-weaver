@@ -403,7 +403,6 @@ class CreateWorkflowController<TSource, TDestination> extends BaseWorkflowContro
     return {
       format: patchType,
       input: cloneValue(this.settings.input || {}),
-      limits: cloneValue(this.settings.limits || {}),
       logging: cloneValue(this.settings.logging || {}),
       onLog: this.settings.logging?.sink,
       output: {

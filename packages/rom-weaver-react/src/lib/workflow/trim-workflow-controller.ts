@@ -283,7 +283,6 @@ class TrimWorkflowController<TSource, TDestination> extends BaseWorkflowControll
   private createExecutionOptions(): CreateWorkflowOptions {
     return {
       input: cloneValue(this.settings.input || {}),
-      limits: cloneValue(this.settings.limits || {}),
       logging: cloneValue(this.settings.logging || {}),
       onLog: this.settings.logging?.sink,
       output: {

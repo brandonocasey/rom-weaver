@@ -256,19 +256,17 @@ function CreatePatchForm(props: CreatePatchFormProps) {
       createSettingsDependencyKey({
         input: settings.input,
         language: settingsLanguage,
-        limits: settings.limits,
         loggingLevel: settings.logging?.level,
         workers: settings.workers,
         workerThreads: props.workerThreads,
       }),
-    [props.workerThreads, settings.input, settings.limits, settings.logging?.level, settings.workers, settingsLanguage],
+    [props.workerThreads, settings.input, settings.logging?.level, settings.workers, settingsLanguage],
   );
   const stagingSettings = useMemo(
     () =>
       toCreateWorkflowSettings(
         {
           input: settings.input,
-          limits: settings.limits,
           logging: settings.logging,
           output: { compression: "none" },
           workers: settings.workers,
@@ -276,7 +274,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
         "",
         props.workerThreads,
       ),
-    [props.workerThreads, settings.input, settings.limits, settings.logging, settings.workers],
+    [props.workerThreads, settings.input, settings.logging, settings.workers],
   );
   const stagingSettingsRef = useRef(stagingSettings);
   useEffect(() => {
