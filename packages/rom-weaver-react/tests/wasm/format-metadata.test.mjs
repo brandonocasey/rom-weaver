@@ -18,6 +18,7 @@ describe("generated format metadata parity", () => {
     expect(ROM_WEAVER_FILE_FILTERS.patchExtensions).toEqual([
       ...ROM_WEAVER_PATCH_FORMATS.flatMap((format) => format.extensions),
       ".pds",
+      ".dcp",
     ]);
   });
 
