@@ -67,3 +67,36 @@ pub(crate) fn byuu_parse_report(
     }));
     report
 }
+
+/// Like [`byuu_parse_report`] but for the metadata-only ingest probe: the action stream was not
+/// decoded, so `record_count` is omitted (reported as unknown) rather than zero. The embedded
+/// source/target sizes + checksums still come straight from the header/footer.
+pub(crate) fn byuu_metadata_report(
+    descriptor: &'static FormatDescriptor,
+    source_size: u64,
+    target_size: u64,
+    source_crc32: u32,
+    target_crc32: u32,
+    patch_crc32: u32,
+) -> OperationReport {
+    let mut report = crate::patch_success_report(
+        descriptor,
+        "parse",
+        format!(
+            "described {} patch metadata; source crc32 {source_crc32:08x}; target crc32 {target_crc32:08x}; patch crc32 {patch_crc32:08x}",
+            descriptor.name
+        ),
+        None,
+    );
+    report.details = Some(json!({
+        "patch": {
+            "format": descriptor.name,
+            "source_size": source_size,
+            "target_size": target_size,
+            "source_crc32": source_crc32,
+            "target_crc32": target_crc32,
+            "patch_crc32": patch_crc32,
+        }
+    }));
+    report
+}

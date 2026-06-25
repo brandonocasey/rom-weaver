@@ -21,7 +21,7 @@ use tracing::{debug, trace};
 
 use crate::checksum_validation_suffix;
 use crate::shared::checksum_io::{crc32_path_cached, crc32_prefix, crc32_slice, read_u32_le};
-use crate::shared::labels::byuu_parse_report;
+use crate::shared::labels::{byuu_metadata_report, byuu_parse_report};
 use crate::shared::threading::run_with_optional_pool;
 #[cfg(test)]
 use crate::varint::push_varint;
@@ -71,6 +71,26 @@ impl PatchHandler for BpsPatchHandler {
             patch.source_checksum,
             patch.target_checksum,
             patch.patch_checksum,
+        ))
+    }
+
+    fn describe_metadata(
+        &self,
+        patch_path: &Path,
+        _context: &OperationContext,
+    ) -> Result<OperationReport> {
+        // The ingest "describe" path only needs the embedded requirements (sizes + checksums), which
+        // BPS stores in its fixed header + 12-byte footer — so skip decoding the (often million-plus)
+        // action stream. The patch-checksum footer is still verified, so a structurally-broken patch
+        // is rejected exactly as a full `parse` would reject it.
+        let metadata = parse_bps_metadata(patch_path)?;
+        Ok(byuu_metadata_report(
+            self.descriptor,
+            metadata.source_size,
+            metadata.target_size,
+            metadata.source_checksum,
+            metadata.target_checksum,
+            metadata.patch_checksum,
         ))
     }
 
@@ -309,6 +329,67 @@ enum BpsSuffixIndexMode {
 
 fn parse_bps_file(path: &Path) -> Result<ParsedBpsPatch> {
     parse_bps_file_with_checksum_validation(path, true)
+}
+
+/// A BPS patch's embedded requirements, read without decoding the action stream.
+#[derive(Debug)]
+struct BpsMetadata {
+    source_size: u64,
+    target_size: u64,
+    source_checksum: u32,
+    target_checksum: u32,
+    patch_checksum: u32,
+}
+
+/// Read a BPS patch's embedded metadata (header sizes + footer checksums) WITHOUT decoding the action
+/// stream. The patch-checksum footer is verified (a single sequential read), so a corrupt/truncated
+/// patch is rejected with the same verdict a full [`parse_bps_file`] would reach — only the per-action
+/// decode + buffering is skipped.
+fn parse_bps_metadata(path: &Path) -> Result<BpsMetadata> {
+    let file_len = fs::metadata(path)?.len();
+    let minimum_len = (BPS_MAGIC.len() + BPS_FOOTER_SIZE) as u64;
+    if file_len < minimum_len {
+        return Err(RomWeaverError::Validation(
+            "BPS patch is too small to contain a valid header and footer".into(),
+        ));
+    }
+
+    let footer_offset = file_len
+        .checked_sub(BPS_FOOTER_SIZE as u64)
+        .expect("validated footer size");
+    let mut parser = BpsFileParser::new(BufReader::new(File::open(path)?), footer_offset);
+    if parser.read_exact(BPS_MAGIC.len())?.as_slice() != BPS_MAGIC {
+        return Err(crate::coded_validation(
+            "BPS_HEADER_INVALID",
+            "Patch header invalid",
+        ));
+    }
+    let source_size = parser.read_varint()?;
+    let target_size = parser.read_varint()?;
+
+    let footer = read_bps_footer(path, footer_offset)?;
+    let source_checksum = read_u32_le(&footer[0..4]);
+    let target_checksum = read_u32_le(&footer[4..8]);
+    let patch_checksum = read_u32_le(&footer[8..12]);
+    let actual_patch_checksum = crc32_prefix(
+        path,
+        file_len - 4,
+        COPY_BUFFER_SIZE,
+        "BPS checksum chunk exceeded usize",
+    )?;
+    if actual_patch_checksum != patch_checksum {
+        return Err(RomWeaverError::Validation(format!(
+            "Patch checksum invalid; expected: {patch_checksum:x}, Actual: {actual_patch_checksum:x}"
+        )));
+    }
+
+    Ok(BpsMetadata {
+        source_size,
+        target_size,
+        source_checksum,
+        target_checksum,
+        patch_checksum,
+    })
 }
 
 fn parse_bps_file_with_checksum_validation(

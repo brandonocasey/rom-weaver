@@ -817,11 +817,12 @@ impl CliApp {
             // format so the host can still surface it; no embedded metadata to read, not a valid patch.
             return Ok(descriptor);
         };
-        // A recognized handler that PARSES the leaf confirms the patch magic — the same fact the host
-        // re-derived by re-extracting + re-reading the header. A parse error means a
-        // recognized-by-extension but structurally-invalid/truncated file: surface it (with file-name
+        // A recognized handler that confirms the leaf's metadata confirms the patch magic — the same
+        // fact the host re-derived by re-extracting + re-reading the header. `describe_metadata` reads
+        // just the embedded requirements (skipping a full structural scan where the format allows) and
+        // still rejects a structurally-invalid/truncated file: surface that (with file-name
         // requirements + format) but mark it not a valid patch rather than failing the whole ingest.
-        let report = match handler.parse(leaf_path, context) {
+        let report = match handler.describe_metadata(leaf_path, context) {
             Ok(report) => {
                 descriptor.is_valid_patch = true;
                 Self::attach_patch_probe_details(report)
@@ -830,7 +831,7 @@ impl CliApp {
                 trace!(
                     leaf = %leaf_path.display(),
                     %error,
-                    "patch leaf recognized by handler but failed to parse; marking invalid"
+                    "patch leaf recognized by handler but failed to describe; marking invalid"
                 );
                 return Ok(descriptor);
             }
