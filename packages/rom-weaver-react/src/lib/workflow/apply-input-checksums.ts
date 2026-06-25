@@ -12,6 +12,7 @@ import {
   getAssetParentCompressions,
   getAssetSourceSize,
   getInputAssetChecksums,
+  getPatchFilePrecomputedChecksumMs,
   getPatchFilePrecomputedChecksums,
   getPatchFilePrecomputedChecksumVariants,
   getPatchFilePrecomputedRomType,
@@ -56,7 +57,9 @@ const finalizeApplyInputChecksums = async <TSource>(
         asset.checksums = precomputed;
         asset.checksumVariants = getPatchFilePrecomputedChecksumVariants(asset.file);
         asset.romType = getPatchFilePrecomputedRomType(asset.file);
-        asset.checksumTimeMs = 0;
+        // A bare ROM checksummed in place (`ingest`) carries its real elapsed time; an archive leaf
+        // checksummed during extract has none → 0, which renders as "from extract".
+        asset.checksumTimeMs = getPatchFilePrecomputedChecksumMs(asset.file) ?? 0;
         continue;
       }
       const checksumFileName = getPreparedAssetFileName(asset, stage.state.fileName);

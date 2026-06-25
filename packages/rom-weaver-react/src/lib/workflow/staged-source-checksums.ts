@@ -115,6 +115,14 @@ const getPatchFilePrecomputedRomType = (file: PatchFileInstance | undefined): Ro
   return romType && typeof romType === "object" ? cloneRomType(romType as RomTypeTag) : undefined;
 };
 
+// Elapsed time of a precomputed checksum produced OUTSIDE an extract (a bare ROM checksummed in place
+// via `ingest`). Absent for an archive leaf, whose checksum ran during extract (reported as 0 → the
+// "from extract" timing label).
+const getPatchFilePrecomputedChecksumMs = (file: PatchFileInstance | undefined): number | undefined => {
+  const ms = (file as (PatchFileInstance & { _precomputedChecksumMs?: unknown }) | undefined)?._precomputedChecksumMs;
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : undefined;
+};
+
 const createChecksumProgressDetails = (state: StandardChecksumState) => ({
   decompressionTimeMs: state.decompressionTimeMs,
   fileName: state.fileName,
@@ -194,6 +202,7 @@ export {
   getAssetParentCompressions,
   getAssetSourceSize,
   getInputAssetChecksums,
+  getPatchFilePrecomputedChecksumMs,
   getPatchFilePrecomputedChecksums,
   getPatchFilePrecomputedChecksumVariants,
   getPatchFilePrecomputedRomType,

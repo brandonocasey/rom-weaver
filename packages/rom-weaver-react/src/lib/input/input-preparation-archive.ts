@@ -7,6 +7,7 @@ import { createArchiveSourceBlob } from "../archive-utils.ts";
 import { CREATE_ROM_SPECIFIC_COMPRESSION_FORMATS } from "../compression/container-format-registry.ts";
 import { getPathBaseName } from "../path-utils.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
+import { romTypeFromEmittedFile } from "../runtime/run-result-parsing.ts";
 import { isCueEntryFileName, isGdiEntryFileName } from "./archive.ts";
 import type { PatchFileInstance } from "./binary-service.ts";
 import {
@@ -722,6 +723,78 @@ const resolveArchiveInputAssets = async (
   return resolveArchiveInputAssetsByDescent(archiveFile, options, sourceIndex, runtime, selectedInputEntryName);
 };
 
+/**
+ * Checksum a bare (non-container) ROM via the `ingest` command and attach the resulting
+ * checksums/variants/rom-type to the file as precomputed metadata, so the downstream input-checksum
+ * step reuses them (the precomputed branch) instead of dispatching the standalone `checksum` command.
+ *
+ * `ingest` classifies the source first; a bare ROM has no container handler, so it is checksummed in
+ * place — no extraction, no copy — by the SAME shared variant engine the archive path's inline
+ * checksum drives, fed the full thread budget. So a bare ROM hashes as fast as one extracted from an
+ * archive; the standalone `checksum` dispatch used to under-thread multi-variant ROMs (e.g. GBA:
+ * raw + fix-header), making a bare checksum slower than extract+checksum. This brings bare ROMs onto
+ * the same precomputed path archive leaves already use (where `romProbe` is likewise absent — the
+ * standalone path only ever produced a `{ trim: { detected: false } }` placeholder).
+ *
+ * Best-effort: any failure, or a source `ingest` classifies as a patch / yields no ROM asset, leaves
+ * the file untouched so the input-checksum step falls back to `runtime.checksum.calculate`.
+ */
+const attachBareRomIngestMetadata = async (
+  file: PatchFileInstance,
+  options: ApplyWorkflowOptions | undefined,
+  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
+): Promise<void> => {
+  // Already precomputed (e.g. an archive leaf) — nothing to do.
+  if ((file as { checksums?: unknown }).checksums) return;
+  const resolvedRuntime = await resolveInputPreparationRuntime(runtime);
+  if (!resolvedRuntime.ingest?.run) return;
+  try {
+    let firstProgressAt = 0;
+    const startedAt = Date.now();
+    const { result } = await resolvedRuntime.ingest.run({
+      fileName: file.fileName,
+      logLevel: options?.logging?.level,
+      onLog: options?.onLog,
+      onProgress: (progress) => {
+        if (!firstProgressAt) firstProgressAt = Date.now();
+        options?.onProgress?.(progress as never);
+      },
+      source: getCompressionRuntimeSource(file),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
+    const asset = result.isRom ? result.assets[0] : undefined;
+    if (!asset) return;
+    if (asset.checksums && Object.keys(asset.checksums).length) {
+      (file as { checksums?: typeof asset.checksums }).checksums = asset.checksums;
+    }
+    if (asset.checksumVariants?.length) {
+      (file as { checksumVariants?: typeof asset.checksumVariants }).checksumVariants = asset.checksumVariants;
+    }
+    const romType = romTypeFromEmittedFile({ discFormat: asset.discFormat, platform: asset.platform });
+    if (romType) (file as { romType?: typeof romType }).romType = romType;
+    // A bare ROM is checksummed in place (no extract), so it carries a real checksum duration — unlike
+    // an archive leaf (checksummed DURING extract, reported as 0 → the "from extract" label). Prefer the
+    // Rust-reported hash wall time (`asset.checksumMs`); only if it is absent (e.g. older wasm) fall back
+    // to the JS compute span (first progress → done, which excludes the one-time wasm/thread warm-up).
+    const checksumMs = asset.checksumMs ?? Date.now() - (firstProgressAt || startedAt);
+    (file as { _precomputedChecksumMs?: number })._precomputedChecksumMs = checksumMs;
+    traceArchivePreparation(options, "input.archive.bare-rom.ingest", {
+      checksumMs,
+      checksumMsSource: asset.checksumMs === undefined ? "js-fallback" : "rust",
+      file: describeArchiveFileForTrace(file),
+      hasChecksums: !!asset.checksums,
+      platform: asset.platform || "",
+      variantCount: asset.checksumVariants?.length ?? 0,
+    });
+  } catch (error) {
+    // Non-fatal: the input-checksum step will checksum the file the usual way.
+    traceArchivePreparation(options, "input.archive.bare-rom.ingest-failed", {
+      error: error instanceof Error ? error.message : String(error),
+      file: describeArchiveFileForTrace(file),
+    });
+  }
+};
+
 const prepareAutoPatchInputs = async (
   source: SourceRef,
   options: ApplyWorkflowOptions | undefined,
@@ -823,6 +896,7 @@ export type {
 };
 export {
   archiveHasSelectablePatches,
+  attachBareRomIngestMetadata,
   describeArchiveFileForTrace,
   extractArchiveEntry,
   extractArchiveEntryBytes,

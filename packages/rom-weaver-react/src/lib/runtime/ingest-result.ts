@@ -60,6 +60,8 @@ const parseRomAsset = (value: unknown): ParsedIngestRomAsset | undefined => {
   if (cueText !== undefined) asset.cueText = cueText;
   const gdiText = toStringValue(record.gdi_text);
   if (gdiText !== undefined) asset.gdiText = gdiText;
+  const checksumMs = toNumberValue(record.checksum_ms);
+  if (checksumMs !== undefined) asset.checksumMs = checksumMs;
   return asset;
 };
 

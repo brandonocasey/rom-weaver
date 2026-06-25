@@ -20,6 +20,9 @@ export interface ParsedIngestRomAsset {
   cueText?: string;
   gdiText?: string;
   copiedInPlace: boolean;
+  /** Rust-reported hashing wall time (ms) for a bare ROM checksummed in place; absent for an
+   * extracted leaf (whose hashing is folded into its extract timing). */
+  checksumMs?: number;
 }
 
 export interface ParsedPatchDescriptor {

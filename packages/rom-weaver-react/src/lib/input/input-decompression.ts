@@ -13,6 +13,7 @@ import {
 } from "./input-assets.ts";
 import { classifyPatcherInput } from "./input-classification.ts";
 import {
+  attachBareRomIngestMetadata,
   describeArchiveFileForTrace,
   resolveArchiveInput,
   resolveArchiveInputAssets,
@@ -362,6 +363,21 @@ const resolveCompressedInputAssets = async (
       selectedEntryName: selectedEntryName || "",
       sourceIndex,
     });
+    // Finalize a bare (non-container) ROM: checksum it via `ingest` (in place, full thread budget,
+    // shared variant engine) and attach the result as precomputed metadata, so the input-checksum step
+    // reuses it instead of the standalone `checksum` command, which under-threaded multi-variant ROMs
+    // (e.g. GBA: raw + fix-header → 1 thread per variant). Best-effort — on failure (or a source `ingest`
+    // classifies as a patch) the file is left unchanged and checksummed the usual way downstream.
+    const finalizeBareRom = async (): Promise<InputAsset[]> => {
+      await attachBareRomIngestMetadata(current, options, runtime);
+      return finalizePreparedInputAssets(
+        [makeRomAsset(makeInputId(sourceIndex, current.fileName, normalizeArchiveEntryName), current)],
+        sourceSize,
+        wasDecompressed,
+        decompressionTimeMs,
+        parentCompressions,
+      );
+    };
     const finalizeReason = getPreparedInputFinalizeReason(current, classification);
     if (finalizeReason) {
       traceInputDecompression(options, "input.decompression.assets.finalize", {
@@ -371,22 +387,20 @@ const resolveCompressedInputAssets = async (
         reason: finalizeReason,
         sourceIndex,
       });
-      return finalizePreparedInputAssets(
-        [makeRomAsset(makeInputId(sourceIndex, current.fileName, normalizeArchiveEntryName), current)],
-        sourceSize,
-        wasDecompressed,
-        decompressionTimeMs,
-        parentCompressions,
-      );
+      // A large bare ROM is kept as a lazy browser source, so it lands here (`lazy-non-compression`)
+      // rather than the plain non-compression branch below — ingest it too. A `disc-output-non-probeable`
+      // file is a mid-pipeline decoded disc; leave it on the standard checksum path.
+      return finalizeReason === "lazy-non-compression"
+        ? finalizeBareRom()
+        : finalizePreparedInputAssets(
+            [makeRomAsset(makeInputId(sourceIndex, current.fileName, normalizeArchiveEntryName), current)],
+            sourceSize,
+            wasDecompressed,
+            decompressionTimeMs,
+            parentCompressions,
+          );
     }
-    if (classification.kind !== "compression")
-      return finalizePreparedInputAssets(
-        [makeRomAsset(makeInputId(sourceIndex, current.fileName, normalizeArchiveEntryName), current)],
-        sourceSize,
-        wasDecompressed,
-        decompressionTimeMs,
-        parentCompressions,
-      );
+    if (classification.kind !== "compression") return finalizeBareRom();
     const compressedIdentity = getCompressedIdentityKey(current, classification);
     if (seenCompressedInputs.has(compressedIdentity)) {
       traceInputDecompression(options, "input.decompression.assets.stall", {
