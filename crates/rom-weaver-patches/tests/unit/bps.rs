@@ -705,10 +705,20 @@ fn patterned_tail(len: usize) -> Vec<u8> {
 }
 
 fn build_bps_patch(source: &[u8], target: &[u8], actions: Vec<TestAction>) -> Vec<u8> {
+    build_bps_patch_with_metadata(source, target, &[], actions)
+}
+
+fn build_bps_patch_with_metadata(
+    source: &[u8],
+    target: &[u8],
+    metadata: &[u8],
+    actions: Vec<TestAction>,
+) -> Vec<u8> {
     let mut bytes = BPS_MAGIC.to_vec();
     push_varint(&mut bytes, source.len() as u64);
     push_varint(&mut bytes, target.len() as u64);
-    push_varint(&mut bytes, 0);
+    push_varint(&mut bytes, metadata.len() as u64);
+    bytes.extend_from_slice(metadata);
 
     for action in actions {
         match action {
@@ -747,4 +757,203 @@ fn build_bps_patch(source: &[u8], target: &[u8], actions: Vec<TestAction>) -> Ve
     let patch_checksum = crc32_bytes(&bytes);
     bytes.extend_from_slice(&patch_checksum.to_le_bytes());
     bytes
+}
+
+/// Builds a structurally-truncated patch: a `TargetRead` action header promising
+/// `claimed` literal bytes while only `present` are written before the 12-byte footer,
+/// so the action decoder runs off the end of the stream.
+fn truncated_target_read_patch(claimed: u64, present: &[u8]) -> Vec<u8> {
+    let mut bytes = BPS_MAGIC.to_vec();
+    push_varint(&mut bytes, 0); // source size
+    push_varint(&mut bytes, claimed); // target size
+    push_varint(&mut bytes, 0); // metadata size
+    push_varint(&mut bytes, ((claimed - 1) << 2) | 1); // TargetRead header
+    bytes.extend_from_slice(present);
+    bytes.extend_from_slice(&[0u8; 12]); // footer placeholder (never reached)
+    bytes
+}
+
+#[test]
+fn apply_fails_when_input_checksum_mismatches_at_matching_size() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.bps");
+    let output_path = temp.child("output.bin");
+    // Same length as the patch's declared source but different bytes: the size check
+    // passes so the source-checksum footer comparison is what rejects the apply.
+    fs::write(&input_path, b"BBBB").expect("fixture");
+    fs::write(
+        &patch_path,
+        build_bps_patch(b"AAAA", b"AAAA", vec![TestAction::SourceRead(4)]),
+    )
+    .expect("fixture");
+
+    let handler = BpsPatchHandler::new(&BPS);
+    let error = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path,
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect_err("input checksum mismatch should fail");
+    assert!(error.to_string().contains("Input checksum invalid"));
+}
+
+#[test]
+fn apply_fails_when_output_checksum_mismatches() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.bps");
+    let output_path = temp.child("output.bin");
+    fs::write(&input_path, []).expect("fixture");
+    // The target-checksum footer is crc32("AAAA") but the action stream writes "BBBB"
+    // of the same length: parse + size checks pass, so the target-checksum footer
+    // comparison is what rejects the produced output.
+    fs::write(
+        &patch_path,
+        build_bps_patch(b"", b"AAAA", vec![TestAction::TargetRead(b"BBBB".to_vec())]),
+    )
+    .expect("fixture");
+
+    let handler = BpsPatchHandler::new(&BPS);
+    let error = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path,
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect_err("output checksum mismatch should fail");
+    assert!(error.to_string().contains("Output checksum invalid"));
+}
+
+#[test]
+fn parse_rejects_truncated_action_stream() {
+    let bytes = truncated_target_read_patch(8, b"XY");
+    let error = parse_bps_bytes(&bytes).expect_err("truncated action stream should fail");
+    assert!(error.to_string().contains("ended unexpectedly"));
+}
+
+#[test]
+fn apply_rejects_truncated_action_stream_in_file() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.bps");
+    let output_path = temp.child("output.bin");
+    fs::write(&input_path, []).expect("fixture");
+    fs::write(&patch_path, truncated_target_read_patch(8, b"XY")).expect("fixture");
+
+    let handler = BpsPatchHandler::new(&BPS);
+    let error = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path,
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect_err("truncated action stream should fail");
+    assert!(error.to_string().contains("ended unexpectedly"));
+}
+
+#[test]
+fn parse_reads_non_zero_metadata_block() {
+    // A patch carrying a non-empty metadata block still decodes its sizes and action.
+    let patch = build_bps_patch_with_metadata(
+        b"abc",
+        b"abc",
+        b"<metadata>x</metadata>",
+        vec![TestAction::SourceRead(3)],
+    );
+    let parsed = parse_bps_bytes(&patch).expect("parse with metadata");
+    assert_eq!(parsed.source_size, 3);
+    assert_eq!(parsed.target_size, 3);
+    assert_eq!(parsed.actions.len(), 1);
+}
+
+#[test]
+fn describe_metadata_reports_sizes_and_checksums_without_decoding_actions() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("probe.bps");
+    let patch = build_bps_patch_with_metadata(
+        b"abc",
+        b"abc",
+        b"author=test",
+        vec![TestAction::SourceRead(3)],
+    );
+    let parsed = parse_bps_bytes(&patch).expect("parse");
+    fs::write(&patch_path, patch).expect("fixture");
+
+    let handler = BpsPatchHandler::new(&BPS);
+    let report = handler
+        .describe_metadata(&patch_path, &test_context_with_threads(&temp, 1))
+        .expect("describe metadata");
+
+    assert!(report.label.contains("patch metadata"));
+    assert!(
+        report
+            .label
+            .contains(&format!("source crc32 {:08x}", parsed.source_checksum))
+    );
+    assert!(
+        report
+            .label
+            .contains(&format!("target crc32 {:08x}", parsed.target_checksum))
+    );
+    assert!(
+        report
+            .label
+            .contains(&format!("patch crc32 {:08x}", parsed.patch_checksum))
+    );
+}
+
+#[test]
+fn describe_metadata_rejects_patch_checksum_mismatch() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("probe.bps");
+    let mut patch = build_bps_patch(b"abc", b"abc", vec![TestAction::SourceRead(3)]);
+    let last = patch.len().checked_sub(1).expect("patch footer");
+    patch[last] ^= 0x01; // corrupt the trailing patch-checksum footer
+    fs::write(&patch_path, patch).expect("fixture");
+
+    let handler = BpsPatchHandler::new(&BPS);
+    let error = handler
+        .describe_metadata(&patch_path, &test_context_with_threads(&temp, 1))
+        .expect_err("corrupt patch checksum should fail");
+    assert!(error.to_string().contains("Patch checksum invalid"));
+}
+
+#[test]
+fn describe_metadata_rejects_patch_smaller_than_header_and_footer() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("tiny.bps");
+    fs::write(&patch_path, b"BPS1").expect("fixture"); // 4 bytes < magic + 12-byte footer
+    let handler = BpsPatchHandler::new(&BPS);
+    let error = handler
+        .describe_metadata(&patch_path, &test_context_with_threads(&temp, 1))
+        .expect_err("undersized patch should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("too small to contain a valid header and footer")
+    );
+}
+
+#[test]
+fn describe_metadata_rejects_invalid_header_magic() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("bad.bps");
+    // At least magic + footer bytes, but the leading magic is wrong.
+    fs::write(&patch_path, vec![0u8; 16]).expect("fixture");
+    let handler = BpsPatchHandler::new(&BPS);
+    let error = handler
+        .describe_metadata(&patch_path, &test_context_with_threads(&temp, 1))
+        .expect_err("bad magic should fail");
+    assert!(error.to_string().contains("Patch header invalid"));
 }

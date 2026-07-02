@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs::{self, File, OpenOptions},
+    io::Write,
+};
 
 use rom_weaver_core::{
     PatchApplyRequest, PatchChecksumValidation, PatchCreateRequest, PatchHandler,
@@ -426,4 +429,270 @@ fn apply_runtime_threads_match_capabilities_for_multi_record_patch() {
     assert_eq!(execution.effective_threads, 8);
     assert!(execution.used_parallelism);
     assert_eq!(fs::read(output_path).expect("output"), target);
+}
+
+#[test]
+fn checked_range_accepts_in_bounds_and_rejects_past_the_limit() {
+    assert_eq!(
+        super::checked_range(2, 3, 10, "ok").expect("within limit"),
+        (2, 5)
+    );
+
+    let error = super::checked_range(8, 5, 10, "past limit").expect_err("exceeds limit");
+    let message = error.to_string();
+    assert!(message.contains("DPS_RANGE_EXCEEDED_LIMIT"), "{message}");
+    assert!(message.contains("limit=10"), "{message}");
+}
+
+#[test]
+fn validate_dps_record_ranges_accepts_in_bounds_records() {
+    let records = vec![
+        ParsedDpsRecord::CopyFromSource {
+            output_offset: 0,
+            source_offset: 0,
+            length: 4,
+        },
+        ParsedDpsRecord::EmbeddedData {
+            output_offset: 4,
+            data: b"XY".to_vec(),
+        },
+    ];
+    super::validate_dps_record_ranges(&records, 8, 6).expect("in bounds");
+}
+
+#[test]
+fn validate_dps_record_ranges_rejects_oversized_output_range() {
+    let records = vec![ParsedDpsRecord::EmbeddedData {
+        output_offset: 4,
+        data: b"XYZ".to_vec(),
+    }];
+
+    let error = super::validate_dps_record_ranges(&records, 8, 6).expect_err("oversized output");
+    let message = error.to_string();
+    assert!(message.contains("DPS_RANGE_EXCEEDED_LIMIT"), "{message}");
+    assert!(message.contains("DPS output write"), "{message}");
+}
+
+#[test]
+fn validate_dps_record_ranges_rejects_oversized_source_range() {
+    let records = vec![ParsedDpsRecord::CopyFromSource {
+        output_offset: 0,
+        source_offset: 6,
+        length: 4,
+    }];
+
+    let error = super::validate_dps_record_ranges(&records, 8, 16).expect_err("oversized source");
+    let message = error.to_string();
+    assert!(message.contains("DPS_RANGE_EXCEEDED_LIMIT"), "{message}");
+    assert!(message.contains("DPS source copy"), "{message}");
+}
+
+#[test]
+fn merge_dps_record_collapses_adjacent_copy_records() {
+    let mut merged = Vec::new();
+    super::merge_dps_record(
+        &mut merged,
+        DpsRecord::CopyFromSource {
+            output_offset: 0,
+            source_offset: 0,
+            length: 4,
+        },
+    )
+    .expect("first copy");
+    super::merge_dps_record(
+        &mut merged,
+        DpsRecord::CopyFromSource {
+            output_offset: 4,
+            source_offset: 4,
+            length: 3,
+        },
+    )
+    .expect("second copy");
+
+    assert_eq!(merged.len(), 1);
+    match &merged[0] {
+        DpsRecord::CopyFromSource {
+            output_offset,
+            source_offset,
+            length,
+        } => assert_eq!((*output_offset, *source_offset, *length), (0, 0, 7)),
+        other => panic!("expected merged copy record, got {other:?}"),
+    }
+}
+
+#[test]
+fn merge_dps_record_collapses_adjacent_embedded_data() {
+    let mut merged = Vec::new();
+    super::merge_dps_record(
+        &mut merged,
+        DpsRecord::EmbeddedData {
+            output_offset: 0,
+            data: b"AB".to_vec(),
+        },
+    )
+    .expect("first embedded");
+    super::merge_dps_record(
+        &mut merged,
+        DpsRecord::EmbeddedData {
+            output_offset: 2,
+            data: b"CD".to_vec(),
+        },
+    )
+    .expect("second embedded");
+
+    assert_eq!(merged.len(), 1);
+    match &merged[0] {
+        DpsRecord::EmbeddedData {
+            output_offset,
+            data,
+        } => {
+            assert_eq!(*output_offset, 0);
+            assert_eq!(data.as_slice(), b"ABCD");
+        }
+        other => panic!("expected merged embedded record, got {other:?}"),
+    }
+}
+
+#[test]
+fn merge_dps_record_keeps_non_adjacent_and_mixed_records_separate() {
+    let mut merged = Vec::new();
+    super::merge_dps_record(
+        &mut merged,
+        DpsRecord::CopyFromSource {
+            output_offset: 0,
+            source_offset: 0,
+            length: 4,
+        },
+    )
+    .expect("first copy");
+    // output offsets abut but source offsets do not, so the copies cannot merge.
+    super::merge_dps_record(
+        &mut merged,
+        DpsRecord::CopyFromSource {
+            output_offset: 4,
+            source_offset: 16,
+            length: 2,
+        },
+    )
+    .expect("second copy");
+    // Different variant than the tail, exercising the no-merge fallthrough arm.
+    super::merge_dps_record(
+        &mut merged,
+        DpsRecord::EmbeddedData {
+            output_offset: 6,
+            data: b"ZZ".to_vec(),
+        },
+    )
+    .expect("trailing embedded");
+
+    assert_eq!(merged.len(), 3);
+}
+
+#[test]
+fn create_dps_records_streaming_emits_copy_and_embedded_records() {
+    let temp = TestDir::new();
+    let source_path = temp.child("stream-source.bin");
+    let target_path = temp.child("stream-target.bin");
+    fs::write(&source_path, b"abcdefgh").expect("source");
+    fs::write(&target_path, b"abXYefgh").expect("target");
+
+    let records =
+        super::create_dps_records_streaming(&source_path, &target_path).expect("streaming records");
+
+    assert_eq!(records.len(), 3);
+    match &records[0] {
+        DpsRecord::CopyFromSource {
+            output_offset,
+            source_offset,
+            length,
+        } => assert_eq!((*output_offset, *source_offset, *length), (0, 0, 2)),
+        other => panic!("expected leading copy record, got {other:?}"),
+    }
+    match &records[1] {
+        DpsRecord::EmbeddedData {
+            output_offset,
+            data,
+        } => {
+            assert_eq!(*output_offset, 2);
+            assert_eq!(data.as_slice(), b"XY");
+        }
+        other => panic!("expected embedded record, got {other:?}"),
+    }
+    match &records[2] {
+        DpsRecord::CopyFromSource {
+            output_offset,
+            source_offset,
+            length,
+        } => assert_eq!((*output_offset, *source_offset, *length), (4, 4, 4)),
+        other => panic!("expected trailing copy record, got {other:?}"),
+    }
+}
+
+#[test]
+fn collect_dps_chunk_records_treats_bytes_past_source_as_embedded() {
+    let temp = TestDir::new();
+    let source_path = temp.child("chunk-source.bin");
+    let target_path = temp.child("chunk-target.bin");
+    fs::write(&source_path, b"abcd").expect("source");
+    fs::write(&target_path, b"abcdEFGH").expect("target");
+
+    let records = super::collect_dps_chunk_records(&source_path, 4, &target_path, 0, 8)
+        .expect("chunk records");
+
+    assert_eq!(records.len(), 2);
+    match &records[0] {
+        DpsRecord::CopyFromSource {
+            output_offset,
+            source_offset,
+            length,
+        } => assert_eq!((*output_offset, *source_offset, *length), (0, 0, 4)),
+        other => panic!("expected leading copy record, got {other:?}"),
+    }
+    match &records[1] {
+        DpsRecord::EmbeddedData {
+            output_offset,
+            data,
+        } => {
+            assert_eq!(*output_offset, 4);
+            assert_eq!(data.as_slice(), b"EFGH");
+        }
+        other => panic!("expected trailing embedded record, got {other:?}"),
+    }
+}
+
+#[test]
+fn apply_dps_records_in_place_supports_shrinking_output() {
+    let temp = TestDir::new();
+    let source_path = temp.child("in-place-source.bin");
+    let output_path = temp.child("in-place-output.bin");
+    fs::write(&source_path, b"abcdefgh").expect("source");
+
+    let records = vec![
+        ParsedDpsRecord::CopyFromSource {
+            output_offset: 0,
+            source_offset: 0,
+            length: 2,
+        },
+        ParsedDpsRecord::EmbeddedData {
+            output_offset: 2,
+            data: b"XY".to_vec(),
+        },
+    ];
+
+    let mut source = File::open(&source_path).expect("open source");
+    let mut output = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&output_path)
+        .expect("open output");
+    output.set_len(4).expect("size output");
+
+    super::apply_dps_records_in_place(&records, 8, 4, &mut source, &mut output)
+        .expect("apply in place");
+    output.flush().expect("flush");
+    drop(output);
+
+    assert_eq!(fs::read(&output_path).expect("output"), b"abXY");
 }

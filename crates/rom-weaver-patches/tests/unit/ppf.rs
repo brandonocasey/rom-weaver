@@ -1,9 +1,9 @@
 use std::fs;
 
-use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler};
+use rom_weaver_core::{PatchApplyRequest, PatchCreateRequest, PatchHandler, PatchValidateRequest};
 
 use super::{
-    CREATE_THREAD_SCAN_CHUNK_BYTES, FILE_ID_BEGIN_MARKER, FILE_ID_END_MARKER,
+    CREATE_THREAD_SCAN_CHUNK_BYTES, FILE_ID_BEGIN_MARKER, FILE_ID_END_MARKER, PPF_HEADER_MIN_SIZE,
     PPF_VALIDATION_BLOCK_SIZE, PPF2_BLOCKCHECK_OFFSET, PpfPatchHandler, PpfVersion,
     collect_ppf_chunk_diff_runs, collect_ppf_chunk_diff_runs_from_bytes, parse_ppf_bytes,
     parse_ppf_file,
@@ -975,4 +975,487 @@ fn append_ppf2_file_id_diz_trailer(bytes: &mut Vec<u8>, diz: &str) {
 
     let diz_len = u32::try_from(diz.len()).expect("diz length must fit u32");
     bytes.extend_from_slice(&diz_len.to_le_bytes());
+}
+
+/// Writes `bytes` to a fresh patch file and returns the `parse_ppf_file` error string,
+/// failing the test if parsing unexpectedly succeeds. Exercises the production (path-based)
+/// parser rather than the in-memory `#[cfg(test)]` helper.
+fn parse_file_err(bytes: &[u8]) -> String {
+    let temp = TestDir::new();
+    let patch_path = temp.child("malformed.ppf");
+    fs::write(&patch_path, bytes).expect("write malformed patch");
+    parse_ppf_file(&patch_path)
+        .expect_err("parse should reject malformed patch")
+        .to_string()
+}
+
+/// A 1024-byte validation block whose bytes vary so a mismatch is unambiguous.
+fn sample_block() -> Vec<u8> {
+    (0..PPF_VALIDATION_BLOCK_SIZE)
+        .map(|index| (index % 251) as u8)
+        .collect()
+}
+
+/// Builds an input whose PPF2 blockcheck region (`PPF2_BLOCKCHECK_OFFSET..+1024`) is captured
+/// as the expected validation block, returning `(input_bytes, block)`.
+fn ppf2_blockcheck_input() -> (Vec<u8>, Vec<u8>) {
+    let mut input = vec![0u8; (PPF2_BLOCKCHECK_OFFSET as usize) + PPF_VALIDATION_BLOCK_SIZE + 16];
+    for (index, byte) in input.iter_mut().enumerate() {
+        *byte = (index % 247) as u8;
+    }
+    let block = input[PPF2_BLOCKCHECK_OFFSET as usize
+        ..PPF2_BLOCKCHECK_OFFSET as usize + PPF_VALIDATION_BLOCK_SIZE]
+        .to_vec();
+    (input, block)
+}
+
+#[test]
+fn parse_method_reports_ppf1_record_count() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("p.ppf");
+    fs::write(
+        &patch_path,
+        build_ppf1_patch(
+            "PPF1 parse",
+            vec![
+                V1V2Record {
+                    offset: 0,
+                    data: b"AB".to_vec(),
+                },
+                V1V2Record {
+                    offset: 8,
+                    data: b"C".to_vec(),
+                },
+            ],
+        ),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let report = handler
+        .parse(&patch_path, &test_context_with_threads(&temp, 1))
+        .expect("parse");
+    assert!(report.label.contains("PPF1"), "label: {}", report.label);
+    assert!(
+        report.label.contains("2 record(s)"),
+        "label: {}",
+        report.label
+    );
+    assert!(!report.label.contains("blockcheck"));
+    assert!(!report.label.contains("undo data"));
+}
+
+#[test]
+fn parse_method_notes_ppf2_blockcheck_metadata() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("p.ppf");
+    fs::write(
+        &patch_path,
+        build_ppf2_patch(
+            "PPF2 parse",
+            256,
+            &sample_block(),
+            vec![V1V2Record {
+                offset: 4,
+                data: b"ZZ".to_vec(),
+            }],
+        ),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let report = handler
+        .parse(&patch_path, &test_context_with_threads(&temp, 1))
+        .expect("parse");
+    assert!(report.label.contains("PPF2"), "label: {}", report.label);
+    assert!(
+        report
+            .label
+            .contains("includes blockcheck validation bytes"),
+        "label: {}",
+        report.label
+    );
+    assert!(!report.label.contains("undo data"));
+}
+
+#[test]
+fn parse_method_notes_ppf3_undo_and_blockcheck_metadata() {
+    let temp = TestDir::new();
+    let patch_path = temp.child("p.ppf");
+    fs::write(
+        &patch_path,
+        build_ppf3_patch(
+            "PPF3 parse",
+            1,
+            true,
+            true,
+            Some(&sample_block()),
+            vec![V3Record {
+                offset: 2,
+                data: b"abc".to_vec(),
+                undo: b"xyz".to_vec(),
+            }],
+        ),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let report = handler
+        .parse(&patch_path, &test_context_with_threads(&temp, 1))
+        .expect("parse");
+    assert!(report.label.contains("PPF3"), "label: {}", report.label);
+    assert!(
+        report
+            .label
+            .contains("includes blockcheck validation bytes"),
+        "label: {}",
+        report.label
+    );
+    assert!(
+        report.label.contains("includes undo data"),
+        "label: {}",
+        report.label
+    );
+}
+
+#[test]
+fn validate_succeeds_for_ppf2_with_matching_blockcheck() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ppf");
+
+    let (input, block) = ppf2_blockcheck_input();
+    fs::write(&input_path, &input).expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ppf2_patch(
+            "PPF2 validate",
+            input.len() as u32,
+            &block,
+            vec![V1V2Record {
+                offset: 4,
+                data: b"ZZ".to_vec(),
+            }],
+        ),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let report = handler
+        .validate(
+            &PatchValidateRequest {
+                input: input_path,
+                patches: vec![patch_path],
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect("validate should pass with matching blockcheck");
+    assert!(
+        report.label.contains("validated"),
+        "label: {}",
+        report.label
+    );
+    assert!(report.label.contains("PPF2"), "label: {}", report.label);
+    assert!(
+        report.label.contains("1 record(s)"),
+        "label: {}",
+        report.label
+    );
+}
+
+#[test]
+fn validate_rejects_ppf2_when_input_size_mismatches() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ppf");
+
+    let (input, block) = ppf2_blockcheck_input();
+    fs::write(&input_path, &input).expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ppf2_patch(
+            "PPF2 validate bad size",
+            (input.len() as u32).saturating_add(1),
+            &block,
+            vec![V1V2Record {
+                offset: 0,
+                data: vec![0xFF],
+            }],
+        ),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let error = handler
+        .validate(
+            &PatchValidateRequest {
+                input: input_path,
+                patches: vec![patch_path],
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect_err("validate should reject size mismatch");
+    assert!(error.to_string().contains("PPF2 input size invalid"));
+}
+
+#[test]
+fn validate_rejects_when_blockcheck_region_runs_past_input_eof() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ppf");
+
+    // expected_input_len matches the tiny input so the size guard passes, but the input ends
+    // long before the fixed blockcheck offset -- so the validation-block read hits EOF.
+    let input = vec![0u8; 10];
+    fs::write(&input_path, &input).expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ppf2_patch(
+            "PPF2 short input",
+            input.len() as u32,
+            &sample_block(),
+            vec![V1V2Record {
+                offset: 0,
+                data: vec![0xAA],
+            }],
+        ),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let error = handler
+        .validate(
+            &PatchValidateRequest {
+                input: input_path,
+                patches: vec![patch_path],
+            },
+            &test_context_with_threads(&temp, 1),
+        )
+        .expect_err("blockcheck read past EOF should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("validation block read exceeded input length"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn apply_undo_aware_clean_input_without_blockcheck_leaves_no_note() {
+    let temp = TestDir::new();
+    let input_path = temp.child("input.bin");
+    let patch_path = temp.child("update.ppf");
+    let output_path = temp.child("output.bin");
+
+    // Clean (unpatched) input: offset 2 holds the undo bytes ("cde"), not the patch data.
+    fs::write(&input_path, b"abcdefghij").expect("fixture");
+    fs::write(
+        &patch_path,
+        build_ppf3_patch(
+            "PPF3 clean no blockcheck",
+            0,
+            false,
+            true,
+            None,
+            vec![V3Record {
+                offset: 2,
+                data: b"XYZ".to_vec(),
+                undo: b"cde".to_vec(),
+            }],
+        ),
+    )
+    .expect("fixture");
+
+    let handler = PpfPatchHandler::new(&PPF);
+    let report = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 1).with_ppf_undo_aware(true),
+        )
+        .expect("apply");
+
+    assert_eq!(fs::read(output_path).expect("output"), b"abXYZfghij");
+    assert!(
+        !report.label.contains("already patched"),
+        "label: {}",
+        report.label
+    );
+}
+
+#[test]
+fn parse_file_rejects_patch_smaller_than_header() {
+    let error = parse_file_err(&[0u8; 10]);
+    assert!(
+        error.contains("too small to contain a valid header"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_invalid_magic() {
+    let error = parse_file_err(&[0u8; PPF_HEADER_MIN_SIZE]);
+    assert!(error.contains("Patch header invalid"), "error: {error}");
+}
+
+#[test]
+fn parse_file_rejects_invalid_version_digits() {
+    let mut bytes = b"PPF99".to_vec();
+    bytes.push(0);
+    bytes.resize(PPF_HEADER_MIN_SIZE, 0);
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("version digits are invalid"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_invalid_encoding_method() {
+    let mut bytes = b"PPF10".to_vec();
+    bytes.push(9);
+    bytes.resize(PPF_HEADER_MIN_SIZE, 0);
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("encoding method is invalid"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf2_missing_validation_header() {
+    let bytes = build_header(PpfHeaderVersion::V2, "tiny", 1);
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("PPF2 patch is too small to contain a validation header"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf3_header_too_small() {
+    // 56-byte V3 header is below the 60-byte PPF3 base header.
+    let bytes = build_header(PpfHeaderVersion::V3, "tiny", 2);
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("PPF3 patch is too small to contain a valid header"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf3_blockcheck_without_validation_block() {
+    let mut bytes = build_header(PpfHeaderVersion::V3, "no block", 2);
+    bytes.push(0); // imagetype
+    bytes.push(1); // blockcheck enabled
+    bytes.push(0); // undo disabled
+    bytes.push(0);
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("enabled blockcheck but omitted the validation block"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf1_truncated_record_header() {
+    let mut bytes = build_ppf1_patch("trunc header", Vec::new());
+    bytes.extend_from_slice(&[1, 2, 3]); // < 5 trailing bytes: not a full record header
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("PPF record header exceeded patch bounds"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf1_record_data_out_of_bounds() {
+    let mut bytes = build_header(PpfHeaderVersion::V1, "oob data", 0);
+    bytes.extend_from_slice(&7u32.to_le_bytes()); // offset
+    bytes.push(10); // declared length
+    bytes.extend_from_slice(&[1, 2]); // only 2 of 10 bytes present
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("PPF record data exceeded patch bounds"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf3_truncated_record_header() {
+    let mut bytes = build_ppf3_patch("trunc v3 header", 0, false, false, None, Vec::new());
+    bytes.extend_from_slice(&[1, 2, 3, 4]); // < 9 trailing bytes: not a full PPF3 record header
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("PPF3 record header exceeded patch bounds"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf3_record_data_out_of_bounds() {
+    let mut bytes = build_ppf3_patch(
+        "v3 oob data",
+        0,
+        false,
+        false,
+        None,
+        vec![V3Record {
+            offset: 0,
+            data: vec![1, 2, 3],
+            undo: Vec::new(),
+        }],
+    );
+    bytes.pop(); // drop one declared data byte
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("PPF3 record data exceeded patch bounds"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf3_undo_data_out_of_bounds() {
+    let mut bytes = build_ppf3_patch(
+        "v3 oob undo",
+        0,
+        false,
+        true,
+        None,
+        vec![V3Record {
+            offset: 0,
+            data: vec![1, 2, 3],
+            undo: vec![4, 5, 6],
+        }],
+    );
+    bytes.pop(); // drop one declared undo byte
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("PPF3 undo data exceeded patch bounds"),
+        "error: {error}"
+    );
+}
+
+#[test]
+fn parse_file_rejects_ppf3_offset_beyond_i64_max() {
+    let bytes = build_ppf3_patch(
+        "v3 huge offset",
+        0,
+        false,
+        false,
+        None,
+        vec![V3Record {
+            offset: 0x8000_0000_0000_0000,
+            data: Vec::new(),
+            undo: Vec::new(),
+        }],
+    );
+    let error = parse_file_err(&bytes);
+    assert!(
+        error.contains("PPF3 record offset exceeded supported range"),
+        "error: {error}"
+    );
 }

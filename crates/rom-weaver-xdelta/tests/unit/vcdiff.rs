@@ -1952,3 +1952,238 @@ fn encode_varint(bytes: &mut Vec<u8>, mut value: u64) {
         bytes.push(if is_last { *digit } else { *digit | 0x80 });
     }
 }
+
+#[test]
+fn decode_secondary_djw_rejects_zero_output_size() {
+    let error =
+        decode_djw_secondary(&[0u8; 1], 0).expect_err("zero declared output size must be rejected");
+    assert!(
+        format!("{error}").contains("invalid output size"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn decode_secondary_djw_round_trips_single_group() {
+    let original = b"the quick brown fox jumps over the lazy dog 0123456789".to_vec();
+    let payload = xdelta_djw_compress(&original, DjwSectionKind::Data).expect("compress djw");
+    let decoded = decode_djw_secondary(&payload, original.len()).expect("decode djw");
+    assert_eq!(decoded, original);
+}
+
+#[test]
+fn decode_secondary_djw_round_trips_multi_group() {
+    // A ~1.5 KiB Data section drives the multi-group selector path: two
+    // alternating byte populations make per-sector group selection worthwhile.
+    let mut section = Vec::with_capacity(1_500);
+    for index in 0..1_500usize {
+        let value = if (index / 100) % 2 == 0 {
+            (index % 7) as u8
+        } else {
+            200 + (index % 7) as u8
+        };
+        section.push(value);
+    }
+    let payload = xdelta_djw_compress(&section, DjwSectionKind::Data).expect("compress djw");
+    let decoded = decode_djw_secondary(&payload, section.len()).expect("decode djw");
+    assert_eq!(decoded, section);
+}
+
+#[test]
+fn decode_secondary_djw_rejects_trailing_input() {
+    let original = b"repeat repeat repeat repeat".to_vec();
+    let mut payload = xdelta_djw_compress(&original, DjwSectionKind::Data).expect("compress djw");
+    payload.push(0);
+    let error = decode_djw_secondary(&payload, original.len())
+        .expect_err("trailing payload byte must be rejected");
+    assert!(
+        format!("{error}").contains("unused input"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn decode_secondary_djw_bits_rejects_invalid_bit_count() {
+    let mut state = DjwBitState::decode_init();
+    let mut pos = 0usize;
+    let zero = decode_djw_bits(&mut state, &[0u8; 1], &mut pos, 0)
+        .expect_err("zero bit count must be rejected");
+    assert!(format!("{zero}").contains("invalid bit count"));
+
+    let mut state = DjwBitState::decode_init();
+    let mut pos = 0usize;
+    let too_wide = decode_djw_bits(&mut state, &[0u8; 1], &mut pos, usize::BITS as usize)
+        .expect_err("oversized bit count must be rejected");
+    assert!(format!("{too_wide}").contains("invalid bit count"));
+}
+
+#[test]
+fn decode_secondary_djw_symbol_reaches_end_of_input() {
+    let table = build_djw_decoder_table(&[1u8, 1u8], 2, DJW_MAX_CODELEN).expect("build table");
+    let mut state = DjwBitState::decode_init();
+    let mut pos = 0usize;
+    let error = decode_djw_symbol(&mut state, &[], &mut pos, &table, DJW_ALPHABET_SIZE)
+        .expect_err("empty input must reach end of input");
+    assert!(format!("{error}").contains("end of input"));
+}
+
+#[test]
+fn decode_secondary_djw_symbol_rejects_invalid_symbol() {
+    // An incomplete two-length table leaves a hole at the all-ones 2-bit code,
+    // so the decoder exhausts max_len without a match.
+    let table = build_djw_decoder_table(&[2u8, 0u8], 2, DJW_MAX_CODELEN).expect("build table");
+    let mut state = DjwBitState::decode_init();
+    let mut pos = 0usize;
+    let error = decode_djw_symbol(&mut state, &[0x01], &mut pos, &table, DJW_ALPHABET_SIZE)
+        .expect_err("undecodable bit pattern must be rejected");
+    assert!(format!("{error}").contains("invalid symbol"));
+}
+
+#[test]
+fn decode_secondary_build_djw_decoder_table_validates_inputs() {
+    let short = build_djw_decoder_table(&[1u8, 2u8], 5, DJW_MAX_CODELEN)
+        .err()
+        .expect("too few code lengths must be rejected");
+    assert!(format!("{short}").contains("too short"));
+
+    let over = build_djw_decoder_table(&[21u8; 4], 4, DJW_MAX_CODELEN)
+        .err()
+        .expect("over-long code lengths must be rejected");
+    assert!(format!("{over}").contains("exceeds max"));
+
+    let empty = build_djw_decoder_table(&[0u8; 4], 4, DJW_MAX_CODELEN)
+        .err()
+        .expect("all-zero code lengths must be rejected");
+    assert!(format!("{empty}").contains("no symbols"));
+
+    let table = build_djw_decoder_table(&[1u8, 1u8], 2, DJW_MAX_CODELEN).expect("valid table");
+    assert_eq!(table.min_len, 1);
+    assert_eq!(table.max_len, 1);
+    assert_eq!(table.inorder, vec![0u8, 1u8]);
+}
+
+#[test]
+fn decode_secondary_djw_update_mtf_moves_to_front_and_bounds_check() {
+    let mut values = [10u8, 20, 30];
+    let symbol = djw_update_mtf(&mut values, 2).expect("move-to-front");
+    assert_eq!(symbol, 30);
+    assert_eq!(values, [30u8, 10, 20]);
+
+    let error =
+        djw_update_mtf(&mut [1u8, 2, 3], 5).expect_err("out-of-range mtf index must be rejected");
+    assert!(format!("{error}").contains("out of bounds"));
+}
+
+#[test]
+fn decode_secondary_init_djw_clen_mtf_fills_and_guards_short_buffer() {
+    let mut short = [0u8; 3];
+    init_djw_clen_mtf(&mut short);
+    assert_eq!(short, [0u8; 3], "short buffer must be left untouched");
+
+    let mut full = [0u8; DJW_TOTAL_CODES];
+    init_djw_clen_mtf(&mut full);
+    assert_eq!(full[0], 0);
+    assert_eq!(&full[1..6], &[4u8, 5, 6, 7, 8]);
+}
+
+#[test]
+fn decode_secondary_djw_count_byte_frequencies_counts_bytes() {
+    let freq = djw_count_byte_frequencies(b"aab");
+    assert_eq!(freq[usize::from(b'a')], 2);
+    assert_eq!(freq[usize::from(b'b')], 1);
+    assert_eq!(freq[0], 0);
+}
+
+#[test]
+fn decode_secondary_djw_build_prefix_lengths_handles_empty_and_single_symbol() {
+    let empty =
+        djw_build_prefix_lengths(&[], DJW_MAX_CODELEN).expect_err("empty frequencies must fail");
+    assert!(format!("{empty}").contains("empty frequency"));
+
+    // A single non-zero frequency exercises the heap_last == 1 rebalance path.
+    let (lengths, total_bits) =
+        djw_build_prefix_lengths(&[5u32, 0, 0], DJW_MAX_CODELEN).expect("single-symbol prefix");
+    assert_eq!(lengths.len(), 3);
+    assert!(lengths[0] > 0);
+    assert!(lengths[1] == 0 || lengths[2] > 0);
+    assert!(total_bits > 0);
+}
+
+#[test]
+fn decode_secondary_djw_build_codes_from_lengths_validates() {
+    let none =
+        djw_build_codes_from_lengths(&[0u8, 0], DJW_MAX_CODELEN).expect_err("no symbols must fail");
+    assert!(format!("{none}").contains("no symbols"));
+
+    let over = djw_build_codes_from_lengths(&[5u8, 3], 4).expect_err("over-long lengths must fail");
+    assert!(format!("{over}").contains("configured maximum"));
+
+    let codes = djw_build_codes_from_lengths(&[1u8, 2, 2], DJW_MAX_CODELEN).expect("valid codes");
+    assert_eq!(codes.len(), 3);
+}
+
+#[test]
+fn decode_secondary_fgk_state_new_rejects_zero_alphabet() {
+    let error = FgkState::new(0)
+        .err()
+        .expect("zero alphabet must be rejected");
+    assert!(format!("{error}").contains("total node count"));
+}
+
+#[test]
+fn decode_secondary_fgk_round_trips() {
+    // Repeats over a small alphabet drive many adaptive weight updates and
+    // block promotions in the FGK tree, round-tripping end to end. (Larger
+    // alphabets currently trip an encoder-side tree bug, so keep this minimal.)
+    let input = b"ABAB".repeat(40);
+    let payload = xdelta_fgk_compress(&input).expect("compress fgk");
+    let decoded = decode_fgk_secondary(&payload, input.len()).expect("decode fgk");
+    assert_eq!(decoded, input);
+}
+
+#[test]
+fn decode_secondary_fgk_reaches_end_of_input() {
+    let payload = xdelta_fgk_compress(b"AB").expect("compress fgk");
+    // payload.len() * 8 is the maximum symbol count the bitstream could yield;
+    // since FGK symbols cost more than one bit, the decoder must run dry first.
+    let error = decode_fgk_secondary(&payload, payload.len() * 8)
+        .expect_err("over-long declared output must exhaust the input");
+    assert!(format!("{error}").contains("end of input"));
+}
+
+#[test]
+fn decode_secondary_try_decode_xdelta_djw_sections_handles_flags() {
+    let original = b"abcabcabcabcabcabcabc".to_vec();
+    let djw = xdelta_djw_compress(&original, DjwSectionKind::Data).expect("compress djw");
+    let mut data_section = Vec::new();
+    encode_varint_raw(&mut data_section, original.len() as u64);
+    data_section.extend_from_slice(&djw);
+
+    let inst = b"raw-inst".to_vec();
+    let addr = b"raw-addr".to_vec();
+    let (data, decoded_inst, decoded_addr) =
+        try_decode_xdelta_djw_sections(&data_section, &inst, &addr, DELTA_DATA_COMP)
+            .expect("decode djw sections");
+    assert_eq!(data, original);
+    assert_eq!(decoded_inst, inst);
+    assert_eq!(decoded_addr, addr);
+}
+
+#[test]
+fn decode_secondary_try_decode_xdelta_fgk_sections_handles_flags() {
+    // Two-symbol payload keeps the FGK encoder off its large-alphabet tree bug.
+    let original = b"ABABABABABABABABABAB".to_vec();
+    let fgk = xdelta_fgk_compress(&original).expect("compress fgk");
+    let mut data_section = Vec::new();
+    encode_varint_raw(&mut data_section, original.len() as u64);
+    data_section.extend_from_slice(&fgk);
+
+    let inst = b"raw-inst".to_vec();
+    let addr = b"raw-addr".to_vec();
+    let (data, decoded_inst, decoded_addr) =
+        try_decode_xdelta_fgk_sections(&data_section, &inst, &addr, DELTA_DATA_COMP)
+            .expect("decode fgk sections");
+    assert_eq!(data, original);
+    assert_eq!(decoded_inst, inst);
+    assert_eq!(decoded_addr, addr);
+}

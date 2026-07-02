@@ -457,3 +457,209 @@ fn capabilities_mark_threaded_output_with_create_disabled() {
     assert!(!capabilities.threaded_diff);
     assert!(capabilities.threaded_output);
 }
+
+fn bzip2_encode(payload: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+
+    use bzip2::{Compression, write::BzEncoder};
+
+    let mut encoder = BzEncoder::new(Vec::new(), Compression::new(9));
+    encoder.write_all(payload).expect("bzip2 write");
+    encoder.finish().expect("bzip2 finish")
+}
+
+fn build_bz2_hdiff13_patch(old: &[u8], new: &[u8]) -> Vec<u8> {
+    let compressed = bzip2_encode(new);
+
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"HDIFF13&bz2");
+    patch.push(0);
+
+    write_var_u64(&mut patch, u64::try_from(new.len()).expect("new size"));
+    write_var_u64(&mut patch, u64::try_from(old.len()).expect("old size"));
+    write_var_u64(&mut patch, 0); // cover_count
+    write_var_u64(&mut patch, 0); // cover_buf_size
+    write_var_u64(&mut patch, 0); // compress_cover_buf_size
+    write_var_u64(&mut patch, 0); // rle_ctrl_buf_size
+    write_var_u64(&mut patch, 0); // compress_rle_ctrl_buf_size
+    write_var_u64(&mut patch, 0); // rle_code_buf_size
+    write_var_u64(&mut patch, 0); // compress_rle_code_buf_size
+    write_var_u64(&mut patch, u64::try_from(new.len()).expect("new diff size"));
+    write_var_u64(
+        &mut patch,
+        u64::try_from(compressed.len()).expect("compressed size"),
+    );
+    patch.extend_from_slice(&compressed);
+    patch
+}
+
+#[test]
+fn apply_hdiff13_bz2_zero_cover_round_trip() {
+    let old = b"01234567890123456789";
+    let new = b"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+    let patch = build_bz2_hdiff13_patch(old, new);
+    let parsed = super::parse_hdiff_patch_bytes(patch).expect("parse");
+
+    let super::ParsedPatchVariant::SingleFile13(header) = parsed.variant else {
+        panic!("expected hdiff13");
+    };
+    assert_eq!(header.compression.as_str(), "bz2");
+
+    let output = apply_hdiff13(old, &parsed.bytes, &header).expect("apply");
+    assert_eq!(output, new);
+}
+
+fn build_hdiff13_single_cover_with_rle(
+    old_len: usize,
+    new_len: usize,
+    cover_length: u64,
+    rle_ctrl: &[u8],
+    rle_code: &[u8],
+) -> Vec<u8> {
+    let mut cover = Vec::new();
+    cover.push(0); // old sign=0, old_delta=0
+    write_var_u64(&mut cover, 0); // copy_length
+    write_var_u64(&mut cover, cover_length); // cover_length
+
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"HDIFF13&nocomp");
+    patch.push(0);
+    write_var_u64(&mut patch, u64::try_from(new_len).expect("new size"));
+    write_var_u64(&mut patch, u64::try_from(old_len).expect("old size"));
+    write_var_u64(&mut patch, 1); // cover_count
+    write_var_u64(&mut patch, u64::try_from(cover.len()).expect("cover size"));
+    write_var_u64(&mut patch, 0); // compress_cover_buf_size
+    write_var_u64(
+        &mut patch,
+        u64::try_from(rle_ctrl.len()).expect("rle ctrl size"),
+    );
+    write_var_u64(&mut patch, 0); // compress_rle_ctrl_buf_size
+    write_var_u64(
+        &mut patch,
+        u64::try_from(rle_code.len()).expect("rle code size"),
+    );
+    write_var_u64(&mut patch, 0); // compress_rle_code_buf_size
+    write_var_u64(&mut patch, 0); // new_data_diff_size
+    write_var_u64(&mut patch, 0); // compress_new_data_diff_size
+    patch.extend_from_slice(&cover);
+    patch.extend_from_slice(rle_ctrl);
+    patch.extend_from_slice(rle_code);
+    patch
+}
+
+#[test]
+fn apply_hdiff13_rle_explicit_set_value_adds_constant_to_cover() {
+    // rle ctrl byte 0x83 => rle_type=2 (set from rle_code), length=4; rle_code
+    // delta of 1 is added to every covered byte.
+    let old = b"ABCD";
+    let patch = build_hdiff13_single_cover_with_rle(
+        old.len(),
+        old.len(),
+        u64::try_from(old.len()).expect("cover length"),
+        &[0x83],
+        &[1],
+    );
+    let parsed = super::parse_hdiff_patch_bytes(patch).expect("parse");
+
+    let super::ParsedPatchVariant::SingleFile13(header) = parsed.variant else {
+        panic!("expected hdiff13");
+    };
+
+    let output = apply_hdiff13(old, &parsed.bytes, &header).expect("apply");
+    assert_eq!(output, b"BCDE");
+}
+
+#[test]
+fn apply_hdiff13_rle_implicit_set_value_wraps_cover_bytes() {
+    // rle ctrl byte 0x43 => rle_type=1 (implicit set_value = 0u8.wrapping_sub(1)
+    // = 255), length=4; adding 255 wrapping subtracts one from every byte. No
+    // rle_code is consumed for the implicit-value path.
+    let old = b"BCDE";
+    let patch = build_hdiff13_single_cover_with_rle(
+        old.len(),
+        old.len(),
+        u64::try_from(old.len()).expect("cover length"),
+        &[0x43],
+        &[],
+    );
+    let parsed = super::parse_hdiff_patch_bytes(patch).expect("parse");
+
+    let super::ParsedPatchVariant::SingleFile13(header) = parsed.variant else {
+        panic!("expected hdiff13");
+    };
+
+    let output = apply_hdiff13(old, &parsed.bytes, &header).expect("apply");
+    assert_eq!(output, b"ABCD");
+}
+
+fn build_hdiffsf20_single_cover_value_rle(source: &[u8], deltas: &[u8]) -> Vec<u8> {
+    assert_eq!(
+        source.len(),
+        deltas.len(),
+        "value-phase fixture needs one delta per source byte"
+    );
+    let cover_len = source.len();
+
+    let mut cover = Vec::new();
+    append_sf20_zero_delta_cover(&mut cover, cover_len);
+
+    let mut rle = Vec::new();
+    write_var_u64(&mut rle, 0); // len_zero: no verbatim bytes
+    write_var_u64(&mut rle, u64::try_from(cover_len).expect("len_value")); // len_value
+    rle.extend_from_slice(deltas);
+
+    let mut payload = Vec::new();
+    write_var_u64(&mut payload, u64::try_from(cover.len()).expect("cover len"));
+    write_var_u64(&mut payload, u64::try_from(rle.len()).expect("rle len"));
+    payload.extend_from_slice(&cover);
+    payload.extend_from_slice(&rle);
+
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"HDIFFSF20&nocomp");
+    patch.push(0);
+    write_var_u64(&mut patch, u64::try_from(source.len()).expect("new size"));
+    write_var_u64(&mut patch, u64::try_from(source.len()).expect("old size"));
+    write_var_u64(&mut patch, 1); // cover_count
+    write_var_u64(&mut patch, 256); // step_mem_size
+    write_var_u64(
+        &mut patch,
+        u64::try_from(payload.len()).expect("payload size"),
+    );
+    write_var_u64(&mut patch, 0); // compressed_size
+    patch.extend_from_slice(&payload);
+    patch
+}
+
+#[test]
+fn apply_hdiffsf20_value_phase_rle_from_temp_file() {
+    let temp = TestDir::new();
+    let input_path = temp.child("source.bin");
+    let patch_path = temp.child("patch.hpatchz");
+    let output_path = temp.child("output.bin");
+
+    let source = vec![0x10u8, 0x20, 0x30, 0x40];
+    let deltas = [1u8, 2, 3, 4];
+    let expected = vec![0x11u8, 0x22, 0x33, 0x44];
+
+    fs::write(&input_path, &source).expect("source");
+    fs::write(
+        &patch_path,
+        build_hdiffsf20_single_cover_value_rle(&source, &deltas),
+    )
+    .expect("patch");
+
+    let handler = HdiffPatchHandler::new(&HDIFFPATCH);
+    let report = handler
+        .apply(
+            &PatchApplyRequest {
+                input: input_path,
+                patches: vec![patch_path],
+                output: output_path.clone(),
+            },
+            &test_context_with_threads(&temp, 4),
+        )
+        .expect("apply");
+
+    assert!(report.label.contains("applied"), "label: {}", report.label);
+    assert_eq!(fs::read(output_path).expect("output"), expected);
+}

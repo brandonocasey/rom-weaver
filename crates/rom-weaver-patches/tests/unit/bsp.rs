@@ -531,3 +531,165 @@ fn apply_rejects_zero_length_nested_bsppatch() {
     push_word(&mut patch, 0); // len = 0 -> "invalid zero length"
     assert_bsp_program_error(&patch, vec![0x00], "invalid zero length");
 }
+
+// --------------------------------------------------------------------------------------------
+// BSP VM data-movement / file-buffer success paths. These drive the interpreter's `VmFileBuffer`
+// (open/write_at/read_exact_at/ensure_size/truncate/xor_range/sha1_digest) and the `write_data` /
+// `utf8_decode` / `resize_stack` helpers directly, without the Node reference runtime. Each test
+// runs a single hand-built program through `apply_bsp_patch_bytes`, which stages the input into a
+// real temp file before executing, so the file-backed buffer is genuinely exercised.
+// --------------------------------------------------------------------------------------------
+
+/// Run a BSP program over `input` and assert the resulting file bytes equal `expected`.
+fn assert_bsp_program_output(patch: &[u8], input: Vec<u8>, expected: Vec<u8>) {
+    let output =
+        apply_bsp_patch_bytes(patch, input, None).expect("well-formed BSP program should apply");
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn apply_write_data_copies_patch_payload_and_grows_buffer() {
+    // 0x7C: write_data(current_pointer, address, len). Seek 0, then copy two bytes embedded in the
+    // patch into an empty file -> exercises write_data's ensure_size growth + VmFileBuffer::write_range.
+    let mut patch = vec![0x60];
+    push_word(&mut patch, 0); // seek 0
+    patch.push(0x7C);
+    push_word(&mut patch, 19); // patch-space address of the payload
+    push_word(&mut patch, 2); // length
+    patch.push(0x06);
+    push_word(&mut patch, 0); // exit 0
+    patch.extend_from_slice(&[0xAB, 0xCD]); // payload at offset 19
+    assert_eq!(patch.len(), 21);
+
+    assert_bsp_program_output(&patch, vec![], vec![0xAB, 0xCD]);
+}
+
+#[test]
+fn apply_xor_data_masks_existing_file_bytes() {
+    // 0x6C: when the pointer is inside the file, copy-or-xor folds onto xor_data -> VmFileBuffer::xor_range.
+    let mut patch = vec![0x60];
+    push_word(&mut patch, 0); // seek 0
+    patch.push(0x6C);
+    push_word(&mut patch, 19); // patch-space address of the mask
+    push_word(&mut patch, 3); // length
+    patch.push(0x06);
+    push_word(&mut patch, 0); // exit 0
+    patch.extend_from_slice(&[0xFF, 0x0F, 0xF0]); // mask at offset 19
+
+    assert_bsp_program_output(&patch, vec![0x10, 0x20, 0x30], vec![0xEF, 0x2F, 0xC0]);
+}
+
+#[test]
+fn apply_grows_file_via_ensure_size_when_writing_past_end() {
+    // Seek past the end of a 1-byte file, then write a byte -> set_file_byte -> ensure_size growth
+    // (zero-fills the gap) followed by VmFileBuffer::write_at at the new tail.
+    let mut patch = vec![0x60];
+    push_word(&mut patch, 3); // seek to offset 3 (beyond len 1)
+    patch.push(0x18);
+    patch.push(0xEE); // write byte 0xEE at the pointer
+    patch.push(0x06);
+    push_word(&mut patch, 0); // exit 0
+
+    assert_bsp_program_output(&patch, vec![0x01], vec![0x01, 0x00, 0x00, 0xEE]);
+}
+
+#[test]
+fn apply_truncates_file_buffer() {
+    // 0x1E: truncate to the given size -> VmFileBuffer::truncate (shrink).
+    let mut patch = vec![0x1E];
+    push_word(&mut patch, 1); // truncate to 1 byte
+    patch.push(0x06);
+    push_word(&mut patch, 0); // exit 0
+
+    assert_bsp_program_output(&patch, vec![0x01, 0x02, 0x03], vec![0x01]);
+}
+
+#[test]
+fn apply_reads_file_byte_into_variable_then_writes_it_back() {
+    // 0x0C reads a file byte into a variable (read_exact_at), 0x19 writes that variable back out.
+    let mut patch = vec![0x0C, 0x00]; // var0 = read byte at pointer; pointer += 1
+    patch.extend_from_slice(&[0x19, 0x00]); // write var0 at pointer; pointer += 1
+    patch.push(0x06);
+    push_word(&mut patch, 0); // exit 0
+
+    assert_bsp_program_output(&patch, vec![0xAB, 0x00], vec![0xAB, 0xAB]);
+}
+
+#[test]
+fn apply_decodes_utf8_string_opcode() {
+    // 0x68 decodes a NUL-terminated UTF-8 string from the patch space (and discards it). Drives
+    // utf8_decode's happy path without touching the file buffer.
+    let mut patch = vec![0x68];
+    push_word(&mut patch, 10); // patch-space address of the string
+    patch.push(0x06);
+    push_word(&mut patch, 0); // exit 0
+    patch.extend_from_slice(b"Hi\0"); // string at offset 10
+
+    assert_bsp_program_output(&patch, vec![0x01], vec![0x01]);
+}
+
+#[test]
+fn apply_rejects_invalid_utf8_string() {
+    // utf8_decode collects bytes until NUL; a lone 0xFF is not valid UTF-8 -> "invalid UTF-8 string".
+    let mut patch = vec![0x68];
+    push_word(&mut patch, 10); // address of the invalid string
+    patch.push(0x06);
+    push_word(&mut patch, 0);
+    patch.extend_from_slice(&[0xFF, 0x00]); // 0xFF, then NUL terminator
+    assert_bsp_program_error(&patch, vec![0x01], "invalid UTF-8 string");
+}
+
+#[test]
+fn apply_computes_file_sha1_digest_opcode() {
+    // 0x16 hashes the file (VmFileBuffer::sha1_digest via update_hashes) and compares the result
+    // to a 20-byte SHA-1 embedded in the patch. The mismatch bitmask lands in a variable and does
+    // not affect output, so the file passes through unchanged while sha1_digest is exercised.
+    let mut patch = vec![0x16, 0x00]; // sha1 -> var0
+    push_word(&mut patch, 11); // patch-space address of the expected digest
+    patch.push(0x06);
+    push_word(&mut patch, 0); // exit 0
+    patch.extend_from_slice(&[0u8; 20]); // 20-byte comparison digest at offset 11
+    assert_eq!(patch.len(), 31);
+
+    assert_bsp_program_output(&patch, vec![0x01, 0x02], vec![0x01, 0x02]);
+}
+
+#[test]
+fn apply_resizes_stack_grow_then_shrink() {
+    // 0xA8 resizeStack: grow to 4 entries (try_reserve + push) then shrink to 2 (pop) -> both
+    // branches of resize_stack. The file is untouched.
+    let mut patch = vec![0xA8];
+    push_word(&mut patch, 4); // grow
+    patch.push(0xA8);
+    push_word(&mut patch, 2); // shrink
+    patch.push(0x06);
+    push_word(&mut patch, 0); // exit 0
+
+    assert_bsp_program_output(&patch, vec![0x00], vec![0x00]);
+}
+
+#[test]
+fn apply_rejects_oversized_stack_resize() {
+    // 0xA8 with a size above BSP_MAX_STACK_LEN (1 << 24) is rejected before allocating.
+    let mut patch = vec![0xA8];
+    push_word(&mut patch, 0x0200_0000); // 33_554_432 > 16_777_216
+    assert_bsp_program_error(&patch, vec![0x00], "exceeding the maximum of");
+}
+
+#[test]
+fn apply_rejects_read_byte_past_file_end() {
+    // 0x0C reads a file byte at the pointer; on an empty file get_file_byte's bounds guard fires.
+    assert_bsp_program_error(&[0x0C, 0x00], vec![], "past the end of the file buffer");
+}
+
+#[test]
+fn apply_rejects_read_halfword_past_file_end() {
+    // 0x0D reads a halfword; on an empty file get_file_halfword's bounds guard fires.
+    assert_bsp_program_error(&[0x0D, 0x00], vec![], "past the end of the file buffer");
+}
+
+#[test]
+fn apply_rejects_read_word_past_file_end() {
+    // 0x0E reads a word; on an empty file get_file_word's bounds guard fires.
+    assert_bsp_program_error(&[0x0E, 0x00], vec![], "past the end of the file buffer");
+}
