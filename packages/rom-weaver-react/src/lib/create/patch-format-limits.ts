@@ -1,4 +1,3 @@
-import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY } from "../../wasm/generated/rom-weaver-format-metadata.ts";
 
 type CreatePatchFormatPreferenceInput = {
@@ -15,7 +14,6 @@ const CREATE_IPS_SIZE_LIMIT_BYTES = ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY.limits
 const CREATE_BPS_DEFAULT_LIMIT_BYTES = ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY.limits.bpsDefaultSizeBytes;
 const CREATE_LEGACY_PATCH_SIZE_LIMIT_BYTES = ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY.limits.legacySizeLimitBytes;
 const CREATE_PATCH_DEFAULT_FORMAT = ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY.defaultFormat;
-const CREATE_PATCH_LARGE_DEFAULT_FORMAT = ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY.largeDefaultFormat;
 const CREATE_PATCH_FORMAT_ALIASES = ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY.aliases as Readonly<Record<string, string>>;
 
 const SMALL_CREATE_PATCH_FORMATS: CreatePatchFormatList = ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY.formats.small;
@@ -59,18 +57,6 @@ const normalizeCandidateCreatePatchFormats = (formats?: readonly string[] | null
   return out;
 };
 
-const createPatchFormatSupportsCreateSizes = (format: string, ...sizes: Array<number | null | undefined>) =>
-  getCreatePatchFormatsForSizes(...sizes).includes(normalizeCreatePatchFormat(format));
-
-const getDefaultCreatePatchFormatForSources = ({
-  originalSize,
-  modifiedSize,
-}: CreatePatchFormatPreferenceInput = {}) => {
-  return getMaxCreateRomSize(originalSize, modifiedSize) < CREATE_BPS_DEFAULT_LIMIT_BYTES
-    ? CREATE_PATCH_DEFAULT_FORMAT
-    : CREATE_PATCH_LARGE_DEFAULT_FORMAT;
-};
-
 const getPreferredCreatePatchFormat = ({
   automaticFormatSelection = true,
   candidateDefaultFormat,
@@ -85,15 +71,14 @@ const getPreferredCreatePatchFormat = ({
     : getCreatePatchFormatsForSizes(originalSize, modifiedSize);
   const normalizedRequestedFormat = normalizeCreatePatchFormat(requestedFormat);
   const normalizedCandidateDefaultFormat = normalizeCreatePatchFormat(candidateDefaultFormat);
-  const defaultFormat =
+  // The default comes from Rust: the resolved candidate default already accounts
+  // for archive/special-compression inputs. Before candidates resolve, fall back
+  // to the preferred-first entry of the size-bucket list (the generated table is
+  // ordered best-first) rather than re-deriving the default policy here.
+  const supportedDefaultFormat =
     normalizedCandidateDefaultFormat && formats.includes(normalizedCandidateDefaultFormat)
       ? normalizedCandidateDefaultFormat
-      : getDefaultCreatePatchFormatForSources({
-          automaticFormatSelection,
-          modifiedSize,
-          originalSize,
-        });
-  const supportedDefaultFormat = formats.includes(defaultFormat) ? defaultFormat : formats[0];
+      : formats[0];
   if (!normalizedRequestedFormat) return supportedDefaultFormat;
   if (
     automaticFormatSelection &&
@@ -104,28 +89,10 @@ const getPreferredCreatePatchFormat = ({
   return formats.includes(normalizedRequestedFormat) ? normalizedRequestedFormat : supportedDefaultFormat;
 };
 
-const getCreatePatchFormatSizeErrorMessage = (
-  format: string,
-  ...sizes: Array<number | null | undefined>
-): string | null => {
-  if (createPatchFormatSupportsCreateSizes(format, ...sizes)) return null;
-  const normalizedFormat = normalizeCreatePatchFormat(format);
-  const maxSize = getMaxCreateRomSize(...sizes);
-  if ((normalizedFormat === "ips" || normalizedFormat === "ebp") && maxSize >= CREATE_IPS_SIZE_LIMIT_BYTES) {
-    return `Create inputs at or above ${formatByteSize(CREATE_IPS_SIZE_LIMIT_BYTES)} should use BPS, XDelta, or another large-capable patch type; selected patch type: ${normalizedFormat}`;
-  }
-  if (maxSize > CREATE_LEGACY_PATCH_SIZE_LIMIT_BYTES) {
-    return `Create inputs above ${formatByteSize(CREATE_LEGACY_PATCH_SIZE_LIMIT_BYTES)} require xdelta or PPF patches; selected patch type: ${normalizedFormat}`;
-  }
-  return `Unsupported patch type for create input sizes: ${normalizedFormat}`;
-};
-
 export {
   CREATE_BPS_DEFAULT_LIMIT_BYTES,
   CREATE_IPS_SIZE_LIMIT_BYTES,
   CREATE_LEGACY_PATCH_SIZE_LIMIT_BYTES,
-  createPatchFormatSupportsCreateSizes,
-  getCreatePatchFormatSizeErrorMessage,
   getCreatePatchFormatsForSizes,
   getPreferredCreatePatchFormat,
   normalizeCreatePatchFormat,

@@ -8,11 +8,7 @@ import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { CreatePatchInput, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import { ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY } from "../../wasm/generated/rom-weaver-format-metadata.ts";
 import { CREATE_ARCHIVE_COMPRESSION_FORMATS } from "../compression/container-format-registry.ts";
-import {
-  createPatchFormatSupportsCreateSizes,
-  getCreatePatchFormatSizeErrorMessage,
-  normalizeCreatePatchFormat,
-} from "../create/patch-format-limits.ts";
+import { getCreatePatchFormatsForSizes, normalizeCreatePatchFormat } from "../create/patch-format-limits.ts";
 import { createWorkflowDeps, runCreateWorkflow } from "../create/workflow.ts";
 import { RomWeaverError, withAbortSignal } from "../errors.ts";
 import { getFileNameWithoutExtension } from "../input/path-utils.ts";
@@ -197,11 +193,11 @@ class CreateWorkflowController<TSource, TDestination> extends BaseWorkflowContro
       const patchType = this.getPatchType();
       if (!SUPPORTED_CREATE_PATCH_TYPES.has(patchType))
         throw new RomWeaverError("UNSUPPORTED_FORMAT", `Unsupported patch type: ${patchType}`);
-      if (!createPatchFormatSupportsCreateSizes(patchType, original.state.size, modified.state.size)) {
+      const supportedCreateFormats = getCreatePatchFormatsForSizes(original.state.size, modified.state.size);
+      if (!supportedCreateFormats.includes(patchType)) {
         throw new RomWeaverError(
           "UNSUPPORTED_FORMAT",
-          getCreatePatchFormatSizeErrorMessage(patchType, original.state.size, modified.state.size) ||
-            `Unsupported patch type for create input sizes: ${patchType}`,
+          `Patch type ${patchType} is not available for these input sizes; supported: ${supportedCreateFormats.join(", ")}`,
         );
       }
       this.getOutputCompression();

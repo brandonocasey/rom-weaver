@@ -289,7 +289,7 @@ test("create workflow steers IPS-family formats away from 16.78 MB and larger in
 
     await expect(workflow.run()).rejects.toMatchObject({
       code: "UNSUPPORTED_FORMAT",
-      message: expect.stringContaining("at or above 16.78 MB"),
+      message: expect.stringContaining("not available for these input sizes"),
     });
   } finally {
     await workflow.dispose();
@@ -308,7 +308,7 @@ test("create workflow limits over-268.44 MB inputs to xdelta and ppf", async () 
 
     await expect(workflow.run()).rejects.toMatchObject({
       code: "UNSUPPORTED_FORMAT",
-      message: expect.stringContaining("xdelta or PPF"),
+      message: expect.stringContaining("xdelta, ppf"),
     });
   } finally {
     await workflow.dispose();
