@@ -308,6 +308,67 @@ fn ingest_nested_rom_archive_descends_to_leaf() {
 }
 
 #[test]
+fn ingest_nested_patch_archive_routes_as_patch_source() {
+    // A patch bundled inside a nested archive: the OUTER archive's only entry is the inner container,
+    // so the top-level classify sees no patch name and defaults to `is_rom = true`. The rom-filtered
+    // descent then finds no ROM in the inner archive — ingest must fall back to patch ingestion and
+    // route the whole bundle as a patch source instead of erroring with "no entries matched --rom-filter".
+    let temp = setup_temp_dir();
+    let patch = temp.child("hack.ips");
+    fs::write(
+        patch.path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 0,
+                data: b"patched".to_vec(),
+            }],
+            None,
+        ),
+    )
+    .expect("ips fixture");
+    let inner = temp.child("inner.zip");
+    command_stdout(
+        &[
+            "compress",
+            patch.path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            inner.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+    let outer = temp.child("outer.tar.gz");
+    write_tar_gz_fixture(&[(inner.path(), "inner.zip")], outer.path());
+    let out_dir = temp.child("ingest-nested-patch-out");
+
+    let terminal = ingest_terminal(&[
+        "ingest",
+        outer.path().to_str().expect("path"),
+        "--out-dir",
+        out_dir.path().to_str().expect("path"),
+        "--json",
+    ]);
+    let ingest = &terminal["details"]["ingest"];
+    assert_eq!(ingest["kind"], "patch");
+    assert_eq!(ingest["is_rom"], false);
+    assert!(
+        ingest["assets"]
+            .as_array()
+            .expect("assets array")
+            .is_empty(),
+        "a nested patch bundle surfaces no ROM assets"
+    );
+    let patches = ingest["patches"].as_array().expect("patches array");
+    assert_eq!(patches.len(), 1, "the nested patch leaf is surfaced");
+    assert_eq!(
+        patches[0]["is_valid_patch"], true,
+        "the nested IPS leaf parses, so it is marked valid"
+    );
+}
+
+#[test]
 fn ingest_bare_ips_patch_describes_without_checksumming() {
     let temp = setup_temp_dir();
     let patch = temp.child("hack.ips");

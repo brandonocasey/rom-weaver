@@ -361,7 +361,7 @@ impl CliApp {
         // cannot be asked (matches the prior auto-split behavior).
         let resolved_split_bin =
             self.resolve_ingest_split_bin(handler, source, split_bin, context)?;
-        let assets = self.ingest_rom_leaves(
+        let assets = match self.ingest_rom_leaves(
             handler,
             source,
             out_dir,
@@ -371,7 +371,43 @@ impl CliApp {
             resolved_split_bin,
             algorithms,
             context,
-        )?;
+        ) {
+            Ok(assets) => assets,
+            Err(rom_error) => {
+                // `classify_container_entries` only inspects TOP-LEVEL names, so an archive whose only
+                // entries are nested containers carries no patch names and defaults to `is_rom = true`.
+                // When the patches actually live a level down, the rom-filtered descent finds no ROM and
+                // errors. Re-ingest as patches before surfacing that error: a bundle that is patches all
+                // the way down routes as a patch source; anything else keeps the original ROM failure.
+                let patches = self
+                    .ingest_patch_leaves(
+                        handler,
+                        source,
+                        out_dir,
+                        &raw_selections,
+                        no_ignore,
+                        no_nested_extract,
+                        true,
+                        None,
+                        context,
+                    )
+                    .unwrap_or_default();
+                if patches.is_empty() {
+                    return Err(rom_error);
+                }
+                trace!(
+                    source = %source.display(),
+                    patch_count = patches.len(),
+                    "ingest ROM branch found no ROM; re-routed nested bundle as patch source"
+                );
+                return Ok(IngestOutcome {
+                    kind: IngestKind::Patch,
+                    is_rom: false,
+                    assets: Vec::new(),
+                    patches,
+                });
+            }
+        };
         // A mixed archive (ROM + sidecar patches) surfaces both so the host can offer applying the
         // bundled patches without losing the ROM checksum. The sidecar patches are enumerated
         // independently of the ROM keep-one `select` (a chosen ROM must not hide the bundle's patches)
