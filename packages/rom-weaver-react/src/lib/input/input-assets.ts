@@ -18,6 +18,15 @@ type InputPreparationMetrics = {
   wasDecompressed?: boolean;
 };
 
+// A sidecar patch ingest extracted from the same ROM-bearing archive, harvested off the single
+// ROM-staging `ingest` pass (no separate scan). The host surfaces these for the user to apply
+// (interactive) or auto-applies the name-matched ones (`sidecarOrder` set) headlessly.
+type PreparedSidecarPatch = {
+  file: PatchFileInstance;
+  parentCompressions: InputParentCompression[];
+  sidecarOrder?: number;
+};
+
 type InputAsset = {
   id: string;
   fileName: string;
@@ -32,6 +41,9 @@ type InputAsset = {
   file: PatchFileInstance;
   groupId?: string;
   patchable: boolean;
+  // Sidecar patches bundled alongside this ROM in the source archive, harvested from the same ingest
+  // pass that produced this asset. Set on the primary ROM asset of a mixed ROM+patch archive only.
+  sidecarPatches?: PreparedSidecarPatch[];
   disc?: {
     cueText?: string;
     gdiText?: string;
@@ -182,7 +194,7 @@ const attachInputPreparationMetrics = (
 const getInputPreparationMetrics = (assets: InputAsset[]): InputPreparationMetrics | undefined =>
   assets.find((asset) => asset.preparation)?.preparation;
 
-export type { InputAsset, InputParentCompression };
+export type { InputAsset, InputParentCompression, PreparedSidecarPatch };
 export {
   attachInputPreparationMetrics,
   getInputPreparationMetrics,

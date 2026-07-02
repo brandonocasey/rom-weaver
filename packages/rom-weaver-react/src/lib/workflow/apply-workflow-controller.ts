@@ -11,12 +11,10 @@ import { patchWorkflowDeps, runApplyWorkflow } from "../apply/workflow.ts";
 import { isCompressionFormat } from "../compression/container-format-registry.ts";
 import { RomWeaverError, toRomWeaverError, withAbortSignal } from "../errors.ts";
 import { getPatchFileBlob, getPatchFileBytes } from "../input/binary-service.ts";
-import type { InputAsset, InputParentCompression } from "../input/input-assets.ts";
+import type { InputAsset, InputParentCompression, PreparedSidecarPatch } from "../input/input-assets.ts";
 import {
-  archiveHasSelectablePatches,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
-  prepareAutoPatchInputs,
   prepareInputFile,
 } from "../input/input-preparation-service.ts";
 import { selectionToArchiveEntry } from "../input/selection.ts";
@@ -309,70 +307,57 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
     return patchFile as unknown as TSource;
   }
 
+  // Sidecar patches the ROM-staging `ingest` already extracted from this stage's source archive,
+  // harvested off the same pass (no separate scan). Empty unless the source was a mixed ROM+patch
+  // archive.
+  private stageSidecarPatches(stage: StagedSource<TSource>): PreparedSidecarPatch[] {
+    return (stage.preparedInputAssets ?? []).flatMap((asset) => asset.sidecarPatches ?? []);
+  }
+
   private async discoverImplicitPatches(): Promise<void> {
-    if (this.patches.length || !this.inputs.length) return;
-    // No interactive selection handler — headless / libretro-style automatic soft-patching — so keep the
-    // name-matched sidecar auto-apply: a patch named after the ROM applies with no prompt, and ambiguous
-    // bundles are left for an explicit add. With a handler (the webapp) every patch the archive carries
-    // is surfaced through the selection dialog instead, so nothing is silently dropped.
+    if (this.patches.length || !this.inputSession) return;
+    const stages = this.inputSession.stages.length ? this.inputSession.stages : [this.inputSession.view];
+    // No interactive selection handler — headless / libretro-style automatic soft-patching — so apply
+    // only the sidecar patch(es) whose name matches the ROM, with no prompt. With a handler (the webapp)
+    // every sidecar patch the archive carried is surfaced through the selection flow instead.
     if (!this.selectFile) {
-      await this.discoverNameMatchedSidecarPatches();
+      await this.discoverNameMatchedSidecarPatches(stages);
       return;
     }
-    const options = this.createExecutionOptions();
-    for (const source of this.inputs) {
-      let hasPatches = false;
-      try {
-        hasPatches = await archiveHasSelectablePatches(source as never, options, this.runtime);
-      } catch (error) {
-        this.trace("patch.implicit.discovery-failed", { error });
+    for (const stage of stages) {
+      const sidecarPatches = this.stageSidecarPatches(stage);
+      if (!sidecarPatches.length) continue;
+      // A lone sidecar patch auto-adds (no prompt), reusing the leaf the ROM-staging ingest already
+      // extracted. Two or more open the multi-select dialog — the user picks, nothing is attributed by
+      // name or dropped. (The apply execution skips its own discovery once rows exist.)
+      if (sidecarPatches.length === 1) {
+        const only = sidecarPatches[0];
+        if (only) {
+          this.trace("patch.implicit.sidecar-auto-add", { fileName: only.file.fileName });
+          await this.addFannedOutPatch(only.file, only.parentCompressions);
+        }
         continue;
       }
-      if (!hasPatches) continue;
-      // A lone patch auto-adds; two or more open the select dialog. The user picks — nothing is
-      // attributed by name or dropped. (The apply execution skips its own discovery once rows exist.)
-      await this.surfaceArchivePatchSelection(this.cloneArchiveAsPatchSource(source as never));
+      this.trace("patch.implicit.sidecar-surface", { count: sidecarPatches.length, fileName: stage.state.fileName });
+      await this.surfaceArchivePatchSelection(this.cloneArchiveAsPatchSource(stage.source));
     }
   }
 
   // Headless/libretro path: apply the sidecar patch(es) whose name matches the ROM, with no selection
-  // prompt (matching the non-interactive apply execution and RetroArch soft-patch conventions).
-  private async discoverNameMatchedSidecarPatches(): Promise<void> {
-    const options = this.createExecutionOptions();
-    const discovered: PatchFileInstance[] = [];
-    for (const source of this.inputs) {
-      try {
-        discovered.push(...(await prepareAutoPatchInputs(source as never, options, this.runtime)));
-      } catch (error) {
-        this.trace("patch.implicit.discovery-failed", { error });
-      }
-    }
+  // prompt (matching the non-interactive apply execution and RetroArch soft-patch conventions). The
+  // matches and apply order come from the ROM-staging ingest (`sidecarOrder`), not a separate scan.
+  private async discoverNameMatchedSidecarPatches(stages: StagedSource<TSource>[]): Promise<void> {
+    const discovered = stages
+      .flatMap((stage) => this.stageSidecarPatches(stage))
+      .filter((leaf) => typeof leaf.sidecarOrder === "number")
+      .sort((left, right) => (left.sidecarOrder ?? 0) - (right.sidecarOrder ?? 0));
     if (!discovered.length) return;
     this.trace("patch.implicit.discovered", {
       patchCount: discovered.length,
-      patches: discovered.map((patch) => patch.fileName || "patch.bin"),
+      patches: discovered.map((leaf) => leaf.file.fileName || "patch.bin"),
     });
-    for (const patchFile of discovered) {
-      const stage = this.createInitialSource("patch", this.createImplicitPatchSource(patchFile), this.patches.length);
-      stage.preparedPatchFile = patchFile;
-      stage.outputLabel =
-        (patchFile as PatchFileInstance & { _generatedPatchName?: string })._generatedPatchName ||
-        createPatchOutputLabel(patchFile.fileName) ||
-        stage.outputLabel;
-      applyPreparedPatchMetadata(stage, {
-        decompressionTimeMs: 0,
-        file: patchFile,
-        parentCompressions: [],
-        sourceSize: patchFile.fileSize,
-        wasDecompressed: true,
-      });
-      this.addDirectCandidate(stage, "patch", stage.index, stage.state.id);
-      stage.state.selectedCandidateId = stage.state.candidates[0]?.id;
-      if (stage.outputLabel)
-        (stage.preparedPatchFile as PatchFileInstance & { _generatedPatchName?: string })._generatedPatchName =
-          stage.outputLabel;
-      await this.evaluatePatchReadiness(stage);
-      this.patches.push(stage);
+    for (const leaf of discovered) {
+      await this.addFannedOutPatch(leaf.file, leaf.parentCompressions);
     }
   }
 

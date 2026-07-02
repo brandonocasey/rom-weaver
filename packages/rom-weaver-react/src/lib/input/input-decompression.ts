@@ -4,7 +4,7 @@ import type { PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
 import { RomWeaverError } from "../errors.ts";
 import { reportProgress } from "../progress/progress-reporting.ts";
 import { isLazyExternalPatchFile } from "./binary-service.ts";
-import type { InputAsset, InputParentCompression } from "./input-assets.ts";
+import type { InputAsset, InputParentCompression, PreparedSidecarPatch } from "./input-assets.ts";
 import {
   attachInputPreparationMetrics,
   getInputPreparationMetrics,
@@ -94,12 +94,19 @@ const finalizePreparedInputAssets = (
   wasDecompressed: boolean,
   decompressionTimeMs: number,
   parentCompressions: InputParentCompression[],
-) =>
-  attachInputPreparationMetrics(assets, {
+  sidecarPatches: PreparedSidecarPatch[] = [],
+) => {
+  // Re-attach the sidecar patches the descent harvested in an earlier pass: each later pass rebuilds
+  // the asset (e.g. a nested zip→chd), so they ride the loop's accumulator and land on the final asset.
+  if (sidecarPatches.length && assets[0]) {
+    assets[0].sidecarPatches = [...(assets[0].sidecarPatches ?? []), ...sidecarPatches];
+  }
+  return attachInputPreparationMetrics(assets, {
     ...(Number.isFinite(sourceSize) ? { sourceSize } : {}),
     ...(parentCompressions.length ? { parentCompressions: parentCompressions.map((entry) => ({ ...entry })) } : {}),
     ...(wasDecompressed ? { decompressionTimeMs, wasDecompressed: true } : { wasDecompressed: false }),
   });
+};
 
 const getKnownDecompressionTimeMs = (entries: InputParentCompression[]): number | undefined => {
   let total = 0;
@@ -335,6 +342,7 @@ const resolveCompressedInputAssets = async (
   let selectedEntryName = selectedInputEntryName;
   let decompressionTimeMs = 0;
   const parentCompressions: InputParentCompression[] = [];
+  const harvestedSidecarPatches: PreparedSidecarPatch[] = [];
   const seenCompressedInputs = new Set<string>();
   let wasDecompressed = false;
   const sourceSize = file.fileSize;
@@ -352,6 +360,7 @@ const resolveCompressedInputAssets = async (
         wasDecompressed,
         decompressionTimeMs,
         parentCompressions,
+        harvestedSidecarPatches,
       );
     }
     const classification = getCompressionClassification(current);
@@ -376,6 +385,7 @@ const resolveCompressedInputAssets = async (
         wasDecompressed,
         decompressionTimeMs,
         parentCompressions,
+        harvestedSidecarPatches,
       );
     };
     const finalizeReason = getPreparedInputFinalizeReason(current, classification);
@@ -398,6 +408,7 @@ const resolveCompressedInputAssets = async (
             wasDecompressed,
             decompressionTimeMs,
             parentCompressions,
+            harvestedSidecarPatches,
           );
     }
     if (classification.kind !== "compression") return finalizeBareRom();
@@ -431,6 +442,14 @@ const resolveCompressedInputAssets = async (
     const startedAt = Date.now();
     const assets = await resolveArchiveInputAssets(current, options, sourceIndex, runtime, selectedEntryName);
     const durationMs = Date.now() - startedAt;
+    // Move any sidecar patches this pass's descent harvested onto the loop accumulator: a later pass
+    // rebuilds the asset, so finalize re-attaches them to whatever asset is ultimately returned.
+    for (const asset of assets) {
+      if (asset.sidecarPatches?.length) {
+        harvestedSidecarPatches.push(...asset.sidecarPatches);
+        asset.sidecarPatches = undefined;
+      }
+    }
     traceInputDecompression(options, "input.decompression.assets.after", {
       compressedIdentity,
       decompressionTimeMs: durationMs,
@@ -486,7 +505,14 @@ const resolveCompressedInputAssets = async (
         reason: "non-single-rom-assets",
         sourceIndex,
       });
-      return finalizePreparedInputAssets(assets, sourceSize, wasDecompressed, decompressionTimeMs, parentCompressions);
+      return finalizePreparedInputAssets(
+        assets,
+        sourceSize,
+        wasDecompressed,
+        decompressionTimeMs,
+        parentCompressions,
+        harvestedSidecarPatches,
+      );
     }
     if (hasSameFileIdentity(current, assets[0].file)) {
       traceInputDecompression(options, "input.decompression.assets.stall", {

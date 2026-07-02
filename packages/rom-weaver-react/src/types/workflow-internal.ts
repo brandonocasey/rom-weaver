@@ -17,7 +17,6 @@ type PatchWorkflowDeps = {
   getBinarySourceSize: typeof import("../lib/input/input-preparation-service.ts").getBinarySourceSize;
   normalizePatchOptions: typeof import("../lib/apply/patch-apply-service.ts").normalizePatchOptions;
   parsePatchForApply: typeof import("../lib/apply/patch-apply-service.ts").parsePatchForApply;
-  prepareAutoPatchInputs: typeof import("../lib/input/input-preparation-service.ts").prepareAutoPatchInputs;
   prepareInput: typeof import("../lib/input/input-preparation-service.ts").prepareInput;
   prepareInputAssets: typeof import("../lib/input/input-preparation-service.ts").prepareInputAssets;
   prepareMultipleDirectInputAssets: typeof import("../lib/input/input-preparation-service.ts").prepareMultipleDirectInputAssets;

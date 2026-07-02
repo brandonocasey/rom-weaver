@@ -2,13 +2,16 @@ import { getInputPreparationMetrics, type InputAsset } from "../../lib/input/inp
 import { getInputSourceFileName } from "../../lib/input/input-classification.ts";
 import {
   getBinarySourceSize,
-  prepareAutoPatchInputs,
   prepareInput,
   prepareInputAssets,
   prepareMultipleDirectInputAssets,
 } from "../../lib/input/input-preparation-service.ts";
 import { getBaseFileName, hasFileNameExtension, replaceFileNameExtension } from "../../lib/input/path-utils.ts";
-import { applySidecarPatchOutputLabel, resolveSidecarPatchEntries } from "../../lib/input/sidecar-patch-resolution.ts";
+import {
+  applySidecarPatchOutputLabel,
+  getSidecarPatchOutputLabel,
+  resolveSidecarPatchEntries,
+} from "../../lib/input/sidecar-patch-resolution.ts";
 import { buildSessionOutputFiles } from "../../lib/output/output-build-service.ts";
 import { requireOutputName } from "../../lib/output/output-name-validation.ts";
 import { reportProgress } from "../../lib/progress/progress-reporting.ts";
@@ -295,8 +298,15 @@ const runApplyWorkflow = async (
       "patch.autodiscover",
       "patch",
       async () => {
-        for (const inputSource of inputSources) {
-          patchFiles = patchFiles.concat(await deps.prepareAutoPatchInputs(inputSource, options));
+        // Name-matched sidecar patches the ROM-staging ingest already extracted from the input
+        // archive (no separate scan); ordered by ingest's libretro apply order.
+        const sidecars = inputAssets
+          .flatMap((asset) => asset.sidecarPatches ?? [])
+          .filter((leaf) => typeof leaf.sidecarOrder === "number")
+          .sort((left, right) => (left.sidecarOrder ?? 0) - (right.sidecarOrder ?? 0));
+        for (const leaf of sidecars) {
+          applySidecarPatchOutputLabel(leaf.file, getSidecarPatchOutputLabel(leaf.file.fileName));
+          patchFiles.push(leaf.file);
         }
       },
       () => ({
@@ -620,7 +630,6 @@ const patchWorkflowDeps = {
   getBinarySourceSize,
   normalizePatchOptions,
   parsePatchForApply,
-  prepareAutoPatchInputs,
   prepareInput,
   prepareInputAssets,
   prepareMultipleDirectInputAssets,

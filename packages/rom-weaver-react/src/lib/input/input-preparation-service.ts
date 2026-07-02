@@ -38,10 +38,8 @@ import {
   resolveCompressedInputFile,
 } from "./input-decompression.ts";
 import {
-  archiveHasSelectablePatches,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
-  prepareAutoPatchInputs,
 } from "./input-preparation-archive.ts";
 import { getBaseFileName, normalizeArchiveEntryName } from "./path-utils.ts";
 
@@ -585,11 +583,9 @@ const prepareInputFile = async (
 };
 
 export {
-  archiveHasSelectablePatches,
   getBinarySourceSize,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
-  prepareAutoPatchInputs,
   prepareInput,
   prepareInputAssets,
   prepareInputFile,

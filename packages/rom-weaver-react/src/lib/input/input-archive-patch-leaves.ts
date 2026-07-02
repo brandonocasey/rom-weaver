@@ -1,5 +1,7 @@
 import { DEFAULT_VFS_ROOT } from "../../storage/vfs/path.ts";
+import type { ParsedPatchDescriptor } from "../../types/ingest.ts";
 import type { CandidateSelectionRequest, SelectionFileCandidate } from "../../types/selection.ts";
+import type { PublicOutput } from "../../types/workflow-runtime-types.ts";
 import { attachIngestPatchRequirements, patchProbeRequirementsFromDescriptor } from "../apply/patch-apply-service.ts";
 import { RomWeaverError } from "../errors.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
@@ -28,6 +30,9 @@ type PatchArchiveLeaf = {
   candidate: SelectionFileCandidate;
   file: PatchFileInstance;
   parentCompressions: InputParentCompression[];
+  // Libretro sidecar apply order when ingest name-matched this patch to the source's ROM; absent for
+  // an unmatched patch. Drives the non-interactive (headless) auto-apply of name-matched sidecars.
+  sidecarOrder?: number;
 };
 
 // Each ambiguous patch selection extracts every branch ONCE; the resulting (materialized) leaf files
@@ -100,10 +105,26 @@ const enumeratePatchLeaves = async (
     source: getCompressionRuntimeSource(archiveFile),
     ...(options?.signal ? { signal: options.signal } : {}),
   });
+  return buildPatchArchiveLeaves(archiveFile, result.patches, patchOutputs, extractElapsedMs, options, sourceIndex);
+};
+
+/** Turn an `ingest` result's patch descriptors + adopted `patchOutputs` into materialized leaf files
+ * with selection candidates. Shared by {@link enumeratePatchLeaves} (which runs its own ingest for a
+ * dropped patch archive) and the ROM-staging descent (which harvests the sidecar patches its single
+ * ingest already extracted, so no second pass is needed). Every patch ingest identified is surfaced
+ * (only an archive leaf is excluded); the apply-time validate guards a genuinely bad one. */
+const buildPatchArchiveLeaves = async (
+  archiveFile: PatchFileInstance,
+  patches: ParsedPatchDescriptor[],
+  patchOutputs: PublicOutput[],
+  extractElapsedMs: number | undefined,
+  options: InputPreparationOptions,
+  sourceIndex: number,
+): Promise<PatchArchiveLeaf[]> => {
   const cache = getValidatedPatchArchiveEntryCache(archiveFile);
   const leaves: PatchArchiveLeaf[] = [];
-  for (let index = 0; index < result.patches.length; index += 1) {
-    const descriptor = result.patches[index];
+  for (let index = 0; index < patches.length; index += 1) {
+    const descriptor = patches[index];
     if (!descriptor) continue;
     const displayPath = descriptor.leafPath;
     // Archive leaves are adopted 1:1 into patchOutputs (a bare patch — never an archive — yields none).
@@ -154,10 +175,10 @@ const enumeratePatchLeaves = async (
       },
       file,
       parentCompressions,
+      ...(typeof descriptor.sidecarOrder === "number" ? { sidecarOrder: descriptor.sidecarOrder } : {}),
     });
   }
   traceArchivePreparation(options, "input.archive.patch.enumerate.finish", {
-    compressionFormat,
     file: describeArchiveFileForTrace(archiveFile),
     leafCandidateIds: leaves.map((leaf) => leaf.candidate.id),
     leafCount: leaves.length,
@@ -234,4 +255,9 @@ const getPatchLeafParentCompressionsForSelection = (
   candidateId: string,
 ): InputParentCompression[] | undefined => patchLeafFilesByRequest.get(request)?.get(candidateId)?.parentCompressions;
 
-export { getPatchLeafFileForSelection, getPatchLeafParentCompressionsForSelection, resolvePatchArchiveLeaf };
+export {
+  buildPatchArchiveLeaves,
+  getPatchLeafFileForSelection,
+  getPatchLeafParentCompressionsForSelection,
+  resolvePatchArchiveLeaf,
+};

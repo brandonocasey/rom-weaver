@@ -4,33 +4,26 @@ import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import type { ExtractedFileEntry, ExtractStepDetails } from "../../wasm/index.ts";
 import { createArchiveSourceBlob } from "../archive-utils.ts";
-import { CREATE_ROM_SPECIFIC_COMPRESSION_FORMATS } from "../compression/container-format-registry.ts";
-import { getPathBaseName } from "../path-utils.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
 import { romTypeFromEmittedFile } from "../runtime/run-result-parsing.ts";
 import { isCueEntryFileName, isGdiEntryFileName } from "./archive.ts";
 import type { PatchFileInstance } from "./binary-service.ts";
 import {
-  attachPatchFileSourceRef,
   createPatchFile,
   decodeUtf8,
   getPatchFileBlob,
   getPatchFileBytes,
-  getPatchFileCleanup,
   getPatchFileExternalSource,
   getPatchFileHandle,
   isLazyExternalPatchFile,
-  normalizeArchiveEntryBytes,
 } from "./binary-service.ts";
 import { buildDescentParentCompressions, type DescentExtractStep } from "./input-archive-descent-chain.ts";
-import { resolveCompressionRomAutoPickEntryName } from "./input-archive-disc-groups.ts";
 import {
+  buildPatchArchiveLeaves,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
   resolvePatchArchiveLeaf,
 } from "./input-archive-patch-leaves.ts";
-import { filterValidPatchArchiveEntriesForSource } from "./input-archive-patch-validity.ts";
-import { getZ3dsOutputPathFileName } from "./input-archive-z3ds-paths.ts";
 import {
   attachInputPreparationMetrics,
   type InputAsset,
@@ -48,7 +41,6 @@ import {
 } from "./input-preparation-compression.ts";
 import { getBaseFileName, normalizeArchiveEntryName } from "./path-utils.ts";
 import { parseCueFile } from "./rom-specific-file-utils.ts";
-import { applySidecarPatchOutputLabel, resolveSidecarPatchEntries } from "./sidecar-patch-resolution.ts";
 
 type ArchiveEntryLike = {
   archiveEntryType?: string;
@@ -71,9 +63,6 @@ type ArchiveFileBackedSource = Blob | FileSystemFileHandle | string;
 type ArchiveFileBackedPatchFile = PatchFileInstance & {
   _archiveFileBackedSource?: ArchiveFileBackedSource | null;
 };
-const PATH_BACKED_COMPRESSION_FORMATS = new Set<string>(CREATE_ROM_SPECIFIC_COMPRESSION_FORMATS);
-const SYNC_READ_ARCHIVE_ENTRY_REGEX =
-  /\.(?:cue|ips|ups|bps|aps|rup|ppf|ebp|bdf|bsp|bspatch|mod|xdelta|delta|dat|vcdiff)\d*$/i;
 const describeArchiveFileForTrace = (file: PatchFileInstance) => ({
   fileName: file.fileName || "input.bin",
   filePath: typeof file.filePath === "string" ? file.filePath : "",
@@ -102,11 +91,6 @@ const traceArchivePreparation = (
 
 const summarizeEntryNames = (entries: ArchiveEntryLike[], maxCount = 8) =>
   entries.slice(0, maxCount).map((entry) => entry.filename);
-
-const isCompressionEntryFileName = (fileName: string) => classifyPatcherInput({ fileName }).kind === "compression";
-
-const filterNestedContainerEntries = (entries: ArchiveEntryLike[]) =>
-  entries.filter((entry) => typeof entry.filename === "string" && isCompressionEntryFileName(entry.filename));
 
 const getChdCodecModeFromMediaKind = (mediaKind: unknown): ChdCodecMode | null => {
   const normalized = String(mediaKind || "")
@@ -300,139 +284,6 @@ const computeListCompressionEntryResult = async (
   return { ...result, chdMode, entries };
 };
 
-const extractCompressionEntries = async (
-  file: PatchFileInstance,
-  entryNames: string[],
-  options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
-  outputName?: string,
-  checksumAlgorithms?: string[],
-  kindFilter: CompressionEntryKindFilter = {},
-) => {
-  const resolvedRuntime = await resolveInputPreparationRuntime(runtime);
-  if (!resolvedRuntime.compression.extract) throw new Error("Compression extraction is unavailable");
-  const compressionFormat = getCompressionFormat(file);
-  traceArchivePreparation(options, "input.archive.extract.start", {
-    compressionFormat,
-    entries: entryNames,
-    file: describeArchiveFileForTrace(file),
-    outputName: outputName || "",
-    patchFilter: !!kindFilter.patchFilter,
-    romFilter: !!kindFilter.romFilter,
-    runtime: resolvedRuntime.name,
-  });
-  const result = await resolvedRuntime.compression.extract({
-    entries: entryNames,
-    format: compressionFormat,
-    options: getCompressionRuntimeOptions(options, { checksumAlgorithms }, kindFilter),
-    outputName,
-    source: getCompressionRuntimeSource(file),
-  });
-  const isPathBackedCompressionOutput = PATH_BACKED_COMPRESSION_FORMATS.has(compressionFormat);
-  traceArchivePreparation(options, "input.archive.extract.finish", {
-    compressionFormat,
-    entryCount: entryNames.length,
-    file: describeArchiveFileForTrace(file),
-    outputCount: result.outputs.length,
-    outputNames: result.outputs.map((output) => output.fileName || ""),
-    patchFilter: !!kindFilter.patchFilter,
-    pathBackedCompressionOutput: isPathBackedCompressionOutput,
-    romFilter: !!kindFilter.romFilter,
-    runtime: resolvedRuntime.name,
-  });
-  return Promise.all(
-    result.outputs.map(async (output, index) => {
-      const requestedEntryName = entryNames[index] || output.fileName || "output.bin";
-      const selectedEntryFileName = getBaseFileName(requestedEntryName);
-      const usePathBackedOutput = isPathBackedCompressionOutput && !isCueEntryFileName(selectedEntryFileName);
-      const isRomSpecificExtractionOutput = isPathBackedCompressionOutput && !isCueEntryFileName(selectedEntryFileName);
-      const shouldMaterializeForSyncRead = SYNC_READ_ARCHIVE_ENTRY_REGEX.test(selectedEntryFileName);
-      const resolvedFileName = isPathBackedCompressionOutput
-        ? compressionFormat === "z3ds"
-          ? getZ3dsOutputPathFileName(output, selectedEntryFileName)
-          : selectedEntryFileName
-        : output.fileName || selectedEntryFileName;
-      const binFile = await createPatchFileFromPublicOutput(output, resolvedFileName, {
-        materializeBlob: shouldMaterializeForSyncRead,
-        preferExternalFilePath: !shouldMaterializeForSyncRead,
-      });
-      binFile.fileName = resolvedFileName;
-      const externalSource = getPatchFileExternalSource(binFile, resolvedFileName, { preferDirectBrowserSource: true });
-      if (externalSource)
-        attachPatchFileSourceRef(binFile, {
-          ...externalSource,
-          fileName: resolvedFileName,
-          size:
-            typeof binFile.fileSize === "number" && Number.isFinite(binFile.fileSize)
-              ? binFile.fileSize
-              : externalSource.size,
-        });
-      if (isRomSpecificExtractionOutput)
-        (binFile as { _romSpecificDecompressionOutput?: boolean })._romSpecificDecompressionOutput = true;
-      traceArchivePreparation(options, "input.archive.extract.output", {
-        compressionFormat,
-        output: describeArchiveFileForTrace(binFile),
-        requestedEntryName,
-        resolvedFileName,
-        usePathBackedOutput,
-      });
-      (binFile as { _archiveEntryName?: string })._archiveEntryName = requestedEntryName;
-      (binFile as { _archiveFileName?: string })._archiveFileName = file.fileName;
-      return binFile;
-    }),
-  );
-};
-
-const extractArchiveEntryBytes = async (
-  archiveFile: PatchFileInstance,
-  entryName: string,
-  options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
-  checksumAlgorithms?: string[],
-  kindFilter: CompressionEntryKindFilter = {},
-) => {
-  const [entryFile] = await extractCompressionEntries(
-    archiveFile,
-    [entryName],
-    options,
-    runtime,
-    getBaseFileName(entryName),
-    checksumAlgorithms,
-    kindFilter,
-  );
-  if (!entryFile) throw new Error(`Archive entry data is not available: ${entryName}`);
-  try {
-    return normalizeArchiveEntryBytes(getPatchFileBytes(entryFile));
-  } finally {
-    await Promise.resolve(getPatchFileCleanup(entryFile)?.()).catch(() => undefined);
-  }
-};
-
-const extractArchiveEntry = async (
-  archiveFile: PatchFileInstance,
-  entryName: string,
-  fileName?: string,
-  options: InputPreparationOptions = undefined,
-  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
-  checksumAlgorithms?: string[],
-  kindFilter: CompressionEntryKindFilter = {},
-): Promise<PatchFileInstance> => {
-  const [entryFile] = await extractCompressionEntries(
-    archiveFile,
-    [entryName],
-    options,
-    runtime,
-    fileName || getBaseFileName(entryName),
-    checksumAlgorithms,
-    kindFilter,
-  );
-  if (!entryFile) throw new Error(`Archive entry data is not available: ${entryName}`);
-  entryFile.fileName = fileName || entryFile.fileName || getBaseFileName(entryName);
-  (entryFile as { _archiveEntryName?: string })._archiveEntryName = entryName;
-  (entryFile as { _archiveFileName?: string })._archiveFileName = archiveFile.fileName;
-  return entryFile;
-};
-
 const normalizeSelectedEntryNames = (entryNames: readonly string[] | undefined): string[] =>
   (Array.isArray(entryNames) ? entryNames : [])
     .map((entryName) => String(entryName || "").trim())
@@ -578,7 +429,11 @@ const resolveArchiveInputAssetsByDescent = async (
   // Each step carries its full `source` path and the `out_dir` it extracted into; the UI relativizes
   // each level's source against the longest matching `out_dir` to show the path inside its parent.
   const steps: DescentExtractStep[] = [];
-  const { result: ingestResult, outputs } = await resolvedRuntime.ingest.run({
+  const {
+    result: ingestResult,
+    outputs,
+    patchOutputs,
+  } = await resolvedRuntime.ingest.run({
     fileName: archiveFile.fileName,
     source: getCompressionRuntimeSource(archiveFile),
     ...(select.length ? { select } : {}),
@@ -673,6 +528,37 @@ const resolveArchiveInputAssetsByDescent = async (
     assets = files.map((file) =>
       makeRomAsset(makeInputId(sourceIndex, file.fileName, normalizeArchiveEntryName), file),
     );
+  }
+  // Harvest the sidecar patches this same ingest pass already extracted (a mixed ROM+patch archive),
+  // so the host never re-scans the archive to discover them. The descriptors carry the name-match
+  // (`sidecarOrder`) and the leaves are already materialized into `patchOutputs`. Attach to the primary
+  // asset; the decompression loop carries them forward to the finalized input.
+  if (ingestResult.patches.length && patchOutputs.length && assets[0]) {
+    const extractElapsedMs = steps.reduce(
+      (total, step) => (typeof step.extractTimeMs === "number" ? total + step.extractTimeMs : total),
+      0,
+    );
+    const sidecarLeaves = await buildPatchArchiveLeaves(
+      archiveFile,
+      ingestResult.patches,
+      patchOutputs,
+      extractElapsedMs || undefined,
+      options,
+      sourceIndex,
+    );
+    if (sidecarLeaves.length) {
+      assets[0].sidecarPatches = sidecarLeaves.map((leaf) => ({
+        file: leaf.file,
+        parentCompressions: leaf.parentCompressions,
+        ...(typeof leaf.sidecarOrder === "number" ? { sidecarOrder: leaf.sidecarOrder } : {}),
+      }));
+      traceArchivePreparation(options, "input.archive.descent.sidecar-patches", {
+        count: sidecarLeaves.length,
+        file: describeArchiveFileForTrace(archiveFile),
+        names: sidecarLeaves.map((leaf) => leaf.file.fileName),
+        sourceIndex,
+      });
+    }
   }
   const parentCompressions = buildDescentParentCompressions({ archiveFile, files, outputs, steps });
   return attachInputPreparationMetrics(assets, {
@@ -782,114 +668,19 @@ const attachBareRomIngestMetadata = async (
   }
 };
 
-const prepareAutoPatchInputs = async (
-  source: SourceRef,
-  options: ApplyWorkflowOptions | undefined,
-  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
-): Promise<PatchFileInstance[]> => {
-  const archiveFile = await createPatchFile(source, "input.bin");
-  if (options?.input?.containerInputsEnabled === false || !isCompressionFile(archiveFile)) return [];
-  // chd/rvz/z3ds are single-disc image formats, not archives that can carry sidecar patch files.
-  // Scanning them for patches re-extracts the whole disc image for nothing (a redundant decode of the
-  // entire input), so skip auto-patch discovery for them entirely.
-  if (PATH_BACKED_COMPRESSION_FORMATS.has(getCompressionFormat(archiveFile))) return [];
-  const romEntries = await listCompressionEntries(archiveFile, options, runtime, { romFilter: true }).catch(() => []);
-  const patchEntries = await filterValidPatchArchiveEntriesForSource(archiveFile, options, runtime);
-  if (!patchEntries.length) return [];
-  let selectedRomEntryName: string | null;
-  try {
-    selectedRomEntryName = await resolveCompressionRomAutoPickEntryName(archiveFile, romEntries, options, runtime);
-  } catch {
-    // Multiple competing ROMs: sidecar patches cannot be attributed to one ROM until the user
-    // keeps a single ROM, so skip implicit patch discovery and let the ROM descent prompt first.
-    return [];
-  }
-  if (!selectedRomEntryName) return [];
-
-  const sidecarPatches = await resolveSidecarPatchEntries(selectedRomEntryName, patchEntries);
-  const patchFiles: PatchFileInstance[] = [];
-  for (const sidecarPatch of sidecarPatches) {
-    const entryName = sidecarPatch.entry.filename;
-    if (!entryName) continue;
-    const patchFile = await extractArchiveEntry(
-      archiveFile,
-      entryName,
-      getPathBaseName(entryName),
-      options,
-      runtime,
-      [],
-      {
-        patchFilter: true,
-      },
-    );
-    applySidecarPatchOutputLabel(patchFile, sidecarPatch.outputLabel);
-    patchFiles.push(patchFile);
-  }
-  return patchFiles;
-};
-
-/**
- * Whether an archive holds at least one valid, selectable patch — the gate the UI's implicit-patch
- * discovery uses to decide a ROM-bearing archive should surface its patches through the patch
- * selection flow (1 auto-adds, 2+ prompts). Unlike {@link prepareAutoPatchInputs} (which name-matches
- * sidecars for the non-interactive apply execution), this never attributes by name — the user picks.
- * Path-backed disc images (chd/rvz/z3ds) never carry sidecar patches, so they short-circuit to false.
- */
-const archiveHasSelectablePatches = async (
-  source: SourceRef,
-  options: ApplyWorkflowOptions | undefined,
-  runtime: InputPreparationRuntimeLike = DEFAULT_INPUT_PREPARATION_RUNTIME,
-): Promise<boolean> => {
-  if (options?.input?.containerInputsEnabled === false) return false;
-  // Classify by file name/extension BEFORE touching the bytes. createPatchFile() on a Blob-backed source with
-  // no path reads the ENTIRE file into a main-thread ArrayBuffer (binary-source-utils materializeSourceArrayBuffer)
-  // — for a bare ~1 GiB ROM dropped as a File that is the iOS/WebKit jetsam OOM-reload, and it was wasted work
-  // because a raw ROM has no selectable patches. classifyPatcherInput needs only the name (plus a synchronous
-  // magic probe when bytes are already resident), never the whole Blob. Only an actual, non-path-backed container
-  // is materialized below, and only to enumerate its entries.
-  const classification = classifyPatcherInput(source as Parameters<typeof classifyPatcherInput>[0]);
-  if (classification.kind !== "compression") {
-    traceArchivePreparation(options, "implicit-patch scan: raw input — no archive enumeration", {
-      fileName: classification.fileName,
-      kind: classification.kind,
-    });
-    return false;
-  }
-  if (PATH_BACKED_COMPRESSION_FORMATS.has(classification.compressionFormat)) {
-    traceArchivePreparation(options, "implicit-patch scan: path-backed ROM container — no selectable patches", {
-      compressionFormat: classification.compressionFormat,
-      fileName: classification.fileName,
-    });
-    return false;
-  }
-  traceArchivePreparation(options, "implicit-patch scan: enumerating container entries (materializes archive)", {
-    compressionFormat: classification.compressionFormat,
-    fileName: classification.fileName,
-  });
-  const archiveFile = await createPatchFile(source, "input.bin");
-  const patchEntries = await filterValidPatchArchiveEntriesForSource(archiveFile, options, runtime).catch(() => []);
-  return patchEntries.length > 0;
-};
-
 // Shared low-level archive primitives consumed by the sibling modules split out of this orchestrator
-// (input-archive-disc-groups, input-archive-patch-leaves). Not part of the public input-preparation
-// surface — internal to the input-archive cluster.
-export type { ArchiveEntryLike, InputPreparationOptions, InputPreparationRuntimeLike };
+// (input-archive-patch-leaves). Not part of the public input-preparation surface — internal to the
+// input-archive cluster.
+export type { InputPreparationOptions, InputPreparationRuntimeLike };
 export {
-  archiveHasSelectablePatches,
   attachBareRomIngestMetadata,
   describeArchiveFileForTrace,
-  extractArchiveEntry,
-  extractArchiveEntryBytes,
-  filterNestedContainerEntries,
   getCompressionFormat,
   getCompressionRuntimeSource,
   getPatchLeafFileForSelection,
   getPatchLeafParentCompressionsForSelection,
   isCompressionFile,
-  listCompressionEntries,
   listDroppedArchiveEntryNames,
-  prepareAutoPatchInputs,
   resolveArchiveInput,
   resolveArchiveInputAssets,
   traceArchivePreparation,

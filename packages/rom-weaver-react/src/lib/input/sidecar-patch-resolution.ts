@@ -73,4 +73,4 @@ const applySidecarPatchOutputLabel = <TFile extends { fileName?: string }>(
   return file;
 };
 
-export { applySidecarPatchOutputLabel, resolveSidecarPatchEntries };
+export { applySidecarPatchOutputLabel, getSidecarPatchOutputLabel, resolveSidecarPatchEntries };
