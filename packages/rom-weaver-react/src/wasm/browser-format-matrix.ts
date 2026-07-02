@@ -224,14 +224,14 @@ export async function runBrowserFullFormatMatrixCore(input: BrowserFormatMatrixC
     const extractDir = joinGuestPath(dir, `roundtrip-${formatToken(format)}-extract`);
     assertRunJsonSucceeded(
       await runCommand(
-        `extract ${format}`,
-        createRomWeaverCommand("extract", {
+        `ingest ${format}`,
+        createRomWeaverCommand("ingest", {
           out_dir: extractDir,
           source: archivePath,
           threads: 1,
         }),
       ),
-      { command: "extract" },
+      { command: "ingest" },
     );
   }
 
@@ -270,14 +270,14 @@ export async function runBrowserFullFormatMatrixCore(input: BrowserFormatMatrixC
     await writeGuestFile(opfsHandle, badSourcePath, toBytes("not-a-real-container"));
     const outDir = joinGuestPath(dir, `extract-${formatToken(format)}-out`);
     const extractResult = await runCommand(
-      `extract invalid ${format}`,
-      createRomWeaverCommand("extract", {
+      `ingest invalid ${format}`,
+      createRomWeaverCommand("ingest", {
         out_dir: outDir,
         source: badSourcePath,
         threads: 1,
       }),
     );
-    assertFailedByPattern(extractResult, pattern, `extract ${format}`);
+    assertFailedByPattern(extractResult, pattern, `ingest ${format}`);
   }
 
   const originalPath = joinGuestPath(dir, "all-format-original.bin");

@@ -57,7 +57,7 @@ import {
 } from "./patch-run-resolution.ts";
 import { emitRuntimeTrace, isTraceEnabled, toRomWeaverOptions } from "./run-options.ts";
 import { getTrimOutputFileName, selectRomWeaverOutputPath } from "./run-output-paths.ts";
-import type { RomWeaverEmittedFile, RomWeaverRunJsonResult } from "./run-result-parsing.ts";
+import type { RomWeaverRunJsonResult } from "./run-result-parsing.ts";
 import {
   asRecord,
   ensureRomWeaverSuccess,
@@ -177,116 +177,6 @@ const invokeRomWeaverCompressionCreateWorker = async (
     fileName: input.outputFileName,
     filePath: emitted?.path || outputPath,
     size: emitted?.sizeBytes,
-    timing: getRunResultTiming(result),
-  };
-};
-
-const invokeRomWeaverExtractWorker = async (
-  input: {
-    invalidateMountCacheBeforeRun?: boolean;
-    knownInputPaths?: string[];
-    logLevel?: LogLevel | string;
-    outDirPath: string;
-    select?: string[];
-    romFilter?: boolean;
-    patchFilter?: boolean;
-    checksumAlgorithms?: string[];
-    /** Like `checksumAlgorithms` but only ROM-like outputs are hashed (sidecar/non-ROM entries
-     * are skipped). Safe to always pass; ignored when `checksumAlgorithms` is also set. */
-    checksumRomAlgorithms?: string[];
-    /** Fold container/platform probe metadata into the result (and fail a single-payload
-     * disc image that resolves to no known platform). Lets a caller skip a separate probe. */
-    probe?: boolean;
-    sourcePath: string;
-    signal?: AbortSignal;
-    splitBin?: boolean;
-    workerThreads?: RuntimeThreadBudgetInput;
-    /** When false, let the Rust core recursively descend nested containers in this one extract
-     * (resolving a single payload per level via the interactive callback). Defaults to true, which
-     * keeps the legacy single-level extract behaviour for existing per-entry callers. */
-    noNestedExtract?: boolean;
-    /** When false, suppress the host selection prompt for ambiguous containers so a multi-branch
-     * archive auto-extracts every branch instead of pausing for input. Defaults to the runner's
-     * interactive behaviour (prompt). */
-    interactiveSelectionEnabled?: boolean;
-  },
-  onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
-  onLog?: (log: WorkflowRuntimeLog) => void,
-): Promise<{ emittedFiles: RomWeaverEmittedFile[]; timing: ReturnType<typeof getRunResultTiming> }> => {
-  const sourcePath = String(input.sourcePath || "").trim();
-  if (!sourcePath) throw new Error("Compression extract source path is required");
-  const outDirPath = String(input.outDirPath || "").trim();
-  if (!outDirPath) throw new Error("Compression extract output directory is required");
-
-  const select: string[] = [];
-  for (const selected of Array.isArray(input.select) ? input.select : []) {
-    const value = String(selected || "").trim();
-    if (!value) continue;
-    select.push(value);
-  }
-  const checksum: string[] = [];
-  for (const algorithm of Array.isArray(input.checksumAlgorithms) ? input.checksumAlgorithms : []) {
-    const value = String(algorithm || "").trim();
-    if (value) checksum.push(value);
-  }
-  const checksumRom: string[] = [];
-  for (const algorithm of Array.isArray(input.checksumRomAlgorithms) ? input.checksumRomAlgorithms : []) {
-    const value = String(algorithm || "").trim();
-    if (value) checksumRom.push(value);
-  }
-  const threadArg = toThreadBudget(input.workerThreads);
-  const command = createRomWeaverCommand("extract", {
-    checksum,
-    no_nested_extract: input.noNestedExtract !== false,
-    out_dir: outDirPath,
-    ...(input.romFilter ? { rom_filter: true } : {}),
-    ...(input.patchFilter ? { patch_filter: true } : {}),
-    select,
-    source: sourcePath,
-    ...(input.splitBin ? { split_bin: true } : {}),
-    ...(checksumRom.length ? { checksum_rom: checksumRom } : {}),
-    ...(input.probe ? { probe: true } : {}),
-    ...(threadArg ? { threads: threadArg } : {}),
-  });
-  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson extract dispatch", {
-    command,
-    outDirPath,
-    patchFilter: !!input.patchFilter,
-    romFilter: !!input.romFilter,
-    selectCount: Array.isArray(input.select) ? input.select.length : 0,
-    sourcePath,
-    threadArg,
-  });
-  const result = await runRomWeaverJson(
-    command,
-    toRomWeaverOptions({
-      ...(typeof input.interactiveSelectionEnabled === "boolean"
-        ? { interactiveSelectionEnabled: input.interactiveSelectionEnabled }
-        : {}),
-      invalidateMountCacheBeforeRun: input.invalidateMountCacheBeforeRun,
-      knownInputPaths: input.knownInputPaths,
-      logLevel: input.logLevel,
-      onEvent: (event) => {
-        const progress = toSimpleProgress(event);
-        if (progress) onProgress?.(progress);
-      },
-      onLog,
-      signal: input.signal,
-    }),
-  );
-  if (!(result.ok && result.exitCode === 0)) {
-    const operationLabel =
-      select.length === 1
-        ? `extract \`${select[0]}\``
-        : select.length > 1
-          ? `extract ${select.length} entries`
-          : "extract output";
-    await throwRomWeaverFailureWithBrowserOutputContext(result, "Compression extract failed", operationLabel);
-  }
-  return {
-    emittedFiles: getEmittedFiles(result),
-    // Run-level elapsed time for the whole extract; the runtime does not report per-file timing, so
-    // callers attach this to each emitted file as its extract time.
     timing: getRunResultTiming(result),
   };
 };
@@ -890,7 +780,7 @@ const invokeRomWeaverIngestWorker = async (
   },
   onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
   onLog?: (log: WorkflowRuntimeLog) => void,
-): Promise<ParsedIngestResult> => {
+): Promise<ParsedIngestResult & { timing: ReturnType<typeof getRunResultTiming> }> => {
   const sourcePath = String(input.sourcePath || "").trim();
   if (!sourcePath) throw new Error("Ingest source path is required");
   const outDirPath = String(input.outDirPath || "").trim();
@@ -956,7 +846,7 @@ const invokeRomWeaverIngestWorker = async (
   if (!parsed) {
     throw withRomWeaverFailureKind(new Error("Ingest result was missing or malformed"), result);
   }
-  return parsed;
+  return { ...parsed, timing: getRunResultTiming(result) };
 };
 
 /** One concurrently-runnable group of a {@link RomWeaverBatchPlan}: the original job indices that may
@@ -1031,7 +921,6 @@ export {
   invokeRomWeaverCompressionCreateWorker,
   invokeRomWeaverCreatePatchCandidatesWorker,
   invokeRomWeaverCreatePatchWorker,
-  invokeRomWeaverExtractWorker,
   invokeRomWeaverIngestWorker,
   invokeRomWeaverPatchApplyWorker,
   invokeRomWeaverPatchValidateWorker,

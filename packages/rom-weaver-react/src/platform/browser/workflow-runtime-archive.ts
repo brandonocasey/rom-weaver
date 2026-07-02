@@ -3,7 +3,7 @@ import { getPathBaseName } from "../../lib/path-utils.ts";
 import { romTypeFromEmittedFile } from "../../lib/runtime/run-result-parsing.ts";
 import {
   invokeRomWeaverCompressionCreateWorker,
-  invokeRomWeaverExtractWorker,
+  invokeRomWeaverIngestWorker,
   runRomWeaverListWorker,
   selectRomWeaverOutputPath,
 } from "../../lib/runtime/wasm-command-runtime.ts";
@@ -300,24 +300,18 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
               )
               .filter((algorithm) => !!algorithm)
           : [...EXTRACT_CHECKSUM_ALGORITHMS];
-        const extracted = await invokeRomWeaverExtractWorker(
+        // Ingest auto-classifies the descended payload as ROM or patch (no rom/patch filter arg)
+        // and descends nested containers by default, so the single inner payload is reached and
+        // returned in `assets` (ROM) or `patches` (patch). ROM leaves hash inline (rom-only).
+        const extracted = await invokeRomWeaverIngestWorker(
           {
-            // ROM/general extraction hashes only ROM-like outputs (safe to always run, skips
-            // sidecars); patch extraction keeps full per-output checksums.
-            ...(extractChecksumAlgorithms.length
-              ? workflowInput.options?.patchFilter
-                ? { checksumAlgorithms: extractChecksumAlgorithms }
-                : { checksumRomAlgorithms: extractChecksumAlgorithms }
-              : {}),
+            ...(extractChecksumAlgorithms.length ? { checksumAlgorithms: extractChecksumAlgorithms } : {}),
             ...(typeof workflowInput.options?.interactiveSelectionEnabled === "boolean"
               ? { interactiveSelectionEnabled: workflowInput.options.interactiveSelectionEnabled }
               : {}),
             knownInputPaths: [archive.filePath],
             logLevel: workflowInput.options?.logLevel,
-            noNestedExtract: false,
             outDirPath,
-            patchFilter: workflowInput.options?.patchFilter,
-            romFilter: workflowInput.options?.romFilter,
             select: selectedEntries,
             signal: workflowInput.options?.signal,
             sourcePath: archive.filePath,
@@ -332,13 +326,32 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
           .toLowerCase();
         const sourceFileName = archive.fileName || getPathBaseName(archive.filePath, "archive.bin");
         const stagedSourceFileName = getPathDerivedFileName(archive.filePath, sourceFileName);
-        const primaryDataEntry = extracted.emittedFiles.find((entry) => {
+        // Patch intent: ingest surfaces the descended patch leaf in `patches` (no checksums/disc
+        // structure); map it directly. ROM intent: map the `assets` leaves with full disc grouping.
+        if (workflowInput.options?.patchFilter === true) {
+          const patchOutputs = await Promise.all(
+            extracted.patches.map((patch) =>
+              workerIo.createWorkerOutput(
+                {
+                  cleanup: () => cleanupExtractedFiles([patch.leafPath]),
+                  fileName: patch.fileName,
+                  filePath: patch.leafPath,
+                  size: patch.sizeBytes,
+                },
+                patch.fileName,
+                "archive descend extract worker did not return browser output",
+              ),
+            ),
+          );
+          return createCompressionExtractResult(patchOutputs);
+        }
+        const primaryDataEntry = extracted.assets.find((entry) => {
           const entryKind = String(entry.kind || "").toLowerCase();
           const entryName = entry.fileName || getPathBaseName(entry.path, entry.path);
           return entryKind !== "cue" && !isCueEntryName(entryName);
         });
         const descendOutputs = await Promise.all(
-          extracted.emittedFiles.map((entry) => {
+          extracted.assets.map((entry) => {
             const extractedFileName = entry.fileName || getPathBaseName(entry.path, entry.path);
             const normalizedFileName = isRomSpecificCompressionFormat(normalizedFormat)
               ? normalizeRomSpecificEntryNameForSource(extractedFileName, stagedSourceFileName, sourceFileName)
@@ -349,8 +362,11 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
                 : normalizedFileName;
             return workerIo.createWorkerOutput(
               {
-                checksums: entry.checksums,
-                checksumVariants: entry.checksumVariants,
+                // Ingest hashes ROM leaves only (rom-only), so a `.cue`/`.gdi` sheet asset carries an
+                // empty checksum map; treat that as "no checksums" to match the prior rom-only extract
+                // (which omitted sheet checksums entirely) rather than surfacing an empty `{}`.
+                checksums: Object.keys(entry.checksums).length ? entry.checksums : undefined,
+                checksumVariants: entry.checksumVariants.length ? entry.checksumVariants : undefined,
                 cleanup: () => cleanupExtractedFiles([entry.path]),
                 // Disc structure folded in by Rust so the host groups + renders a disc without
                 // re-parsing the sheet (see `attach_disc_group_details`).
@@ -397,19 +413,14 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
                 .filter((algorithm) => !!algorithm)
             : [...EXTRACT_CHECKSUM_ALGORITHMS];
           const runExtract = () =>
-            invokeRomWeaverExtractWorker(
+            // Single-level (`noNestedExtract`) ingest of just this entry; ingest auto-classifies
+            // it as ROM (→ assets) or patch (→ patches) and hashes ROM leaves inline (rom-only).
+            invokeRomWeaverIngestWorker(
               {
-                // ROM/general extraction hashes only ROM-like outputs (safe to always run, skips
-                // sidecars); patch extraction keeps full per-output checksums.
-                ...(extractChecksumAlgorithms.length
-                  ? workflowInput.options?.patchFilter
-                    ? { checksumAlgorithms: extractChecksumAlgorithms }
-                    : { checksumRomAlgorithms: extractChecksumAlgorithms }
-                  : {}),
+                ...(extractChecksumAlgorithms.length ? { checksumAlgorithms: extractChecksumAlgorithms } : {}),
                 logLevel: workflowInput.options?.logLevel,
+                noNestedExtract: true,
                 outDirPath,
-                patchFilter: workflowInput.options?.patchFilter,
-                romFilter: workflowInput.options?.romFilter,
                 select: [entryName],
                 signal: workflowInput.options?.signal,
                 sourcePath: archive.filePath,
@@ -435,7 +446,15 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
             }
           };
           const selectMatchedOutput = async (extracted: Awaited<ReturnType<typeof runExtract>>) => {
-            let matched = findExtractedFile(extracted.emittedFiles, entryName);
+            const candidateEntries = [
+              ...extracted.assets,
+              ...extracted.patches.map((patch) => ({
+                fileName: patch.fileName,
+                path: patch.leafPath,
+                sizeBytes: patch.sizeBytes,
+              })),
+            ];
+            let matched = findExtractedFile(candidateEntries, entryName);
             if (!matched) {
               for (const fallbackPath of outputPathCandidates) {
                 const fallbackStat = await browserVfs.stat(fallbackPath);
@@ -449,7 +468,7 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
               }
             }
             if (matched) return matched;
-            const emittedNames = extracted.emittedFiles.map(
+            const emittedNames = candidateEntries.map(
               (entry) => entry.fileName || getPathBaseName(entry.path, entry.path),
             );
             throw new Error(

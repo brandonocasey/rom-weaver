@@ -318,7 +318,7 @@ const ensureRomWeaverSuccess = (result: RomWeaverRunJsonResult, fallbackMessage:
   throw withRomWeaverFailureKind(new Error(getRomWeaverFailureMessage(result, fallbackMessage)), result);
 };
 
-export type { RomWeaverEmittedFile, RomWeaverRunJsonResult, WireRecord };
+export type { RomWeaverRunJsonResult, WireRecord };
 export {
   asRecord,
   ensureRomWeaverSuccess,

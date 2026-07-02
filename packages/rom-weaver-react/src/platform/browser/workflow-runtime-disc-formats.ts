@@ -7,7 +7,7 @@ import { getPathBaseName } from "../../lib/path-utils.ts";
 import { romTypeFromEmittedFile } from "../../lib/runtime/run-result-parsing.ts";
 import {
   invokeRomWeaverCompressionCreateWorker,
-  invokeRomWeaverExtractWorker,
+  invokeRomWeaverIngestWorker,
   runRomWeaverListWorker,
   selectRomWeaverOutputPath,
 } from "../../lib/runtime/wasm-command-runtime.ts";
@@ -149,7 +149,7 @@ const createBrowserDiscFormatsRuntime = (
         fileName: stagedSourceFileName,
       });
       await ensureRvzSourceExists();
-      const extracted = await invokeRomWeaverExtractWorker(
+      const extracted = await invokeRomWeaverIngestWorker(
         {
           checksumAlgorithms: [...EXTRACT_CHECKSUM_ALGORITHMS],
           knownInputPaths: [workerSource.filePath],
@@ -172,7 +172,7 @@ const createBrowserDiscFormatsRuntime = (
         throw error;
       });
       const primaryFile = await selectPreferredExtractedFile({
-        emittedFiles: extracted.emittedFiles,
+        emittedFiles: extracted.assets,
         logLevel,
         onLog,
         preferredEntryNames: [outputName, actualOutputFileName, stagedOutputFileName],
@@ -221,7 +221,7 @@ const createBrowserDiscFormatsRuntime = (
       const stagedOutputFileName = getRomSpecificExtractedFileName("z3ds", {
         fileName: stagedSourceFileName,
       });
-      const extracted = await invokeRomWeaverExtractWorker(
+      const extracted = await invokeRomWeaverIngestWorker(
         {
           checksumAlgorithms: [...EXTRACT_CHECKSUM_ALGORITHMS],
           knownInputPaths: [workerSource.filePath],
@@ -238,7 +238,7 @@ const createBrowserDiscFormatsRuntime = (
         onLog,
       );
       const primaryFile = await selectPreferredExtractedFile({
-        emittedFiles: extracted.emittedFiles,
+        emittedFiles: extracted.assets,
         logLevel,
         onLog,
         preferredEntryNames: [outputName, actualOutputFileName, stagedOutputFileName],

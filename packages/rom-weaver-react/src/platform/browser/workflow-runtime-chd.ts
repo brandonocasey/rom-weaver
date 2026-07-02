@@ -7,7 +7,7 @@ import { getPathBaseName } from "../../lib/path-utils.ts";
 import { romTypeFromEmittedFile } from "../../lib/runtime/run-result-parsing.ts";
 import {
   invokeRomWeaverCompressionCreateWorker,
-  invokeRomWeaverExtractWorker,
+  invokeRomWeaverIngestWorker,
   normalizeCodecEntries,
   runRomWeaverListWorker,
   selectRomWeaverOutputPath,
@@ -264,7 +264,7 @@ const createBrowserChdRuntime = (
       const directOutputFileName = outputName || actualOutputFileName;
       const directOutputPath = stagedOutputFileName ? joinPath(outDirPath, stagedOutputFileName) : "";
       const runExtract = () =>
-        invokeRomWeaverExtractWorker(
+        invokeRomWeaverIngestWorker(
           {
             checksumAlgorithms: [...EXTRACT_CHECKSUM_ALGORITHMS],
             invalidateMountCacheBeforeRun: !!workerSource.virtual,
@@ -296,13 +296,13 @@ const createBrowserChdRuntime = (
       };
       const selectChdOutputs = (value: Awaited<ReturnType<typeof runExtract>>) => {
         const cue =
-          value.emittedFiles.find((entry) => entry.kind === "cue") ||
-          value.emittedFiles.find((entry) => /\.cue$/i.test(entry.fileName));
-        const dataFiles = value.emittedFiles.filter((entry) => !isChdCueOutput(entry));
+          value.assets.find((entry) => entry.kind === "cue") ||
+          value.assets.find((entry) => /\.cue$/i.test(entry.fileName));
+        const dataFiles = value.assets.filter((entry) => !isChdCueOutput(entry));
         const primary =
-          (outputName ? findExtractedFile(value.emittedFiles, outputName) : null) ||
-          (actualOutputFileName ? findExtractedFile(value.emittedFiles, actualOutputFileName) : null) ||
-          (stagedOutputFileName ? findExtractedFile(value.emittedFiles, stagedOutputFileName) : null) ||
+          (outputName ? findExtractedFile(value.assets, outputName) : null) ||
+          (actualOutputFileName ? findExtractedFile(value.assets, actualOutputFileName) : null) ||
+          (stagedOutputFileName ? findExtractedFile(value.assets, stagedOutputFileName) : null) ||
           dataFiles[0] ||
           (directOutputPath
             ? {
@@ -310,7 +310,7 @@ const createBrowserChdRuntime = (
                 path: directOutputPath,
               }
             : null) ||
-          value.emittedFiles[0];
+          value.assets[0];
         const outputFiles: ExtractedFileEntry[] = [];
         pushUniqueExtractedFile(outputFiles, cue);
         if (!isChdCueOutput(primary)) pushUniqueExtractedFile(outputFiles, primary);

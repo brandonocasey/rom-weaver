@@ -40,6 +40,9 @@ const operationMultiplier = (command: RomWeaverCommand): number => {
     case "compress":
       return MULTIPLIER_COMPRESS;
     case "extract":
+    // Ingest now drives disc decompression + archive extraction (formerly `extract`), so it
+    // decodes the same working set — keep its memory multiplier equal to extract's.
+    case "ingest":
       return MULTIPLIER_DECODED;
     case "patch":
       return patchMultiplier(command);
