@@ -33,4 +33,4 @@ const createArchiveSourceBlob = (
   });
 };
 
-export { createArchiveSourceBlob, type NamedArchiveBlob, normalizeArchiveBytes };
+export { createArchiveSourceBlob, type NamedArchiveBlob };

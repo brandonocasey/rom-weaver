@@ -13,7 +13,6 @@ import type {
   PatchFileConstructor as SharedPatchFileType,
 } from "../../workers/protocol/patch-engine.ts";
 import { PatchFile as SharedPatchFile } from "../../workers/protocol/patch-engine.ts";
-import { normalizeArchiveEntryBytes } from "../output/archive-output.ts";
 import { getFileNameWithoutExtension } from "./path-utils.ts";
 
 type ServicePatchFileConstructor = SharedPatchFileType<PatchFileInstance> &
@@ -415,5 +414,4 @@ export {
   getPatchFileSourceAccess,
   isBlobBackedPatchFile,
   isLazyExternalPatchFile,
-  normalizeArchiveEntryBytes,
 };
