@@ -4,11 +4,12 @@ import type { WorkflowKind, WorkflowProgress, WorkflowProgressRole } from "../..
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
 import type { InputAsset, InputParentCompression } from "../input/input-assets.ts";
+import { romTypeFromEmittedFile } from "../runtime/run-result-parsing.ts";
 import { createChecksumSource, DEFAULT_CHECKSUMS, isRecord } from "./controller-utils.ts";
 
 type StandardWorkflowChecksums = Record<(typeof DEFAULT_CHECKSUMS)[number], string>;
 type StandardChecksumParentCompression = InputParentCompression;
-type ChecksumCalculateInput = Parameters<NonNullable<WorkflowRuntime["checksum"]["calculate"]>>[0];
+type IngestRunInput = Parameters<NonNullable<NonNullable<WorkflowRuntime["ingest"]>["run"]>>[0];
 type StandardChecksumState = {
   decompressionTimeMs?: number;
   fileName?: string;
@@ -32,7 +33,7 @@ type StandardChecksumOptions = {
   emitProgress: (event: StandardChecksumProgressEvent) => void;
   file: PatchFileInstance;
   logLevel?: LogLevel;
-  onLog?: ChecksumCalculateInput["onLog"];
+  onLog?: IngestRunInput["onLog"];
   progressId?: string;
   role: WorkflowProgressRole;
   runtime: WorkflowRuntime;
@@ -150,7 +151,13 @@ const calculateStandardInputChecksumsForFile = async ({
   romType?: RomTypeTag;
   variants?: ChecksumVariant[];
 }> => {
-  if (!runtime.checksum.calculate) return { checksums: {} as StandardWorkflowChecksums };
+  // Checksum the prepared input asset via `ingest`, not the standalone `checksum` command: ingest
+  // classifies the (already-extracted) leaf as a bare ROM and hashes it in place with the SAME shared
+  // variant engine — fed the full thread budget — so multi-variant ROMs (e.g. GBA raw + fix-header)
+  // are not under-threaded the way the per-command checksum cap used to do. `romProbe` is absent
+  // because ingest never produces it (the standalone path only ever emitted a `{ trim: { detected:
+  // false } }` placeholder for these inputs).
+  if (!runtime.ingest?.run) return { checksums: {} as StandardWorkflowChecksums };
   const details = createChecksumProgressDetails(state);
   const id = `${progressId || state.id}:checksum`;
   emitProgress({
@@ -162,8 +169,9 @@ const calculateStandardInputChecksumsForFile = async ({
     stage: "checksum",
     workflow,
   });
-  const result = await runtime.checksum.calculate({
-    algorithms: [...DEFAULT_CHECKSUMS],
+  const { result } = await runtime.ingest.run({
+    checksumAlgorithms: [...DEFAULT_CHECKSUMS],
+    fileName: state.fileName,
     logLevel,
     onLog,
     onProgress: (progress) =>
@@ -176,19 +184,20 @@ const calculateStandardInputChecksumsForFile = async ({
         stage: "checksum",
         workflow,
       }),
-    source: createChecksumSource(file, state.fileName) as never,
+    source: createChecksumSource(file, state.fileName),
   });
+  const asset = result.isRom ? result.assets[0] : undefined;
+  const assetChecksums = (asset?.checksums ?? {}) as Record<string, string | undefined>;
+  const checksums = {} as StandardWorkflowChecksums;
+  for (const algorithm of DEFAULT_CHECKSUMS) {
+    const value = assetChecksums[algorithm];
+    checksums[algorithm] = typeof value === "string" ? value.trim().toLowerCase() : "";
+  }
   return {
-    checksums: {
-      crc32: Number(result.crc32 || 0)
-        .toString(16)
-        .padStart(8, "0"),
-      md5: result.md5 || "",
-      sha1: result.sha1 || "",
-    },
-    romProbe: cloneChecksumRomProbe(result.romProbe),
-    romType: cloneRomType(result.romType),
-    variants: cloneChecksumVariants(result.variants),
+    checksums,
+    romProbe: undefined,
+    romType: romTypeFromEmittedFile({ discFormat: asset?.discFormat, platform: asset?.platform }),
+    variants: cloneChecksumVariants(asset?.checksumVariants),
   };
 };
 

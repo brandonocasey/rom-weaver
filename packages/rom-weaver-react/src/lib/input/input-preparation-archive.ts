@@ -599,18 +599,16 @@ const resolveArchiveInputAssets = async (
 /**
  * Checksum a bare (non-container) ROM via the `ingest` command and attach the resulting
  * checksums/variants/rom-type to the file as precomputed metadata, so the downstream input-checksum
- * step reuses them (the precomputed branch) instead of dispatching the standalone `checksum` command.
+ * step reuses them (the precomputed branch) and skips re-dispatching `ingest` itself.
  *
  * `ingest` classifies the source first; a bare ROM has no container handler, so it is checksummed in
  * place — no extraction, no copy — by the SAME shared variant engine the archive path's inline
  * checksum drives, fed the full thread budget. So a bare ROM hashes as fast as one extracted from an
- * archive; the standalone `checksum` dispatch used to under-thread multi-variant ROMs (e.g. GBA:
- * raw + fix-header), making a bare checksum slower than extract+checksum. This brings bare ROMs onto
- * the same precomputed path archive leaves already use (where `romProbe` is likewise absent — the
- * standalone path only ever produced a `{ trim: { detected: false } }` placeholder).
+ * archive (where `romProbe` is likewise absent — `ingest` never produces it, only a `{ trim: {
+ * detected: false } }` placeholder was ever emitted for these inputs).
  *
  * Best-effort: any failure, or a source `ingest` classifies as a patch / yields no ROM asset, leaves
- * the file untouched so the input-checksum step falls back to `runtime.checksum.calculate`.
+ * the file untouched so the input-checksum step checksums it the usual way (a second `ingest` pass).
  */
 const attachBareRomIngestMetadata = async (
   file: PatchFileInstance,
