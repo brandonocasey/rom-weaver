@@ -23,6 +23,17 @@ const getDiscFormatLabel = (discFormat: string | null | undefined): string | nul
   return DISC_FORMAT_LABELS[normalized] ?? null;
 };
 
+type ChdCodecMode = "cd" | "dvd";
+
+/** Map the engine's `disc_format` verdict ("CD"/"GD-ROM"/"DVD") to the CHD create/recompress mode, or
+ * `undefined` when the source is not a recognized optical medium. */
+const discFormatToChdMode = (discFormat: string | null | undefined): ChdCodecMode | undefined => {
+  const lower = String(discFormat || "").toLowerCase();
+  if (lower === "dvd") return "dvd";
+  if (lower === "cd" || lower.includes("gd")) return "cd";
+  return undefined;
+};
+
 type ByteProbeableSource = {
   _u8array?: Uint8Array;
   fileName?: string;
@@ -31,12 +42,21 @@ type ByteProbeableSource = {
 };
 
 const getChdAutoCreateMode = (
-  source: ByteProbeableSource & { _chdCuePath?: string; _chdCueText?: string; _chdMode?: string },
+  source: ByteProbeableSource & {
+    _chdCuePath?: string;
+    _chdCueText?: string;
+    _chdMode?: string;
+    _discFormat?: string;
+  },
 ): string => {
   if (source._chdMode === "cd" || source._chdCuePath || source._chdCueText) return "cd";
   if (source._chdMode === "dvd") return "dvd";
+  // Prefer the Rust ingest/checksum identity verdict (`_discFormat`) over a filename guess; the regex
+  // below is only a last resort for inputs that never went through the identity pass.
+  const discFormatMode = discFormatToChdMode(source._discFormat);
+  if (discFormatMode) return discFormatMode;
   const fileName = String(source.fileName || "");
   return CUE_EXTENSION_REGEX.test(fileName) || BIN_EXTENSION_REGEX.test(fileName) ? "cd" : "dvd";
 };
 
-export { getChdAutoCreateMode, getDiscFormatLabel, parseCueFile, replaceCuePatchFileName };
+export { discFormatToChdMode, getChdAutoCreateMode, getDiscFormatLabel, parseCueFile, replaceCuePatchFileName };

@@ -40,7 +40,7 @@ import {
   resolveInputPreparationRuntime,
 } from "./input-preparation-compression.ts";
 import { getBaseFileName, normalizeArchiveEntryName } from "./path-utils.ts";
-import { parseCueFile } from "./rom-specific-file-utils.ts";
+import { discFormatToChdMode, parseCueFile } from "./rom-specific-file-utils.ts";
 
 type ArchiveEntryLike = {
   archiveEntryType?: string;
@@ -50,7 +50,6 @@ type ArchiveEntryLike = {
 };
 type InputPreparationOptions = ApplyWorkflowOptions | CreateWorkflowOptions | undefined;
 type InputPreparationRuntimeLike = InputPreparationRuntime | Pick<WorkflowRuntime, "name">;
-type ChdCodecMode = "cd" | "dvd";
 type CompressionExtractOverrides = {
   checksumAlgorithms?: string[];
   interactiveSelectionEnabled?: boolean;
@@ -379,14 +378,6 @@ const readSucceededExtractStep = (progressDetails: unknown): ExtractStepDetails 
     return null;
   }
   return step as unknown as ExtractStepDetails;
-};
-
-// Map ingest's detected optical medium to the CHD recompress mode the output path keys off.
-const discFormatToChdMode = (discFormat: string | undefined): ChdCodecMode | undefined => {
-  const lower = String(discFormat || "").toLowerCase();
-  if (lower === "dvd") return "dvd";
-  if (lower === "cd" || lower.includes("gd")) return "cd";
-  return undefined;
 };
 
 /** Discover a compressed archive's input assets with a SINGLE recursive ingest (classify + descend +
