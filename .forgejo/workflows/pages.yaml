@@ -12,6 +12,10 @@ jobs:
       CARGO_TERM_COLOR: always
       WASI_SDK_VERSION: "33"
       WASI_SDK_SHA256: 0ba8b5bfaeb2adf3f29bab5841d76cf5318ab8e1642ea195f88baba1abd47bce
+      # The Forgejo runner injects its own token as GITHUB_TOKEN; mise would
+      # forward it to api.github.com and get 401. Blank it so mise queries
+      # GitHub anonymously (a couple of release lookups for binaryen/ripgrep).
+      GITHUB_TOKEN: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -32,6 +36,7 @@ jobs:
         uses: https://github.com/jdx/mise-action@v2
         with:
           install: true
+          github_token: ""
 
       - name: Install WASI SDK
         run: |
