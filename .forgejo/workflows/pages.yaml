@@ -12,10 +12,15 @@ jobs:
       CARGO_TERM_COLOR: always
       WASI_SDK_VERSION: "33"
       WASI_SDK_SHA256: 0ba8b5bfaeb2adf3f29bab5841d76cf5318ab8e1642ea195f88baba1abd47bce
-      # mise resolves binaryen/ripgrep via the GitHub API, but the Forgejo
-      # runner's injected token 401s there. Skip them in mise: ripgrep isn't
-      # needed for this build, and wasm-opt (binaryen) is installed directly below.
-      MISE_DISABLE_TOOLS: "aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep"
+      # Skip three mise tools for this job:
+      # - binaryen/ripgrep: mise fetches them via the GitHub API, which 401s
+      #   with the Forgejo runner's injected token. wasm-opt is installed
+      #   directly below; ripgrep isn't needed for the build.
+      # - rust: dtolnay installs stable + the wasm32-wasip1-threads target via
+      #   rustup. If mise also installs its own rust, `mise run` uses that one
+      #   (no wasm target) and the build fails E0463. Disabling it here makes
+      #   `mise run` use the rustup toolchain (with the target) from PATH.
+      MISE_DISABLE_TOOLS: "aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,rust"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
