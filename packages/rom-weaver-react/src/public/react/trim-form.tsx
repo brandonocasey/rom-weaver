@@ -24,6 +24,7 @@ import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./
 import { Notice } from "./components/ds/feedback.tsx";
 import { useFlatTransitionFlag } from "./components/ds/flat-transition.ts";
 import { InfoPopover } from "./components/ds/layout.tsx";
+import { StageStatus, stageBarValue, stagePercent, stageStatusLabel } from "./components/ds/staging-meta.tsx";
 import { OutputRunAction } from "./components/ds/workflow-output-step.tsx";
 import { buildCompressPanel } from "./compress-options.ts";
 import { ARCHIVE_FILE_EXTENSIONS } from "./file-classification.ts";
@@ -720,6 +721,15 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   const trimTimingText = formatOptionalElapsedMs(completedTrimTimeMs ?? undefined);
   const compressTimingText = formatOptionalElapsedMs(completedCompressionTimeMs ?? undefined);
   const checksumProgress = progress?.stage === "checksum" ? progress : null;
+  // Staging treatment shared with the apply form: the resolved card stays mounted
+  // and a slim determinate bar on its top edge + a status on the meta line carry
+  // progress, rather than swapping the whole card for a bordered progress panel.
+  const checksumProps = toWorkflowChecksumProgressProps(checksumProgress);
+  const staging = !!inputProgressProps || !!checksumProgress;
+  const stagingProgress = checksumProgress ? checksumProps : inputProgressProps;
+  const stagePct = stagePercent(stagingProgress);
+  const stageLabel = stageStatusLabel("Checksumming", !checksumProgress && !!inputProgressProps);
+  const stageBytes = sourceState?.size ?? sourceState?.sourceSize;
   const sourceNoticeMessage = getSourceNoticeMessage(sourceState);
   const runtimeSourceNoticeVisible = !!message && messagePlacement === "source";
   const sourceNotice = runtimeSourceNoticeVisible ? (
@@ -881,39 +891,39 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       ),
       items: source
         ? [
-            inputProgressProps
-              ? {
-                  id: "trim-input-progress",
-                  progress: inputProgressProps,
-                }
-              : {
-                  card: {
-                    extract: {
-                      fileName: resolvedSourceFileName,
-                      fileSize: sourceState?.size,
-                      parentCompressions: sourceState?.parentCompressions,
-                      timing: formatOptionalElapsedMs(sourceState?.decompressionTimeMs),
-                    },
-                    onRemove: () => updateSource(null),
-                    panels: {
-                      info: {
-                        bytes: sourceState?.size ?? sourceState?.sourceSize,
-                        checksums: sourceState?.checksums,
-                        defaultOpen: false,
-                        progress: toWorkflowChecksumProgressProps(checksumProgress),
-                        timing: formatOptionalElapsedMs(sourceState?.checksumTimeMs),
-                        trim: sourceState?.romProbe?.trim,
-                      },
-                    },
-                    removeLabel: "Clear ROM",
-                    state: hasSourceQueueWarning(sourceState)
-                      ? "bad"
-                      : sourceState?.status === "ready"
-                        ? "ok"
-                        : undefined,
-                  },
-                  id: "trim-input-card",
+            {
+              card: {
+                extract: {
+                  fileName: resolvedSourceFileName,
+                  fileSize: sourceState?.size,
+                  parentCompressions: sourceState?.parentCompressions,
+                  timing: formatOptionalElapsedMs(sourceState?.decompressionTimeMs),
                 },
+                meta: staging ? (
+                  <>
+                    {typeof stageBytes === "number" ? (
+                      <span className="fsize mono">{formatByteSize(stageBytes)}</span>
+                    ) : null}
+                    <StageStatus id="trim-input-stage" label={stageLabel} percent={stagePct} />
+                  </>
+                ) : undefined,
+                onRemove: () => updateSource(null),
+                panels: {
+                  info: {
+                    bytes: stageBytes,
+                    checksums: sourceState?.checksums,
+                    defaultOpen: false,
+                    progress: checksumProps,
+                    timing: formatOptionalElapsedMs(sourceState?.checksumTimeMs),
+                    trim: sourceState?.romProbe?.trim,
+                  },
+                },
+                removeLabel: "Clear ROM",
+                stageBar: stageBarValue(staging, stagePct),
+                state: hasSourceQueueWarning(sourceState) ? "bad" : sourceState?.status === "ready" ? "ok" : undefined,
+              },
+              id: "trim-input-card",
+            },
           ]
         : [],
       notice: sourceNotice,

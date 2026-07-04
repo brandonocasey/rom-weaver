@@ -43,7 +43,7 @@ const WorkflowOutputStep = ({
 
 const OutputRunAction = ({ children, disabled, download, icon, id, onClick, progress }: OutputRunActionProps) => (
   <>
-    {progress ? <FileProgress {...progress} /> : null}
+    {progress ? <FileProgress {...progress} run /> : null}
     {progress ? null : (
       <RunButton disabled={disabled} download={download} icon={icon} id={id} onClick={onClick}>
         {children}

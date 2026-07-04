@@ -1,4 +1,6 @@
+import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { Notice } from "./components/ds/feedback.tsx";
+import { StageStatus, stageBarValue, stagePercent, stageStatusLabel } from "./components/ds/staging-meta.tsx";
 import type { CreatePatchFormViewModel } from "./create-patch-form-view.tsx";
 import {
   type CreateDisplaySourceState,
@@ -67,6 +69,17 @@ const buildCreateSourceStep = ({
   const { message, messagePlacement, errorCode, messageDismissible, clearWorkflowMessage } = runtimeNotice;
   const displayInfo = getDisplaySourceInfo(sourceState, fileName);
   const sourceChecksumProgress = isChecksumProgress(checksumProgress) ? checksumProgress : null;
+  // Staging treatment shared with the apply form: the resolved card stays mounted
+  // and a slim determinate bar on its top edge + a status on the meta line carry
+  // progress, rather than swapping the whole card for a bordered progress panel.
+  const checksumProps = toWorkflowChecksumProgressProps(sourceChecksumProgress);
+  const staging = !!sourceProgress || !!sourceChecksumProgress;
+  const stagingProgress = sourceChecksumProgress ? checksumProps : sourceProgress;
+  const stagePct = stagePercent(stagingProgress);
+  // Only the source (extract) phase carries the "Extracting & …" verb; the
+  // checksum phase reads plain "Checksumming…".
+  const stageLabel = stageStatusLabel("Checksumming", !sourceChecksumProgress && !!sourceProgress);
+  const stageBytes = displayInfo?.size ?? displayInfo?.sourceSize;
   const sourceNoticeMessage = getSourceNoticeMessage(sourceState);
   const runtimeNoticeVisible = !!message && messagePlacement === role;
   const notice = runtimeNoticeVisible ? (
@@ -86,38 +99,38 @@ const buildCreateSourceStep = ({
     id: `patch-builder-row-${role}`,
     items: file
       ? [
-          sourceProgress
-            ? {
-                id: `${num}:progress`,
-                progress: sourceProgress,
-              }
-            : {
-                card: {
-                  extract: {
-                    fileName,
-                    fileSize: displayInfo?.size,
-                    parentCompressions: displayInfo?.parentCompressions,
-                    timing: formatElapsedMs(displayInfo?.decompressionTimeMs),
-                  },
-                  onRemove: onClear,
-                  panels: {
-                    info: {
-                      bytes: displayInfo?.size ?? displayInfo?.sourceSize,
-                      checksums: getDisplaySourceChecksums(sourceState),
-                      defaultOpen: false,
-                      progress: toWorkflowChecksumProgressProps(sourceChecksumProgress),
-                      timing: getChecksumTimingLabel(getDisplaySourceChecksumTiming(sourceState)) || undefined,
-                    },
-                  },
-                  removeLabel,
-                  state: hasSourceQueueWarning(sourceState)
-                    ? "bad"
-                    : sourceState?.status === "ready"
-                      ? "ok"
-                      : undefined,
-                },
-                id: `${num}:card`,
+          {
+            card: {
+              extract: {
+                fileName,
+                fileSize: displayInfo?.size,
+                parentCompressions: displayInfo?.parentCompressions,
+                timing: formatElapsedMs(displayInfo?.decompressionTimeMs),
               },
+              meta: staging ? (
+                <>
+                  {typeof stageBytes === "number" ? (
+                    <span className="fsize mono">{formatByteSize(stageBytes)}</span>
+                  ) : null}
+                  <StageStatus id={`${num}:stage`} label={stageLabel} percent={stagePct} />
+                </>
+              ) : undefined,
+              onRemove: onClear,
+              panels: {
+                info: {
+                  bytes: stageBytes,
+                  checksums: getDisplaySourceChecksums(sourceState),
+                  defaultOpen: false,
+                  progress: checksumProps,
+                  timing: getChecksumTimingLabel(getDisplaySourceChecksumTiming(sourceState)) || undefined,
+                },
+              },
+              removeLabel,
+              stageBar: stageBarValue(staging, stagePct),
+              state: hasSourceQueueWarning(sourceState) ? "bad" : sourceState?.status === "ready" ? "ok" : undefined,
+            },
+            id: `${num}:card`,
+          },
         ]
       : [],
     notice,

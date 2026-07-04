@@ -125,9 +125,20 @@ const InlineProgress = ({
 
 type FileProgressProps = Parameters<typeof InlineProgress>[0];
 
-/** {@link InlineProgress} in the bordered, recessed instrument panel, for in-row file work. */
-const FileProgress = ({ onCancel, cancelLabel = "Cancel operation", id, ...progress }: FileProgressProps) => (
-  <div aria-busy="true" className="prog-panel fileprog" id={id}>
+/**
+ * {@link InlineProgress} in the bordered, recessed instrument panel, for in-row
+ * file work. `run` swaps the bordered box for the borderless full-width run
+ * panel (the apply form's live-run look) so the output-step progress lines up
+ * with the card content above it.
+ */
+const FileProgress = ({
+  onCancel,
+  cancelLabel = "Cancel operation",
+  id,
+  run,
+  ...progress
+}: FileProgressProps & { run?: boolean }) => (
+  <div aria-busy="true" className={join("prog-panel fileprog", run && "runprog")} id={id}>
     <div className="prog">
       <div className="lab">
         <span className="what">{progress.label}</span>

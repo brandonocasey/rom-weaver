@@ -1081,7 +1081,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .btn.danger:hover { background: color-mix(in oklab, var(--fault) 10%, transparent); }
 .rw-app .btn.slim { height: 30px; padding-inline: 12px; font-size: .76rem; }
 .rw-app .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
-.rw-app .btn.run { width: 100%; height: 46px; font-size: .95rem; letter-spacing: .04em; text-transform: uppercase; }
+.rw-app .btn.run { width: 100%; min-height: 46px; height: auto; padding-block: 6px; font-size: .95rem; letter-spacing: .04em; text-transform: uppercase; }
 
 /* ═══ weave meter ═══ */
 .rw-app .meter { position: relative; height: 8px; border-radius: 99px; background: var(--well); overflow: clip; box-shadow: inset 0 1px 2px rgb(0 0 0 / .25); }
@@ -1160,13 +1160,13 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
    the step header, so this is just the orange action button */
 .rw-app .result { margin-block-start: 2px; animation: drop-in .4s var(--ease); }
 /* the download button carries output size + delta on the left and the total
-   time at the right — ONE line, every segment nowrap. The icon/kind/size are
-   pinned (flex none); only the delta text may shrink + ellipsize, so create's
-   longer "N delta records" can't crush the icon to zero width */
-.rw-app .download-btn { gap: 10px; font-size: .9rem; white-space: nowrap; flex-wrap: nowrap; min-width: 0; }
+   time at the right. It prefers one line, but a long segment (e.g. trim's
+   "N MB raw · N MB compressed") wraps onto additional lines and the button
+   grows in height rather than the text running off its edge */
+.rw-app .download-btn { gap: 6px 10px; font-size: .9rem; flex-wrap: wrap; min-width: 0; }
 .rw-app .download-btn > svg { flex: none; }
-.rw-app .download-btn .dl-kind, .rw-app .download-btn .dl-size { flex: none; white-space: nowrap; }
-.rw-app .download-btn .dl-delta { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rw-app .download-btn .dl-kind, .rw-app .download-btn .dl-size { flex: 0 1 auto; overflow-wrap: anywhere; }
+.rw-app .download-btn .dl-delta { min-width: 0; overflow-wrap: anywhere; }
 /* the output kind leads (patch type / container · codecs / archive / raw), then
    size + delta, with the total + threads pushed to the right */
 .rw-app .download-btn .dl-kind { font-weight: 700; font-size: 1.02rem; text-transform: none; letter-spacing: .01em; }
