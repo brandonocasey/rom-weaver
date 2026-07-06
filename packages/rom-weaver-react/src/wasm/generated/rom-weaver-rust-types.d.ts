@@ -122,6 +122,12 @@ platform?: string | null,
  */
 disc_format?: string | null,
 /**
+ * Recommended rom-specific compression container (`chd`/`rvz`/`z3ds`) derived from the
+ * detected `platform`/`disc_format` by the shared Rust recommender. `None` when no
+ * rom-specific format applies (the host then falls back to its own extension heuristics).
+ */
+recommended_format?: string | null,
+/**
  * Disc-group id shared by a `.cue`/`.gdi` sheet and its tracks (multi-track disc grouping).
  */
 disc_group_id?: string | null,

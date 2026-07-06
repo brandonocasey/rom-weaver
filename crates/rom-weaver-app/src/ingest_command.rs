@@ -66,6 +66,12 @@ pub struct IngestRomAsset {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub disc_format: Option<String>,
+    /// Recommended rom-specific compression container (`chd`/`rvz`/`z3ds`) derived from the
+    /// detected `platform`/`disc_format` by the shared Rust recommender. `None` when no
+    /// rom-specific format applies (the host then falls back to its own extension heuristics).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub recommended_format: Option<String>,
     /// Disc-group id shared by a `.cue`/`.gdi` sheet and its tracks (multi-track disc grouping).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
@@ -488,6 +494,7 @@ impl CliApp {
             checksum_variants: Vec::new(),
             platform: None,
             disc_format: None,
+            recommended_format: None,
             disc_group_id: None,
             track_number: None,
             cue_text: None,
@@ -559,6 +566,7 @@ impl CliApp {
                     .get("disc_format")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                recommended_format: None,
                 disc_group_id: map
                     .get("disc_group_id")
                     .and_then(Value::as_str)
@@ -1045,11 +1053,29 @@ impl CliApp {
             outcome.assets.len(),
             outcome.patches.len()
         );
+        // Single choke point: stamp each asset's recommended rom-specific container from
+        // the already-detected platform/disc_format via the shared Rust recommender. Only
+        // chd/rvz/z3ds are surfaced; the 7z fallback stays `None` so the host falls back to
+        // its own extension heuristics.
+        let assets = outcome
+            .assets
+            .into_iter()
+            .map(|mut asset| {
+                let recommendation = rom_weaver_containers::recommend_container_for_identity(
+                    asset.platform.as_deref(),
+                    asset.disc_format.as_deref(),
+                );
+                if matches!(recommendation.format_name, "chd" | "rvz" | "z3ds") {
+                    asset.recommended_format = Some(recommendation.format_name.to_string());
+                }
+                asset
+            })
+            .collect();
         let result = IngestResult {
             kind: outcome.kind,
             source_file_name,
             is_rom: outcome.is_rom,
-            assets: outcome.assets,
+            assets,
             patches: outcome.patches,
         };
         let mut report = OperationReport::succeeded(

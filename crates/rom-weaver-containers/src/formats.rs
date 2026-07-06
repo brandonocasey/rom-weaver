@@ -754,6 +754,18 @@ impl ContainerRegistry {
     }
 
     pub fn recommend_compress_format(&self, path: &Path) -> CompressFormatRecommendation {
+        let identity = rom_weaver_checksum::rom_identity::detect_rom_identity_for_path(path);
+        let recommendation = recommend_container_for_identity(
+            identity.platform,
+            identity.disc_format.map(|medium| medium.label()),
+        );
+        if recommendation.format_name != SEVEN_Z.name {
+            return recommendation;
+        }
+        // GameCube/Wii container formats (wbfs/wia/gcz) hide the raw disc magic behind their own
+        // header, so prefix-based identity detection above sees no console. Fall back to nod, which
+        // decodes the container and reads the disc header — this recovers the RVZ recommendation for
+        // an already-compressed GC/Wii image the webapp would otherwise get from the decoded leaf.
         let options = NodDiscOptions {
             preloader_threads: 0,
             ..Default::default()
@@ -769,10 +781,41 @@ impl ContainerRegistry {
                 };
             }
         }
-        CompressFormatRecommendation {
+        recommendation
+    }
+}
+
+/// Map a detected ROM identity (the `platform` label and optical-medium `disc_format`
+/// label emitted by `rom_weaver_checksum::rom_identity`) to the best rom-specific
+/// compression container. GameCube/Wii → RVZ, 3DS → z3ds, any optical disc → CHD,
+/// otherwise the 7z fallback.
+///
+/// GameCube/Wii are matched before the disc rule because those discs also report a DVD
+/// medium — keying CHD off `disc_format` alone would mis-route a GameCube ISO to CHD.
+/// This is the single source of truth shared by the probe recommendation and the ingest
+/// per-asset `recommended_format`.
+pub fn recommend_container_for_identity(
+    platform: Option<&str>,
+    disc_format: Option<&str>,
+) -> CompressFormatRecommendation {
+    use rom_weaver_checksum::platform_detection::platform as plat;
+    match platform {
+        Some(plat::GAMECUBE | plat::WII) => CompressFormatRecommendation {
+            format_name: RVZ.name,
+            reason: "wii-gc-disc",
+        },
+        Some(plat::N3DS) => CompressFormatRecommendation {
+            format_name: Z3DS.name,
+            reason: "n3ds",
+        },
+        _ if disc_format.is_some() => CompressFormatRecommendation {
+            format_name: rom_weaver_chd::CHD.name,
+            reason: "disc-chd",
+        },
+        _ => CompressFormatRecommendation {
             format_name: SEVEN_Z.name,
             reason: "fallback-7z-lzma2",
-        }
+        },
     }
 }
 

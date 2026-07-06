@@ -2851,6 +2851,44 @@ mod tests {
     }
 
     #[test]
+    fn recommend_container_for_identity_maps_platform_and_disc_format() {
+        use rom_weaver_checksum::platform_detection::platform as plat;
+
+        // GameCube/Wii → RVZ, checked before the disc rule even though those discs report DVD.
+        assert_eq!(
+            crate::recommend_container_for_identity(Some(plat::GAMECUBE), Some("DVD")).format_name,
+            "rvz"
+        );
+        assert_eq!(
+            crate::recommend_container_for_identity(Some(plat::WII), Some("DVD")).format_name,
+            "rvz"
+        );
+        // 3DS carts have no medium → z3ds.
+        assert_eq!(
+            crate::recommend_container_for_identity(Some(plat::N3DS), None).format_name,
+            "z3ds"
+        );
+        // Any optical disc (known or unknown console) → CHD.
+        assert_eq!(
+            crate::recommend_container_for_identity(Some(plat::PS1), Some("CD")).format_name,
+            "chd"
+        );
+        assert_eq!(
+            crate::recommend_container_for_identity(None, Some("CD")).format_name,
+            "chd"
+        );
+        // Cartridge / undetected → 7z fallback.
+        assert_eq!(
+            crate::recommend_container_for_identity(Some(plat::SNES), None).format_name,
+            "7z"
+        );
+        assert_eq!(
+            crate::recommend_container_for_identity(None, None).format_name,
+            "7z"
+        );
+    }
+
+    #[test]
     fn ambiguous_disc_image_extension_matches_bin_case_insensitively() {
         assert!(crate::is_ambiguous_disc_image_extension("bin"));
         assert!(crate::is_ambiguous_disc_image_extension(".BIN"));

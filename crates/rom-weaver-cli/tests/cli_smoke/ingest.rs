@@ -207,6 +207,35 @@ fn ingest_bare_rom_checksums_in_place() {
 }
 
 #[test]
+fn ingest_gamecube_iso_recommends_rvz() {
+    let temp = setup_temp_dir();
+    let rom = temp.child("game.iso");
+    fs::write(rom.path(), build_test_gamecube_iso(0x8000)).expect("gamecube iso fixture");
+    let out_dir = temp.child("ingest-out");
+
+    let terminal = ingest_terminal(&[
+        "ingest",
+        rom.path().to_str().expect("path"),
+        "--out-dir",
+        out_dir.path().to_str().expect("path"),
+        "--json",
+    ]);
+    assert_eq!(terminal["status"], "succeeded");
+
+    let assets = terminal["details"]["ingest"]["assets"]
+        .as_array()
+        .expect("assets array");
+    let asset = assets
+        .iter()
+        .find(|asset| asset["platform"] == "Nintendo GameCube")
+        .expect("a GameCube asset is detected from the bare .iso disc magic");
+    assert_eq!(
+        asset["recommended_format"], "rvz",
+        "a GameCube disc auto-recommends RVZ from content, even though the extension is a bare .iso"
+    );
+}
+
+#[test]
 fn ingest_rom_archive_extracts_and_checksums() {
     let temp = setup_temp_dir();
     let rom = temp.child("game.nes");
