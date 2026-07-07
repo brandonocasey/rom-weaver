@@ -426,15 +426,18 @@ impl CliApp {
                 // Reuse the mixed-archive pre-pass patches when it already found some (top-level patch
                 // names); otherwise (patches only nested below) enumerate now.
                 if patches.is_empty() {
+                    // Enumerate independently of the ROM `--select` and without prompting, matching the
+                    // mixed-archive pre-pass above: the ROM glob must not filter the bundle's patches, and
+                    // the host drives the patch choice from the full leaf set.
                     patches = self
                         .ingest_patch_leaves(
                             handler,
                             source,
                             out_dir,
-                            &raw_selections,
+                            &[],
                             no_ignore,
                             no_nested_extract,
-                            true,
+                            false,
                             None,
                             context,
                         )
