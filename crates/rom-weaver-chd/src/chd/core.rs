@@ -348,9 +348,20 @@ impl ChdContainerHandler {
                 "rust backend raw extract helper only supports non-disc media".to_string(),
             ));
         }
-        session
-            .extract_to_file_with_progress(output, thread_count, None)
-            .map(|_| ())
+        let mut sink = std::io::BufWriter::new(File::create(output).map_err(|error| {
+            RomWeaverError::Validation(format!("failed to create `{}`: {error}", output.display()))
+        })?);
+        session.stream_with_progress(thread_count, None, |chunk| {
+            std::io::Write::write_all(&mut sink, chunk).map_err(|error| {
+                RomWeaverError::Validation(format!(
+                    "failed to write `{}`: {error}",
+                    output.display()
+                ))
+            })
+        })?;
+        std::io::Write::flush(&mut sink).map_err(|error| {
+            RomWeaverError::Validation(format!("failed to flush `{}`: {error}", output.display()))
+        })
     }
 
     #[cfg(any(test, feature = "test-utils"))]
