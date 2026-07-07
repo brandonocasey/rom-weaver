@@ -238,6 +238,20 @@ const OutputCompressionManager = (() => {
     const size = typeof source?.size === "number" && Number.isFinite(source.size) ? source.size : null;
     return isLikelyDiscImageSource(_getExtension(source), size);
   };
+  // Engine-recommended rom-specific container (chd/rvz/z3ds) from the ingest identity pass.
+  // Content-detected in Rust (works on a bare `.iso`), so it is authoritative and wins over the
+  // extension/size heuristics below; `null` when the engine surfaced no rom-specific format.
+  const _engineRecommendedRomSpecific = (
+    source: CompressionSource | null | undefined,
+  ): OutputCompressionValue | null => {
+    const recommended = String(source?.metadata?.recommendedFormat || "")
+      .trim()
+      .toLowerCase();
+    if (recommended === OUTPUT_COMPRESSION.CHD) return OUTPUT_COMPRESSION.CHD;
+    if (recommended === OUTPUT_COMPRESSION.RVZ) return OUTPUT_COMPRESSION.RVZ;
+    if (recommended === OUTPUT_COMPRESSION.Z3DS) return OUTPUT_COMPRESSION.Z3DS;
+    return null;
+  };
   const _resolveOutputCompression = (
     source: CompressionSource | null | undefined,
     options?: OutputCompressionOptions,
@@ -245,6 +259,10 @@ const OutputCompressionManager = (() => {
     options = options || {};
     const selected = _normalizeOutputCompression(options.compressionFormat);
     if (selected !== OUTPUT_COMPRESSION.AUTO) return selected;
+    // Engine content verdict first: a GameCube/Wii disc reports disc_format=DVD (which would otherwise
+    // trip the CHD disc-metadata heuristic below), but Rust ingest correctly recommends rvz for it.
+    const engineRecommended = _engineRecommendedRomSpecific(source);
+    if (engineRecommended) return engineRecommended;
     if (_hasChdSourceMetadata(source)) return OUTPUT_COMPRESSION.CHD;
     if (_isUnambiguousZ3dsCompressionInput(source)) return OUTPUT_COMPRESSION.Z3DS;
     if (_isZ3dsSource(source)) return OUTPUT_COMPRESSION.Z3DS;

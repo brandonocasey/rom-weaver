@@ -374,6 +374,8 @@ const normalizePatcherUiState = (
         ? {
             discFormat: typeof source.romType.discFormat === "string" ? source.romType.discFormat : undefined,
             platform: typeof source.romType.platform === "string" ? source.romType.platform : undefined,
+            recommendedFormat:
+              typeof source.romType.recommendedFormat === "string" ? source.romType.recommendedFormat : undefined,
           }
         : undefined,
       sha1: typeof source.sha1 === "string" ? source.sha1 : "",

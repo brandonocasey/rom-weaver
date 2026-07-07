@@ -15,6 +15,7 @@ export interface ParsedIngestRomAsset {
   checksumVariants: ChecksumVariant[];
   platform?: string;
   discFormat?: string;
+  recommendedFormat?: string;
   discGroupId?: string;
   trackNumber?: number;
   cueText?: string;

@@ -126,7 +126,11 @@ const createBrowserIngestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime[
                 fileName: asset.fileName,
                 filePath: asset.path,
                 ...(asset.gdiText ? { gdiText: asset.gdiText } : {}),
-                romType: romTypeFromEmittedFile({ discFormat: asset.discFormat, platform: asset.platform }),
+                romType: romTypeFromEmittedFile({
+                  discFormat: asset.discFormat,
+                  platform: asset.platform,
+                  recommendedFormat: asset.recommendedFormat,
+                }),
                 size: asset.sizeBytes,
                 ...(typeof asset.trackNumber === "number" ? { trackNumber: asset.trackNumber } : {}),
               },

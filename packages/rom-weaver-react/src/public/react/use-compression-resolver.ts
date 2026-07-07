@@ -119,6 +119,10 @@ const useCompressionResolver = ({
     // identity pass; the CHD output panel reads it for the disc label instead of
     // re-deriving GD-vs-CD from the cue text / file name in TS.
     const discFormat = romInputs[0]?.info?.romType?.discFormat;
+    // Engine-recommended rom-specific container (chd/rvz/z3ds) from the ingest identity
+    // pass. Content-detected (works on a bare .iso), so it drives the auto output format
+    // ahead of the extension heuristics — a GameCube .iso picks RVZ, not 7z/CHD.
+    const recommendedFormat = romInputs[0]?.info?.romType?.recommendedFormat;
     const baseSource = effectiveInputs[0];
     if (!selectedInputFileName) return baseSource;
     if (baseSource && typeof baseSource === "object") {
@@ -127,8 +131,14 @@ const useCompressionResolver = ({
       const baseSize = romInputs[0]?.size ?? getBinarySourceSize(baseSource);
       return {
         ...(baseSource as unknown as Record<string, unknown>),
-        ...(chdMode || discFormat
-          ? { metadata: { ...(chdMode ? { mode: chdMode } : {}), ...(discFormat ? { format: discFormat } : {}) } }
+        ...(chdMode || discFormat || recommendedFormat
+          ? {
+              metadata: {
+                ...(chdMode ? { mode: chdMode } : {}),
+                ...(discFormat ? { format: discFormat } : {}),
+                ...(recommendedFormat ? { recommendedFormat } : {}),
+              },
+            }
           : {}),
         ...(typeof baseSize === "number" && Number.isFinite(baseSize) ? { size: baseSize } : {}),
         fileName: selectedInputFileName,
@@ -173,4 +183,4 @@ const useCompressionResolver = ({
   };
 };
 
-export { useCompressionResolver };
+export { resolveCompressionState, useCompressionResolver };

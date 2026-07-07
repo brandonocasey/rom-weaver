@@ -32,6 +32,8 @@ type ChecksumResult = {
 type RomTypeTag = {
   platform?: string;
   discFormat?: string;
+  /** Engine-recommended rom-specific compression container (`chd`/`rvz`/`z3ds`) from ingest. */
+  recommendedFormat?: string;
 };
 
 type ChecksumRomProbe = {

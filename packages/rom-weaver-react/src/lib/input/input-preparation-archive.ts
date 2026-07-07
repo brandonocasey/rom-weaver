@@ -617,7 +617,11 @@ const attachBareRomIngestMetadata = async (
     if (asset.checksumVariants?.length) {
       (file as { checksumVariants?: typeof asset.checksumVariants }).checksumVariants = asset.checksumVariants;
     }
-    const romType = romTypeFromEmittedFile({ discFormat: asset.discFormat, platform: asset.platform });
+    const romType = romTypeFromEmittedFile({
+      discFormat: asset.discFormat,
+      platform: asset.platform,
+      recommendedFormat: asset.recommendedFormat,
+    });
     if (romType) (file as { romType?: typeof romType }).romType = romType;
     // A bare ROM is checksummed in place (no extract), so it carries a real checksum duration — unlike
     // an archive leaf (checksummed DURING extract, reported as 0 → the "from extract" label). Prefer the

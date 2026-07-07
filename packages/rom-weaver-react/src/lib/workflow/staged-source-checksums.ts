@@ -196,7 +196,11 @@ const calculateStandardInputChecksumsForFile = async ({
   return {
     checksums,
     romProbe: undefined,
-    romType: romTypeFromEmittedFile({ discFormat: asset?.discFormat, platform: asset?.platform }),
+    romType: romTypeFromEmittedFile({
+      discFormat: asset?.discFormat,
+      platform: asset?.platform,
+      recommendedFormat: asset?.recommendedFormat,
+    }),
     variants: cloneChecksumVariants(asset?.checksumVariants),
   };
 };

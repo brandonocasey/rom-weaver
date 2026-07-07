@@ -53,6 +53,8 @@ const parseRomAsset = (value: unknown): ParsedIngestRomAsset | undefined => {
   if (platform !== undefined) asset.platform = platform;
   const discFormat = toStringValue(record.disc_format);
   if (discFormat !== undefined) asset.discFormat = discFormat;
+  const recommendedFormat = toStringValue(record.recommended_format);
+  if (recommendedFormat !== undefined) asset.recommendedFormat = recommendedFormat;
   const discGroupId = toStringValue(record.disc_group_id);
   if (discGroupId !== undefined) asset.discGroupId = discGroupId;
   const trackNumber = toNumberValue(record.track_number);

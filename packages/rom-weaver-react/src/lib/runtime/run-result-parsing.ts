@@ -191,12 +191,17 @@ const parseChecksumVariants = (details: unknown): ChecksumVariant[] | undefined 
 };
 
 const romTypeFromEmittedFile = (
-  entry: { platform?: string; discFormat?: string } | undefined,
+  entry: { platform?: string; discFormat?: string; recommendedFormat?: string } | undefined,
 ): RomTypeTag | undefined => {
   const platform = entry?.platform?.trim() ? entry.platform.trim() : undefined;
   const discFormat = entry?.discFormat?.trim() ? entry.discFormat.trim() : undefined;
-  if (!(platform || discFormat)) return undefined;
-  return { ...(platform ? { platform } : {}), ...(discFormat ? { discFormat } : {}) };
+  const recommendedFormat = entry?.recommendedFormat?.trim() ? entry.recommendedFormat.trim() : undefined;
+  if (!(platform || discFormat || recommendedFormat)) return undefined;
+  return {
+    ...(platform ? { platform } : {}),
+    ...(discFormat ? { discFormat } : {}),
+    ...(recommendedFormat ? { recommendedFormat } : {}),
+  };
 };
 
 const getEmittedFiles = (result: RomWeaverRunJsonResult): RomWeaverEmittedFile[] => {
