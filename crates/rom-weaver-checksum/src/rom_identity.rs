@@ -105,7 +105,13 @@ struct PrefixDisc<'a> {
 
 impl DiscSectorSource for PrefixDisc<'_> {
     fn read_sectors(&self, lba: u64, count: u32) -> io::Result<Vec<u8>> {
-        let mut out = Vec::with_capacity(count as usize * USER_SECTOR_BYTES);
+        // `count` derives from an untrusted ISO9660 directory/extent length, so cap the
+        // reservation at the prefix we can actually return (the loop below stops at its end)
+        // instead of trusting `count` — a bogus length must not force a multi-GiB allocation.
+        let capacity = (count as usize)
+            .saturating_mul(USER_SECTOR_BYTES)
+            .min(self.bytes.len());
+        let mut out = Vec::with_capacity(capacity);
         for index in 0..count as u64 {
             let frame_start = (lba + index) as usize * self.frame + self.data_offset;
             if frame_start >= self.bytes.len() {
