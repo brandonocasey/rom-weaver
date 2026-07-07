@@ -82,31 +82,24 @@ describe("UpdateBanner", () => {
 });
 
 describe("Selvage", () => {
-  it("renders the status dot, metadata, and links", () => {
+  it("renders version, threads, and links", () => {
     const { container } = render(
       withSettings(
         <Selvage
-          cacheLabel="cache v18"
           donateHref="https://example.com/donate"
           githubHref="https://example.com/repo"
-          stage="Apply — track 1"
-          state="running"
           threads={8}
           version="1.2.3"
         />,
       ),
     );
-    const state = container.querySelector(".sv-state");
-    expect(state?.classList.contains("running")).toBe(true);
-    expect(container.querySelector(".sv-stage")?.textContent).toBe("Apply — track 1");
+    expect(container.querySelector(".sv-meta")?.textContent).toBe("1.2.3");
     expect(container.querySelector(".sv-threads")?.textContent).toContain("8");
-    expect(container.querySelector(".sv-cache")?.textContent).toBe("cache v18");
     expect(container.querySelector(".sv-link.donate")).toBeTruthy();
   });
 
-  it("keeps the dot neutral while idle", () => {
-    const { container } = render(withSettings(<Selvage state="idle" />));
-    const state = container.querySelector(".sv-state");
-    expect(state?.className).toBe("sv-state");
+  it("omits threads when none are provided", () => {
+    const { container } = render(withSettings(<Selvage version="1.2.3" />));
+    expect(container.querySelector(".sv-threads")).toBeNull();
   });
 });

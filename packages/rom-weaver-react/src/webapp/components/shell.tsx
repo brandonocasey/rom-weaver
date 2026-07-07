@@ -267,46 +267,29 @@ const WakeLockBanner = ({
   );
 };
 
-type SelvageState = "done" | "failed" | "idle" | "ready" | "running" | "staging";
-
 /** Edge-to-edge status strip at the very bottom of the page. */
 const Selvage = ({
-  state,
-  stage,
   version,
-  cacheLabel,
   threads,
   githubHref,
   donateHref,
 }: {
-  state: SelvageState;
-  stage?: string;
   version?: string;
-  cacheLabel?: string;
   threads?: number;
   githubHref?: string;
   donateHref?: string;
 }) => {
   const localizer = useUiLocalizer();
-  const stateClass = state === "idle" || state === "staging" ? "" : state;
   return (
     <footer className="selvage">
       <div className="sv-inner">
-        <span className={join("sv-state", stateClass)}>
-          <span aria-hidden="true" className="sv-dot" />
-          <span className="mono">{localizer.message(`ui.status.${state}`)}</span>
-        </span>
-        <span aria-live="polite" className="sv-stage mono">
-          {stage || ""}
-        </span>
-        <span className="sv-spacer" />
         {version ? <span className="sv-meta mono">{version}</span> : null}
-        {cacheLabel ? <span className="sv-meta mono sv-cache">{cacheLabel}</span> : null}
         {threads ? (
           <span className="sv-meta mono sv-threads">
             {threads} {localizer.message("ui.env.threads")}
           </span>
         ) : null}
+        <span className="sv-spacer" />
         {githubHref ? (
           <a className="sv-link" href={githubHref} rel="noreferrer" target="_blank">
             GitHub
@@ -322,4 +305,4 @@ const Selvage = ({
   );
 };
 
-export { Masthead, Reveal, Selvage, type SelvageState, UpdateBanner, WakeLockBanner };
+export { Masthead, Reveal, Selvage, UpdateBanner, WakeLockBanner };

@@ -420,10 +420,8 @@ const Shell = (currentTab, panelView, formNode) =>
         ),
       ),
       createElement(Selvage, {
-        cacheLabel: "cache v1",
         donateHref: "https://example.invalid/donate",
         githubHref: "https://example.invalid/repo",
-        state: "ready",
         threads: 8,
         version: "0.1.0",
       }),

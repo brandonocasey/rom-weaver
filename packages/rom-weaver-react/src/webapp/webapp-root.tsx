@@ -16,7 +16,7 @@ import { ApplyPatchForm, CreatePatchForm, RomWeaverSettingsProvider, TrimPatchFo
 import { useUiLocalizer } from "../public/react/settings-context.tsx";
 import { APP_BUILD_VERSION } from "./build-version.ts";
 import { LogDialog } from "./components/log-dialog.tsx";
-import { Masthead, Selvage, type SelvageState, UpdateBanner } from "./components/shell.tsx";
+import { Masthead, Selvage, UpdateBanner } from "./components/shell.tsx";
 import { ProcessingWakeLockNotice } from "./components/wake-lock-notice.tsx";
 import { getSettingsUiState } from "./settings/settings-state.ts";
 import type { WebappRootProps } from "./webapp-root-types.ts";
@@ -128,40 +128,27 @@ const ActivityWakeLockNotice = () => {
   return <ProcessingWakeLockNotice active={activity.state === "running"} />;
 };
 
-const ActivitySelvage = ({
-  cacheLabel,
-  sessionHasInput,
-  threads,
-}: {
-  cacheLabel?: string;
-  sessionHasInput: boolean;
-  threads?: number;
-}) => {
+const ActivitySelvage = ({ threads }: { threads?: number }) => {
   const activity = useSyncExternalStore(subscribeWorkbenchActivity, getWorkbenchActivity, getWorkbenchActivity);
-  const selvageState: SelvageState = activity.state === "idle" && sessionHasInput ? "ready" : activity.state;
-  // The status strip re-renders when the bench settles out of a run (running/staging → ready for a ROM
-  // load, → done for an apply/create/trim) — the commit batched with the result render. Close the
-  // perceived-latency tail (romweaver:after-finish) on the paint that reveals the result; staying off the
-  // workbench keeps the measure from perturbing the run, and skipping the in-progress states avoids
-  // firing on an intermediate step of a multi-step action (e.g. a ROM load's extract before its checksum).
+  // The bench settles out of a run (running/staging → ready/done) on the commit batched with the result
+  // render. Close the perceived-latency tail (romweaver:after-finish) on the paint that reveals the result;
+  // skipping the in-progress states avoids firing on an intermediate step of a multi-step action (e.g. a ROM
+  // load's extract before its checksum).
   const settled = activity.state !== "running" && activity.state !== "staging";
   useEffect(() => {
     if (settled) markResultPaintedAfterFinish();
   });
   return (
     <Selvage
-      cacheLabel={cacheLabel}
       donateHref="https://www.paypal.me/marcrobledo/5"
       githubHref="https://github.com/marcrobledo/rom-weaver/"
-      stage={activity.stage}
-      state={selvageState}
       threads={threads}
       version={APP_BUILD_VERSION}
     />
   );
 };
 
-function WebappRoot({ state, serviceWorkerCache, pageUpdate, confirmationDialog, actions }: WebappRootProps) {
+function WebappRoot({ state, pageUpdate, confirmationDialog, actions }: WebappRootProps) {
   useEntryAnimationLock();
   // The page title follows the active workflow tab.
   useEffect(() => {
@@ -250,15 +237,6 @@ function WebappRoot({ state, serviceWorkerCache, pageUpdate, confirmationDialog,
     };
   }, [confirmationDialog.open, state.currentView, state.settingsDialogOpen]);
 
-  // Optional access: harness tests mount the root with partial session state.
-  // Optional access: harness tests mount the root with partial session state.
-  const sessionHasInput =
-    !!state.patcherSession?.romFilePresent ||
-    (state.patcherSession?.patchCount ?? 0) > 0 ||
-    !!state.creatorSession?.originalFilePresent ||
-    !!state.creatorSession?.modifiedFilePresent ||
-    !!state.trimSession?.sourceFilePresent;
-
   const workflowPanel = (view: WorkflowView, form: React.ReactNode) =>
     isViewMounted(view) ? (
       <section
@@ -329,11 +307,7 @@ function WebappRoot({ state, serviceWorkerCache, pageUpdate, confirmationDialog,
             <DropVeil />
           </main>
         </div>
-        <ActivitySelvage
-          cacheLabel={serviceWorkerCache.label}
-          sessionHasInput={sessionHasInput}
-          threads={resolveWorkerThreads(workerThreads)}
-        />
+        <ActivitySelvage threads={resolveWorkerThreads(workerThreads)} />
         <LogDialog
           level={state.settings.logLevel}
           onClose={() => setLogOpen(false)}
