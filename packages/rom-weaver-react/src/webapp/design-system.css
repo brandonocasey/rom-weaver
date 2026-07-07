@@ -1236,7 +1236,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
   padding: 7px 0 max(7px, env(safe-area-inset-bottom));
   background: color-mix(in srgb, var(--plate) 88%, transparent);
   border-block-start: 1px solid var(--seam);
-  font-size: .66rem; color: var(--ink-3);
+  font-size: .82rem; color: var(--ink-3);
 }
 .rw-app .selvage::before {
   /* thread accent along the top edge, fading at the selvage ends */
@@ -1549,8 +1549,8 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
   .rw-app .setgroup .setrow { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   /* stays pinned at the top; the opened panel is capped + scrollable so it never
      runs off the small screen */
-  /* footer: one line, always — status truncates, metadata yields. bump the type a
-     step up from the desktop .66rem so the status stays readable on a phone */
+  /* footer: one line, always — status truncates, metadata yields. hold the
+     type at .76rem so the status stays on one line on a phone */
   .rw-app .selvage { font-size: .76rem; }
   .rw-app .sv-inner { flex-wrap: nowrap; gap: 10px; }
   .rw-app .sv-stage { flex: 0 1 auto; }
