@@ -336,8 +336,13 @@ impl CliApp {
                     .archive_origin
                     .as_ref()
                     .expect("repack source carries its archive origin");
-                match self.confirm_archive_repack(archive, repack_root, &trim_source.path, dry_run)
-                {
+                match self.confirm_archive_repack(
+                    archive,
+                    repack_root,
+                    &trim_source.path,
+                    trim_source.kind,
+                    dry_run,
+                ) {
                     Ok(true) => {}
                     Ok(false) => {
                         let message = format!(
@@ -359,7 +364,7 @@ impl CliApp {
                             OperationLabel {
                                 command: "trim",
                                 family: OperationFamily::Command,
-                                format: Some("nds"),
+                                format: Some(trim_source.kind.mode_label()),
                             },
                             operation.stage(),
                             error.to_string(),
@@ -402,7 +407,7 @@ impl CliApp {
                 OperationLabel {
                     command: "trim",
                     family: OperationFamily::Command,
-                    format: Some("nds"),
+                    format: Some(trim_source.kind.mode_label()),
                 },
                 operation.stage(),
                 format!(
@@ -616,6 +621,7 @@ impl CliApp {
         archive: &Path,
         repack_root: &Path,
         rom_path: &Path,
+        kind: TrimInputKind,
         dry_run: bool,
     ) -> Result<bool> {
         let others = Self::repack_other_files(repack_root, rom_path)?;
@@ -634,7 +640,7 @@ impl CliApp {
                 OperationLabel {
                     command: "trim",
                     family: OperationFamily::Command,
-                    format: Some("nds"),
+                    format: Some(kind.mode_label()),
                 },
                 "trim",
                 format!(
