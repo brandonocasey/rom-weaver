@@ -60,6 +60,12 @@ const COI_RELOAD_REASON_COEP_DEGRADE = "coepdegrade";
 const COI_RELOAD_REASON_NOT_CONTROLLING = "notcontrolling";
 const CLIENT_LOG_PREFIX = "[rom-weaver-sw-client]";
 const SERVICE_WORKER_READY_TIMEOUT_MS = 8000;
+// Per-tab-session budget on unattended auto-apply reloads. Prompt mode had the user as the circuit
+// breaker; auto-apply needs its own so a deploy that ever serves a byte-varying worker cannot reload
+// an idle tab endlessly. Past the budget we fall back to the manual update prompt. sessionStorage
+// clears on tab close, so this resets naturally per browsing session.
+const AUTO_APPLY_RELOAD_COUNT_KEY = "rom-weaver-sw-auto-apply-reloads";
+const AUTO_APPLY_RELOAD_BUDGET = 3;
 
 const logServiceWorkerClient = (message: string, details?: Record<string, unknown>) => {
   if (details) console.info(CLIENT_LOG_PREFIX, message, details);
@@ -527,12 +533,21 @@ const createPwaServiceWorkerClient = ({
       immediate: true,
       onNeedRefresh: () => {
         logServiceWorkerClient("service worker update ready");
-        if (shouldAutoApplyUpdate?.() && updateServiceWorker) {
-          logServiceWorkerClient("auto-applying service worker update; no in-progress work");
+        const autoApplyReloads = Number.parseInt(getSessionStorageItem(AUTO_APPLY_RELOAD_COUNT_KEY), 10) || 0;
+        if (shouldAutoApplyUpdate?.() && updateServiceWorker && autoApplyReloads < AUTO_APPLY_RELOAD_BUDGET) {
+          logServiceWorkerClient("auto-applying service worker update; no in-progress work", {
+            autoApplyReloads,
+          });
+          setSessionStorageItem(AUTO_APPLY_RELOAD_COUNT_KEY, String(autoApplyReloads + 1));
           clearUpdateReady();
           onBeforeReload?.();
           void updateServiceWorker(true);
           return;
+        }
+        if (autoApplyReloads >= AUTO_APPLY_RELOAD_BUDGET) {
+          logServiceWorkerClient("auto-apply budget exhausted; deferring to manual update prompt", {
+            autoApplyReloads,
+          });
         }
         markUpdateReady();
       },

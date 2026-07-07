@@ -148,6 +148,25 @@ test("auto-applies an update when no work is in progress", async () => {
   expect(harness.client.getState().updateReady).toBe(false);
 });
 
+test("stops auto-applying once the per-session reload budget is spent", async () => {
+  const controller = createController();
+  const harness = createHarness({
+    controller,
+    crossOriginIsolated: true,
+    sessionStorageSeed: { "rom-weaver-sw-auto-apply-reloads": "3" },
+    shouldAutoApplyUpdate: () => true,
+  });
+
+  harness.client.initialize();
+  await flushAsync();
+  harness.triggerNeedRefresh();
+
+  // Budget already spent: even with no work in progress, fall back to the manual prompt instead of
+  // auto-reloading again (guards against a deploy that serves a byte-varying worker on every check).
+  expect(harness.updateServiceWorker).not.toHaveBeenCalled();
+  expect(harness.client.getState().updateReady).toBe(true);
+});
+
 test("defers an update to a prompt when work is in progress", async () => {
   const controller = createController();
   const harness = createHarness({
