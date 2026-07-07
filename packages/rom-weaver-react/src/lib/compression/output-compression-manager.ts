@@ -281,18 +281,25 @@ const OutputCompressionManager = (() => {
       selected === OUTPUT_COMPRESSION.ZIP
     )
       return true;
+    // Honor the engine's content verdict first so "supported" agrees with what `_resolveOutputCompression`
+    // auto-picks: a content-detected disc whose file name lacks a matching extension (a bare `.bin`
+    // GameCube dump) is still a valid rvz/chd/z3ds target and must stay selectable in the dropdown.
+    const engineRecommended = _engineRecommendedRomSpecific(source as CompressionSource | null | undefined);
     if (selected === OUTPUT_COMPRESSION.CHD)
       return (
+        engineRecommended === OUTPUT_COMPRESSION.CHD ||
         _isChdCompressionInput(source as CompressionSource | null | undefined) ||
         _isChdSource(source as CompressionSource | null | undefined)
       );
     if (selected === OUTPUT_COMPRESSION.RVZ)
       return (
+        engineRecommended === OUTPUT_COMPRESSION.RVZ ||
         _isRvzCompressionInput(source as CompressionSource | null | undefined) ||
         _isRvzSource(source as CompressionSource | null | undefined)
       );
     if (selected === OUTPUT_COMPRESSION.Z3DS)
       return (
+        engineRecommended === OUTPUT_COMPRESSION.Z3DS ||
         _isZ3dsCompressionInput(source as CompressionSource | null | undefined) ||
         _isZ3dsSource(source as CompressionSource | null | undefined)
       );
