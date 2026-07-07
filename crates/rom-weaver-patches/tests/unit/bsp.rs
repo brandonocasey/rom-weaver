@@ -260,6 +260,23 @@ fn apply_runs_nested_bsppatch_against_shared_buffer() {
 }
 
 #[test]
+fn apply_rejects_unbounded_bsppatch_nesting() {
+    // A bsppatch (0x94) whose selected region is the opcode itself recurses without bound; each level
+    // allocates a fresh frame, so without the depth cap it OOMs before the instruction budget trips.
+    // The cap must turn it into a validation error instead. Encoding: 0x94, var=0, start=0, len=10
+    // (the whole 10-byte opcode, so the child patch space is a copy of the opcode that recurses).
+    let patch_bytes = [0x94, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00];
+    let error = apply_bsp_patch_bytes(&patch_bytes, vec![0x00; 4], None)
+        .expect_err("self-referential bsppatch must be rejected, not run to OOM");
+    assert!(
+        error
+            .to_string()
+            .contains("nesting exceeded the maximum depth"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn apply_reports_parallel_execution_for_large_write_data_opcode() {
     let temp = TestDir::new();
     let payload_len = (BSP_THREAD_WORK_CHUNK_BYTES * 2) + 17;

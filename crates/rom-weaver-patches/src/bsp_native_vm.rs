@@ -24,9 +24,15 @@ const BSP_STEP_BUDGET_FLOOR: u64 = 1 << 32;
 /// Additional budget granted per input byte (patch + file) so legitimate scripts
 /// that iterate over large ROMs still have ample headroom.
 const BSP_STEP_BUDGET_PER_BYTE: u64 = 4096;
-/// Upper bound on stack length for `resize_stack`; a single `resizeStack` opcode
-/// carries an attacker-controlled u32, so reject absurd sizes before allocating.
+/// Upper bound on stack length for `resize_stack` and the incremental push
+/// opcodes; a single `resizeStack` opcode carries an attacker-controlled u32 and
+/// a `push`/`call` loop can grow the stack one entry per step, so both are
+/// rejected past this ceiling before allocating.
 const BSP_MAX_STACK_LEN: usize = 1 << 24;
+/// Upper bound on `bsppatch` nesting depth. Each level pushes a fresh frame (a
+/// 256-word variable file plus an owned copy of the selected patch region), so a
+/// self-referential `bsppatch` would OOM long before the step budget trips.
+const BSP_MAX_PATCH_DEPTH: usize = 256;
 
 #[derive(Clone, Copy)]
 enum StepControl {
@@ -444,8 +450,15 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
         Ok(self.get_variable(variable))
     }
 
-    fn push_to_stack(&mut self, value: u32) {
-        self.top_frame_mut().stack.push_front(value);
+    fn push_to_stack(&mut self, value: u32) -> VmResult<()> {
+        let stack = &mut self.top_frame_mut().stack;
+        if stack.len() >= BSP_MAX_STACK_LEN {
+            return Err(format!(
+                "BSP stack exceeded the maximum of {BSP_MAX_STACK_LEN} entries (possible runaway push loop)"
+            ));
+        }
+        stack.push_front(value);
+        Ok(())
     }
 
     fn pop_from_stack(&mut self) -> VmResult<u32> {
@@ -850,7 +863,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
             0x04 | 0x05 => self.call_opcode(args[0]),
             0x06 | 0x07 => Ok(StepControl::Exit(args[0])),
             0x08 | 0x09 => {
-                self.push_to_stack(args[0]);
+                self.push_to_stack(args[0])?;
                 Ok(StepControl::Continue)
             }
             0x0A => {
@@ -1276,7 +1289,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 }
             }
             0x92 => {
-                self.push_to_stack(self.current_file_pointer);
+                self.push_to_stack(self.current_file_pointer)?;
                 Ok(StepControl::Continue)
             }
             0x93 => {
@@ -1488,7 +1501,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
 
     fn call_opcode(&mut self, target: u32) -> VmResult<StepControl> {
         let current_ip = self.top_frame().instruction_pointer;
-        self.push_to_stack(current_ip);
+        self.push_to_stack(current_ip)?;
         self.jump_opcode(target)
     }
 
@@ -1561,6 +1574,12 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
         }
         if len == 0 {
             return Err("invalid zero length".to_string());
+        }
+
+        if self.suspended_frames.len() >= BSP_MAX_PATCH_DEPTH {
+            return Err(format!(
+                "BSP bsppatch nesting exceeded the maximum depth of {BSP_MAX_PATCH_DEPTH}"
+            ));
         }
 
         let slice = self.top_frame().patch_space.read_vec(start, len)?;
