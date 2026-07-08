@@ -428,4 +428,4 @@ const createWebappRootController = (options: ControllerOptions) => {
   };
 };
 
-export { createWebappRootController, readWorkflowViewFromHash };
+export { areSettingsEqual, createWebappRootController, readWorkflowViewFromHash };

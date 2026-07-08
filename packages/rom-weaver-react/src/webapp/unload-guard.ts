@@ -1,3 +1,4 @@
+import { areSettingsEqual } from "./webapp-controller.ts";
 import type { WorkflowView as AppWorkflowView } from "./webapp-state-types.ts";
 
 type UnknownRecord = Record<string, RuntimeValue>;
@@ -49,13 +50,7 @@ const UNSAVED_SETTINGS_DISCARD_MESSAGE = "You have unsaved settings changes. Clo
 
 const settingsDraftHasChanges = (webappState?: WebappState | null): boolean => {
   if (!(webappState?.settings && webappState.draftSettings)) return false;
-  const settings = webappState.settings;
-  const draftSettings = webappState.draftSettings;
-  const keys = new Set([...Object.keys(settings), ...Object.keys(draftSettings)]);
-  for (const key of keys) {
-    if (settings[key] !== draftSettings[key]) return true;
-  }
-  return false;
+  return !areSettingsEqual(webappState.settings, webappState.draftSettings);
 };
 
 const creatorHasPendingChanges = (creatorState: CreatorState): boolean => {
