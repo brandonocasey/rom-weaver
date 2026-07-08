@@ -45,7 +45,6 @@ type ArchiveEntryInput = {
 export type {
   ArchiveEntryInput,
   BrowserFileLike,
-  CleanupCallback,
   JsonObject,
   JsonRecord,
   JsonValue,

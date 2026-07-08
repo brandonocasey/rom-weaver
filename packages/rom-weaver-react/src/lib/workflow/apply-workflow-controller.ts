@@ -1309,5 +1309,4 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
   }
 }
 
-export type { ApplyWorkflowSnapshot };
 export { ApplyWorkflowController };

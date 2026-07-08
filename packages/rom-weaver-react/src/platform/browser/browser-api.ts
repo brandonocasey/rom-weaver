@@ -85,9 +85,6 @@ class CreateWorkflow extends CreateWorkflowController<BrowserSourceRef, BrowserS
   }
 }
 
-export type { ApplyWorkflowSnapshot } from "../../lib/workflow/apply-workflow-controller.ts";
-export type { CreateWorkflowSnapshot } from "../../lib/workflow/create-workflow-controller.ts";
-export type { TrimWorkflowSnapshot } from "../../lib/workflow/trim-workflow-controller.ts";
 export type { BrowserSaveDestination } from "../../types/output.ts";
 export type { WorkflowProgress } from "../../types/progress.ts";
 export type {

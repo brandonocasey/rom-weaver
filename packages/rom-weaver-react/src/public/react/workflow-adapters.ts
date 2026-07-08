@@ -1,5 +1,3 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { ApplyWorkflow, CreateWorkflow } from "../../platform/browser/browser-api.ts";
 import { clampProgressPercent, normalizeProgressDisplayPercent } from "../../presentation/workflow-presentation.ts";
 import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
 import type { CreateWorkflowSourceState } from "../../types/create-workflow.ts";
@@ -7,47 +5,6 @@ import type { ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type { BinarySource } from "./patcher-form.ts";
 
 const CREATE_OUTPUT_EXTENSION_REGEX = /\.[^.]*$/;
-
-const useApplyWorkflow = (options: ConstructorParameters<typeof ApplyWorkflow>[0] = {}): ApplyWorkflow => {
-  const workflowRef = useRef<ApplyWorkflow | null>(null);
-  if (!workflowRef.current) workflowRef.current = new ApplyWorkflow(options);
-  useEffect(
-    () => () => {
-      void workflowRef.current?.dispose();
-      workflowRef.current = null;
-    },
-    [],
-  );
-  return workflowRef.current as ApplyWorkflow;
-};
-
-const useCreateWorkflow = (options: ConstructorParameters<typeof CreateWorkflow>[0] = {}): CreateWorkflow => {
-  const workflowRef = useRef<CreateWorkflow | null>(null);
-  if (!workflowRef.current) workflowRef.current = new CreateWorkflow(options);
-  useEffect(
-    () => () => {
-      void workflowRef.current?.dispose();
-      workflowRef.current = null;
-    },
-    [],
-  );
-  return workflowRef.current as CreateWorkflow;
-};
-
-/**
- * Subscribe a component to a workflow's reactive snapshot. The workflow object (an apply/create/trim
- * instance or its controller) is stable across renders, so the bound callbacks are memoized on it.
- * The snapshot keeps a stable identity until the next staged-state change, satisfying
- * `useSyncExternalStore`.
- */
-const useWorkflowSnapshot = <TSnapshot>(workflow: {
-  subscribe: (listener: () => void) => () => void;
-  getSnapshot: () => TSnapshot;
-}): TSnapshot => {
-  const subscribe = useCallback((listener: () => void) => workflow.subscribe(listener), [workflow]);
-  const getSnapshot = useCallback(() => workflow.getSnapshot(), [workflow]);
-  return useSyncExternalStore(subscribe, getSnapshot);
-};
 
 const getReactBinarySourceFileName = (source: BinarySource | null | undefined, fallback: string) => {
   if (!source) return "";
@@ -174,7 +131,4 @@ export {
   getReactBinarySourceFileName,
   toReactProgressEvent,
   toStagedInputInfo,
-  useApplyWorkflow,
-  useCreateWorkflow,
-  useWorkflowSnapshot,
 };
