@@ -402,8 +402,8 @@ where
     CombineFn: Fn(Vec<Result<T>>) -> Result<C>,
     FormatFn: Fn(C) -> String,
 {
-    let chunk_size =
-        crc32_parallel_chunk_size(source_ref.range.len, execution.effective_threads) as usize;
+    let worker_count = execution.effective_threads.max(1);
+    let chunk_size = crc32_parallel_chunk_size(source_ref.range.len, worker_count);
     let partials = if let Some(mapped) = source_ref.mapped {
         collect_parallel_partials_mapped(
             mapped.bytes(),
@@ -417,7 +417,7 @@ where
         collect_parallel_partials_stream(
             source_ref.source,
             source_ref.range,
-            chunk_size,
+            worker_count,
             pool,
             cancel,
             progress,
@@ -443,21 +443,28 @@ where
     T: Send,
     F: Fn(&[u8]) -> T + Send + Sync,
 {
+    cancel.check()?;
     let chunk_size = chunk_size.max(1);
-    let mut partials = Vec::with_capacity(bytes.len().div_ceil(chunk_size));
-    for chunk in bytes.chunks(chunk_size) {
-        cancel.check()?;
-        let partial = pool.install(|| compute_partial(chunk));
-        partials.push(Ok(partial));
-        progress.advance(chunk.len() as u64);
-    }
+    trace!(
+        total_bytes = bytes.len(),
+        chunk_size, "hashing mapped checksum range as parallel chunk partials"
+    );
+    // The whole range is already resident, so hash every chunk concurrently on the pool
+    // workers (par_chunks preserves order, which the ordered combine relies on).
+    let partials = pool.install(|| {
+        bytes
+            .par_chunks(chunk_size)
+            .map(|chunk| Ok(compute_partial(chunk)))
+            .collect::<Vec<Result<T>>>()
+    });
+    progress.advance(bytes.len() as u64);
     Ok(partials)
 }
 
 pub(super) fn collect_parallel_partials_stream<T, F>(
     source: &Path,
     range: &ResolvedRange,
-    chunk_size: usize,
+    worker_count: usize,
     pool: &SharedThreadPool,
     cancel: &CancellationToken,
     progress: &mut ChecksumProgressTracker<'_>,
@@ -467,30 +474,51 @@ where
     T: Send,
     F: Fn(&[u8]) -> T + Send + Sync,
 {
-    let chunk_size = chunk_size.max(1);
+    let chunk_size = crc32_parallel_chunk_size(range.len, worker_count);
+    let batch_chunks = worker_count.max(1);
     let mut file = File::open(source)?;
     file.seek(SeekFrom::Start(range.start))?;
 
     let mut remaining = range.len;
     let estimated_chunks = range.len.div_ceil(chunk_size as u64) as usize;
     let mut partials = Vec::with_capacity(estimated_chunks);
-    let mut buffer = vec![0u8; chunk_size];
+    trace!(
+        range_len = range.len,
+        chunk_size, batch_chunks, "streaming checksum range as batched parallel chunk partials"
+    );
+
+    // Single reader on the calling thread — Safari/OPFS forbids parallel same-file reads —
+    // filling a batch of up to `batch_chunks` owned buffers, then hashing the batch
+    // concurrently on the pool workers. Peak memory stays bounded to batch_chunks *
+    // chunk_size regardless of range length, and the ordered partials combine identically.
     while remaining > 0 {
         cancel.check()?;
-        let limit = remaining.min(buffer.len() as u64) as usize;
-        let bytes_read = file.read(&mut buffer[..limit])?;
-        if bytes_read == 0 {
-            return Err(RomWeaverError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "source ended before checksum range chunk was fully read",
-            )));
+        let mut batch: Vec<Vec<u8>> = Vec::with_capacity(batch_chunks);
+        let mut batch_bytes = 0u64;
+        while remaining > 0 && batch.len() < batch_chunks {
+            let limit = remaining.min(chunk_size as u64) as usize;
+            let mut buffer = vec![0u8; limit];
+            let bytes_read = file.read(&mut buffer)?;
+            if bytes_read == 0 {
+                return Err(RomWeaverError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "source ended before checksum range chunk was fully read",
+                )));
+            }
+            buffer.truncate(bytes_read);
+            remaining -= bytes_read as u64;
+            batch_bytes += bytes_read as u64;
+            batch.push(buffer);
         }
 
-        let chunk = &buffer[..bytes_read];
-        let partial = pool.install(|| compute_partial(chunk));
-        partials.push(Ok(partial));
-        remaining -= bytes_read as u64;
-        progress.advance(bytes_read as u64);
+        let mut batch_partials = pool.install(|| {
+            batch
+                .par_iter()
+                .map(|chunk| Ok(compute_partial(chunk.as_slice())))
+                .collect::<Vec<Result<T>>>()
+        });
+        partials.append(&mut batch_partials);
+        progress.advance(batch_bytes);
     }
     Ok(partials)
 }
@@ -675,8 +703,14 @@ pub(super) fn parallel_blake3_max_threads(range_len: u64) -> usize {
         .clamp(1, BLAKE3_PARALLEL_MAX_THREADS)
 }
 
-pub(super) fn crc32_parallel_chunk_size(range_len: u64, worker_count: usize) -> u64 {
-    range_len.div_ceil(worker_count.max(1) as u64).max(1)
+pub(super) fn crc32_parallel_chunk_size(range_len: u64, worker_count: usize) -> usize {
+    // Clamp to MAX_CHUNK_SIZE so each per-chunk read buffer stays bounded: the combine
+    // functions handle any chunk count, so the checksum value is identical regardless of
+    // how finely the range is split. Without the clamp an 8 GiB range over 4 workers would
+    // allocate a single 2 GiB buffer (and the `as usize` would truncate on wasm32).
+    range_len
+        .div_ceil(worker_count.max(1) as u64)
+        .clamp(1, MAX_CHUNK_SIZE as u64) as usize
 }
 
 pub(super) fn map_range(source: &Path, range: &ResolvedRange) -> Option<MappedRange> {
