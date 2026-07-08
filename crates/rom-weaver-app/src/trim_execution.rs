@@ -277,15 +277,27 @@ impl CliApp {
 
         if in_place || source == destination {
             let temp_path = Self::temporary_xiso_trim_path(source);
-            Self::create_trimmed_xiso(source, &temp_path)?;
-            if let Err(rename_error) = fs::rename(&temp_path, source) {
-                fs::copy(&temp_path, source).map_err(|copy_error| {
-                    RomWeaverError::Validation(format!(
-                        "failed to replace `{}` with trimmed xiso (rename error: {rename_error}; copy fallback error: {copy_error})",
-                        source.display()
-                    ))
-                })?;
+            // A failed build leaves a partial temp beside the user's ROM; remove it before
+            // propagating so repeated failed trims don't accumulate multi-GB junk.
+            if let Err(build_error) = Self::create_trimmed_xiso(source, &temp_path) {
                 fs::remove_file(&temp_path).ok();
+                return Err(build_error);
+            }
+            // Only rename can replace the source atomically. Never fall back to copy-over-source:
+            // a partial copy would destroy the original with no way back. Rename failure leaves the
+            // source untouched, so surface where the intact trimmed image lives instead.
+            if let Err(rename_error) = fs::rename(&temp_path, source) {
+                tracing::debug!(
+                    source = %source.display(),
+                    temp = %temp_path.display(),
+                    error = %rename_error,
+                    "xiso in-place trim rename failed; leaving source untouched"
+                );
+                return Err(RomWeaverError::Validation(format!(
+                    "failed to replace `{}` with the trimmed xiso (rename error: {rename_error}); the original was left untouched and the trimmed image is intact at `{}`",
+                    source.display(),
+                    temp_path.display()
+                )));
             }
             let result_size = fs::metadata(source)?.len();
             return Ok(NdsTrimOutcome {
