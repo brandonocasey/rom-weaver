@@ -93,25 +93,46 @@ function CandidateSelectionDialog({
 const useCandidateSelection = ({ onCancelSelection }: UseCandidateSelectionOptions = {}) => {
   const [selectionState, setSelectionState] = useState<CandidateSelectionState | null>(null);
   const selectionStateRef = useRef<CandidateSelectionState | null>(null);
+  // Two independent serialization domains (the per-controller modal lock and the
+  // runner's host-prompt chain) can each open a dialog without knowing about the
+  // other. Queue a second request behind the open one instead of replacing it —
+  // replacing without settling orphaned the open dialog's promise and hung the
+  // mutation awaiting it.
+  const pendingQueueRef = useRef<CandidateSelectionState[]>([]);
+  const showSelection = useCallback((next: CandidateSelectionState | null) => {
+    selectionStateRef.current = next;
+    setSelectionState(next);
+  }, []);
+  const advanceSelection = useCallback(() => {
+    const next = pendingQueueRef.current.shift() ?? null;
+    showSelection(next);
+  }, [showSelection]);
   const selectFile = useCallback(
     (request: CandidateSelectionPrompt) =>
       new Promise<CandidateSelectionChoice>((resolve, reject) => {
+        const nextState: CandidateSelectionState = { reject, request, resolve };
+        if (selectionStateRef.current) {
+          pendingQueueRef.current.push(nextState);
+          logger.trace("queued candidate selection behind an open dialog", {
+            queuedDepth: pendingQueueRef.current.length,
+            role: request.role,
+            sourceName: request.sourceName,
+          });
+          return;
+        }
         logger.trace("opening candidate selection dialog", {
           candidateCount: request.candidates.length,
           role: request.role,
           selectableCount: countSelectable(request),
           sourceName: request.sourceName,
         });
-        const nextState = { reject, request, resolve };
-        selectionStateRef.current = nextState;
-        setSelectionState(nextState);
+        showSelection(nextState);
       }),
-    [],
+    [showSelection],
   );
   const cancelSelection = useCallback(() => {
     const current = selectionStateRef.current;
-    selectionStateRef.current = null;
-    setSelectionState(null);
+    advanceSelection();
     if (!current) {
       logger.trace("candidate selection cancel ignored — no dialog open");
       return;
@@ -122,31 +143,35 @@ const useCandidateSelection = ({ onCancelSelection }: UseCandidateSelectionOptio
     });
     onCancelSelection?.(current.request);
     current.reject(createSelectionSkippedError());
-  }, [onCancelSelection]);
-  const chooseCandidate = useCallback((id: string) => {
-    const current = selectionStateRef.current;
-    selectionStateRef.current = null;
-    setSelectionState(null);
-    logger.trace("candidate selection dialog resolved with choice", {
-      id,
-      role: current?.request.role,
-      sourceName: current?.request.sourceName,
-    });
-    current?.resolve({ id });
-  }, []);
-  const chooseCandidates = useCallback((ids: string[]) => {
-    const current = selectionStateRef.current;
-    if (!ids.length) return;
-    selectionStateRef.current = null;
-    setSelectionState(null);
-    logger.trace("candidate selection dialog resolved with multiple choices", {
-      idCount: ids.length,
-      ids,
-      role: current?.request.role,
-      sourceName: current?.request.sourceName,
-    });
-    current?.resolve({ id: ids[0] as string, ids });
-  }, []);
+  }, [advanceSelection, onCancelSelection]);
+  const chooseCandidate = useCallback(
+    (id: string) => {
+      const current = selectionStateRef.current;
+      advanceSelection();
+      logger.trace("candidate selection dialog resolved with choice", {
+        id,
+        role: current?.request.role,
+        sourceName: current?.request.sourceName,
+      });
+      current?.resolve({ id });
+    },
+    [advanceSelection],
+  );
+  const chooseCandidates = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return;
+      const current = selectionStateRef.current;
+      advanceSelection();
+      logger.trace("candidate selection dialog resolved with multiple choices", {
+        idCount: ids.length,
+        ids,
+        role: current?.request.role,
+        sourceName: current?.request.sourceName,
+      });
+      current?.resolve({ id: ids[0] as string, ids });
+    },
+    [advanceSelection],
+  );
   return {
     cancelSelection,
     candidateSelectionDialog: (

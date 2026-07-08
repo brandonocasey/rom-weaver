@@ -387,6 +387,10 @@ type PatchEnablement = {
   onToggle: (index: number) => void;
 };
 
+// The apply view is a singleton in the webapp; a stable per-workflow key keeps
+// its activity slot separate from the create/trim forms in the shared store.
+const APPLY_ACTIVITY_KEY = "react-apply-view";
+
 function ApplyWorkflowFormView({
   controllers,
   onUnifiedDrop,
@@ -454,11 +458,11 @@ function ApplyWorkflowFormView({
   const stagingStage = localizer.message("ui.drop.staging");
   const doneStage = applyTotalTime ? localizer.message("ui.status.doneMsg", { t: applyTotalTime }) : "";
   useEffect(() => {
-    if (applyProgress) setWorkbenchActivity({ stage: applyStage, state: "running" });
-    else if (applyFailed) setWorkbenchActivity({ state: "failed" });
-    else if (applyDone) setWorkbenchActivity({ stage: doneStage, state: "done" });
-    else if (inputsStaging) setWorkbenchActivity({ stage: stagingStage, state: "staging" });
-    else setWorkbenchActivity({ state: "idle" });
+    if (applyProgress) setWorkbenchActivity(APPLY_ACTIVITY_KEY, { stage: applyStage, state: "running" });
+    else if (applyFailed) setWorkbenchActivity(APPLY_ACTIVITY_KEY, { state: "failed" });
+    else if (applyDone) setWorkbenchActivity(APPLY_ACTIVITY_KEY, { stage: doneStage, state: "done" });
+    else if (inputsStaging) setWorkbenchActivity(APPLY_ACTIVITY_KEY, { stage: stagingStage, state: "staging" });
+    else setWorkbenchActivity(APPLY_ACTIVITY_KEY, { state: "idle" });
   }, [applyProgress, applyStage, applyFailed, applyDone, doneStage, inputsStaging, stagingStage]);
   const running = !!applyProgress;
   const wovenSteps = running || applyDone;

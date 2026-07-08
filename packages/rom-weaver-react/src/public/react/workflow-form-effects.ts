@@ -130,14 +130,19 @@ type WorkbenchActivityOptions = {
 /**
  * Publishes the create/trim workflow's job state to the selvage status strip:
  * running while busy or queued, done once an output is ready, idle otherwise.
- * (The apply form keeps a richer staging/failed-aware variant inline.)
+ * (The apply form keeps a richer staging/failed-aware variant inline.) Keyed by
+ * the caller's stable workflow id so each mounted form owns its own activity slot
+ * — a sibling form mounting/settling can no longer clobber a live run.
  */
-const useWorkbenchActivity = ({ busy, queued, completed }: WorkbenchActivityOptions) => {
+const useWorkbenchActivity = (workflowId: string, { busy, queued, completed }: WorkbenchActivityOptions) => {
   useEffect(() => {
-    if (busy || queued) setWorkbenchActivity({ state: "running" });
-    else if (completed) setWorkbenchActivity({ state: "done" });
-    else setWorkbenchActivity({ state: "idle" });
-  }, [busy, queued, completed]);
+    if (busy || queued) setWorkbenchActivity(workflowId, { state: "running" });
+    else if (completed) setWorkbenchActivity(workflowId, { state: "done" });
+    else setWorkbenchActivity(workflowId, { state: "idle" });
+    // ponytail: no unmount cleanup — the webapp forms never unmount, and normal
+    // settling already clears the slot to idle. Add a cleanup here if a form can
+    // unmount mid-run (would otherwise leave a stale 'running' pinned).
+  }, [workflowId, busy, queued, completed]);
 };
 
 /**

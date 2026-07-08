@@ -61,7 +61,8 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   const mutationQueueRef = useRef(Promise.resolve<void>(undefined));
   const selectFileRef = useRef(selectFile);
   selectFileRef.current = selectFile;
-  useInputSelectionHandler(selectFile);
+  // id matches webapp-root's `currentView` so root routing targets the active tab.
+  useInputSelectionHandler("patcher", selectFile);
   const lastInputsRef = useRef<BinarySource[]>([]);
   const lastPatchOrderRef = useRef("");
   const forcePatchWorkflowRefreshRef = useRef(false);

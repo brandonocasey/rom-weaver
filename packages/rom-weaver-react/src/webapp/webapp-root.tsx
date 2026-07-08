@@ -13,6 +13,7 @@ import { runFlatViewTransition } from "../public/react/components/ds/flat-transi
 import { ConfirmDialog, Modal } from "../public/react/components/ds/index.ts";
 import type { PageFileDrop } from "../public/react/index.tsx";
 import { ApplyPatchForm, CreatePatchForm, RomWeaverSettingsProvider, TrimPatchForm } from "../public/react/index.tsx";
+import { setActiveSelectionForm } from "../public/react/input-selection-handler.ts";
 import { useUiLocalizer } from "../public/react/settings-context.tsx";
 import { APP_BUILD_VERSION } from "./build-version.ts";
 import { LogDialog } from "./components/log-dialog.tsx";
@@ -154,6 +155,11 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions }: WebappRo
   useEffect(() => {
     const tab = WORKFLOW_TABS.find((entry) => entry.id === state.currentView);
     document.title = tab ? `rom-weaver - ${tab.label}` : "rom-weaver";
+  }, [state.currentView]);
+  // Route mid-command wasm host selection prompts to the visible tab's form. All
+  // forms stay mounted, so without this the last-mounted form would own prompts.
+  useEffect(() => {
+    setActiveSelectionForm(state.currentView);
   }, [state.currentView]);
   const [updateDismissed, setUpdateDismissed] = useState(readUpdateDismissed);
   const [logOpen, setLogOpen] = useState(false);

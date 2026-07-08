@@ -91,7 +91,8 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   const { candidateSelectionDialog, selectFile } = useCandidateSelection({
     onCancelSelection: (request) => cancelSelectionRef.current(request),
   });
-  useInputSelectionHandler(selectFile);
+  // id matches webapp-root's `currentView` so root routing targets the active tab.
+  useInputSelectionHandler("creator", selectFile);
   const [internalOriginal, setInternalOriginal] = useState<BinarySource | null>(props.defaultOriginal || null);
   const [internalModified, setInternalModified] = useState<BinarySource | null>(props.defaultModified || null);
   const [internalSettings, setInternalSettings] = useState<CreatePatchFormSettings>(() =>
@@ -750,7 +751,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
   // "Needs input" directives forward to the 0x01 unified picker.
   const openUnifiedPicker = () => document.getElementById("patch-builder-input-file-unified")?.click();
   // The selvage status strip mirrors this workflow's job state.
-  useWorkbenchActivity({ busy, completed: !!completedOutput, queued: createQueued });
+  useWorkbenchActivity(workflowIdRef.current, { busy, completed: !!completedOutput, queued: createQueued });
 
   const model: CreatePatchFormViewModel = {
     dialog: candidateSelectionDialog,

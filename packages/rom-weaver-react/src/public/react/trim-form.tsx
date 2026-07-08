@@ -193,7 +193,8 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   const { candidateSelectionDialog, selectFile } = useCandidateSelection({
     onCancelSelection: (request) => cancelSelectionRef.current(request),
   });
-  useInputSelectionHandler(selectFile);
+  // id matches webapp-root's `currentView` so root routing targets the active tab.
+  useInputSelectionHandler("trim", selectFile);
   const [internalSource, setInternalSource] = useState<BinarySource | null>(props.defaultSource || null);
   const [internalSettings, setInternalSettings] = useState<TrimPatchFormSettings>(() =>
     mergeSettingsWithOutput(providerSettings, props.defaultSettings),
@@ -761,7 +762,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
   const openUnifiedPicker = () => document.getElementById("trim-builder-input-file-unified")?.click();
   const trimSourceEmpty = useFlatTransitionFlag(!source);
   // The selvage status strip mirrors this workflow's job state.
-  useWorkbenchActivity({ busy, completed: !!completedOutput, queued: trimQueued });
+  useWorkbenchActivity(workflowIdRef.current, { busy, completed: !!completedOutput, queued: trimQueued });
 
   const model: TrimPatchFormViewModel = {
     confirm: {
