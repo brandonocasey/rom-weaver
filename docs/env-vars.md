@@ -37,11 +37,15 @@ Not for production use.
 
 | Variable | Read at | Purpose |
 | --- | --- | --- |
-| `ROM_WEAVER_CONTAINER_MAIN_THREAD_READER` | name in `rom-weaver-containers/src/constants.rs` (`MAIN_THREAD_READER_ENV`), parsed via `core::io::reads_source_on_main_thread`, consumed in `rom-weaver-containers/src/handlers/z3ds.rs` | **Native, test-only.** Forces container pipelines to read the source on the main thread. On wasm this path is always taken and the variable is ignored. |
-| `ROM_WEAVER_PATCH_MAIN_THREAD_READER` | `rom-weaver-patches/src/lib.rs` | **Native, test-only.** Same as above for patch apply/create. Ignored on wasm (always read-on-main there). |
 | `ROM_WEAVER_TEST_THREAD_POOL_FAIL` | `rom-weaver-core/src/threads.rs` | Forces a thread-pool build failure to exercise the single-thread fallback. |
 | `ROM_WEAVER_TEST_TMPDIR` | container test harness | Overrides the temp dir used by container tests. |
 | `ROM_WEAVER_WASI_THREADS` | crate `build.rs` scripts | Forces the `rom_weaver_wasi_threads` cfg on (otherwise gated on the `wasm32-wasip1-threads` target). |
+
+> **Retired knobs.** `ROM_WEAVER_CONTAINER_MAIN_THREAD_READER` and
+> `ROM_WEAVER_PATCH_MAIN_THREAD_READER` are gone — the OPFS proxy worker made
+> per-worker OPFS reads work, so the read-on-main gates were removed (see
+> "Browser I/O paths" in `docs/ARCHITECTURE.md`). The names survive only in
+> cli_smoke tests (`rvz_z3ds.rs`, `compress.rs`) that assert they are no-ops.
 
 ## wasm CLI harness (`scripts/wasm/run-wasi-cli.mjs`)
 

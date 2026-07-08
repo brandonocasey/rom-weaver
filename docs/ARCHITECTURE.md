@@ -8,7 +8,7 @@ the WASM build over a JSON event protocol.
                  ┌────────────────────────────┐
                  │       rom-weaver-app       │  command orchestration
                  │  (shared command surface)  │  (probe/extract/checksum/
-                 └─────────┬──────────┬───────┘   compress/trim/patch)
+                 └─────────┬──────────┬───────┘   compress/trim/patch/ingest)
                            │          │
               native build │          │ wasm32-wasip1-threads build
                            ▼          ▼
@@ -181,7 +181,8 @@ as wasm (each worker opens its own range), differing only in backend (`File` vs
 proxy) — there is no read-on-main on native.
 
 **Constraints that shape all of this:** `SharedArrayBuffer` needs
-crossOriginIsolation (COOP/COEP headers from `scripts/dev-server.mjs` / the prod
+crossOriginIsolation (COOP/COEP headers from
+`packages/rom-weaver-react/scripts/dev-server.mjs` / the prod
 service worker) — no SAB means no proxy and no threads; OPFS is dedicated-worker
 only (no main-thread `window`); WebKit allows **one `SyncAccessHandle` per file**
 (the proxy refcounts to one) and serializes concurrent `FileReaderSync` of one
@@ -242,6 +243,18 @@ require reproducing DiscUtils' exact ISO9660 layout and is deferred.
   side never calls Rust functions directly — everything goes through the
   runner's argv/stdio surface, which is what keeps the native and browser CLIs
   behaviorally identical.
+- **`ingest` — the mainline browser drop path.** The webapp routes every
+  dropped input through the shared `ingest` command
+  (`rom-weaver-app/src/ingest_command.rs`), one wasm call per source. It
+  classifies the source into a `rom` or `patch` bucket, does nested archive/
+  codec extraction, checksums each ROM leaf (variants + platform identity), and
+  describes any patches — replacing the webapp's older separate classify →
+  nested-extract → checksum (ROM) and classify → describe (patch) round-trips.
+  A ROM source that also bundled sidecar patches carries both. The consolidated
+  `IngestResult` rides the standard `OperationReport.details` envelope (under
+  `details.ingest`) so the existing terminal-event parse layer keeps working,
+  and stays a compile-checked Rust⇄TS shape via `#[derive(TS)]`. It has its own
+  cli_smoke family (`crates/rom-weaver-cli/tests/cli_smoke/ingest.rs`).
 - **Workers only.** The OPFS runtime requires a Dedicated Worker (sync OPFS
   access handles and SharedArrayBuffer are unavailable on the main thread).
   `rom-weaver-react/src/workers/` hosts the worker entrypoints; the protocol

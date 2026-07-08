@@ -31,8 +31,10 @@ paths; CI runs all of it unconditionally plus the full test suites.
   (`crates/rom-weaver-core/src/error.rs`); never introduce per-crate error
   enums.
 - **Browser OPFS code runs in Dedicated Workers only** — no main-thread
-  (`window`) usage. Spawned wasm threads cannot open OPFS files; read source
-  bytes on the wasm main thread (see "Read-on-main" in `docs/ARCHITECTURE.md`).
+  (`window`) usage. All OPFS access goes through the dedicated OPFS proxy
+  worker; spawned wasm threads open and read their own OPFS files through it
+  (the old read-on-main gates are retired). See "Browser I/O paths" in
+  `docs/ARCHITECTURE.md`.
 - **Tracing.** Use `tracing` `trace!`/`debug!` liberally in Rust pipelines —
   trace output is the primary debugging tool for wasm/browser issues.
 - Relative imports only in TypeScript (no path aliases).

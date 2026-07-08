@@ -89,11 +89,11 @@ busy-retry `25 ms` interval / `30 s` ceiling when no pooled worker is free.
 
 **Why it exists.** A virtual file lets the wasm engine read a user-picked file's bytes
 *on demand* without first copying the whole file into OPFS. The bytes are owned by the
-main thread; the wasm consumer requests ranges over shared memory. This is also the
-general escape hatch for the Safari/iOS limitation where spawned worker threads cannot
-open OPFS files (see "Safari OPFS read-on-main rollout" and the
-`ROM_WEAVER_CONTAINER_MAIN_THREAD_READER` gate). Small `Blob`s skip the channel and are
-read directly; larger inputs use the proxy.
+main thread; the wasm consumer requests ranges over shared memory. Spawned worker
+threads that need OPFS-backed files instead go through the dedicated OPFS proxy worker,
+which owns the sole `SyncAccessHandle` per file and services every thread's reads (the
+old read-on-main gates are retired). Small `Blob`s skip the channel and are read
+directly; larger inputs use the proxy.
 
 **Slot** = one `controlBuffer` (`Int32Array` of `VIRTUAL_FILE_CONTROL_WORD_COUNT = 6`
 words) + one `dataBuffer` (`Uint8Array`, up to `maxChunkSize`). A proxy has 1–4 slots
