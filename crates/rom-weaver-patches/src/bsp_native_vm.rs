@@ -33,6 +33,11 @@ const BSP_MAX_STACK_LEN: usize = 1 << 24;
 /// 256-word variable file plus an owned copy of the selected patch region), so a
 /// self-referential `bsppatch` would OOM long before the step budget trips.
 const BSP_MAX_PATCH_DEPTH: usize = 256;
+/// Upper bound on the per-frame print message buffer. The print opcodes
+/// (0xA0-0xA5) append attacker-controlled text/chars/numbers every iteration and
+/// only 0xA6/0xA7 clear it, so a `print; jump` loop within the step budget could
+/// grow it unbounded and OOM; this caps it to a validation error instead.
+const BSP_MAX_MESSAGE_BUFFER_LEN: usize = 1 << 20;
 
 #[derive(Clone, Copy)]
 enum StepControl {
@@ -534,6 +539,51 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
             .write_at(position as usize, &value.to_le_bytes())
     }
 
+    /// Writes `pattern` repeated `count` times at `position`, growing the file
+    /// once and emitting in capped heap chunks instead of one ensure+seek+write
+    /// syscall pair per element. Output bytes are identical to the element-wise
+    /// loop. Returns the address just past the written run.
+    fn fill_file_pattern(&mut self, position: u32, pattern: &[u8], count: u32) -> VmResult<u32> {
+        let unit = pattern.len();
+        if unit == 0 || count == 0 {
+            return Ok(position);
+        }
+        let total = (unit as u64) * (count as u64);
+        let end = (position as u64)
+            .checked_add(total)
+            .filter(|end| *end <= u32::MAX as u64)
+            .ok_or_else(|| "file position overflow".to_string())?;
+        self.ensure_file_size(end as u32)?;
+
+        let units_per_chunk = (FILE_IO_CHUNK_BYTES / unit).max(1);
+        let mut buffer = Vec::with_capacity(units_per_chunk * unit);
+        for _ in 0..units_per_chunk {
+            buffer.extend_from_slice(pattern);
+        }
+
+        let mut remaining = count as u64;
+        let mut address = position as usize;
+        while remaining > 0 {
+            let this_units = remaining.min(units_per_chunk as u64) as usize;
+            let bytes = this_units * unit;
+            self.file_buffer.write_at(address, &buffer[..bytes])?;
+            address += bytes;
+            remaining -= this_units as u64;
+        }
+        Ok(end as u32)
+    }
+
+    fn push_message(&mut self, text: &str) -> VmResult<()> {
+        let frame = self.top_frame_mut();
+        if frame.message_buffer.len().saturating_add(text.len()) > BSP_MAX_MESSAGE_BUFFER_LEN {
+            return Err(format!(
+                "BSP print message buffer exceeded the maximum size of {BSP_MAX_MESSAGE_BUFFER_LEN} bytes"
+            ));
+        }
+        frame.message_buffer.push_str(text);
+        Ok(())
+    }
+
     fn get_file_byte(&mut self, position: u32) -> VmResult<u8> {
         let position = position as usize;
         if position >= self.file_buffer.len() {
@@ -638,6 +688,11 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
             address = address.wrapping_add(1);
             if next == 0 {
                 break;
+            }
+            if bytes.len() >= BSP_MAX_MESSAGE_BUFFER_LEN {
+                return Err(format!(
+                    "BSP decoded string exceeded the maximum size of {BSP_MAX_MESSAGE_BUFFER_LEN} bytes"
+                ));
             }
             bytes.push(next);
         }
@@ -1141,64 +1196,42 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 Ok(StepControl::Continue)
             }
             0x70..=0x73 => {
-                let mut count = args[0];
+                let count = args[0];
                 let value = (args[1] & 0xFF) as u8;
                 if count == 0 {
                     return Ok(StepControl::Continue);
                 }
-                let mut address = self.current_file_pointer;
-                if (address as u64) + (count as u64) > u32::MAX as u64 {
-                    return Err("file position overflow".to_string());
-                }
-                while count > 0 {
-                    self.set_file_byte(address, value)?;
-                    address = address.wrapping_add(1);
-                    count -= 1;
-                }
+                let end = self.fill_file_pattern(self.current_file_pointer, &[value], count)?;
                 if !self.current_file_pointer_locked {
-                    self.current_file_pointer = address;
+                    self.current_file_pointer = end;
                 }
                 self.dirty = true;
                 Ok(StepControl::Continue)
             }
             0x74..=0x77 => {
-                let mut count = args[0];
+                let count = args[0];
                 let value = (args[1] & 0xFFFF) as u16;
                 if count == 0 {
                     return Ok(StepControl::Continue);
                 }
-                let mut address = self.current_file_pointer;
-                if (address as u64) + (2u64 * count as u64) > u32::MAX as u64 {
-                    return Err("file position overflow".to_string());
-                }
-                while count > 0 {
-                    self.set_file_halfword(address, value)?;
-                    address = address.wrapping_add(2);
-                    count -= 1;
-                }
+                let end =
+                    self.fill_file_pattern(self.current_file_pointer, &value.to_le_bytes(), count)?;
                 if !self.current_file_pointer_locked {
-                    self.current_file_pointer = address;
+                    self.current_file_pointer = end;
                 }
                 self.dirty = true;
                 Ok(StepControl::Continue)
             }
             0x78..=0x7B => {
-                let mut count = args[0];
+                let count = args[0];
                 let value = args[1];
                 if count == 0 {
                     return Ok(StepControl::Continue);
                 }
-                let mut address = self.current_file_pointer;
-                if (address as u64) + (4u64 * count as u64) > u32::MAX as u64 {
-                    return Err("file position overflow".to_string());
-                }
-                while count > 0 {
-                    self.set_file_word(address, value)?;
-                    address = address.wrapping_add(4);
-                    count -= 1;
-                }
+                let end =
+                    self.fill_file_pattern(self.current_file_pointer, &value.to_le_bytes(), count)?;
                 if !self.current_file_pointer_locked {
-                    self.current_file_pointer = address;
+                    self.current_file_pointer = end;
                 }
                 self.dirty = true;
                 Ok(StepControl::Continue)
@@ -1352,7 +1385,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
             }
             0xA0 | 0xA1 => {
                 let text = self.utf8_decode(args[0])?;
-                self.top_frame_mut().message_buffer.push_str(&text);
+                self.push_message(&text)?;
                 Ok(StepControl::Continue)
             }
             0xA2 | 0xA3 => {
@@ -1363,14 +1396,13 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
                 if character > 0 {
                     let c = char::from_u32(character)
                         .ok_or_else(|| "invalid Unicode character".to_string())?;
-                    self.top_frame_mut().message_buffer.push(c);
+                    let mut buf = [0u8; 4];
+                    self.push_message(c.encode_utf8(&mut buf))?;
                 }
                 Ok(StepControl::Continue)
             }
             0xA4 | 0xA5 => {
-                self.top_frame_mut()
-                    .message_buffer
-                    .push_str(&args[0].to_string());
+                self.push_message(&args[0].to_string())?;
                 Ok(StepControl::Continue)
             }
             0xA6 => {
@@ -1546,11 +1578,7 @@ impl<'a, 'pool> BspVm<'a, 'pool> {
             if count == 0 {
                 count = self.ips_next_value(&mut current_address, 2)?;
                 let value = self.ips_next_byte(&mut current_address)?;
-                while count > 0 {
-                    self.set_file_byte(position, value)?;
-                    position = position.wrapping_add(1);
-                    count -= 1;
-                }
+                self.fill_file_pattern(position, &[value], count)?;
             } else {
                 while count > 0 {
                     let value = self.ips_next_byte(&mut current_address)?;

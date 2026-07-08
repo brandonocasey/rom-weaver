@@ -535,6 +535,19 @@ fn apply_rejects_invalid_unicode_codepoint() {
 }
 
 #[test]
+fn apply_rejects_unbounded_print_message_loop() {
+    // 0xA4 appends arg0's decimal string to the frame message buffer, then 0x02
+    // jumps back to offset 0 -> an infinite print-append loop. Without the
+    // message-buffer cap this grows the buffer until OOM; the cap turns it into
+    // a clean validation error well within the step budget.
+    let mut patch = vec![0xA4];
+    push_word(&mut patch, u32::MAX); // 10-char decimal string per iteration
+    patch.push(0x02);
+    push_word(&mut patch, 0); // jump back to offset 0
+    assert_bsp_program_error(&patch, vec![0x00], "print message buffer exceeded");
+}
+
+#[test]
 fn apply_rejects_pop_from_empty_stack() {
     // 0x0A pops the stack into a variable; with an empty stack this hits the pop guard.
     assert_bsp_program_error(&[0x0A, 0x00], vec![0x00], "popped empty stack");
