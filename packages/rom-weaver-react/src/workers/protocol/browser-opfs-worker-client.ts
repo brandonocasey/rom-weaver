@@ -73,6 +73,16 @@ const requestBrowserOpfsStorage = async (request: BrowserOpfsStorageRequest): Pr
     };
     const handleError = (event: ErrorEvent) => {
       cleanup();
+      // A fatal worker error (blocked/failed script fetch, CSP, offline SW miss) kills the worker for
+      // good: a cached dead worker silently no-ops every later postMessage, so a retry's promise would
+      // never settle. Drop the cached worker so the next request respawns a fresh one. The identity guard
+      // makes this idempotent across the concurrent in-flight requests that all receive this same error
+      // event (only the first replaces it) — no respawn storm, and respawn is driven by the next request,
+      // not a loop here.
+      if (opfsWorker === worker) {
+        worker.terminate();
+        opfsWorker = null;
+      }
       reject(new Error(event.message || "Browser OPFS storage worker failed"));
     };
     const cleanup = () => {
