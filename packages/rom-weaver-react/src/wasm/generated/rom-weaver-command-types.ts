@@ -9,6 +9,7 @@ export const KNOWN_COMMAND_TYPES = [
   "compress",
   "trim",
   "patch",
+  "manifest",
   "plan-extract-batch",
   "match-sidecars"
 ] as const;
@@ -20,8 +21,13 @@ export const KNOWN_PATCH_COMMAND_TYPES = [
   "create"
 ] as const;
 
+export const KNOWN_MANIFEST_COMMAND_TYPES = [
+  "parse"
+] as const;
+
 export type KnownRomWeaverCommandType = typeof KNOWN_COMMAND_TYPES[number];
 export type KnownRomWeaverPatchCommandType = typeof KNOWN_PATCH_COMMAND_TYPES[number];
+export type KnownRomWeaverManifestCommandType = typeof KNOWN_MANIFEST_COMMAND_TYPES[number];
 
 export function isKnownRomWeaverCommandType(value: unknown): value is KnownRomWeaverCommandType {
   return typeof value === 'string' && (KNOWN_COMMAND_TYPES as readonly string[]).includes(value);
@@ -29,6 +35,10 @@ export function isKnownRomWeaverCommandType(value: unknown): value is KnownRomWe
 
 export function isKnownRomWeaverPatchCommandType(value: unknown): value is KnownRomWeaverPatchCommandType {
   return typeof value === 'string' && (KNOWN_PATCH_COMMAND_TYPES as readonly string[]).includes(value);
+}
+
+export function isKnownRomWeaverManifestCommandType(value: unknown): value is KnownRomWeaverManifestCommandType {
+  return typeof value === 'string' && (KNOWN_MANIFEST_COMMAND_TYPES as readonly string[]).includes(value);
 }
 
 export function assertKnownRomWeaverCommandType(
@@ -51,6 +61,17 @@ export function assertKnownRomWeaverPatchCommandType(
   if (!type) throw new TypeError(`${label} requires a string ${field}`);
   if (isKnownRomWeaverPatchCommandType(type)) return type;
   throw new TypeError(`${label} has unsupported ${field}: ${type} (known: ${formatKnownTypes(KNOWN_PATCH_COMMAND_TYPES)})`);
+}
+
+export function assertKnownRomWeaverManifestCommandType(
+  value: unknown,
+  label = 'rom-weaver manifest command',
+  field = '`type` field',
+): KnownRomWeaverManifestCommandType {
+  const type = typeof value === 'string' ? value.trim() : '';
+  if (!type) throw new TypeError(`${label} requires a string ${field}`);
+  if (isKnownRomWeaverManifestCommandType(type)) return type;
+  throw new TypeError(`${label} has unsupported ${field}: ${type} (known: ${formatKnownTypes(KNOWN_MANIFEST_COMMAND_TYPES)})`);
 }
 
 function formatKnownTypes(types: readonly string[]): string {

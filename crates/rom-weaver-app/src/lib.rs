@@ -85,6 +85,8 @@ pub enum Commands {
     Trim(TrimCommand),
     #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
     Patch(PatchCommands),
+    #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
+    Manifest(ManifestCommands),
     #[cfg_attr(
         not(target_arch = "wasm32"),
         command(
@@ -138,6 +140,25 @@ pub enum PatchCommands {
     )]
     CreateCandidates(PatchCreateCandidatesCommand),
     Create(Box<PatchCreateCommand>),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Subcommand))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+#[serde(rename_all = "kebab-case", tag = "type", content = "args")]
+#[cfg_attr(
+    feature = "typescript-types",
+    ts(rename_all = "kebab-case", tag = "type", content = "args")
+)]
+pub enum ManifestCommands {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(
+            about = "Parse and validate an rw.json manifest (plain, stream-codec compressed, or inside an archive) and resolve its ROM/patch entries",
+            long_about = "Parse and validate an rw.json manifest and resolve its ROM/patch entries.\n\nAccepted sources: a plain rw.json, a stream-codec-compressed rw.json.gz/.bz2/.xz/.zst, or an archive carrying rw.json at its root (an \"everything archive\" that also bundles the ROM and patches).\n\nManifest `path` entries refer to archive members (or files next to the manifest). With --extract-dir, members referenced by the manifest are extracted there and returned as resolved paths, and extracted patch entries include a full patch descriptor. URL entries are returned verbatim; relative URLs resolve against the manifest's own location on the caller's side."
+        )
+    )]
+    Parse(ManifestParseCommand),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -992,11 +1013,26 @@ pub use patch_commands::{PatchCreateFormatPolicyMetadata, patch_create_format_po
 mod patch_filename_checksum;
 use patch_filename_checksum::{embed_checksum_in_filename, parse_filename_requirements};
 
+mod manifest_schema;
+pub use manifest_schema::{
+    MANIFEST_VERSION, ManifestChecks, ManifestCompress, ManifestCompressSettings, ManifestOutput,
+    ManifestPatchEntry, ManifestPatchStatus, ManifestRom, RomWeaverManifest,
+};
+
+mod manifest_parse;
+
+mod manifest_load;
+
+mod manifest_command;
+pub use manifest_command::{
+    ManifestParseResult, ManifestPatchSource, ManifestSourceKind, ManifestSourceRef,
+};
+
 mod command_args;
 pub use command_args::{
-    ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, MatchSidecarsCommand,
-    PatchApplyCommand, PatchCreateCandidatesCommand, PatchCreateCommand, PatchValidateCommand,
-    PlanExtractBatchCommand, ProbeCommand, TrimCommand,
+    ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, ManifestParseCommand,
+    MatchSidecarsCommand, PatchApplyCommand, PatchCreateCandidatesCommand, PatchCreateCommand,
+    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

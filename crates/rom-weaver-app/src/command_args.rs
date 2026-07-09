@@ -1148,3 +1148,24 @@ pub struct MatchSidecarsCommand {
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub patch_names: Vec<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct ManifestParseCommand {
+    pub source: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "extract-dir",
+            help = "Extract manifest-referenced archive members into this directory (path entries stay unresolved without it when the source is an archive)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub extract_dir: Option<PathBuf>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+}

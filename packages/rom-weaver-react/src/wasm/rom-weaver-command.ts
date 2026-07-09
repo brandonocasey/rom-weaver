@@ -1,5 +1,6 @@
 import {
   assertKnownRomWeaverCommandType,
+  assertKnownRomWeaverManifestCommandType,
   assertKnownRomWeaverPatchCommandType,
 } from "./generated/rom-weaver-command-types.ts";
 import type {
@@ -17,7 +18,9 @@ export {
 
 type RomWeaverPatchCommand = Extract<RomWeaverCommand, { type: "patch" }>["args"];
 type RomWeaverPatchCommandType = RomWeaverPatchCommand["type"];
-type RomWeaverTopLevelCommand = Exclude<RomWeaverCommand, { type: "patch" }>;
+type RomWeaverManifestCommand = Extract<RomWeaverCommand, { type: "manifest" }>["args"];
+type RomWeaverManifestCommandType = RomWeaverManifestCommand["type"];
+type RomWeaverTopLevelCommand = Exclude<RomWeaverCommand, { type: "manifest" } | { type: "patch" }>;
 type RomWeaverTopLevelCommandType = RomWeaverTopLevelCommand["type"];
 type RomWeaverPatchCommandLabel = `patch-${RomWeaverPatchCommandType}`;
 type RomWeaverPatchCommandBranch = {
@@ -26,6 +29,13 @@ type RomWeaverPatchCommandBranch = {
     type: `patch-${TType}`;
   };
 }[RomWeaverPatchCommandType];
+type RomWeaverManifestCommandLabel = `manifest-${RomWeaverManifestCommandType}`;
+type RomWeaverManifestCommandBranch = {
+  [TType in RomWeaverManifestCommandType]: {
+    args: Extract<RomWeaverManifestCommand, { type: TType }>["args"];
+    type: `manifest-${TType}`;
+  };
+}[RomWeaverManifestCommandType];
 type RomWeaverTopLevelCommandBranch = {
   [TType in RomWeaverTopLevelCommandType]: {
     args: Extract<RomWeaverTopLevelCommand, { type: TType }>["args"];
@@ -33,8 +43,14 @@ type RomWeaverTopLevelCommandBranch = {
   };
 }[RomWeaverTopLevelCommandType];
 
-export type RomWeaverCommandLabel = RomWeaverTopLevelCommandType | RomWeaverPatchCommandLabel;
-type RomWeaverCommandBranch = RomWeaverTopLevelCommandBranch | RomWeaverPatchCommandBranch;
+export type RomWeaverCommandLabel =
+  | RomWeaverTopLevelCommandType
+  | RomWeaverPatchCommandLabel
+  | RomWeaverManifestCommandLabel;
+type RomWeaverCommandBranch =
+  | RomWeaverTopLevelCommandBranch
+  | RomWeaverPatchCommandBranch
+  | RomWeaverManifestCommandBranch;
 export type RomWeaverCommandBranchArgs<TType extends RomWeaverCommandLabel> = Extract<
   RomWeaverCommandBranch,
   { type: TType }
@@ -72,6 +88,8 @@ export function createRomWeaverCommand<TType extends RomWeaverCommandLabel>(
       return { args: { args, type: "create-candidates" }, type: "patch" } as RomWeaverCommand;
     case "patch-create":
       return { args: { args, type: "create" }, type: "patch" } as RomWeaverCommand;
+    case "manifest-parse":
+      return { args: { args, type: "parse" }, type: "manifest" } as RomWeaverCommand;
     default:
       return assertNever(type);
   }
@@ -102,6 +120,9 @@ function normalizeRomWeaverCommand(command: RomWeaverCommand): RomWeaverCommand 
   const type = assertKnownRomWeaverCommandType(command.type, "rom-weaver typed command");
   if (type === "patch") {
     return normalizeRomWeaverPatchCommand((command as Extract<RomWeaverCommand, { type: "patch" }>).args);
+  }
+  if (type === "manifest") {
+    return normalizeRomWeaverManifestCommand((command as Extract<RomWeaverCommand, { type: "manifest" }>).args);
   }
 
   const args = isObjectRecord(command.args) ? { ...command.args } : {};
@@ -157,6 +178,8 @@ function readRomWeaverCommandBranch(command: RomWeaverCommand): RomWeaverCommand
       } as RomWeaverTopLevelCommandBranch;
     case "patch":
       return readRomWeaverPatchCommandBranch(command.args);
+    case "manifest":
+      return readRomWeaverManifestCommandBranch(command.args);
     default:
       return assertNever(command);
   }
@@ -192,6 +215,9 @@ export function collectRomWeaverRunInputPaths(
       break;
     case "patch":
       collectRomWeaverPatchInputPaths(paths, command.args);
+      break;
+    case "manifest":
+      collectRomWeaverManifestInputPaths(paths, command.args);
       break;
     case "plan-extract-batch":
     case "match-sidecars":
@@ -285,6 +311,13 @@ export function romWeaverCommandSupportsThreads(command: RomWeaverCommand): bool
         default:
           return assertNever(command.args);
       }
+    case "manifest":
+      switch (command.args.type) {
+        case "parse":
+          return true;
+        default:
+          return assertNever(command.args.type);
+      }
     case "plan-extract-batch":
     case "match-sidecars":
       // Pure planning: the `threads` field is the budget to plan for, not a worker spawn, so it is
@@ -320,6 +353,50 @@ function normalizeRomWeaverPatchCommand(patchCommand: RomWeaverPatchCommand): Ro
       } as RomWeaverCommand;
     default:
       return assertNever(patchType);
+  }
+}
+
+function normalizeRomWeaverManifestCommand(manifestCommand: RomWeaverManifestCommand): RomWeaverCommand {
+  if (!isObjectRecord(manifestCommand) || Array.isArray(manifestCommand)) {
+    throw new TypeError("rom-weaver manifest command requires an object `args` payload");
+  }
+  const manifestType = assertKnownRomWeaverManifestCommandType(
+    manifestCommand.type,
+    "rom-weaver manifest command",
+    "nested `type` field",
+  );
+  const manifestArgs =
+    isObjectRecord(manifestCommand.args) && !Array.isArray(manifestCommand.args) ? { ...manifestCommand.args } : {};
+  switch (manifestType) {
+    case "parse":
+      return {
+        args: {
+          args: manifestArgs,
+          type: manifestType,
+        },
+        type: "manifest",
+      } as RomWeaverCommand;
+    default:
+      return assertNever(manifestType);
+  }
+}
+
+function readRomWeaverManifestCommandBranch(command: RomWeaverManifestCommand): RomWeaverManifestCommandBranch {
+  switch (command.type) {
+    case "parse":
+      return { args: command.args, type: "manifest-parse" };
+    default:
+      return assertNever(command.type);
+  }
+}
+
+function collectRomWeaverManifestInputPaths(paths: Set<string>, command: RomWeaverManifestCommand) {
+  switch (command.type) {
+    case "parse":
+      pushPathValue(paths, command.args.source);
+      return;
+    default:
+      assertNever(command.type);
   }
 }
 
@@ -380,6 +457,7 @@ function replaceRomWeaverCommandArgs(command: RomWeaverCommand, args: Record<str
         args,
       } as RomWeaverCommand;
     case "patch":
+    case "manifest":
       return {
         ...command,
         args: {

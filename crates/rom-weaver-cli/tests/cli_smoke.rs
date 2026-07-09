@@ -13,6 +13,9 @@ mod checksum;
 #[path = "cli_smoke/ingest.rs"]
 mod ingest;
 
+#[path = "cli_smoke/manifest.rs"]
+mod manifest;
+
 #[path = "cli_smoke/compress.rs"]
 mod compress;
 

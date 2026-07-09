@@ -3,11 +3,14 @@ use std::{env, fs, path::Path};
 use rom_weaver_app::{
     ChecksumCommand, Commands, CompressCommand, CompressionLevelProfile, ExtractCommand,
     ExtractStepDetails, ExtractedFileEntry, IngestCommand, IngestKind, IngestResult,
-    IngestRomAsset, MatchSidecarsCommand, N64ByteOrder, PatchApplyCommand, PatchApplyHeaderMode,
+    IngestRomAsset, ManifestChecks, ManifestCommands, ManifestCompress, ManifestCompressSettings,
+    ManifestOutput, ManifestParseCommand, ManifestParseResult, ManifestPatchEntry,
+    ManifestPatchSource, ManifestPatchStatus, ManifestRom, ManifestSourceKind, ManifestSourceRef,
+    MatchSidecarsCommand, N64ByteOrder, PatchApplyCommand, PatchApplyHeaderMode,
     PatchApplyOutputHeaderMode, PatchCommands, PatchCreateCandidatesCommand, PatchCreateCommand,
     PatchDescriptor, PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand,
-    RomWeaverRunOutputOptions, RomWeaverRunRequest, TrimCommand, compression_metadata,
-    patch_create_format_policy_metadata,
+    RomWeaverManifest, RomWeaverRunOutputOptions, RomWeaverRunRequest, TrimCommand,
+    compression_metadata, patch_create_format_policy_metadata,
 };
 use rom_weaver_containers::{
     ArchiveExtensionAlias, ArchiveFormatMetadata, ContainerDefaultOutputMetadata,
@@ -188,6 +191,20 @@ fn render_types() -> String {
         export_decl::<PatchCreateCandidatesCommand>(&config),
         export_decl::<PatchCreateCommand>(&config),
         export_decl::<PatchCommands>(&config),
+        export_decl::<ManifestPatchStatus>(&config),
+        export_decl::<ManifestChecks>(&config),
+        export_decl::<ManifestRom>(&config),
+        export_decl::<ManifestPatchEntry>(&config),
+        export_decl::<ManifestCompressSettings>(&config),
+        export_decl::<ManifestCompress>(&config),
+        export_decl::<ManifestOutput>(&config),
+        export_decl::<RomWeaverManifest>(&config),
+        export_decl::<ManifestSourceKind>(&config),
+        export_decl::<ManifestSourceRef>(&config),
+        export_decl::<ManifestPatchSource>(&config),
+        export_decl::<ManifestParseResult>(&config),
+        export_decl::<ManifestParseCommand>(&config),
+        export_decl::<ManifestCommands>(&config),
         export_decl::<PlanExtractBatchCommand>(&config),
         export_decl::<MatchSidecarsCommand>(&config),
         export_decl::<Commands>(&config),
@@ -241,8 +258,9 @@ fn render_command_types() -> String {
     let config = ts_rs::Config::default();
     let command_types = tagged_enum_type_literals::<Commands>(&config);
     let patch_command_types = tagged_enum_type_literals::<PatchCommands>(&config);
+    let manifest_command_types = tagged_enum_type_literals::<ManifestCommands>(&config);
     format!(
-        "{COMMAND_TYPES_HEADER}{}\n\n{}\n\n{}\n",
+        "{COMMAND_TYPES_HEADER}{}\n\n{}\n\n{}\n\n{}\n",
         render_ts_const(
             "KNOWN_COMMAND_TYPES",
             Value::Array(string_values(command_types))
@@ -251,8 +269,13 @@ fn render_command_types() -> String {
             "KNOWN_PATCH_COMMAND_TYPES",
             Value::Array(string_values(patch_command_types))
         ),
+        render_ts_const(
+            "KNOWN_MANIFEST_COMMAND_TYPES",
+            Value::Array(string_values(manifest_command_types))
+        ),
         r#"export type KnownRomWeaverCommandType = typeof KNOWN_COMMAND_TYPES[number];
 export type KnownRomWeaverPatchCommandType = typeof KNOWN_PATCH_COMMAND_TYPES[number];
+export type KnownRomWeaverManifestCommandType = typeof KNOWN_MANIFEST_COMMAND_TYPES[number];
 
 export function isKnownRomWeaverCommandType(value: unknown): value is KnownRomWeaverCommandType {
   return typeof value === 'string' && (KNOWN_COMMAND_TYPES as readonly string[]).includes(value);
@@ -260,6 +283,10 @@ export function isKnownRomWeaverCommandType(value: unknown): value is KnownRomWe
 
 export function isKnownRomWeaverPatchCommandType(value: unknown): value is KnownRomWeaverPatchCommandType {
   return typeof value === 'string' && (KNOWN_PATCH_COMMAND_TYPES as readonly string[]).includes(value);
+}
+
+export function isKnownRomWeaverManifestCommandType(value: unknown): value is KnownRomWeaverManifestCommandType {
+  return typeof value === 'string' && (KNOWN_MANIFEST_COMMAND_TYPES as readonly string[]).includes(value);
 }
 
 export function assertKnownRomWeaverCommandType(
@@ -282,6 +309,17 @@ export function assertKnownRomWeaverPatchCommandType(
   if (!type) throw new TypeError(`${label} requires a string ${field}`);
   if (isKnownRomWeaverPatchCommandType(type)) return type;
   throw new TypeError(`${label} has unsupported ${field}: ${type} (known: ${formatKnownTypes(KNOWN_PATCH_COMMAND_TYPES)})`);
+}
+
+export function assertKnownRomWeaverManifestCommandType(
+  value: unknown,
+  label = 'rom-weaver manifest command',
+  field = '`type` field',
+): KnownRomWeaverManifestCommandType {
+  const type = typeof value === 'string' ? value.trim() : '';
+  if (!type) throw new TypeError(`${label} requires a string ${field}`);
+  if (isKnownRomWeaverManifestCommandType(type)) return type;
+  throw new TypeError(`${label} has unsupported ${field}: ${type} (known: ${formatKnownTypes(KNOWN_MANIFEST_COMMAND_TYPES)})`);
 }
 
 function formatKnownTypes(types: readonly string[]): string {

@@ -497,12 +497,25 @@ impl CliApp {
                                 header = ?header_match.header,
                                 output_header = ?output_header_mode,
                                 nsrt_metadata,
-                                add_header = add,
-                                "output header resolved for stripped input"
-                            );
-                            add
-                        });
-                let strip_output_header = output_header == Some(PatchApplyOutputHeaderMode::Strip)
+||||||| parent of 819a4022 (feat(manifest): rw.json schema + parse command)
+                    && state.stripped_header_match.as_ref().is_some_and(|header_match| {
+                        let add = match output_header_mode {
+                            PatchApplyOutputHeaderMode::Keep => true,
+                            PatchApplyOutputHeaderMode::Strip => false,
+                            PatchApplyOutputHeaderMode::Auto => {
+                                header_match.header.retained_on_output()
+                            }
+                        };
+                        debug!(
+                            header = ?header_match.header,
+                            output_header = ?output_header_mode,
+                            add_header = add,
+                            "output header resolved for stripped input"
+                        );
+                        add
+                    });
+                let strip_output_header = output_header
+                    == Some(PatchApplyOutputHeaderMode::Strip)
                     && !state.headerless
                     && !is_disc;
                 (add_header, strip_output_header)

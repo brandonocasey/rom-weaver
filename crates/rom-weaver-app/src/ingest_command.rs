@@ -891,7 +891,7 @@ impl CliApp {
 
     /// Aggregate one patch's consolidated descriptor: format + embedded metadata (`handler.parse`),
     /// file-name requirements (`parse_filename_requirements`), and libretro sidecar order.
-    fn build_patch_descriptor(
+    pub(super) fn build_patch_descriptor(
         &self,
         leaf_path: &Path,
         rom_hint: Option<&str>,

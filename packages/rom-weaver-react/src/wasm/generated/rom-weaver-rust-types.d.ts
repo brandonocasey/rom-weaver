@@ -286,11 +286,132 @@ export type PatchCreateCommand = { original: string, modified?: string, format?:
 
 export type PatchCommands = { "type": "apply", "args": PatchApplyCommand } | { "type": "validate", "args": PatchValidateCommand } | { "type": "create-candidates", "args": PatchCreateCandidatesCommand } | { "type": "create", "args": PatchCreateCommand };
 
+export type ManifestPatchStatus = "required" | "default" | "optional" | "disabled";
+
+export type ManifestChecks = { checksums?: { [key in string]: string },
+/**
+ * Exact byte size. Emitted as a JSON `number` on the wasm wire, so
+ * override the default ts-rs `bigint` mapping.
+ */
+size?: number | null, };
+
+export type ManifestRom = {
+/**
+ * Display / output-naming file name (defaults to the source's base name).
+ */
+name?: string,
+/**
+ * Download URL. Exactly one of `url` / `path` must be set.
+ */
+url?: string,
+/**
+ * Manifest-relative path (archive member for bundled manifests).
+ */
+path?: string,
+/**
+ * Expected checksums/size of the ROM itself (also verifies downloads).
+ */
+checks?: ManifestChecks, };
+
+export type ManifestPatchEntry = { name?: string, description?: string,
+/**
+ * Selection default: whether this patch starts (and must stay) selected.
+ */
+status: ManifestPatchStatus,
+/**
+ * Free-form maturity/display label (for example `stable`, `beta`).
+ */
+label?: string,
+/**
+ * Download URL. Exactly one of `url` / `path` must be set.
+ */
+url?: string,
+/**
+ * Manifest-relative path (archive member for bundled manifests).
+ */
+path?: string,
+/**
+ * Expected checksums/size of the ORIGINAL input ROM this patch was
+ * authored against (feeds pre-apply input validation).
+ */
+checks?: ManifestChecks,
+/**
+ * Checksums of the patch FILE itself, keyed by algorithm (verifies
+ * downloaded patch bytes; distinct from `checks`).
+ */
+integrity?: { [key in string]: string },
+/**
+ * Per-patch header mode override (`auto` when omitted).
+ */
+header?: PatchApplyHeaderMode, };
+
+export type ManifestCompressSettings = {
+/**
+ * Compression container format (for example `zip`, `7z`, `chd`).
+ */
+format?: string,
+/**
+ * Codec overrides, `codec[:level]` (same shape as `--compress-codec`).
+ */
+codecs?: Array<string>, level?: CompressionLevelProfile, };
+
+export type ManifestCompress = boolean | ManifestCompressSettings;
+
+export type ManifestOutput = {
+/**
+ * Default output file name.
+ */
+name?: string, header?: PatchApplyOutputHeaderMode, compress?: ManifestCompress, };
+
+export type RomWeaverManifest = { version: number, name?: string, description?: string, rom?: ManifestRom,
+/**
+ * Ordered: array order is the apply order.
+ */
+patches: Array<ManifestPatchEntry>, output?: ManifestOutput, };
+
+export type ManifestSourceKind = "json" | "compressed-json" | "archive";
+
+export type ManifestSourceRef = { url: string, } | { extracted_path: string, } | { path: string, };
+
+export type ManifestPatchSource = { source: ManifestSourceRef,
+/**
+ * Ingest-grade descriptor for entries extracted from the manifest
+ * archive (spares the host a second describe round-trip). `None` for
+ * URL / unresolved-path entries.
+ */
+descriptor?: PatchDescriptor | null, };
+
+export type ManifestParseResult = {
+/**
+ * The validated manifest, checksum values normalized.
+ */
+manifest: RomWeaverManifest, source_kind: ManifestSourceKind,
+/**
+ * Entry name of the manifest member when the source was an archive.
+ */
+archive_member?: string | null,
+/**
+ * Resolved ROM source; `None` when the manifest defines no ROM.
+ */
+rom_source?: ManifestSourceRef | null,
+/**
+ * Index-aligned with `manifest.patches`.
+ */
+patch_sources: Array<ManifestPatchSource>,
+/**
+ * Non-fatal issues (ignored members, extra manifests, …).
+ */
+warnings: Array<string>, };
+
+export type ManifestParseCommand = { source: string, extract_dir?: string, threads?: ThreadBudget, };
+
+export type ManifestCommands = { "type": "parse", "args": ManifestParseCommand };
+
 export type PlanExtractBatchCommand = { job_sizes?: Array<bigint>, threads?: ThreadBudget, max_concurrency?: number | null, total_memory_bytes?: bigint | null, memory_ceiling_bytes?: bigint | null, };
 
 export type MatchSidecarsCommand = { rom_name: string, patch_names?: Array<string>, };
 
-export type Commands = { "type": "probe", "args": ProbeCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "ingest", "args": IngestCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "patch", "args": PatchCommands } | { "type": "plan-extract-batch", "args": PlanExtractBatchCommand } | { "type": "match-sidecars", "args": MatchSidecarsCommand };
+export type Commands = { "type": "probe", "args": ProbeCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "ingest", "args": IngestCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "patch", "args": PatchCommands } | { "type": "manifest", "args": ManifestCommands } | { "type": "plan-extract-batch", "args": PlanExtractBatchCommand } | { "type": "match-sidecars", "args": MatchSidecarsCommand };
 
 export type RomWeaverRunOutputOptions = { json?: boolean, progress?: boolean, trace?: boolean, interactive_selection_enabled?: boolean, };
 
