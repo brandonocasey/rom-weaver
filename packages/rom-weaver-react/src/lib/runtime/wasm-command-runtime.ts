@@ -405,6 +405,31 @@ const invokeRomWeaverPatchApplyWorker = async (
     applyOptionRecord?.validateWithOutputChecksums ?? applyOptionRecord?.validate_with_output_checksums,
   );
   const ppfUndoAware = Boolean(applyOptionRecord?.ppfUndoAware ?? applyOptionRecord?.ppf_undo_aware);
+  // One header mode per patch (chain order). The browser resolved the FIRST patch
+  // against the staged checksum variants, so entry 0 is always concrete ("keep"/
+  // "strip") and suppresses an engine re-hash of the OPFS input; later entries may
+  // be "auto" — the engine decides those per step from its own local intermediates.
+  // Legacy compatibility booleans (settings.compatibility add/remove header) remap
+  // onto the same enums: removeHeader => strip for the whole chain, with the
+  // output-header choosing whether the header returns.
+  const rawHeaderModes = Array.isArray(applyOptionRecord?.headerModes) ? applyOptionRecord.headerModes : [];
+  const headerModes: ("keep" | "strip" | "auto")[] = removeHeader
+    ? ["strip"]
+    : rawHeaderModes.map((mode, index) =>
+        mode === "keep" || mode === "strip" || mode === "auto"
+          ? mode
+          : index === 0
+            ? ("keep" as const)
+            : ("auto" as const),
+      );
+  const outputHeaderRaw = applyOptionRecord?.outputHeader ?? applyOptionRecord?.output_header;
+  const outputHeader = removeHeader
+    ? addHeader
+      ? ("keep" as const)
+      : ("strip" as const)
+    : outputHeaderRaw === "keep" || outputHeaderRaw === "strip"
+      ? outputHeaderRaw
+      : ("auto" as const);
   const requestedThreadArg = toThreadBudget((input.options as { workerThreads?: unknown } | undefined)?.workerThreads);
   const { forceSingleThreadReason, forcedSingleThread, hasBpsPatch, hasXdeltaPatch, singleThreadNoPool, threadArg } =
     resolvePatchApplyThreadArg(requestedThreadArg, input.patchFiles, input.inputSize);
@@ -412,9 +437,10 @@ const invokeRomWeaverPatchApplyWorker = async (
   const virtualOnlyMounts = hasBpsPatch;
   const syncAccessMode = hasBpsPatch ? "readwrite-unsafe" : undefined;
   const command = createRomWeaverCommand("patch-apply", {
-    add_header: addHeader,
+    ...(headerModes.length ? { patch_header: headerModes } : {}),
     ignore_checksum_validation: ignoreChecksumValidation,
     input: input.romFilePath,
+    output_header: outputHeader,
     ...(n64ByteOrder ? { n64_byte_order: n64ByteOrder } : {}),
     no_compress: true,
     output: outputPath,
@@ -423,7 +449,6 @@ const invokeRomWeaverPatchApplyWorker = async (
     ...(ppfUndoAware ? { ppf_undo_aware: true } : {}),
     repair_checksum: repairChecksum,
     rom_filter: true,
-    strip_header: removeHeader,
     ...(threadArg ? { threads: threadArg } : {}),
     ...(validateWithChecksums.length ? { validate_with_checksums: validateWithChecksums } : {}),
     ...(validateWithOutputChecksums.length ? { validate_with_output_checksums: validateWithOutputChecksums } : {}),
@@ -504,7 +529,9 @@ const invokeRomWeaverPatchApplyWorker = async (
       },
       timing: getRunResultTiming(result),
     },
-    fileName: outputFileName,
+    // Follow the engine's emitted name: it adjusts the extension when the final
+    // header state changes the ROM's conventional extension (.smc vs .sfc).
+    fileName: emitted?.path ? getPathBaseName(emitted.path, outputFileName) : outputFileName,
     filePath: emitted?.path || outputPath,
     size: emitted?.sizeBytes,
     timing: getRunResultTiming(result),

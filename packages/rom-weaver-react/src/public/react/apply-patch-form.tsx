@@ -813,7 +813,12 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     async (
       input: ApplyWorkflowSessionInput,
       patchIndex: number,
-      option: { ppfUndo?: boolean; validateInputChecksum?: string; validateOutputChecksum?: string },
+      option: {
+        ppfUndo?: boolean;
+        validateInputChecksum?: string;
+        validateOutputChecksum?: string;
+        header?: "keep" | "strip";
+      },
     ) => {
       const originalNames = input.patches.map((patch, index) =>
         getReactBinarySourceFileName(patch, `Patch ${index + 1}`),

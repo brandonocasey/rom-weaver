@@ -53,6 +53,12 @@ type StagedInputInfo = {
   ppfUndo?: boolean;
   validateInputChecksum?: string;
   validateOutputChecksum?: string;
+  /** User header override from the Options drawer (`undefined` = default keep). */
+  headerChoice?: "keep" | "strip";
+  /** Detected copier-header size in bytes, for labeling the header option. */
+  headerStrippedBytes?: number;
+  /** Show the header choice: strippable header present and checksums didn't decide. */
+  showHeaderOption?: boolean;
 };
 
 type ApplyWorkflowStageSnapshot = {
@@ -156,7 +162,12 @@ type LocalApplyPatchFormSessionOptions = Pick<
   setPatchOption?: (
     input: ApplyWorkflowStageSnapshot,
     patchIndex: number,
-    option: { ppfUndo?: boolean; validateInputChecksum?: string; validateOutputChecksum?: string },
+    option: {
+      ppfUndo?: boolean;
+      validateInputChecksum?: string;
+      validateOutputChecksum?: string;
+      header?: "keep" | "strip";
+    },
   ) => Promise<Array<StagedInputInfo | null | undefined>>;
 };
 

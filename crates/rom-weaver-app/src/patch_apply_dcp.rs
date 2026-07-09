@@ -36,8 +36,10 @@ impl CliApp {
                 ),
             );
         }
-        if args.strip_header
-            || args.add_header
+        if args
+            .patch_header
+            .contains(&PatchApplyHeaderMode::Strip)
+            || args.output_header.is_some()
             || args.repair_checksum
             || args.n64_byte_order.is_some()
         {
@@ -45,7 +47,7 @@ impl CliApp {
                 "patch-apply",
                 fail(
                     "validate",
-                    "a .dcp patch cannot be combined with --strip-header, --add-header, --repair-checksum, or --n64-byte-order".to_string(),
+                    "a .dcp patch cannot be combined with --patch-header strip, --output-header, --repair-checksum, or --n64-byte-order".to_string(),
                 ),
             );
         }

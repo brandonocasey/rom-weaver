@@ -23,8 +23,8 @@ impl CliApp {
             compress_level = ?args.compress_level,
             checksum_cache = args.checksum_cache.len(),
             validate_with_checksums = args.validate_with_checksums.len(),
-            strip_header = args.strip_header,
-            add_header = args.add_header,
+            patch_header = ?args.patch_header,
+            output_header = ?args.output_header,
             repair_checksum = args.repair_checksum,
             n64_byte_order = ?args.n64_byte_order,
             ignore_checksum_validation = args.ignore_checksum_validation,
@@ -56,15 +56,15 @@ impl CliApp {
             no_extract,
             no_ignore,
             mut patches,
-            output,
+            mut output,
             no_compress,
             compress_format,
             compress_codec,
             compress_level,
             checksum_cache,
             validate_with_checksums,
-            strip_header,
-            add_header,
+            patch_header,
+            output_header,
             repair_checksum,
             n64_byte_order,
             ignore_checksum_validation,
@@ -97,12 +97,34 @@ impl CliApp {
                 probe_threads.clone(),
             )
         };
-        if !codes.is_empty() && (strip_header || n64_byte_order.is_some()) {
+        // Per-patch header modes: entry i governs patch i; a missing entry inherits
+        // the last given mode (so a single value applies to the whole chain) and an
+        // empty list means all-auto. `Auto` needs checksum evidence to act on:
+        // N64 byte-order rewrites and cheat codes pin offsets to the original bytes,
+        // and --ignore-checksum-validation removes the evidence itself, so those runs
+        // degrade auto to keep.
+        let auto_evidence_available =
+            n64_byte_order.is_none() && codes.is_empty() && !ignore_checksum_validation;
+        let patch_header_mode = |index: usize| -> PatchApplyHeaderMode {
+            let mode = patch_header
+                .get(index)
+                .or_else(|| patch_header.last())
+                .copied()
+                .unwrap_or_default();
+            if mode == PatchApplyHeaderMode::Auto && !auto_evidence_available {
+                PatchApplyHeaderMode::Keep
+            } else {
+                mode
+            }
+        };
+        let any_explicit_strip = patch_header.contains(&PatchApplyHeaderMode::Strip);
+        let output_header_mode = output_header.unwrap_or_default();
+        if !codes.is_empty() && (any_explicit_strip || n64_byte_order.is_some()) {
             return self.finish(
                 "patch-apply",
                 fail(
                     "validate",
-                    "--code cannot be combined with --strip-header or --n64-byte-order; cheat offsets are computed against the original ROM bytes".to_string(),
+                    "--code cannot be combined with --patch-header strip or --n64-byte-order; cheat offsets are computed against the original ROM bytes".to_string(),
                 ),
             );
         }
@@ -153,13 +175,16 @@ impl CliApp {
             );
         }
         if disc_context.is_some()
-            && (strip_header || add_header || repair_checksum || n64_byte_order.is_some())
+            && (any_explicit_strip
+                || output_header.is_some()
+                || repair_checksum
+                || n64_byte_order.is_some())
         {
             return self.finish(
                 "patch-apply",
                 fail(
                     "validate",
-                    "disc patch apply (.cue/.gdi input) cannot be combined with --strip-header, --add-header, --repair-checksum, or --n64-byte-order".to_string(),
+                    "disc patch apply (.cue/.gdi input) cannot be combined with --patch-header strip, --output-header, --repair-checksum, or --n64-byte-order".to_string(),
                 ),
             );
         }
@@ -338,6 +363,31 @@ impl CliApp {
                 );
             }
 
+            // One resolved mode per resolved patch. Disc apply and cheat-code runs
+            // never transform headers (explicit strip is rejected above; auto has
+            // no evidence), so they pin every step to keep.
+            let chain_header_modes: Vec<PatchApplyHeaderMode> = if is_disc || !codes.is_empty() {
+                vec![PatchApplyHeaderMode::Keep; resolved_patches.len()]
+            } else {
+                (0..resolved_patches.len()).map(patch_header_mode).collect()
+            };
+            // Patch 0 sets the initial header state (the strip happens on the
+            // resolved input, before checksum validation). Later patches transition
+            // the state inside the apply loop on their own evidence.
+            let strip_header = match chain_header_modes.first().copied().unwrap_or_default() {
+                PatchApplyHeaderMode::Strip => true,
+                PatchApplyHeaderMode::Keep => false,
+                PatchApplyHeaderMode::Auto => self.auto_header_strip_decision(
+                    &resolved_input,
+                    resolved_patches
+                        .first()
+                        .map(|(_, resolved)| resolved.as_path()),
+                    &expected_input_checksums,
+                    &cached_input_checksums,
+                    &context,
+                ),
+            };
+
             let mut checksum_verification_labels = Vec::new();
             let PreparedApplyInput {
                 apply_input,
@@ -412,12 +462,71 @@ impl CliApp {
                 }
             }
 
+            let mut header_state = ChainHeaderState {
+                headerless: stripped_header_match.is_some(),
+                stripped_header,
+                stripped_header_match,
+            };
+            // The output-header decision: on a headerless final state, `--output-header`
+            // decides whether the stripped header returns (auto re-adds emulator-required
+            // headers like iNES/fwNES/LNX/A78 and drops junk copier headers like SNES/PCE/
+            // Game Doctor). Explicit `--output-header strip` on a headered state removes
+            // the still-present header during finalize. Evaluated here for the patch-0
+            // state; chains re-evaluate after the loop from the final chain state (they
+            // always stage, so the staging decision below is unaffected).
+            let resolve_output_header = |state: &ChainHeaderState| -> (bool, bool) {
+                let add_header = state.headerless
+                    && state.stripped_header_match.as_ref().is_some_and(|header_match| {
+                        let add = match output_header_mode {
+                            PatchApplyOutputHeaderMode::Keep => true,
+                            PatchApplyOutputHeaderMode::Strip => false,
+                            PatchApplyOutputHeaderMode::Auto => {
+                                header_match.header.retained_on_output()
+                            }
+                        };
+                        debug!(
+                            header = ?header_match.header,
+                            output_header = ?output_header_mode,
+                            add_header = add,
+                            "output header resolved for stripped input"
+                        );
+                        add
+                    });
+                let strip_output_header = output_header
+                    == Some(PatchApplyOutputHeaderMode::Strip)
+                    && !state.headerless
+                    && !is_disc;
+                (add_header, strip_output_header)
+            };
+            let (mut add_header, mut strip_output_header) = resolve_output_header(&header_state);
+
             let patch_count = resolved_patches.len();
+            // Single-patch runs know the final header state before anything is
+            // written, so the extension swap lands here and every writer (direct
+            // handler output, finalize, compression entry naming) targets the
+            // adjusted path — no post-hoc rename, which the browser VFS cannot
+            // observe. Chains re-evaluate after the loop; they always stage, so
+            // the finalize/compression writers pick the adjusted path up there.
+            let mut extension_swap_note: Option<String> = None;
+            if patch_count == 1
+                && !is_disc
+                && let Some((swapped_output, note)) = Self::resolve_header_extension_swap(
+                    &output,
+                    &header_state,
+                    add_header,
+                    strip_output_header,
+                    &resolved_input,
+                )
+            {
+                output = swapped_output;
+                extension_swap_note = Some(note);
+            }
             // Disc inputs reject the header/N64 transforms and do their own
             // reassembly, so they skip the standard compat finalize; they always
             // stage the patched track before reassembling the full disc.
             let requires_compat_finalize = !is_disc
                 && (add_header
+                    || strip_output_header
                     || repair_checksum
                     || restore_n64_order.is_some()
                     || patch_count > 1);
@@ -453,7 +562,6 @@ impl CliApp {
             } else {
                 output.clone()
             };
-            let mut terminal_output_path = output.clone();
 
             let PatchApplyLoopOutcome {
                 mut report,
@@ -462,6 +570,8 @@ impl CliApp {
                 &resolved_patches,
                 apply_input,
                 &staged_output,
+                &chain_header_modes,
+                &mut header_state,
                 &probe_threads,
                 &context,
                 &mut temp_paths,
@@ -469,6 +579,28 @@ impl CliApp {
                 Ok(outcome) => outcome,
                 Err(report) => return *report,
             };
+
+            // Mid-chain transitions may have changed the header state; chains always
+            // stage (patch_count > 1 forces the compat finalize), so re-resolving the
+            // output-header decision and the extension swap here still lands before
+            // the finalize copy chooses its destination.
+            if patch_count > 1 {
+                (add_header, strip_output_header) = resolve_output_header(&header_state);
+                if report.status == OperationStatus::Succeeded
+                    && !is_disc
+                    && let Some((swapped_output, note)) = Self::resolve_header_extension_swap(
+                        &output,
+                        &header_state,
+                        add_header,
+                        strip_output_header,
+                        &staged_output,
+                    )
+                {
+                    output = swapped_output;
+                    extension_swap_note = Some(note);
+                }
+            }
+            let mut terminal_output_path = output.clone();
 
             let mut raw_ready_output = staged_output.clone();
             let mut disc_track_overrides: Vec<CreateInputOverride> = Vec::new();
@@ -514,7 +646,8 @@ impl CliApp {
                     &staged_output,
                     &finalized_output_path,
                     add_header,
-                    stripped_header.as_deref(),
+                    header_state.stripped_header.as_deref(),
+                    strip_output_header,
                     repair_checksum,
                     Some(&resolved_input),
                     restore_n64_order,
@@ -617,20 +750,16 @@ impl CliApp {
                     report.label
                 );
             }
-            if strip_header {
-                if let Some(header_match) = stripped_header_match {
-                    report.label = format!(
-                        "{}; input header stripped ({} bytes, {})",
-                        report.label,
-                        header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES),
-                        header_match.profile_name()
-                    );
-                } else {
-                    report.label = format!(
-                        "{}; input header stripped ({} bytes)",
-                        report.label, ROM_HEADER_BYTES
-                    );
-                }
+            if let Some(header_match) = header_state.stripped_header_match.as_ref() {
+                report.label = format!(
+                    "{}; input header stripped ({} bytes, {})",
+                    report.label,
+                    header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES),
+                    header_match.profile_name()
+                );
+            }
+            if let Some(note) = extension_swap_note.as_deref() {
+                report.label = format!("{}; {note}", report.label);
             }
             if let Some(target_order) = n64_byte_order {
                 report.label = format!("{}; n64_byte_order={}", report.label, target_order.id());
@@ -819,6 +948,330 @@ impl CliApp {
     /// only in the command name, the label noun, and the temp-file prefix.
     /// Cleanup paths from each extract are pushed onto `temp_paths` as they are
     /// produced, matching the previous inline loops.
+    /// Decide the default (`--patch-header auto`) handling for the FIRST patch: strip
+    /// the detected copier header before apply only when the patch's required input
+    /// checksum proves it was authored against the headerless bytes. Any doubt — no
+    /// strippable header, no checksum evidence, or a checksum matching neither
+    /// variant — keeps the input as-is, so runs without evidence behave exactly like
+    /// the pre-policy default. Later chain steps decide per patch in
+    /// [`Self::chain_header_transition`].
+    fn auto_header_strip_decision(
+        &self,
+        resolved_input: &Path,
+        first_resolved_patch: Option<&Path>,
+        expected_input_checksums: &BTreeMap<String, String>,
+        cached_input_checksums: &BTreeMap<String, String>,
+        context: &OperationContext,
+    ) -> bool {
+        let Ok(header_match) = Self::detect_strippable_rom_header(resolved_input) else {
+            trace!(
+                input = %resolved_input.display(),
+                "auto header: no strippable ROM header detected; keeping input as-is"
+            );
+            return false;
+        };
+        let header_len = header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES);
+        let required_crc32 = expected_input_checksums.get("crc32").cloned().or_else(|| {
+            first_resolved_patch.and_then(|patch| self.embedded_patch_source_crc32(patch, context))
+        });
+        let Some(required_crc32) = required_crc32 else {
+            trace!(
+                input = %resolved_input.display(),
+                header = ?header_match.header,
+                "auto header: strippable header present but no required input checksum; keeping header (ambiguous)"
+            );
+            return false;
+        };
+        if cached_input_checksums
+            .get("crc32")
+            .is_some_and(|cached| cached.eq_ignore_ascii_case(&required_crc32))
+        {
+            trace!(
+                required_crc32 = %required_crc32,
+                "auto header: required checksum matches the raw (headered) input; keeping header"
+            );
+            return false;
+        }
+        let headerless_crc32 = (|| -> Result<Option<String>> {
+            let mut reader = BufReader::new(File::open(resolved_input)?);
+            reader.seek(SeekFrom::Start(header_len as u64))?;
+            Self::crc32_of_reader(&mut reader, context)
+        })();
+        match headerless_crc32 {
+            Ok(Some(headerless)) if headerless.eq_ignore_ascii_case(&required_crc32) => {
+                debug!(
+                    header = ?header_match.header,
+                    header_bytes = header_len,
+                    required_crc32 = %required_crc32,
+                    "auto header: required input checksum matches the headerless bytes; stripping header before apply and re-adding it after"
+                );
+                true
+            }
+            Ok(_) => {
+                trace!(
+                    required_crc32 = %required_crc32,
+                    "auto header: required checksum matches neither the raw nor the headerless bytes; keeping header"
+                );
+                false
+            }
+            Err(error) => {
+                trace!(
+                    %error,
+                    "auto header: could not hash the headerless bytes; keeping header"
+                );
+                false
+            }
+        }
+    }
+
+    /// Adjust the requested output path when the final header state changes the
+    /// ROM's conventional extension (SNES `.smc` vs headerless `.sfc`, LNX `.lnx`
+    /// vs `.lyx`, ...). Fires only when the requested extension IS the known
+    /// counterpart — unrelated extensions are never touched — and only when a
+    /// header was actually in play (a strip somewhere in the chain, or an explicit
+    /// output strip, whose header is detected from `detect_source`). Returns the
+    /// swapped path plus the report-label note; mirrors the compression step's
+    /// extension-adjustment precedent.
+    fn resolve_header_extension_swap(
+        output: &Path,
+        state: &ChainHeaderState,
+        add_header: bool,
+        strip_output_header: bool,
+        detect_source: &Path,
+    ) -> Option<(PathBuf, String)> {
+        let known_header = if state.headerless || state.stripped_header_match.is_some() {
+            state
+                .stripped_header_match
+                .as_ref()
+                .map(|header_match| header_match.header)
+        } else if strip_output_header {
+            Self::detect_strippable_rom_header(detect_source)
+                .ok()
+                .map(|header_match| header_match.header)
+        } else {
+            // The header was never touched: leave the requested name alone.
+            None
+        }?;
+        let final_headerless = (state.headerless && !add_header) || strip_output_header;
+        let (from_extension, to_extension) = if final_headerless {
+            (
+                known_header.headered_extension(),
+                known_header.headerless_extension(),
+            )
+        } else {
+            (
+                known_header.headerless_extension(),
+                known_header.headered_extension(),
+            )
+        };
+        if from_extension == to_extension {
+            return None;
+        }
+        let output_matches_from = output
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                from_extension
+                    .strip_prefix('.')
+                    .is_some_and(|from| extension.eq_ignore_ascii_case(from))
+            });
+        if !output_matches_from {
+            return None;
+        }
+        let swapped_output = output.with_extension(to_extension.trim_start_matches('.'));
+        debug!(
+            header = ?known_header,
+            final_headerless,
+            from = from_extension,
+            to = to_extension,
+            output = %swapped_output.display(),
+            "adjusting output extension to match final header state"
+        );
+        Some((
+            swapped_output,
+            format!(
+                "output extension adjusted ({from_extension} -> {to_extension}) to match {} output",
+                if final_headerless {
+                    "headerless"
+                } else {
+                    "headered"
+                }
+            ),
+        ))
+    }
+
+    /// Hash a reader's remaining bytes as the engine-formatted lowercase CRC32.
+    fn crc32_of_reader(reader: &mut impl Read, context: &OperationContext) -> Result<Option<String>> {
+        let values = checksum_reader_values_with_progress(
+            reader,
+            &["crc32".to_string()],
+            context,
+            &mut |_| {},
+        )?;
+        Ok(values.values.get("crc32").cloned())
+    }
+
+    /// Transition the on-disk header state between chain steps so patch `mode`'s
+    /// step applies against the bytes it was authored for. Explicit keep/strip
+    /// force the state (a keep with nothing ever stripped is a no-op); auto acts
+    /// only on checksum proof from this patch's embedded source CRC32 — no
+    /// evidence, or evidence matching the current bytes, carries the state over
+    /// untouched, and evidence matching neither variant is left for the handler's
+    /// own strict validation to report.
+    #[allow(clippy::too_many_arguments)]
+    fn chain_header_transition(
+        &self,
+        mode: PatchApplyHeaderMode,
+        resolved_patch: &Path,
+        current_input: &mut PathBuf,
+        state: &mut ChainHeaderState,
+        context: &OperationContext,
+        temp_paths: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        let desired_headerless = match mode {
+            PatchApplyHeaderMode::Keep => false,
+            PatchApplyHeaderMode::Strip => true,
+            PatchApplyHeaderMode::Auto => {
+                let Some(required_crc32) =
+                    self.embedded_patch_source_crc32(resolved_patch, context)
+                else {
+                    trace!(
+                        patch = %resolved_patch.display(),
+                        headerless = state.headerless,
+                        "chain header: patch embeds no source checksum; header state carries over"
+                    );
+                    return Ok(());
+                };
+                let current_crc32 = {
+                    let mut reader = BufReader::new(File::open(&*current_input)?);
+                    Self::crc32_of_reader(&mut reader, context)?
+                };
+                if current_crc32
+                    .as_deref()
+                    .is_some_and(|crc| crc.eq_ignore_ascii_case(&required_crc32))
+                {
+                    trace!(
+                        required_crc32 = %required_crc32,
+                        headerless = state.headerless,
+                        "chain header: patch targets the current bytes; header state carries over"
+                    );
+                    return Ok(());
+                }
+                if !state.headerless {
+                    let Ok(header_match) = Self::detect_strippable_rom_header(current_input)
+                    else {
+                        trace!(
+                            required_crc32 = %required_crc32,
+                            "chain header: checksum mismatch but no strippable header on the current bytes; leaving state for strict validation"
+                        );
+                        return Ok(());
+                    };
+                    let header_len = header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES);
+                    let headerless_crc32 = {
+                        let mut reader = BufReader::new(File::open(&*current_input)?);
+                        reader.seek(SeekFrom::Start(header_len as u64))?;
+                        Self::crc32_of_reader(&mut reader, context)?
+                    };
+                    if !headerless_crc32
+                        .as_deref()
+                        .is_some_and(|crc| crc.eq_ignore_ascii_case(&required_crc32))
+                    {
+                        trace!(
+                            required_crc32 = %required_crc32,
+                            "chain header: checksum matches neither the current nor the headerless bytes; leaving state for strict validation"
+                        );
+                        return Ok(());
+                    }
+                    debug!(
+                        header = ?header_match.header,
+                        required_crc32 = %required_crc32,
+                        "chain header: patch targets the headerless bytes; stripping between steps"
+                    );
+                    true
+                } else if let Some(header_bytes) = state.stripped_header.as_deref() {
+                    let headered_crc32 = {
+                        let file = BufReader::new(File::open(&*current_input)?);
+                        let mut reader = header_bytes.chain(file);
+                        Self::crc32_of_reader(&mut reader, context)?
+                    };
+                    if !headered_crc32
+                        .as_deref()
+                        .is_some_and(|crc| crc.eq_ignore_ascii_case(&required_crc32))
+                    {
+                        trace!(
+                            required_crc32 = %required_crc32,
+                            "chain header: checksum matches neither the headerless nor the re-headered bytes; leaving state for strict validation"
+                        );
+                        return Ok(());
+                    }
+                    debug!(
+                        required_crc32 = %required_crc32,
+                        "chain header: patch targets the re-headered bytes; restoring the stripped header between steps"
+                    );
+                    false
+                } else {
+                    return Ok(());
+                }
+            }
+        };
+        if desired_headerless == state.headerless {
+            return Ok(());
+        }
+        if desired_headerless {
+            let stripped_path = context
+                .temp_paths()
+                .next_path("patch-apply-chain-noheader", Some("bin"));
+            let result = Self::strip_header_to_temp(current_input, &stripped_path)?;
+            temp_paths.push(stripped_path.clone());
+            debug!(
+                header = ?result.matched_header,
+                "chain header: stripped header before this patch"
+            );
+            state.stripped_header = Some(result.header_bytes);
+            if state.stripped_header_match.is_none() {
+                state.stripped_header_match = result.matched_header;
+            }
+            state.headerless = true;
+            *current_input = stripped_path;
+        } else {
+            let Some(header_bytes) = state.stripped_header.clone() else {
+                // Keep on a chain that never stripped: nothing to restore.
+                return Ok(());
+            };
+            let restored_path = context
+                .temp_paths()
+                .next_path("patch-apply-chain-rehead", Some("bin"));
+            Self::copy_with_optional_header(current_input, &restored_path, Some(&header_bytes))?;
+            temp_paths.push(restored_path.clone());
+            debug!("chain header: restored the stripped header before this patch");
+            state.headerless = false;
+            *current_input = restored_path;
+        }
+        Ok(())
+    }
+
+    /// Read the first patch's embedded expected-source CRC32 (UPS/BPS store it in
+    /// their header/footer) without applying the patch, formatted as the same
+    /// lowercase 8-digit hex the checksum engine emits.
+    fn embedded_patch_source_crc32(
+        &self,
+        patch_path: &Path,
+        context: &OperationContext,
+    ) -> Option<String> {
+        let handler = self.patches.probe(patch_path)?;
+        let report = handler.describe_metadata(patch_path, context).ok()?;
+        let source_crc32 = report
+            .details
+            .as_ref()?
+            .as_object()?
+            .get("patch")?
+            .as_object()?
+            .get("source_crc32")?
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())?;
+        Some(format!("{source_crc32:08x}"))
+    }
+
     pub(super) fn resolve_patches(
         &self,
         patches: &[PathBuf],
@@ -962,6 +1415,15 @@ struct PatchApplyLoopOutcome {
     applied_formats: Vec<&'static str>,
 }
 
+/// The ROM copier-header state threaded through the patch chain: whether the
+/// bytes currently feeding the next patch are headerless, plus the header
+/// captured at the first strip (for mid-chain restores and the output re-add).
+struct ChainHeaderState {
+    headerless: bool,
+    stripped_header: Option<Vec<u8>>,
+    stripped_header_match: Option<KnownRomHeaderMatch>,
+}
+
 impl CliApp {
     /// Apply each resolved patch in sequence, threading the running output
     /// through every step (intermediate steps write temp files registered in
@@ -971,11 +1433,14 @@ impl CliApp {
     /// patch handler is missing or an apply fails — the exact reports the
     /// inline loop produced. Extracted from `run_patch_apply` to shrink it; the
     /// `Err` early-exits map one-to-one onto the loop's former `return`s.
+    #[allow(clippy::too_many_arguments)]
     fn run_patch_apply_loop(
         &self,
         resolved_patches: &[(PathBuf, PathBuf)],
         apply_input: PathBuf,
         staged_output: &Path,
+        chain_header_modes: &[PatchApplyHeaderMode],
+        header_state: &mut ChainHeaderState,
         probe_threads: &Option<ThreadExecution>,
         context: &OperationContext,
         temp_paths: &mut Vec<PathBuf>,
@@ -1001,6 +1466,33 @@ impl CliApp {
             )?;
             applied_formats.push(handler.descriptor().name);
             let patch_start_percent = patch_progress_segment_start(index, patch_count);
+
+            // Later chain steps may need a different header state than the previous
+            // patch left behind (explicit per-patch mode, or auto evidence from this
+            // patch's embedded source checksum).
+            if index > 0
+                && let Err(error) = self.chain_header_transition(
+                    chain_header_modes.get(index).copied().unwrap_or_default(),
+                    resolved_patch_path,
+                    &mut current_input,
+                    header_state,
+                    context,
+                    temp_paths,
+                )
+            {
+                return Err(Box::new(OperationReport::failed(
+                    OperationFamily::Patch,
+                    Some(handler.descriptor().name.to_string()),
+                    "prepare",
+                    format!(
+                        "patch {}/{} (`{}`): header transition failed: {error}",
+                        index + 1,
+                        patch_count,
+                        patch_path.display()
+                    ),
+                    context.single_thread_execution(),
+                )));
+            }
 
             let is_last = index + 1 == patch_count;
             let apply_output = if is_last {

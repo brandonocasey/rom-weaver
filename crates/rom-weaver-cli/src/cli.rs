@@ -6,10 +6,11 @@ use std::io::{self, IsTerminal};
 use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 #[cfg(not(target_arch = "wasm32"))]
 use rom_weaver_app::{
-    Commands, JsonProgressSink, RomWeaverRunOutputOptions, RunCommandOptions, run_command,
+    Commands, JsonProgressSink, PatchCommands, RomWeaverRunOutputOptions, RunCommandOptions,
+    run_command,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use rom_weaver_core::{NoninteractivePrompter, ProgressSink, SelectionPrompter};
@@ -96,7 +97,20 @@ fn progress_override(progress: bool, no_progress: bool) -> Option<bool> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn main_entry() -> ExitCode {
-    let cli = Cli::parse();
+    // Two-step parse (matches + derive) instead of `Cli::parse()`: positional
+    // `--patch-header` occurrences bind to the preceding `--patch`, and only the
+    // raw `ArgMatches` argv indices preserve that interleave order.
+    let matches = Cli::command().get_matches();
+    let mut cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
+    };
+    if let Commands::Patch(PatchCommands::Apply(command)) = &mut cli.command
+        && let Some((_, patch_matches)) = matches.subcommand()
+        && let Some((_, apply_matches)) = patch_matches.subcommand()
+    {
+        command.align_patch_header_modes(apply_matches);
+    }
     let stdout_is_tty = io::stdout().is_terminal();
     // Interactive prompting needs a terminal on both stdin (to read) and stderr (to draw), and is
     // meaningless when emitting JSON.

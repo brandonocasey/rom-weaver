@@ -77,6 +77,9 @@ type OutputSettings = {
   container?: Omit<CompressionSettings, "format" | "workerThreads">;
   compression?: "auto" | CompressionFormat;
   extension?: string;
+  /** ROM copier-header handling on the patched output: auto (re-add emulator-required
+   * headers, drop junk copier headers), keep, or strip (headerless output). */
+  header?: "auto" | "keep" | "strip";
   outputName?: string;
   suffix?: boolean;
 };

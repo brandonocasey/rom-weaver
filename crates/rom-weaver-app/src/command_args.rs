@@ -635,23 +635,27 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long,
-            help = "Remove a detected ROM header before patch apply (A78/LNX/NES/FDS/SMC signatures; SNES/PCE copier-size rules)"
+            long = "patch-header",
+            value_enum,
+            action = ArgAction::Append,
+            help = "Which bytes patches apply against: auto (default; strip the detected ROM copier header only when that patch's required input checksum matches the headerless bytes — decided per patch in a chain), keep (patch the current bytes as-is), or strip (strip the detected header). Repeatable: each occurrence applies to the most recent preceding --patch and carries forward until the next occurrence; an occurrence before any --patch applies to every patch. Detected headers: A78/LNX/NES/FDS/SMC signatures plus SNES/PCE copier-size rules."
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub strip_header: bool,
+    pub patch_header: Vec<PatchApplyHeaderMode>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long,
-            help = "Add header bytes after patch apply (reuses stripped header bytes when available; defaults to 512-byte copier header)"
+            long = "output-header",
+            value_enum,
+            overrides_with = "output_header",
+            help = "Whether the final patched output carries the ROM header: keep (re-add a header stripped for apply), strip (headerless output, removing a still-present header if needed), or auto (default; keep emulator-required headers like iNES/FDS/LNX/A78, drop junk copier headers like SNES/PCE/Game Doctor). The chain produces one output, so this is a single setting; if repeated, the last value wins. When the final header state changes the ROM's conventional extension (for example SNES .smc vs headerless .sfc), the output extension is adjusted to match."
         )
     )]
     #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub add_header: bool,
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub output_header: Option<PatchApplyOutputHeaderMode>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -739,6 +743,57 @@ pub struct PatchApplyCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PatchApplyCommand {
+    /// Expand positional `--patch-header` occurrences into one mode per `--patch`.
+    /// Each occurrence applies to the most recent preceding `--patch` and carries
+    /// forward until the next occurrence; an occurrence before any `--patch` (or a
+    /// run with only discovered sidecar patches) applies to every patch. Clap's
+    /// parsed `Vec` loses the interleave order, so this re-derives it from the
+    /// argv indices of the raw matches.
+    pub fn align_patch_header_modes(&mut self, matches: &clap::ArgMatches) {
+        if self.patch_header.is_empty() {
+            return;
+        }
+        let modes = std::mem::take(&mut self.patch_header);
+        let mode_indices: Vec<usize> = matches
+            .indices_of("patch_header")
+            .map(Iterator::collect)
+            .unwrap_or_default();
+        let patch_indices: Vec<usize> = matches
+            .indices_of("patches")
+            .map(Iterator::collect)
+            .unwrap_or_default();
+        if patch_indices.is_empty() || mode_indices.len() != modes.len() {
+            // No explicit --patch flags (sidecar discovery): the last given mode
+            // applies to every discovered patch via the carry-forward lookup.
+            self.patch_header = modes
+                .last()
+                .copied()
+                .map(|mode| vec![mode])
+                .unwrap_or_default();
+            return;
+        }
+        let mut resolved = Vec::with_capacity(patch_indices.len());
+        for position in 0..patch_indices.len() {
+            let next_patch_index = patch_indices
+                .get(position + 1)
+                .copied()
+                .unwrap_or(usize::MAX);
+            let mode = mode_indices
+                .iter()
+                .zip(&modes)
+                .filter(|(index, _)| **index < next_patch_index)
+                .map(|(_, mode)| *mode)
+                .next_back()
+                .unwrap_or_default();
+            resolved.push(mode);
+        }
+        trace!(modes = ?resolved, "aligned positional --patch-header occurrences per patch");
+        self.patch_header = resolved;
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

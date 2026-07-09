@@ -975,6 +975,7 @@ fn header_repair_finalize_restores_original_n64_order() {
         false,
         None,
         false,
+        false,
         None,
         Some(N64ByteOrderTransform {
             from: N64ByteOrder::BigEndian,

@@ -4,10 +4,15 @@ import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { createTiming, formatTiming } from "../../storage/shared/timing.ts";
 import { ApplyPatchListStep } from "./apply-patch-list-step.tsx";
-import { buildOutputCompressionPanel, getOutputCompressionFormatLabel } from "./components/ds/compress-panel.tsx";
+import {
+  buildOutputCompressionPanel,
+  FieldInfoToggle,
+  getOutputCompressionFormatLabel,
+} from "./components/ds/compress-panel.tsx";
 import { FileProgress, Notice } from "./components/ds/feedback.tsx";
 import { useFlatTransitionFlag } from "./components/ds/flat-transition.ts";
 import { InfoPopover, NeedsInput, StepSection } from "./components/ds/layout.tsx";
+import { OutputField } from "./components/ds/output-card.tsx";
 import { StageStatus, stageBarValue, stagePercent, stageStatusLabel } from "./components/ds/staging-meta.tsx";
 import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
@@ -475,6 +480,64 @@ function ApplyWorkflowFormView({
   };
   const compressHeaderFormat = getOutputCompressionFormatLabel(outputState.compressionFormat, outputState.options);
   const compressionTypeOptions = createCompressionTypeOptions(outputState.options, "none");
+  // The output "ROM header" select only exists when the staged ROM actually has a
+  // strippable copier header (the checksum variants carry the detection). Auto follows
+  // the engine's rule: re-add emulator-required headers, drop junk copier headers.
+  const outputHeaderVariant = romInputs
+    .flatMap((row) => row.info.checksumVariants || [])
+    .find(
+      (variant) =>
+        variant.applyCompatibility?.removeHeader === true || variant.applyCompatibility?.strip_header === true,
+    );
+  const outputHeaderTransform = outputHeaderVariant?.transforms?.removeHeader as
+    | { headeredExtension?: string; headerlessExtension?: string; retainOnOutput?: boolean }
+    | undefined;
+  const outputHeaderRetained = outputHeaderTransform?.retainOnOutput !== false;
+  const headeredExtension = outputHeaderTransform?.headeredExtension;
+  const headerlessExtension = outputHeaderTransform?.headerlessExtension;
+  const extensionsDiffer = !!headeredExtension && !!headerlessExtension && headeredExtension !== headerlessExtension;
+  // Option labels carry the resulting extension when keeping vs dropping the
+  // header changes the ROM's conventional one (.smc vs .sfc) — the output file
+  // name follows the choice automatically.
+  const withExtension = (label: string, extension: string | undefined) =>
+    extensionsDiffer && extension ? `${label} (${extension})` : label;
+  const outputHeaderInfo = {
+    items: [
+      `Auto keeps headers emulators require (iNES/FDS/LNX/A78) and drops junk copier headers (SNES/PCE/Game Doctor)${outputHeaderRetained ? "" : " — this ROM's header is copier junk, so auto drops it"}.`,
+      "Keep header: the patched output carries the ROM header (re-added if it was stripped for patching).",
+      "Headerless: the patched output has no ROM header (stripped from the output if the patch ran on the headered bytes).",
+      ...(extensionsDiffer
+        ? [
+            `The output extension follows the choice: ${headeredExtension} with the header, ${headerlessExtension} without.`,
+          ]
+        : []),
+    ],
+    summary:
+      "Whether the patched output carries the ROM's copier header. Separate from the per-patch strip choice, which only controls what bytes the patch applies against.",
+    title: "ROM header",
+  };
+  const outputHeaderField = outputHeaderVariant ? (
+    <OutputField label="ROM header" labelInfo={<FieldInfoToggle info={outputHeaderInfo} label="ROM header" />}>
+      <select
+        aria-label="ROM header"
+        className="select"
+        disabled={outputState.disabled}
+        id="rom-weaver-select-output-header"
+        onChange={(event) =>
+          controllers.output.setOutputHeader?.(event.currentTarget.value as "auto" | "keep" | "strip")
+        }
+        value={outputState.outputHeader || "auto"}
+      >
+        <option value="auto">
+          {outputHeaderRetained
+            ? withExtension("Auto — keep header", headeredExtension)
+            : withExtension("Auto — headerless", headerlessExtension)}
+        </option>
+        <option value="keep">{withExtension("Keep header", headeredExtension)}</option>
+        <option value="strip">{withExtension("Headerless", headerlessExtension)}</option>
+      </select>
+    </OutputField>
+  ) : null;
 
   // Combined drop surface (--rom-filter + --patch-filter): the parent's unified
   // drop handler stages bare files immediately and shows an "identifying"
@@ -695,6 +758,7 @@ function ApplyWorkflowFormView({
         }
         compress={buildOutputCompressionPanel({
           disabled: outputState.disabled,
+          extraChildren: outputHeaderField,
           fields: outputState.compress?.fields,
           format: compressHeaderFormat,
           formatId: "rom-weaver-select-output-format-compress",

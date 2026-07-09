@@ -3,7 +3,8 @@ use std::{env, fs, path::Path};
 use rom_weaver_app::{
     ChecksumCommand, Commands, CompressCommand, CompressionLevelProfile, ExtractCommand,
     ExtractStepDetails, ExtractedFileEntry, IngestCommand, IngestKind, IngestResult,
-    IngestRomAsset, MatchSidecarsCommand, N64ByteOrder, PatchApplyCommand, PatchCommands,
+    IngestRomAsset, MatchSidecarsCommand, N64ByteOrder, PatchApplyCommand, PatchApplyHeaderMode,
+    PatchApplyOutputHeaderMode, PatchCommands,
     PatchCreateCandidatesCommand, PatchCreateCommand, PatchDescriptor, PatchValidateCommand,
     PlanExtractBatchCommand, ProbeCommand, RomWeaverRunOutputOptions, RomWeaverRunRequest,
     TrimCommand, compression_metadata, patch_create_format_policy_metadata,
@@ -174,6 +175,8 @@ fn render_types() -> String {
         export_decl::<IngestResult>(&config),
         export_decl::<CompressionLevelProfile>(&config),
         export_decl::<N64ByteOrder>(&config),
+        export_decl::<PatchApplyHeaderMode>(&config),
+        export_decl::<PatchApplyOutputHeaderMode>(&config),
         export_decl::<ProbeCommand>(&config),
         export_decl::<ExtractCommand>(&config),
         export_decl::<ChecksumCommand>(&config),

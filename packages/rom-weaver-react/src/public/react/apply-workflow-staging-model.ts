@@ -197,10 +197,15 @@ const toPatchStageInfo = (
     decompressionTimeMs: patch.decompressionTimeMs,
     fileName,
     format: patch.requirements?.format,
+    headerChoice: patch.headerChoice,
+    headerStrippedBytes: patch.headerResolution?.strippedBytes,
     id: patch.id,
     order,
     parentCompressions: patch.parentCompressions,
     ppfUndo: patch.ppfUndo,
+    // Only surface a header choice when there is actually a strippable header AND the
+    // required checksums didn't already decide what to do with it.
+    showHeaderOption: !!patch.headerResolution && !patch.headerResolution.decided,
     size: patch.size,
     sourceChecksumState: patch.checksumPreflight?.status || "",
     sourceSize: patch.sourceSize,

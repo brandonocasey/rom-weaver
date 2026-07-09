@@ -1106,6 +1106,12 @@ const useLocalApplyPatchFormSession = ({
         // the run already reads; leaves the persisted Settings untouched.
         updateSettings({ ...activeSettings, ...(updates || { [key]: value }) });
       },
+      setOutputHeader: (value: "auto" | "keep" | "strip") => {
+        updateSettings({
+          ...activeSettings,
+          output: { ...activeSettings.output, header: value },
+        });
+      },
       subscribe: localOutputStoreController.subscribe,
     }),
     [

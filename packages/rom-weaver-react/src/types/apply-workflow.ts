@@ -77,6 +77,8 @@ type ApplyWorkflowPatchState = {
   wasDecompressed?: boolean;
   warnings: WorkflowWarning[];
   requirements?: {
+    /** Required input crc32 parsed from the patch file name's `[crc32:..]` token. */
+    filenameCrc32?: string;
     format?: string;
     minimumSourceSize?: number;
     patchCrc32?: string;
@@ -107,6 +109,20 @@ type ApplyWorkflowPatchState = {
   validateOutputChecksum?: string;
   /** User toggle for PPF undo-aware apply; `undefined` means "default on for PPF patches". */
   ppfUndo?: boolean;
+  /** Computed header decision for this patch against its target ROM (absent when the ROM
+   * has no strippable copier header). */
+  headerResolution?: {
+    mode: "keep" | "strip";
+    decided: boolean;
+    strippedBytes?: number;
+    headerlessCrc32?: string;
+    headerlessChecksums?: Record<string, string>;
+    retainOnOutput?: boolean;
+    headeredExtension?: string;
+    headerlessExtension?: string;
+  };
+  /** User override from the patch Options drawer; `undefined` means the resolved default. */
+  headerChoice?: "keep" | "strip";
 };
 
 export type {

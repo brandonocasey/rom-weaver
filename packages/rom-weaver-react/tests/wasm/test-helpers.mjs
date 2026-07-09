@@ -241,8 +241,12 @@ function commandArgsToRunRequest(args) {
         ...(readOptionValues(parsed, "validate-with-checksum").length
           ? { validate_with_checksums: readOptionValues(parsed, "validate-with-checksum") }
           : {}),
-        ...(parsed.flags.has("strip-header") ? { strip_header: true } : {}),
-        ...(parsed.flags.has("add-header") ? { add_header: true } : {}),
+        ...(readOptionValues(parsed, "patch-header").length
+          ? { patch_header: readOptionValues(parsed, "patch-header") }
+          : {}),
+        ...(readOptionalValue(parsed, "output-header")
+          ? { output_header: readOptionalValue(parsed, "output-header") }
+          : {}),
         ...(parsed.flags.has("repair-checksum") ? { repair_checksum: true } : {}),
         ...(readOptionalValue(parsed, "n64-byte-order")
           ? { n64_byte_order: readOptionalValue(parsed, "n64-byte-order") }

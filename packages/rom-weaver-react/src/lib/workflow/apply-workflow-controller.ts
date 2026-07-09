@@ -593,6 +593,7 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       ppfUndo?: boolean;
       validateInputChecksum?: string;
       validateOutputChecksum?: string;
+      header?: "keep" | "strip";
     },
   ): Promise<void> {
     return this.mutate("setPatchOption", async () => {
@@ -606,6 +607,12 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       if ("validateOutputChecksum" in option) {
         const value = option.validateOutputChecksum?.trim();
         stage.state.validateOutputChecksum = value ? value : undefined;
+      }
+      if ("header" in option) {
+        stage.state.headerChoice = option.header;
+        // The header choice changes which bytes the apply runs against, so the checksum
+        // preflight (and its target validation) must be recomputed.
+        await this.evaluatePatchReadiness(stage);
       }
       this.recomputeOutputState();
     });
@@ -1271,6 +1278,11 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       parsedPatches: this.patches.map((patch) => patch.parsedPatch).filter(Boolean) as ParsedPatchLike[],
       patches: this.patches.map((patch) => patch.source) as never,
       patchOptions: this.patches.map((patch) => ({
+        // User drawer choice wins; otherwise only a checksum-proven auto decision acts.
+        // Ambiguous (undecided) defaults to keep, matching RomPatcher.js.
+        header:
+          patch.state.headerChoice ??
+          (patch.state.headerResolution?.decided ? patch.state.headerResolution.mode : undefined),
         ppfUndo: patch.state.requirements?.format === "PPF" ? patch.state.ppfUndo !== false : false,
         validateInputChecksum: patch.state.validateInputChecksum,
         validateOutputChecksum: patch.state.validateOutputChecksum,

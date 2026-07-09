@@ -37,6 +37,10 @@ const validateApplyPatchTarget = async <TSource>(
   adapters: PatchTargetValidationAdapters,
 ): Promise<void> => {
   const validationKey = createApplyPatchValidationKey(stage, target, preflight);
+  const headerRemoved =
+    !!adapters.settings.compatibility?.removeHeader ||
+    (stage.state.headerChoice ??
+      (stage.state.headerResolution?.decided ? stage.state.headerResolution.mode : "keep")) === "strip";
   const existingValidation = stage.state.patchValidation;
   if (
     existingValidation?.validationKey === validationKey &&
@@ -122,8 +126,14 @@ const validateApplyPatchTarget = async <TSource>(
           workflow: "apply",
         }),
       options: {
-        checksumCache: getInputAssetChecksums(target),
-        removeHeader: !!adapters.settings.compatibility?.removeHeader,
+        // The effective header decision (drawer choice, else checksum-proven auto) must
+        // reach the dry-run too: a headerless-targeting patch validates against the
+        // stripped bytes — strip in the engine and cache the headerless checksums, not
+        // the raw file's.
+        checksumCache: headerRemoved
+          ? stage.state.headerResolution?.headerlessChecksums
+          : getInputAssetChecksums(target),
+        removeHeader: headerRemoved,
         workerThreads: adapters.settings.workers?.threads,
       },
       patches: [

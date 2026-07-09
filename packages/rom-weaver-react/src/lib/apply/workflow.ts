@@ -473,6 +473,19 @@ const runApplyWorkflow = async (
               (entry): entry is string => !!entry,
             );
             const ppfUndoAware = patchIndices.some((patchIndex) => patchOptions[patchIndex]?.ppfUndo === true);
+            // One header mode per patch. The first patch's mode is concrete — the
+            // browser resolved it against the staged checksum variants, so the engine
+            // never re-hashes the OPFS input. Later patches send their explicit
+            // choice/decided mode, or "auto" so the engine decides per step from its
+            // own chain intermediates. Whether a stripped header returns on the
+            // output is the output-header policy (the output card's "ROM header"
+            // select; auto = engine decides by header kind).
+            const headerModesForChain = patchIndices.map((patchIndex, position) => {
+              const header = patchOptions[patchIndex]?.header;
+              if (header === "strip" || header === "keep") return header;
+              return position === 0 ? ("keep" as const) : ("auto" as const);
+            });
+            const outputHeaderForChain = options?.output?.header || ("auto" as const);
             // Descriptive "Applying <patch> to <rom>" label (vs the worker's generic one).
             const targetName = asset.fileName || "ROM";
             const patchNames = selectedPatches.map((entry) => entry.patchFileName).filter(Boolean);
@@ -492,6 +505,8 @@ const runApplyWorkflow = async (
                 }),
               options: {
                 ...createWorkerApplyOptions(options, workerOutputName),
+                headerModes: headerModesForChain,
+                outputHeader: outputHeaderForChain,
                 ...(ppfUndoAware ? { ppfUndoAware: true } : {}),
                 ...(validateWithChecksums.length ? { validateWithChecksums } : {}),
                 ...(validateWithOutputChecksums.length ? { validateWithOutputChecksums } : {}),

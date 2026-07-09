@@ -220,14 +220,17 @@ type RuntimeChecksumCacheInput =
   | Record<string, string | number | null | undefined>;
 
 type RuntimePatchApplyOptions = Partial<Omit<PatchApplyCommand, "input" | "output" | "patches">> & {
-  addHeader?: PatchApplyCommand["add_header"];
+  addHeader?: boolean;
   appendOutputSuffix?: boolean;
   fixChecksum?: PatchApplyCommand["repair_checksum"];
+  /** One mode per patch in chain order; a shorter list carries the last mode forward. */
+  headerModes?: PatchApplyCommand["patch_header"];
+  outputHeader?: PatchApplyCommand["output_header"];
   n64ByteOrder?: PatchApplyCommand["n64_byte_order"];
   outputExtension?: string | null | undefined;
   outputName?: string | null | undefined;
   ppfUndoAware?: PatchApplyCommand["ppf_undo_aware"];
-  removeHeader?: PatchApplyCommand["strip_header"];
+  removeHeader?: boolean;
   requireInputChecksumMatch?: boolean;
   validateWithChecksums?: PatchApplyCommand["validate_with_checksums"];
   validateWithOutputChecksums?: PatchApplyCommand["validate_with_output_checksums"];

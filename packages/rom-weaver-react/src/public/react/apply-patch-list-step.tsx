@@ -161,10 +161,15 @@ const PatchOptions = ({
   patchStack: PatcherStackController;
 }) => {
   const setOption = patchStack.setPatchOption;
-  // Only PPF patches expose options (the undo toggle). Other formats have no
-  // per-patch options worth a drawer, so the card stays clean.
-  if (!(setOption && item.showPpfUndo)) return null;
+  // The drawer only appears when there is a real decision to make: the PPF undo
+  // toggle, or an ambiguous ROM copier header (strippable header present and the
+  // patch's required checksums didn't decide). Every other card stays clean.
+  if (!(setOption && (item.showPpfUndo || item.showHeaderOption))) return null;
   const ppfUndoChecked = item.ppfUndo !== false;
+  const stripHeaderChecked = item.headerChoice === "strip";
+  const headerLabel = item.headerStrippedBytes
+    ? `Strip ${item.headerStrippedBytes}-byte ROM header before patching`
+    : "Strip ROM header before patching";
   return (
     <Drawer
       bodyClassName="optsbody"
@@ -206,17 +211,33 @@ const PatchOptions = ({
           />
         </div>
       </div>
-      {item.showPpfUndo ? (
+      {item.showPpfUndo || item.showHeaderOption ? (
         <div className="optschecks">
-          <label className="popt" title="Safely re-apply over an already-patched ROM using the PPF undo data">
-            <input
-              checked={ppfUndoChecked}
-              disabled={item.optionsDisabled}
-              onChange={(event) => setOption(index, { ppfUndo: event.currentTarget.checked })}
-              type="checkbox"
-            />
-            <span>PPF undo (safe re-apply)</span>
-          </label>
+          {item.showPpfUndo ? (
+            <label className="popt" title="Safely re-apply over an already-patched ROM using the PPF undo data">
+              <input
+                checked={ppfUndoChecked}
+                disabled={item.optionsDisabled}
+                onChange={(event) => setOption(index, { ppfUndo: event.currentTarget.checked })}
+                type="checkbox"
+              />
+              <span>PPF undo (safe re-apply)</span>
+            </label>
+          ) : null}
+          {item.showHeaderOption ? (
+            <label
+              className="popt"
+              title="Patch the headerless bytes when this patch was authored against a ROM without its copier header. Whether the header appears on the final output is the output card's separate ROM header setting (auto keeps emulator-required headers, drops copier junk)."
+            >
+              <input
+                checked={stripHeaderChecked}
+                disabled={item.optionsDisabled}
+                onChange={(event) => setOption(index, { header: event.currentTarget.checked ? "strip" : "keep" })}
+                type="checkbox"
+              />
+              <span>{headerLabel}</span>
+            </label>
+          ) : null}
         </div>
       ) : null}
     </Drawer>

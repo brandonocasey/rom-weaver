@@ -2107,7 +2107,7 @@ fn patch_create_rejects_ips32_at_large_size() {
 }
 
 #[test]
-fn patch_apply_supports_strip_and_add_header_flags() {
+fn patch_apply_supports_patch_header_strip_with_output_modes() {
     let temp = setup_temp_dir();
     let base = b"abcdefgh".to_vec();
     let headered = with_header(&base);
@@ -2137,7 +2137,10 @@ fn patch_apply_supports_strip_and_add_header_flags() {
                 .path()
                 .to_str()
                 .expect("path"),
-            "--strip-header",
+            "--patch-header",
+            "strip",
+            "--output-header",
+            "strip",
             "--no-compress",
             "--json",
         ],
@@ -2166,8 +2169,10 @@ fn patch_apply_supports_strip_and_add_header_flags() {
                 .path()
                 .to_str()
                 .expect("path"),
-            "--strip-header",
-            "--add-header",
+            "--patch-header",
+            "strip",
+            "--output-header",
+            "keep",
             "--no-compress",
             "--json",
         ],
@@ -2185,7 +2190,7 @@ fn patch_apply_supports_strip_and_add_header_flags() {
 }
 
 #[test]
-fn patch_apply_supports_nes_header_strip_and_add_flags() {
+fn patch_apply_supports_nes_patch_header_strip_with_output_modes() {
     let temp = setup_temp_dir();
     let base = b"abcdefgh".to_vec();
     let headered = with_nes_header(&base);
@@ -2215,7 +2220,10 @@ fn patch_apply_supports_nes_header_strip_and_add_flags() {
                 .path()
                 .to_str()
                 .expect("path"),
-            "--strip-header",
+            "--patch-header",
+            "strip",
+            "--output-header",
+            "strip",
             "--no-compress",
             "--json",
         ],
@@ -2250,8 +2258,10 @@ fn patch_apply_supports_nes_header_strip_and_add_flags() {
                 .path()
                 .to_str()
                 .expect("path"),
-            "--strip-header",
-            "--add-header",
+            "--patch-header",
+            "strip",
+            "--output-header",
+            "keep",
             "--no-compress",
             "--json",
         ],
@@ -2265,6 +2275,663 @@ fn patch_apply_supports_nes_header_strip_and_add_flags() {
     assert_eq!(
         fs::read(temp.child("output-headered.nes").path()).expect("output"),
         with_nes_header(b"Zbcdefgh")
+    );
+}
+
+#[test]
+fn patch_apply_patch_header_strip_readds_nes_header_via_output_auto() {
+    let temp = setup_temp_dir();
+    let base = b"abcdefgh".to_vec();
+    fs::write(temp.child("input.nes").path(), with_nes_header(&base)).expect("fixture");
+    fs::write(
+        temp.child("update.ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 0,
+                data: b"Z".to_vec(),
+            }],
+            Some(base.len() as u32),
+        ),
+    )
+    .expect("fixture");
+
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.ips").path().to_str().expect("path"),
+            "--output",
+            temp.child("output-remove.nes")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--patch-header",
+            "strip",
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-apply");
+    assert_eq!(json["status"], "succeeded");
+    // `--patch-header strip` patches the headerless bytes; the default output-header
+    // auto re-adds the emulator-required iNES header.
+    assert_eq!(
+        fs::read(temp.child("output-remove.nes").path()).expect("output"),
+        with_nes_header(b"Zbcdefgh")
+    );
+}
+
+#[test]
+fn patch_apply_positional_patch_header_binds_to_preceding_patch() {
+    let temp = setup_temp_dir();
+    let base = b"hello old world".to_vec();
+    let headered = with_nes_header(&base);
+    fs::write(temp.child("input.nes").path(), &headered).expect("fixture");
+    // `headered.ips` targets the HEADERED layout (offset 16 = payload byte 0);
+    // `headerless.ips` targets the stripped layout (offset 1 = payload byte 1).
+    fs::write(
+        temp.child("headered.ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 16,
+                data: b"A".to_vec(),
+            }],
+            Some(headered.len() as u32),
+        ),
+    )
+    .expect("fixture");
+    fs::write(
+        temp.child("headerless-first.ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 0,
+                data: b"A".to_vec(),
+            }],
+            Some(base.len() as u32),
+        ),
+    )
+    .expect("fixture");
+    fs::write(
+        temp.child("headerless-second.ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 1,
+                data: b"B".to_vec(),
+            }],
+            Some(base.len() as u32),
+        ),
+    )
+    .expect("fixture");
+    let expected = with_nes_header(b"ABllo old world");
+
+    // `--patch a --patch b --patch-header strip`: the occurrence binds to the
+    // SECOND patch only — the first applies to the headered bytes, the header is
+    // stripped between the steps, and output auto re-adds the iNES header.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--patch",
+            temp.child("headered.ips").path().to_str().expect("path"),
+            "--patch",
+            temp.child("headerless-second.ips")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--patch-header",
+            "strip",
+            "--output",
+            temp.child("output-second.nes")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(temp.child("output-second.nes").path()).expect("output"),
+        expected
+    );
+
+    // `--patch a --patch-header strip --patch b`: the occurrence binds to the
+    // first patch and CARRIES FORWARD to the second — both apply headerless.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--patch",
+            temp.child("headerless-first.ips")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--patch-header",
+            "strip",
+            "--patch",
+            temp.child("headerless-second.ips")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--output",
+            temp.child("output-carry.nes")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(temp.child("output-carry.nes").path()).expect("output"),
+        expected
+    );
+}
+
+#[test]
+fn patch_apply_auto_header_strips_when_patch_targets_headerless_bytes() {
+    let temp = setup_temp_dir();
+    let base = b"hello old world".to_vec();
+    let modified = temp.child("new.bin");
+    fs::write(temp.child("base.bin").path(), &base).expect("fixture");
+    fs::write(modified.path(), b"hello new world").expect("fixture");
+    // BPS authored against the HEADERLESS bytes embeds their crc32 as the required
+    // source checksum — the evidence default-auto strips on.
+    command_stdout(
+        &[
+            "patch",
+            "create",
+            "--original",
+            temp.child("base.bin").path().to_str().expect("path"),
+            "--modified",
+            modified.path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+    fs::write(temp.child("input.nes").path(), with_nes_header(&base)).expect("fixture");
+
+    // No header flags at all: `auto` is the default.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.nes").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-apply");
+    assert_eq!(json["status"], "succeeded");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("input header stripped (16 bytes, No-Intro_NES.xml)")
+    );
+    // The header is re-added after apply, so the output stays a playable .nes.
+    assert_eq!(
+        fs::read(temp.child("output.nes").path()).expect("output"),
+        with_nes_header(b"hello new world")
+    );
+}
+
+#[test]
+fn patch_apply_auto_output_header_drops_snes_copier_header() {
+    let temp = setup_temp_dir();
+    // 512-byte copier header + 32 KiB payload: SNES copier size rule (len % 1024 == 512).
+    let base = vec![0xA5_u8; 32768];
+    let mut modified = base.clone();
+    modified[0] = b'Z';
+    fs::write(temp.child("base.sfc").path(), &base).expect("fixture");
+    fs::write(temp.child("modified.sfc").path(), &modified).expect("fixture");
+    fs::write(temp.child("input.smc").path(), with_header(&base)).expect("fixture");
+    command_stdout(
+        &[
+            "patch",
+            "create",
+            "--original",
+            temp.child("base.sfc").path().to_str().expect("path"),
+            "--modified",
+            temp.child("modified.sfc").path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    // Default auto everywhere: strip proven by the BPS source checksum, and the SNES
+    // copier header is junk — the output stays headerless (.sfc convention).
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.smc").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output-auto.sfc").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(temp.child("output-auto.sfc").path()).expect("output"),
+        modified
+    );
+
+    // Explicit keep re-adds the captured copier header bytes.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.smc").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output-keep.smc").path().to_str().expect("path"),
+            "--output-header",
+            "keep",
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(temp.child("output-keep.smc").path()).expect("output"),
+        with_header(&modified)
+    );
+}
+
+#[test]
+fn patch_apply_output_header_strip_removes_kept_header() {
+    let temp = setup_temp_dir();
+    let base = b"abcdefgh".to_vec();
+    let headered = with_nes_header(&base);
+    fs::write(temp.child("input.nes").path(), &headered).expect("fixture");
+    // IPS with no requirements: auto keeps the header for the apply; the explicit
+    // output strip then removes it from the patched output.
+    fs::write(
+        temp.child("update.ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: 16,
+                data: b"Z".to_vec(),
+            }],
+            Some(headered.len() as u32),
+        ),
+    )
+    .expect("fixture");
+
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.ips").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.nes").path().to_str().expect("path"),
+            "--output-header",
+            "strip",
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(temp.child("output.nes").path()).expect("output"),
+        b"Zbcdefgh".to_vec()
+    );
+}
+
+#[test]
+fn patch_apply_adjusts_smc_extension_for_headerless_output() {
+    let temp = setup_temp_dir();
+    // 512-byte copier header + 32 KiB payload: SNES copier size rule (len % 1024 == 512).
+    let base = vec![0xA5_u8; 32768];
+    let mut modified = base.clone();
+    modified[0] = b'Z';
+    fs::write(temp.child("base.sfc").path(), &base).expect("fixture");
+    fs::write(temp.child("modified.sfc").path(), &modified).expect("fixture");
+    fs::write(temp.child("input.smc").path(), with_header(&base)).expect("fixture");
+    command_stdout(
+        &[
+            "patch",
+            "create",
+            "--original",
+            temp.child("base.sfc").path().to_str().expect("path"),
+            "--modified",
+            temp.child("modified.sfc").path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    // Auto strips (BPS source checksum proof) and auto drops the junk copier
+    // header — the requested `.smc` output lands as `.sfc` to match.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.smc").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.smc").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("output extension adjusted (.smc -> .sfc) to match headerless output")
+    );
+    assert!(!temp.child("output.smc").path().exists());
+    assert_eq!(
+        fs::read(temp.child("output.sfc").path()).expect("output"),
+        modified
+    );
+
+    // The reverse: keeping the header on a `.sfc`-named output moves it to `.smc`.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.smc").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("kept.sfc").path().to_str().expect("path"),
+            "--output-header",
+            "keep",
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("output extension adjusted (.sfc -> .smc) to match headered output")
+    );
+    assert!(!temp.child("kept.sfc").path().exists());
+    assert_eq!(
+        fs::read(temp.child("kept.smc").path()).expect("output"),
+        with_header(&modified)
+    );
+
+    // Unrelated extensions are never touched.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.smc").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.rom").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert!(
+        !json["label"]
+            .as_str()
+            .expect("label")
+            .contains("output extension adjusted")
+    );
+    assert_eq!(
+        fs::read(temp.child("output.rom").path()).expect("output"),
+        modified
+    );
+}
+
+#[test]
+fn patch_apply_auto_header_keeps_header_when_patch_targets_raw_bytes() {
+    let temp = setup_temp_dir();
+    let base = b"hello old world".to_vec();
+    let headered = with_nes_header(&base);
+    let mut modified_headered = headered.clone();
+    modified_headered[16] = b'H';
+    fs::write(temp.child("input.nes").path(), &headered).expect("fixture");
+    fs::write(temp.child("modified.nes").path(), &modified_headered).expect("fixture");
+    // BPS authored against the FULL headered bytes: auto must keep the header, or the
+    // handler's source-checksum validation would reject the stripped input.
+    command_stdout(
+        &[
+            "patch",
+            "create",
+            "--original",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--modified",
+            temp.child("modified.nes").path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.nes").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-apply");
+    assert_eq!(json["status"], "succeeded");
+    assert!(
+        !json["label"]
+            .as_str()
+            .expect("label")
+            .contains("input header stripped")
+    );
+    assert_eq!(
+        fs::read(temp.child("output.nes").path()).expect("output"),
+        modified_headered
+    );
+}
+
+/// Helper for the chain tests: `patch create --format bps` from `original` to
+/// `modified`, writing the patch at `output`.
+fn create_bps_patch(original: &std::path::Path, modified: &std::path::Path, output: &std::path::Path) {
+    command_stdout(
+        &[
+            "patch",
+            "create",
+            "--original",
+            original.to_str().expect("path"),
+            "--modified",
+            modified.to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            output.to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+}
+
+#[test]
+fn patch_apply_auto_strips_mid_chain_on_embedded_checksum() {
+    let temp = setup_temp_dir();
+    let base = b"hello old world".to_vec();
+    let headered = with_nes_header(&base);
+    fs::write(temp.child("input.nes").path(), &headered).expect("fixture");
+    // Patch 1 targets the HEADERED bytes; patch 2 targets the HEADERLESS bytes of
+    // patch 1's result — auto must strip the header between the two steps.
+    let modified1 = b"Xello old world".to_vec();
+    let modified1_headered = with_nes_header(&modified1);
+    let modified2 = b"XYllo old world".to_vec();
+    fs::write(temp.child("m1.nes").path(), &modified1_headered).expect("fixture");
+    fs::write(temp.child("m1.bin").path(), &modified1).expect("fixture");
+    fs::write(temp.child("m2.bin").path(), &modified2).expect("fixture");
+    create_bps_patch(
+        temp.child("input.nes").path(),
+        temp.child("m1.nes").path(),
+        temp.child("first.bps").path(),
+    );
+    create_bps_patch(
+        temp.child("m1.bin").path(),
+        temp.child("m2.bin").path(),
+        temp.child("second.bps").path(),
+    );
+
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--patch",
+            temp.child("first.bps").path().to_str().expect("path"),
+            "--patch",
+            temp.child("second.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.nes").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert!(
+        json["label"]
+            .as_str()
+            .expect("label")
+            .contains("input header stripped (16 bytes, No-Intro_NES.xml)")
+    );
+    // Output auto re-adds the emulator-required iNES header after the chain.
+    assert_eq!(
+        fs::read(temp.child("output.nes").path()).expect("output"),
+        with_nes_header(&modified2)
+    );
+}
+
+#[test]
+fn patch_apply_auto_restores_header_mid_chain_on_embedded_checksum() {
+    let temp = setup_temp_dir();
+    let base = b"hello old world".to_vec();
+    fs::write(temp.child("input.nes").path(), with_nes_header(&base)).expect("fixture");
+    // Patch 1 targets the HEADERLESS bytes (auto strips up front); patch 2 targets
+    // the RE-HEADERED bytes of patch 1's result — auto must restore the captured
+    // header between the two steps.
+    let modified1 = b"Aello old world".to_vec();
+    let modified1_headered = with_nes_header(&modified1);
+    let modified2_headered = with_nes_header(b"ABllo old world");
+    fs::write(temp.child("base.bin").path(), &base).expect("fixture");
+    fs::write(temp.child("m1.bin").path(), &modified1).expect("fixture");
+    fs::write(temp.child("m1.nes").path(), &modified1_headered).expect("fixture");
+    fs::write(temp.child("m2.nes").path(), &modified2_headered).expect("fixture");
+    create_bps_patch(
+        temp.child("base.bin").path(),
+        temp.child("m1.bin").path(),
+        temp.child("first.bps").path(),
+    );
+    create_bps_patch(
+        temp.child("m1.nes").path(),
+        temp.child("m2.nes").path(),
+        temp.child("second.bps").path(),
+    );
+
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.nes").path().to_str().expect("path"),
+            "--patch",
+            temp.child("first.bps").path().to_str().expect("path"),
+            "--patch",
+            temp.child("second.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.nes").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    // The chain ends headered (patch 2 ran on the restored bytes), so the output
+    // is exactly patch 2's result — no extra re-add.
+    assert_eq!(
+        fs::read(temp.child("output.nes").path()).expect("output"),
+        modified2_headered
     );
 }
 

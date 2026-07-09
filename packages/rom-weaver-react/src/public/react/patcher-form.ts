@@ -43,7 +43,12 @@ type PatcherStackController = StoreController<PatchStackState> & {
   setPatchTarget?: (index: number, targetInputId: string) => void;
   setPatchOption?: (
     index: number,
-    option: { ppfUndo?: boolean; validateInputChecksum?: string; validateOutputChecksum?: string },
+    option: {
+      ppfUndo?: boolean;
+      validateInputChecksum?: string;
+      validateOutputChecksum?: string;
+      header?: "keep" | "strip";
+    },
   ) => void;
 };
 
@@ -51,6 +56,8 @@ type PatcherOutputController = StoreController<PatcherOutputState> & {
   cancelPrimaryAction?: () => void;
   setDisplayFileName: (value: string) => void;
   setOutputCompression: (value: string) => void;
+  /** ROM copier-header handling on the patched output (auto|keep|strip). */
+  setOutputHeader?: (value: "auto" | "keep" | "strip") => void;
   /** Apply a per-job compression override (settings key → value) from the output Options panel. */
   setOutputCompressOption?: (key: string, value: string, updates?: Record<string, string>) => void;
   runPrimaryAction: () => void;

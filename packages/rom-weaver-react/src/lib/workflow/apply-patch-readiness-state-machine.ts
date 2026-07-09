@@ -1,5 +1,6 @@
 import { RomWeaverError, toRomWeaverError } from "../errors.ts";
 import type { InputAsset } from "../input/input-assets.ts";
+import { resolveApplyHeaderMode, toNormalizedCrc32 } from "./apply-header-resolution.ts";
 import type { InternalPatchChecksumPreflight, StagedSource } from "./apply-workflow-state.ts";
 import { getInputAssetChecksums } from "./staged-source-checksums.ts";
 
@@ -24,23 +25,13 @@ type PatchReadinessAdapters<TSource> = {
 
 const PATCH_TARGET_SELECTION_ERROR_CODES = new Set(["AMBIGUOUS_SELECTION", "PATCH_TARGET_MISMATCH"]);
 
-const toNormalizedCrc32 = (value: unknown): string | undefined => {
-  if (typeof value === "number" && Number.isFinite(value)) return (value >>> 0).toString(16).padStart(8, "0");
-  if (typeof value !== "string") return undefined;
-  const normalized = value.trim().toLowerCase().replace(/^0x/, "");
-  if (!normalized) return undefined;
-  if (/^[0-9a-f]+$/i.test(normalized) && normalized.length <= 8)
-    return Number.parseInt(normalized, 16).toString(16).padStart(8, "0");
-  if (/^\d+$/.test(normalized)) return (Number.parseInt(normalized, 10) >>> 0).toString(16).padStart(8, "0");
-  return undefined;
-};
-
 const clearApplyPatchTarget = <TSource>(stage: StagedSource<TSource>) => {
   stage.state.checksumTimeMs = undefined;
   stage.state.targetInputId = undefined;
   stage.state.targetInputFileName = undefined;
   stage.state.checksumPreflight = undefined;
   stage.state.patchValidation = undefined;
+  stage.state.headerResolution = undefined;
 };
 
 const assignApplyPatchTarget = <TSource>(stage: StagedSource<TSource>, target: InputAsset) => {
@@ -53,8 +44,23 @@ const createApplyPatchChecksumPreflight = <TSource>(
   target: InputAsset,
 ): InternalPatchChecksumPreflight => {
   const requirements = stage.state.requirements;
-  const actualSize = typeof target.size === "number" && Number.isFinite(target.size) ? target.size : undefined;
-  const actualCrc32 = toNormalizedCrc32(getInputAssetChecksums(target)?.crc32);
+  // Header decision first: when the effective handling is "strip" (auto-decided from the
+  // patch's required checksum, or user-chosen in the drawer), the apply runs against the
+  // headerless bytes — so the preflight must compare those, not the raw file.
+  const headerResolution = resolveApplyHeaderMode(requirements, {
+    checksums: getInputAssetChecksums(target),
+    checksumVariants: target.checksumVariants,
+  });
+  stage.state.headerResolution = headerResolution;
+  const effectiveHeaderMode = stage.state.headerChoice ?? headerResolution?.mode ?? "keep";
+  const headerRemoved = effectiveHeaderMode === "strip" && !!headerResolution;
+  const strippedBytes = headerResolution?.strippedBytes;
+  const rawSize = typeof target.size === "number" && Number.isFinite(target.size) ? target.size : undefined;
+  const actualSize =
+    headerRemoved && rawSize !== undefined && strippedBytes !== undefined ? rawSize - strippedBytes : rawSize;
+  const actualCrc32 = headerRemoved
+    ? headerResolution?.headerlessCrc32
+    : toNormalizedCrc32(getInputAssetChecksums(target)?.crc32);
   const requiredSize =
     typeof requirements?.sourceSize === "number" && Number.isFinite(requirements.sourceSize)
       ? requirements.sourceSize
@@ -63,7 +69,7 @@ const createApplyPatchChecksumPreflight = <TSource>(
     typeof requirements?.minimumSourceSize === "number" && Number.isFinite(requirements.minimumSourceSize)
       ? requirements.minimumSourceSize
       : undefined;
-  const requiredCrc32 = toNormalizedCrc32(requirements?.sourceCrc32);
+  const requiredCrc32 = toNormalizedCrc32(requirements?.sourceCrc32) ?? toNormalizedCrc32(requirements?.filenameCrc32);
   if (requiredSize === undefined && minimumSourceSize === undefined && !requiredCrc32) {
     return {
       actualCrc32,

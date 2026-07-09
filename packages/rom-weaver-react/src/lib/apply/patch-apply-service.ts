@@ -21,6 +21,9 @@ type PatchSourceValidator = {
 };
 
 type PatchProbeRequirements = {
+  /** Required input crc32 parsed from the patch file name's `[crc32:..]` token (fallback
+   * requirement source when the format embeds no source checksum). */
+  filenameCrc32?: string;
   format?: string;
   minimumSourceSize?: number;
   patchCrc32?: string;
@@ -177,6 +180,7 @@ const patchProbeRequirementsFromDescriptor = (
   const sourceCrc32 = toOptionalCrc32Hex(descriptor.sourceCrc32);
   const targetCrc32 = toOptionalCrc32Hex(descriptor.targetCrc32);
   const patchCrc32 = toOptionalCrc32Hex(descriptor.patchCrc32);
+  const filenameCrc32 = toOptionalCrc32Hex(descriptor.filenameChecksums?.crc32);
   if (
     !(
       format ||
@@ -185,11 +189,13 @@ const patchProbeRequirementsFromDescriptor = (
       targetSize !== undefined ||
       sourceCrc32 ||
       targetCrc32 ||
-      patchCrc32
+      patchCrc32 ||
+      filenameCrc32
     )
   )
     return undefined;
   return {
+    ...(filenameCrc32 ? { filenameCrc32 } : {}),
     ...(format ? { format } : {}),
     ...(minimumSourceSize === undefined ? {} : { minimumSourceSize }),
     ...(patchCrc32 ? { patchCrc32 } : {}),

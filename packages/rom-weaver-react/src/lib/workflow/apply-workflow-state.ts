@@ -46,6 +46,10 @@ type InternalSourceState = {
   validateOutputChecksum?: string;
   /** User toggle for PPF undo-aware apply; `undefined` means "default on for PPF patches". */
   ppfUndo?: boolean;
+  /** Computed header decision for this patch against its target ROM. */
+  headerResolution?: NonNullable<ApplyWorkflowPatchState["headerResolution"]>;
+  /** User override from the patch Options drawer; `undefined` means the resolved default. */
+  headerChoice?: "keep" | "strip";
   role: SourceRole;
 };
 type InternalCandidate<TSource> = SharedInternalCandidate<TSource, InternalSourceState>;

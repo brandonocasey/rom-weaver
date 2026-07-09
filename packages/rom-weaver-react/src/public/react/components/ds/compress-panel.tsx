@@ -138,6 +138,9 @@ const CompressPanelBody = ({
 
 type OutputCompressionPanelConfig = {
   disabled?: boolean;
+  /** Extra non-compression controls appended after the compression fields (e.g. the
+   * apply output's "ROM header" select). */
+  extraChildren?: ReactNode;
   fields?: CompressField[] | null;
   format?: string;
   formatId?: string;
@@ -167,6 +170,7 @@ const getOutputCompressionFormatLabel = (
 
 const buildOutputCompressionPanel = ({
   disabled,
+  extraChildren,
   fields,
   format,
   formatId,
@@ -181,8 +185,13 @@ const buildOutputCompressionPanel = ({
 }: OutputCompressionPanelConfig): OutputCompressPanel => ({
   children:
     fields?.length && onFieldChange ? (
-      <CompressPanelBody disabled={disabled} fields={fields} onChange={onFieldChange} />
-    ) : null,
+      <>
+        <CompressPanelBody disabled={disabled} fields={fields} onChange={onFieldChange} />
+        {extraChildren}
+      </>
+    ) : (
+      (extraChildren ?? null)
+    ),
   format,
   formatId,
   formatInfo:
@@ -197,4 +206,10 @@ const buildOutputCompressionPanel = ({
   timing,
 });
 
-export { buildOutputCompressionPanel, CompressInfoContent, CompressPanelBody, getOutputCompressionFormatLabel };
+export {
+  buildOutputCompressionPanel,
+  CompressInfoContent,
+  CompressPanelBody,
+  FieldInfoToggle,
+  getOutputCompressionFormatLabel,
+};

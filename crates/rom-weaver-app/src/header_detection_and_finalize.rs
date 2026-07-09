@@ -150,19 +150,45 @@ impl CliApp {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_patch_apply_output(
         staged_output: &Path,
         final_output: &Path,
         add_header: bool,
         stripped_header: Option<&[u8]>,
+        strip_output_header: bool,
         repair_checksum: bool,
         repair_hint_path: Option<&Path>,
         restore_n64_order: Option<N64ByteOrderTransform>,
     ) -> Result<PatchApplyFinalizeResult> {
-        let header_bytes = if add_header {
-            Some(stripped_header.unwrap_or(&[0_u8; ROM_HEADER_BYTES]))
+        // A re-add always restores the real bytes captured at strip time; the
+        // decision layer never sets `add_header` without a captured header.
+        let header_bytes = if add_header { stripped_header } else { None };
+        // `--output-header strip` on an apply that ran against the headered bytes:
+        // drop the still-present header while writing the final output. A missing
+        // header is not an error — the request is "make the output headerless" and
+        // it already is.
+        let skip_prefix_bytes = if strip_output_header && header_bytes.is_none() {
+            match Self::detect_strippable_rom_header(staged_output) {
+                Ok(header_match) => {
+                    let stripped = header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES);
+                    debug!(
+                        header = ?header_match.header,
+                        stripped_bytes = stripped,
+                        "stripping ROM header from patched output"
+                    );
+                    stripped as u64
+                }
+                Err(error) => {
+                    trace!(
+                        %error,
+                        "output header strip requested but no removable header detected; output left as-is"
+                    );
+                    0
+                }
+            }
         } else {
-            None
+            0
         };
 
         if let Some(transform) = restore_n64_order {
@@ -172,6 +198,8 @@ impl CliApp {
                 transform.from,
                 transform.to,
             )?;
+        } else if skip_prefix_bytes > 0 {
+            Self::copy_skipping_prefix(staged_output, final_output, skip_prefix_bytes)?;
         } else {
             Self::copy_with_optional_header(staged_output, final_output, header_bytes)?;
         }
@@ -204,6 +232,22 @@ impl CliApp {
             repaired_profiles: Vec::new(),
             repair_warning: None,
         })
+    }
+
+    pub(super) fn copy_skipping_prefix(
+        source: &Path,
+        destination: &Path,
+        prefix_bytes: u64,
+    ) -> Result<()> {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut reader = BufReader::new(File::open(source)?);
+        reader.seek(SeekFrom::Start(prefix_bytes))?;
+        let mut writer = BufWriter::new(File::create(destination)?);
+        io::copy(&mut reader, &mut writer)?;
+        writer.flush()?;
+        Ok(())
     }
 
     pub(super) fn copy_with_optional_header(

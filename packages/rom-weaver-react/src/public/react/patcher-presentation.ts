@@ -51,6 +51,8 @@ type PatcherOutputState = {
   disabled: boolean;
   applyButton: OutputApplyButtonState;
   options: OutputOption[];
+  /** ROM copier-header handling on the patched output (output card "ROM header" select). */
+  outputHeader?: "auto" | "keep" | "strip";
 };
 
 type ArchivePathEntry = {
@@ -87,6 +89,12 @@ type PatchStackItemState = {
   showPpfUndo?: boolean;
   /** Current PPF undo-aware toggle; `undefined` means the default (on for PPF). */
   ppfUndo?: boolean;
+  /** Whether the header choice should be shown (strippable header + checksums undecided). */
+  showHeaderOption?: boolean;
+  /** Current header handling override; `undefined` means the default (keep). */
+  headerChoice?: "keep" | "strip";
+  /** Detected copier-header size in bytes, for the header option label. */
+  headerStrippedBytes?: number;
   /** User-pasted checksum (raw hex) used to validate the target input before apply. */
   validateInputChecksum?: string;
   /** User-pasted checksum (raw hex) used to validate the patched output after apply. */

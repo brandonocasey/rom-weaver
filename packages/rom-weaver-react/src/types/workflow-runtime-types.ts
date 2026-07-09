@@ -78,6 +78,9 @@ type PatchApplyUserOptions = {
   validateOutputChecksum?: string;
   /** Enable PPF undo-aware apply for this patch (only meaningful for PPF patches). */
   ppfUndo?: boolean;
+  /** ROM copier-header handling: `remove` strips the detected header before apply and
+   * re-adds it after. `undefined`/`keep` patches the input bytes as-is. */
+  header?: "keep" | "strip";
 };
 
 type PatchInput = {

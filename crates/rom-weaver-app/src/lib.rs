@@ -53,7 +53,7 @@ use rom_weaver_patches::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 #[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::{filter::Targets, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 #[cfg(feature = "typescript-types")]
@@ -116,7 +116,7 @@ pub enum PatchCommands {
         not(target_arch = "wasm32"),
         command(
             about = "Apply one or more ROM patch files to an input in sequence",
-            long_about = "Apply one or more ROM patch files to an input in sequence.\n\nSupported patch apply formats:\nIPS, IPS32, SOLID, BPS, UPS, VCDIFF, xdelta, GDIFF, HDiffPatch/HPatchZ, APS (N64), APSGBA, RUP, PPF, PAT/FFP, EBP, BDF/BSDIFF40, BSP, MOD/PMSR, DLDI, DPS, DCP (Dreamcast).\n\nCaveats:\n- NINJA1 headers are recognized but apply is unsupported.\n- PDS is explicitly unsupported.\n- HDiffPatch directory patches (HDIFF19) are unsupported; only single-file .hdiff/.hpatchz is supported.\n- DCP (Universal Dreamcast Patcher) requires a disc-sheet input (.cue/.gdi); it rebuilds the GD-ROM data track's filesystem and reassembles the full disc (compressed to CHD by default). It cannot be chained with other patches or combined with header/checksum transforms."
+            long_about = "Apply one or more ROM patch files to an input in sequence.\n\nSupported patch apply formats:\nIPS, IPS32, SOLID, BPS, UPS, VCDIFF, xdelta, GDIFF, HDiffPatch/HPatchZ, APS (N64), APSGBA, RUP, PPF, PAT/FFP, EBP, BDF/BSDIFF40, BSP, MOD/PMSR, DLDI, DPS, DCP (Dreamcast).\n\nROM copier headers:\n- --patch-header (auto|keep|strip, default auto) controls which bytes each patch applies against. Auto decides PER PATCH: a patch's required input checksum (embedded UPS/BPS source CRC32, or a [crc32:..] filename token for the first patch) is compared against the current bytes and their headerless/re-headered counterpart; the header is stripped or restored between chain steps only on checksum proof. No evidence keeps the current bytes untouched.\n- --patch-header is positional and repeatable: each occurrence applies to the most recent preceding --patch and carries forward (`--patch a.bps --patch-header strip --patch b.ups` strips for both; `--patch a.bps --patch b.ups --patch-header strip` strips only for b.ups). An occurrence before any --patch applies to every patch.\n- --output-header (keep|strip|auto, default auto) controls whether the final output carries the header. Auto keeps headers emulators require (iNES/FDS/LNX/A78) and drops junk copier headers (SNES/PCE/Game Doctor). The chain has one output, so the flag is a single setting (last value wins).\n- When the final header state changes the ROM's conventional extension, the output extension is adjusted to match (for example SNES .smc -> headerless .sfc) and the report notes the adjustment. Unrelated extensions are never touched.\n\nCaveats:\n- NINJA1 headers are recognized but apply is unsupported.\n- PDS is explicitly unsupported.\n- HDiffPatch directory patches (HDIFF19) are unsupported; only single-file .hdiff/.hpatchz is supported.\n- DCP (Universal Dreamcast Patcher) requires a disc-sheet input (.cue/.gdi); it rebuilds the GD-ROM data track's filesystem and reassembles the full disc (compressed to CHD by default). It cannot be chained with other patches or combined with header/checksum transforms."
         )
     )]
     Apply(Box<PatchApplyCommand>),
@@ -892,6 +892,38 @@ impl N64ByteOrder {
 struct N64ByteOrderTransform {
     from: N64ByteOrder,
     to: N64ByteOrder,
+}
+
+/// Which bytes a patch applies against. `Auto` (the default) strips the detected
+/// copier header only when that patch's required input checksum proves it was
+/// authored against the headerless bytes — decided per patch in a chain, so a
+/// later patch can strip (or restore) the header mid-chain on checksum proof.
+/// Whether the header appears on the final output is [`PatchApplyOutputHeaderMode`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(ValueEnum))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+#[serde(rename_all = "kebab-case")]
+pub enum PatchApplyHeaderMode {
+    Keep,
+    Strip,
+    #[default]
+    Auto,
+}
+
+/// Whether a detected ROM copier header appears on the patched OUTPUT. `Auto` (the
+/// default) re-adds format headers that emulators require (iNES/fwNES/LNX/A78) and drops
+/// junk copier headers (SNES/PCE/Game Doctor) per the headerless-`.sfc` convention.
+/// `Strip` also removes a still-present header from the output when the apply itself ran
+/// on the headered bytes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(ValueEnum))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+#[serde(rename_all = "kebab-case")]
+pub enum PatchApplyOutputHeaderMode {
+    Keep,
+    Strip,
+    #[default]
+    Auto,
 }
 
 #[path = "command_dispatch.rs"]
