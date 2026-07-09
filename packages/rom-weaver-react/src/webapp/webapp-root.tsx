@@ -2,7 +2,7 @@ import GitCompare from "lucide-react/dist/esm/icons/git-compare.js";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.js";
 import Save from "lucide-react/dist/esm/icons/save.js";
 import Scissors from "lucide-react/dist/esm/icons/scissors.js";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getWorkbenchActivity, subscribeWorkbenchActivity } from "../lib/activity-store.ts";
 import { readDataTransferFiles } from "../lib/input/dropped-files.ts";
 import { createLogger } from "../lib/logging.ts";
@@ -21,6 +21,8 @@ import { LogDialog } from "./components/log-dialog.tsx";
 import { Masthead, Selvage, UpdateBanner } from "./components/shell.tsx";
 import { ProcessingWakeLockNotice } from "./components/wake-lock-notice.tsx";
 import { getSettingsUiState } from "./settings/settings-state.ts";
+import { UrlSessionBanner } from "./url-session/url-session-banner.tsx";
+import { useUrlSessionBoot } from "./url-session/use-url-session-boot.ts";
 import type { WebappRootProps } from "./webapp-root-types.ts";
 import { SettingsPanel } from "./webapp-settings";
 
@@ -157,7 +159,7 @@ const ActivitySelvage = ({
   );
 };
 
-function WebappRoot({ state, pageUpdate, confirmationDialog, actions }: WebappRootProps) {
+function WebappRoot({ state, pageUpdate, confirmationDialog, actions, urlSession }: WebappRootProps) {
   useEntryAnimationLock();
   // The page title follows the active workflow tab.
   useEffect(() => {
@@ -185,6 +187,20 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions }: WebappRo
     void preloadBrowserRuntime({ workerThreads });
   }, [workerThreads]);
   const activePageDrop = pageDrop?.view === state.currentView ? pageDrop.drop : null;
+
+  // URL-session sources land in the apply tab's drop pipeline exactly like a
+  // page-level drop (classification and routing stay Rust/extension-driven).
+  const deliverUrlSessionFiles = useCallback((files: File[]) => {
+    pageDropIdRef.current += 1;
+    setPageDrop({
+      drop: {
+        files,
+        id: pageDropIdRef.current,
+      },
+      view: "patcher",
+    });
+  }, []);
+  const urlSessionBoot = useUrlSessionBoot(urlSession?.request ?? null, deliverUrlSessionFiles);
 
   useEffect(() => {
     setVisitedViews((previous) => (previous.includes(state.currentView) ? previous : [...previous, state.currentView]));
@@ -296,6 +312,7 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions }: WebappRo
             onReload={actions.onReloadUpdate}
             open={changelogOpen}
           />
+          <UrlSessionBanner onRetry={urlSessionBoot.retry} state={urlSessionBoot.state} />
           <ActivityWakeLockNotice />
           <main className="workbench">
             {workflowPanel(

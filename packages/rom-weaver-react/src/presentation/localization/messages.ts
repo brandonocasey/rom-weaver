@@ -390,6 +390,12 @@ const MESSAGES: Record<MessageId, MessageDescriptor> = {
   "ui.update.reload": msg({ id: "ui.update.reload", message: "Reload" }),
   "ui.update.reloadNow": msg({ id: "ui.update.reloadNow", message: "Reload now" }),
   "ui.update.whatsNew": msg({ id: "ui.update.whatsNew", message: "What’s new" }),
+  "ui.urlSession.corsHint": msg({
+    id: "ui.urlSession.corsHint",
+    message: "The file host must allow cross-origin downloads (CORS).",
+  }),
+  "ui.urlSession.error": msg({ id: "ui.urlSession.error", message: "Shared session download failed" }),
+  "ui.urlSession.loading": msg({ id: "ui.urlSession.loading", message: "Loading shared session…" }),
   "ui.variant.asDumped": msg({ id: "ui.variant.asDumped", message: "File — as dumped" }),
   "ui.variant.autoTrimmed": msg({ id: "ui.variant.autoTrimmed", message: "Auto-trimmed" }),
   "ui.variant.noHeader": msg({ id: "ui.variant.noHeader", message: "Without copier header" }),

@@ -1,4 +1,5 @@
 import type { PageUpdateState } from "./page-update-state.ts";
+import type { UrlSessionParseResult } from "./url-session/url-session-request.ts";
 import type {
   CreatorSessionState,
   PatcherSessionState,
@@ -49,6 +50,8 @@ type WebappRootProps = {
   };
   pageUpdate: PageUpdateState;
   confirmationDialog: ConfirmationDialogState;
+  /** Boot-time `?manifest=` / `?rom=&patch=` session request, when present. */
+  urlSession?: UrlSessionParseResult | null;
   actions: {
     onSelectView: (view: WorkflowView) => void;
     onDraftChange: (field: string, value: string | boolean) => void;

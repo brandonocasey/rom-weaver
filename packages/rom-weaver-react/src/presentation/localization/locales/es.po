@@ -15,6 +15,11 @@ msgstr ""
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+#~ msgid "ui.verify.dryRunDesc"
+#~ msgstr "Aplica sobre una copia temporal y re-hashea — sin tocar los bytes de origen"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.info.threads"
 msgstr "«auto» usa el número de núcleos que reporta el navegador: {n}."
 
@@ -152,11 +157,6 @@ msgstr "Aplicar"
 #: src/presentation/localization/messages.ts
 msgid "ui.step.apply"
 msgstr "Aplicar"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.verify.dryRunDesc"
-msgstr "Aplica sobre una copia temporal y re-hashea — sin tocar los bytes de origen"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -650,6 +650,11 @@ msgstr "Nivel personalizado"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.urlSession.loading"
+msgstr "Cargando sesión compartida…"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.tools.log"
 msgstr "Registro"
 
@@ -1065,6 +1070,11 @@ msgstr "Ajustes"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.urlSession.error"
+msgstr "Falló la descarga de la sesión compartida"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.log.viewLabel"
 msgstr "Registro mostrado"
 
@@ -1152,6 +1162,11 @@ msgstr "El archivo contiene más de un candidato — elige cuáles preparar."
 #: src/presentation/localization/messages.ts
 msgid "ui.info.createOriginal"
 msgstr "El volcado limpio y sin modificar que ya tienen los jugadores; su suma se incrusta en el parche como requisito de aplicación; archivos y contenedores se resuelven solos."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.urlSession.corsHint"
+msgstr "El servidor de archivos debe permitir descargas de origen cruzado (CORS)."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

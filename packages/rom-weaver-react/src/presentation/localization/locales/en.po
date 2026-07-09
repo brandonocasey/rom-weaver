@@ -15,6 +15,11 @@ msgstr ""
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+#~ msgid "ui.verify.dryRunDesc"
+#~ msgstr "Apply to a scratch copy and re-hash — no source bytes touched"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.info.threads"
 msgstr "“auto” resolves to the browser-reported core count of {n}."
 
@@ -152,11 +157,6 @@ msgstr "Apply"
 #: src/presentation/localization/messages.ts
 msgid "ui.step.apply"
 msgstr "Apply"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.verify.dryRunDesc"
-msgstr "Apply to a scratch copy and re-hash — no source bytes touched"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -650,6 +650,11 @@ msgstr "Level override"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.urlSession.loading"
+msgstr "Loading shared session…"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.tools.log"
 msgstr "Log"
 
@@ -1065,6 +1070,11 @@ msgstr "Settings"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.urlSession.error"
+msgstr "Shared session download failed"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.log.viewLabel"
 msgstr "Shown log"
 
@@ -1152,6 +1162,11 @@ msgstr "The archive contains more than one candidate — pick the ones to stage.
 #: src/presentation/localization/messages.ts
 msgid "ui.info.createOriginal"
 msgstr "The clean, unmodified dump that players already own; its checksum is embedded in the patch as the apply requirement; archives and containers resolve automatically."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.urlSession.corsHint"
+msgstr "The file host must allow cross-origin downloads (CORS)."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

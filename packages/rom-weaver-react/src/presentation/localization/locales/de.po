@@ -15,6 +15,11 @@ msgstr ""
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+#~ msgid "ui.verify.dryRunDesc"
+#~ msgstr "Auf eine Kopie anwenden und neu hashen — Quellbytes bleiben unberührt"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.info.threads"
 msgstr "„auto“ nutzt die vom Browser gemeldete Kernanzahl: {n}."
 
@@ -152,11 +157,6 @@ msgstr "Anwenden"
 #: src/presentation/localization/messages.ts
 msgid "ui.step.apply"
 msgstr "Anwenden"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.verify.dryRunDesc"
-msgstr "Auf eine Kopie anwenden und neu hashen — Quellbytes bleiben unberührt"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -650,6 +650,11 @@ msgstr "Eigene Stufe"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.urlSession.loading"
+msgstr "Geteilte Sitzung wird geladen…"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.tools.log"
 msgstr "Protokoll"
 
@@ -1065,6 +1070,11 @@ msgstr "Einstellungen"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.urlSession.error"
+msgstr "Download der geteilten Sitzung fehlgeschlagen"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.log.viewLabel"
 msgstr "Angezeigtes Protokoll"
 
@@ -1152,6 +1162,11 @@ msgstr "Das Archiv enthält mehrere Kandidaten — wähle die einzulegenden Date
 #: src/presentation/localization/messages.ts
 msgid "ui.info.createOriginal"
 msgstr "Der saubere, unveränderte Dump, den Spieler bereits besitzen; seine Prüfsumme wird als Anwendungsvoraussetzung in den Patch eingebettet; Archive und Container werden automatisch aufgelöst."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.urlSession.corsHint"
+msgstr "Der Datei-Host muss Cross-Origin-Downloads (CORS) erlauben."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

@@ -20,6 +20,7 @@ import {
   shouldConfirmDiscardSettings,
   shouldWarnBeforeUnload,
 } from "./unload-guard.ts";
+import { readUrlSessionRequest } from "./url-session/url-session-request.ts";
 import { createWebappRootController, readWorkflowViewFromHash } from "./webapp-controller.ts";
 import { selectViewWithTransition, WebappRoot } from "./webapp-root.tsx";
 import { type ConfirmationDialogState, createEmptyConfirmationDialogState } from "./webapp-root-types.ts";
@@ -170,6 +171,17 @@ const getConfiguredRuntimeSettings = (): RuntimeSettings =>
   appConfig.settings && typeof appConfig.settings === "object" ? { ...appConfig.settings } : {};
 
 const getConfiguredInitialMode = () => (typeof appConfig.initialMode === "string" ? appConfig.initialMode : "");
+
+// `?manifest=` / `?rom=&patch=` URL API, parsed once per page lifetime. The
+// params stay in the address bar so the session URL remains shareable; only
+// this boot-time read consumes them.
+const urlSessionParse =
+  typeof window === "undefined"
+    ? { request: null, warnings: [] }
+    : readUrlSessionRequest(window.location.search, window.location.href);
+for (const warning of urlSessionParse.warnings) {
+  logger.warn(`url session: ${warning}`);
+}
 
 const applySettingsToRuntime = (settings: RuntimeSettings) => {
   configureLogger({ level: typeof settings.logLevel === "string" ? settings.logLevel : undefined });
@@ -357,6 +369,7 @@ const renderWebappRoot = (): undefined => {
         }),
         serviceWorkerCache,
         state: webappController.getState(),
+        urlSession: urlSessionParse.request ? urlSessionParse : null,
       }),
     );
   });
@@ -390,7 +403,10 @@ const initializeWebapp = () => {
   webappController.setStartupState("loading");
   renderWebappRoot();
 
-  const initialMode = getConfiguredInitialMode() || readWorkflowViewFromHash() || "patcher";
+  // A URL session always lands on the apply tab, whatever the hash says.
+  const initialMode = urlSessionParse.request
+    ? "patcher"
+    : getConfiguredInitialMode() || readWorkflowViewFromHash() || "patcher";
   webappController.setStartupState("ready");
   webappController.activateInitialView(initialMode, { fallbackOnError: true });
   const configuredOnInitialize = getConfiguredRuntimeSettings().oninitialize;
