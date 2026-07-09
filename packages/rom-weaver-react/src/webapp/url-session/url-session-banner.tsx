@@ -35,7 +35,11 @@ const UrlSessionBanner = ({ state, onRetry }: { state: UrlSessionBootState; onRe
           <>
             <span aria-hidden="true" className="updates-pulse" />
             <span className="updates-text">
-              <b>{localizer.message("ui.urlSession.loading")}</b> <span className="mono">{progressText}</span>
+              <b>{localizer.message("ui.urlSession.loading")}</b>{" "}
+              <span className="mono">
+                {state.manifestName ? `${state.manifestName} — ` : ""}
+                {progressText}
+              </span>
             </span>
           </>
         )}

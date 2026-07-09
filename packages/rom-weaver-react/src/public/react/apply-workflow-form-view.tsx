@@ -389,6 +389,8 @@ const renderDiscGroup = (
 type PatchEnablement = {
   disabledIds: ReadonlySet<string>;
   getPatchIds: () => string[];
+  /** Toggle-locked ids (a manifest's `required` patches stay on). */
+  lockedIds?: ReadonlySet<string>;
   onToggle: (index: number) => void;
 };
 
@@ -398,6 +400,8 @@ const APPLY_ACTIVITY_KEY = "react-apply-view";
 
 function ApplyWorkflowFormView({
   controllers,
+  manifestExport,
+  manifestMetaById,
   onUnifiedDrop,
   patchEnablement,
   pendingDrops = [],
@@ -410,6 +414,10 @@ function ApplyWorkflowFormView({
     notice?: NoticeController;
     dialog?: DialogController;
   };
+  /** Output-card secondary action: opens the "Export manifest…" dialog. */
+  manifestExport?: { onOpen: () => void };
+  /** Per-patch manifest metadata (label/description chips), keyed by stable source id. */
+  manifestMetaById?: ReadonlyMap<string, { label?: string; description?: string }>;
   onTrace?: (message: string, details?: Record<string, unknown>) => void;
   onUnifiedDrop?: (files: File[]) => void;
   patchEnablement?: PatchEnablement;
@@ -445,6 +453,16 @@ function ApplyWorkflowFormView({
   const disabledPatchFlags = patches.map((_, index) => {
     const id = patchIds[index];
     return !!patchEnablement && id !== undefined && patchEnablement.disabledIds.has(id);
+  });
+  // Per-index locked flags (manifest `required` patches) + card metadata, resolved by stable id so
+  // reorders keep the right cards locked/annotated.
+  const lockedPatchFlags = patches.map((_, index) => {
+    const id = patchIds[index];
+    return !!patchEnablement?.lockedIds && id !== undefined && patchEnablement.lockedIds.has(id);
+  });
+  const manifestMeta = patches.map((_, index) => {
+    const id = patchIds[index];
+    return manifestMetaById && id !== undefined ? manifestMetaById.get(id) : undefined;
   });
   const disabledPatchCount = disabledPatchFlags.filter(Boolean).length;
   const enabledPatchCount = patches.length - disabledPatchCount;
@@ -676,6 +694,8 @@ function ApplyWorkflowFormView({
             disabledFlags={disabledPatchFlags}
             emptyState={patchesNeedsInput}
             fault={applyFailed}
+            lockedFlags={lockedPatchFlags}
+            manifestMeta={manifestMeta}
             onTogglePatch={patchEnablement?.onToggle}
             patches={patches}
             patchInput={uiState.patchInput}
@@ -754,6 +774,17 @@ function ApplyWorkflowFormView({
               disableRun={patches.length > 0 && enabledPatchCount === 0}
               totalTime={applyTotalTime || undefined}
             />
+            {manifestExport ? (
+              <button
+                className="btn ghost slim"
+                disabled={outputState.disabled || !romInputs.length || !patches.length}
+                id="rom-weaver-button-export-manifest"
+                onClick={manifestExport.onOpen}
+                type="button"
+              >
+                {localizer.message("ui.manifestExport.action")}
+              </button>
+            ) : null}
           </>
         }
         compress={buildOutputCompressionPanel({

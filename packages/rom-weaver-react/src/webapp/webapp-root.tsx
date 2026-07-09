@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { getWorkbenchActivity, subscribeWorkbenchActivity } from "../lib/activity-store.ts";
 import { readDataTransferFiles } from "../lib/input/dropped-files.ts";
 import { createLogger } from "../lib/logging.ts";
+import type { ManifestApplySession } from "../lib/manifest/manifest-session-model.ts";
 import { markResultPaintedAfterFinish } from "../lib/perf/op-perf-marks.ts";
 import { preloadBrowserRuntime } from "../platform/browser/browser-api.ts";
 import { ApplyBandaidIcon } from "../public/react/components/apply-bandaid-icon.tsx";
@@ -200,7 +201,10 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions, urlSession
       view: "patcher",
     });
   }, []);
-  const urlSessionBoot = useUrlSessionBoot(urlSession?.request ?? null, deliverUrlSessionFiles);
+  // The `?manifest=` boot's decorated session (enablement seed + output defaults + patch metadata);
+  // the apply form consumes it once its patch list matches the manifest's delivery.
+  const [manifestSession, setManifestSession] = useState<ManifestApplySession | null>(null);
+  const urlSessionBoot = useUrlSessionBoot(urlSession?.request ?? null, deliverUrlSessionFiles, setManifestSession);
 
   useEffect(() => {
     setVisitedViews((previous) => (previous.includes(state.currentView) ? previous : [...previous, state.currentView]));
@@ -318,6 +322,7 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions, urlSession
             {workflowPanel(
               "patcher",
               <ApplyPatchForm
+                manifestSession={manifestSession}
                 onInputsChange={actions.onPatcherInputsChange}
                 onPatchesChange={actions.onPatcherPatchesChange}
                 onSettingsChange={actions.onPatcherSettingsChange}

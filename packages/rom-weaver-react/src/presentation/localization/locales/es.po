@@ -195,6 +195,11 @@ msgstr "Bloquea la ejecución si las sumas de entrada o salida no coinciden con 
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.bundle"
+msgstr "Empaquetar las fuentes en un .zip"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.info.trimPad"
 msgstr "Byte esperado en la cola; auto detecta 0x00 o 0xFF."
 
@@ -355,6 +360,11 @@ msgstr "Descomprimiendo entrada"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.status.default"
+msgstr "Predeterminado (activado)"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.info.rvzBlock"
 msgstr "Por defecto 128 KiB. Bloques mayores comprimen mejor pero buscan más lento."
 
@@ -367,6 +377,11 @@ msgstr "Formato por defecto"
 #: src/presentation/localization/messages.ts
 msgid "ui.info.rvzCodec"
 msgstr "Por defecto zstd. Nivel opcional: zstd:-7 a zstd:22."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.description"
+msgstr "Descripción"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -392,6 +407,11 @@ msgstr "Ventana de diff"
 #: src/presentation/localization/messages.ts
 msgid "ui.info.window"
 msgstr "Ventana de diff al crear — más grande encuentra datos movidos pero usa más memoria."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.status.disabled"
+msgstr "Desactivado"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -487,6 +507,21 @@ msgstr "Suma de entrada esperada"
 #: src/presentation/localization/messages.ts
 msgid "ui.verify.expOut"
 msgstr "Suma de salida esperada"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.export"
+msgstr "Exportar"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.title"
+msgstr "Exportar manifiesto"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.action"
+msgstr "Exportar manifiesto…"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -670,6 +705,16 @@ msgstr "Bajo"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.error"
+msgstr "La exportación del manifiesto falló"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.name"
+msgstr "Nombre del manifiesto"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.scale.max"
 msgstr "Máx"
 
@@ -732,6 +777,11 @@ msgstr "No"
 #: src/presentation/localization/messages.ts
 msgid "ui.patch.on"
 msgstr "Sí"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.status.optional"
+msgstr "Opcional (desactivado)"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -810,6 +860,11 @@ msgstr "Parche"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.statusLabel"
+msgstr "Estado del parche {n}"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "error.PATCH_APPLY_FAILED"
 msgstr "La aplicación del parche falló."
 
@@ -847,6 +902,11 @@ msgstr "crc32 parcheado"
 #: src/presentation/localization/messages.ts
 msgid "ui.needs.patches"
 msgstr "parches"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.patches"
+msgstr "Parches"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -977,6 +1037,16 @@ msgstr "Reemplaza el ROM o añade parches"
 #: src/presentation/localization/messages.ts
 msgid "settings.requireInputChecksumMatch"
 msgstr "Exigir coincidencia de entrada"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.status.required"
+msgstr "Obligatorio"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.manifestSession.requiredLock"
+msgstr "Requerido por el manifiesto"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

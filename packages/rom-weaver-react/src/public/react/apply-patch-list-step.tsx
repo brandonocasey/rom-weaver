@@ -295,20 +295,26 @@ const PatchTarget = ({
   );
 };
 
-/** The loom On/Off switch leading a patch card's meta line. */
+/** The loom On/Off switch leading a patch card's meta line. A locked patch (a
+ * manifest's `required` entry) renders the switch disabled — it stays On. */
 const PatchEnableToggle = ({
   disabled,
   fileName,
+  locked,
+  lockedTitle,
   onToggle,
 }: {
   disabled: boolean;
   fileName: string;
+  locked?: boolean;
+  lockedTitle?: string;
   onToggle: () => void;
 }) => (
-  <label className="patch-enable">
+  <label className="patch-enable" title={locked ? lockedTitle : undefined}>
     <input
       aria-label={`Include ${fileName.replace(/\.[^.]+$/, "")}`}
       checked={!disabled}
+      disabled={locked}
       onChange={onToggle}
       type="checkbox"
     />
@@ -323,6 +329,8 @@ const ApplyPatchListStep = ({
   disabledFlags,
   emptyState,
   fault,
+  lockedFlags,
+  manifestMeta,
   onTogglePatch,
   patchInput,
   patchNotice,
@@ -335,6 +343,10 @@ const ApplyPatchListStep = ({
   /** Fixture shown when no patches (and no embedded/optional patch choices) are present. */
   emptyState?: ReactNode;
   fault?: boolean;
+  /** Per-index toggle locks (a manifest's `required` patches stay On). */
+  lockedFlags?: readonly boolean[];
+  /** Per-index manifest metadata: label chip + muted description on the card. */
+  manifestMeta?: readonly ({ label?: string; description?: string } | undefined)[];
   onTogglePatch?: (index: number) => void;
   patchInput: PatcherUiState["patchInput"];
   patchNotice: NoticeState;
@@ -451,11 +463,16 @@ const ApplyPatchListStep = ({
                     <PatchEnableToggle
                       disabled={!!disabledFlags?.[index]}
                       fileName={item.fileName}
+                      locked={!!lockedFlags?.[index]}
+                      lockedTitle={localizer.message("ui.manifestSession.requiredLock")}
                       onToggle={() => onTogglePatch(index)}
                     />
                   ) : null}
                   {item.fileSize ? <span className="fsize mono">{formatByteSize(item.fileSize)}</span> : null}
                   {item.format ? <span className="meta-fmt mono">{item.format.toLowerCase()}</span> : null}
+                  {manifestMeta?.[index]?.label ? (
+                    <span className="meta-fmt mono">{manifestMeta[index]?.label}</span>
+                  ) : null}
                   {staging ? (
                     <StageStatus
                       id={`rom-weaver-progress-patch-${index}`}
@@ -493,6 +510,9 @@ const ApplyPatchListStep = ({
             >
               <div className="patch-body">
                 <div className="patch-body-inner">
+                  {manifestMeta?.[index]?.description ? (
+                    <p className="pdesc">{manifestMeta[index]?.description}</p>
+                  ) : null}
                   <ExtractDrawer
                     fileName={item.fileName}
                     fileSize={item.fileSize}
