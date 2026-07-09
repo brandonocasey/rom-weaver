@@ -46,19 +46,38 @@ impl CliApp {
             ManifestApplySource::InputArchive(_) => ManifestApplySourceKind::InputArchive,
         };
 
-        let (loaded, archive_source, manifest_dir) = match source {
+        let (loaded, archive_source, manifest_dir, manifest_base_url) = match source {
             ManifestApplySource::Explicit(path) => {
                 if let Some(url) = manifest_ref_as_url(&path) {
-                    return Err(manifest_url_unsupported("--manifest", url));
+                    // Natively the manifest itself may be a URL; its base then
+                    // anchors relative url entries. The browser prefetches
+                    // instead, so wasm rejects URL manifests outright.
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        return Err(manifest_url_unsupported("--manifest", url));
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let base = super::manifest_download::manifest_url_base(url);
+                        let local = self.download_manifest_url(url, "--manifest", context)?;
+                        let dir = parent_dir(&local);
+                        (
+                            Box::new(self.load_manifest_source(&local)?),
+                            local,
+                            dir,
+                            Some(base),
+                        )
+                    }
+                } else {
+                    if !path.exists() {
+                        return Err(RomWeaverError::Validation(format!(
+                            "manifest path does not exist: `{}`",
+                            path.display()
+                        )));
+                    }
+                    let dir = parent_dir(&path);
+                    (Box::new(self.load_manifest_source(&path)?), path, dir, None)
                 }
-                if !path.exists() {
-                    return Err(RomWeaverError::Validation(format!(
-                        "manifest path does not exist: `{}`",
-                        path.display()
-                    )));
-                }
-                let dir = parent_dir(&path);
-                (Box::new(self.load_manifest_source(&path)?), path, dir)
             }
             ManifestApplySource::InputIsManifest => {
                 if !args.input.exists() {
@@ -72,10 +91,11 @@ impl CliApp {
                     Box::new(self.load_manifest_source(&args.input)?),
                     args.input.clone(),
                     dir,
+                    None,
                 )
             }
             ManifestApplySource::InputArchive(loaded) => {
-                (loaded, args.input.clone(), parent_dir(&args.input))
+                (loaded, args.input.clone(), parent_dir(&args.input), None)
             }
         };
         let manifest = parse_manifest_bytes(&loaded.bytes)?;
@@ -122,6 +142,7 @@ impl CliApp {
                             &loaded,
                             &archive_source,
                             &manifest_dir,
+                            manifest_base_url.as_deref(),
                             &mut extract_root,
                             context,
                             "rom",
@@ -163,6 +184,7 @@ impl CliApp {
                         &loaded,
                         &archive_source,
                         &manifest_dir,
+                        manifest_base_url.as_deref(),
                         &mut extract_root,
                         context,
                         &entry_label,
@@ -310,12 +332,30 @@ impl CliApp {
         loaded: &LoadedManifestSource,
         archive_source: &Path,
         manifest_dir: &Path,
+        manifest_base_url: Option<&str>,
         extract_root: &mut Option<PathBuf>,
         context: &OperationContext,
         entry_label: &str,
     ) -> Result<Option<PathBuf>> {
         if let Some(url) = url.map(str::trim).filter(|value| !value.is_empty()) {
-            return Err(manifest_url_unsupported(entry_label, url));
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = manifest_base_url;
+                return Err(manifest_url_unsupported(entry_label, url));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let absolute = super::manifest_download::resolve_manifest_entry_url(
+                    url,
+                    manifest_base_url,
+                    entry_label,
+                )?;
+                return Ok(Some(self.download_manifest_url(
+                    &absolute,
+                    entry_label,
+                    context,
+                )?));
+            }
         }
         let Some(path) = path.map(str::trim).filter(|value| !value.is_empty()) else {
             return Ok(None);
@@ -522,6 +562,7 @@ fn manifest_ref_as_url(path: &Path) -> Option<&str> {
     (value.starts_with("http://") || value.starts_with("https://")).then_some(value)
 }
 
+#[cfg(target_arch = "wasm32")]
 fn manifest_url_unsupported(entry_label: &str, url: &str) -> RomWeaverError {
     RomWeaverError::ValidationCode(
         ValidationCodeError::new("manifest.url.unsupported")

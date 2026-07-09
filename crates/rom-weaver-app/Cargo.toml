@@ -27,6 +27,9 @@ xdvdfs.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap.workspace = true
 tracing-subscriber.workspace = true
+# Native-only manifest URL downloads; the wasm build never sees this (the
+# browser prefetches with JS fetch instead).
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["fmt", "std"] }

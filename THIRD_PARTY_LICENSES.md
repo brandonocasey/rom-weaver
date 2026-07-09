@@ -31,6 +31,7 @@ under `third_party/licenses/<name>-<version>/`.
 | `async-trait` | `0.1.89` | `MIT OR Apache-2.0` | `crates.io` |
 | `autocfg` | `1.5.0` | `Apache-2.0 OR MIT` | `crates.io` |
 | `base16ct` | `1.0.0` | `Apache-2.0 OR MIT` | `crates.io` |
+| `base64` | `0.22.1` | `MIT OR Apache-2.0` | `crates.io` |
 | `bincode` | `1.3.3` | `MIT` | `crates.io` |
 | `bindgen` | `0.72.1` | `BSD-3-Clause` | `crates.io` |
 | `bitbybit` | `1.4.0` | `MIT` | `crates.io` |
@@ -94,6 +95,7 @@ under `third_party/licenses/<name>-<version>/`.
 | `futures-task` | `0.3.32` | `MIT OR Apache-2.0` | `crates.io` |
 | `futures-util` | `0.3.32` | `MIT OR Apache-2.0` | `crates.io` |
 | `generic-array` | `0.14.7` | `MIT` | `crates.io` |
+| `getrandom` | `0.2.17` | `MIT OR Apache-2.0` | `crates.io` |
 | `getrandom` | `0.3.4` | `MIT OR Apache-2.0` | `crates.io` |
 | `glob` | `0.3.3` | `MIT OR Apache-2.0` | `crates.io` |
 | `hash32` | `0.3.1` | `MIT OR Apache-2.0` | `crates.io` |
@@ -101,6 +103,8 @@ under `third_party/licenses/<name>-<version>/`.
 | `heapless` | `0.8.0` | `MIT OR Apache-2.0` | `crates.io` |
 | `heck` | `0.5.0` | `MIT OR Apache-2.0` | `crates.io` |
 | `higher-kinded-types` | `0.2.1` | `Zlib OR MIT OR Apache-2.0` | `crates.io` |
+| `http` | `1.4.2` | `MIT OR Apache-2.0` | `crates.io` |
+| `httparse` | `1.10.1` | `MIT OR Apache-2.0` | `crates.io` |
 | `hybrid-array` | `0.4.12` | `MIT OR Apache-2.0` | `crates.io` |
 | `indicatif` | `0.18.4` | `MIT` | `crates.io` |
 | `inout` | `0.2.2` | `MIT OR Apache-2.0` | `crates.io` |
@@ -145,6 +149,7 @@ under `third_party/licenses/<name>-<version>/`.
 | `oxidelta` | `0.1.4` | `MIT` | `crates.io` |
 | `paste` | `1.0.15` | `MIT OR Apache-2.0` | `crates.io` |
 | `path-slash` | `0.2.1` | `MIT` | `crates.io` |
+| `percent-encoding` | `2.3.2` | `MIT OR Apache-2.0` | `crates.io` |
 | `pin-project-lite` | `0.2.17` | `Apache-2.0 OR MIT` | `crates.io` |
 | `pkg-config` | `0.3.33` | `MIT OR Apache-2.0` | `crates.io` |
 | `polonius-the-crab` | `0.5.0` | `Zlib OR MIT OR Apache-2.0` | `crates.io` |
@@ -161,8 +166,12 @@ under `third_party/licenses/<name>-<version>/`.
 | `regex` | `1.12.3` | `MIT OR Apache-2.0` | `crates.io` |
 | `regex-automata` | `0.4.14` | `MIT OR Apache-2.0` | `crates.io` |
 | `regex-syntax` | `0.8.10` | `MIT OR Apache-2.0` | `crates.io` |
+| `ring` | `0.17.14` | `Apache-2.0 AND ISC` | `crates.io` |
 | `rustc_version` | `0.4.1` | `MIT OR Apache-2.0` | `crates.io` |
 | `rustc-hash` | `2.1.2` | `Apache-2.0 OR MIT` | `crates.io` |
+| `rustls` | `0.23.41` | `Apache-2.0 OR ISC OR MIT` | `crates.io` |
+| `rustls-pki-types` | `1.15.0` | `MIT OR Apache-2.0` | `crates.io` |
+| `rustls-webpki` | `0.103.13` | `ISC` | `crates.io` |
 | `rustversion` | `1.0.22` | `MIT OR Apache-2.0` | `crates.io` |
 | `ruzstd` | `0.8.3` | `MIT` | `crates.io` |
 | `sacabase` | `2.0.0` | `MIT` | `crates.io` |
@@ -185,6 +194,7 @@ under `third_party/licenses/<name>-<version>/`.
 | `stable_deref_trait` | `1.2.1` | `MIT OR Apache-2.0` | `crates.io` |
 | `static_assertions` | `1.1.0` | `MIT OR Apache-2.0` | `crates.io` |
 | `strsim` | `0.11.1` | `MIT` | `crates.io` |
+| `subtle` | `2.6.1` | `BSD-3-Clause` | `crates.io` |
 | `suffix_array` | `0.5.0` | `MIT` | `crates.io` |
 | `syn` | `1.0.109` | `MIT OR Apache-2.0` | `crates.io` |
 | `syn` | `2.0.117` | `MIT OR Apache-2.0` | `crates.io` |
@@ -206,25 +216,42 @@ under `third_party/licenses/<name>-<version>/`.
 | `unicode-ident` | `1.0.24` | `(MIT OR Apache-2.0) AND Unicode-3.0` | `crates.io` |
 | `unicode-width` | `0.2.2` | `MIT OR Apache-2.0` | `crates.io` |
 | `unit-prefix` | `0.5.2` | `MIT` | `crates.io` |
+| `untrusted` | `0.9.0` | `ISC` | `crates.io` |
+| `ureq` | `3.3.0` | `MIT OR Apache-2.0` | `crates.io` |
+| `ureq-proto` | `0.6.0` | `MIT OR Apache-2.0` | `crates.io` |
+| `utf8-zero` | `0.8.1` | `MIT OR Apache-2.0` | `crates.io` |
 | `utf8parse` | `0.2.2` | `Apache-2.0 OR MIT` | `crates.io` |
 | `valuable` | `0.1.1` | `MIT` | `crates.io` |
 | `vcpkg` | `0.2.15` | `MIT/Apache-2.0` | `crates.io` |
 | `version_check` | `0.9.5` | `MIT/Apache-2.0` | `crates.io` |
+| `wasi` | `0.11.1+wasi-snapshot-preview1` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `crates.io` |
 | `wasip2` | `1.0.3+wasi-0.2.9` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `crates.io` |
 | `wasm-bindgen` | `0.2.122` | `MIT OR Apache-2.0` | `crates.io` |
 | `wasm-bindgen-macro` | `0.2.122` | `MIT OR Apache-2.0` | `crates.io` |
 | `wasm-bindgen-macro-support` | `0.2.122` | `MIT OR Apache-2.0` | `crates.io` |
 | `wasm-bindgen-shared` | `0.2.122` | `MIT OR Apache-2.0` | `crates.io` |
 | `web-time` | `1.1.0` | `MIT OR Apache-2.0` | `crates.io` |
+| `webpki-roots` | `1.0.8` | `CDLA-Permissive-2.0` | `crates.io` |
 | `winapi-util` | `0.1.11` | `Unlicense OR MIT` | `crates.io` |
+| `windows_aarch64_gnullvm` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows_aarch64_msvc` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows_i686_gnu` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows_i686_gnullvm` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows_i686_msvc` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows_x86_64_gnu` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows_x86_64_gnullvm` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows_x86_64_msvc` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
 | `windows-link` | `0.2.1` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows-sys` | `0.52.0` | `MIT OR Apache-2.0` | `crates.io` |
 | `windows-sys` | `0.61.2` | `MIT OR Apache-2.0` | `crates.io` |
+| `windows-targets` | `0.52.6` | `MIT OR Apache-2.0` | `crates.io` |
 | `wit-bindgen` | `0.57.1` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `crates.io` |
 | `xdvdfs` | `0.8.3` | `MIT` | `local` |
 | `xxhash-rust` | `0.8.15` | `BSL-1.0` | `crates.io` |
 | `zeekstd` | `0.6.2` | `BSD-2-Clause` | `crates.io` |
 | `zerocopy` | `0.8.48` | `BSD-2-Clause OR Apache-2.0 OR MIT` | `crates.io` |
 | `zerocopy-derive` | `0.8.48` | `BSD-2-Clause OR Apache-2.0 OR MIT` | `crates.io` |
+| `zeroize` | `1.9.0` | `Apache-2.0 OR MIT` | `crates.io` |
 | `zmij` | `1.0.21` | `MIT` | `crates.io` |
 | `zstd` | `0.13.3` | `MIT` | `crates.io` |
 | `zstd-safe` | `7.2.4` | `MIT OR Apache-2.0` | `crates.io` |

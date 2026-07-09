@@ -1025,6 +1025,9 @@ mod manifest_load;
 
 mod manifest_apply;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod manifest_download;
+
 mod manifest_command;
 pub use manifest_command::{
     ManifestParseResult, ManifestPatchSource, ManifestSourceKind, ManifestSourceRef,

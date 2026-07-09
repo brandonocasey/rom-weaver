@@ -612,3 +612,199 @@ fn manifest_apply_manifest_compression_settings_apply() {
         "manifest compression must produce a zip"
     );
 }
+
+/// One-shot threaded HTTP responder: serves `files` (matched by path suffix)
+/// for up to `requests` connections, then exits. Returns the base URL.
+fn serve_files(files: Vec<(&'static str, Vec<u8>)>, requests: usize) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test http server");
+    let address = listener.local_addr().expect("server address");
+    std::thread::spawn(move || {
+        for _ in 0..requests {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = [0u8; 4096];
+            let mut total = 0usize;
+            while let Ok(read) = std::io::Read::read(&mut stream, &mut buffer[total..]) {
+                if read == 0 {
+                    break;
+                }
+                total += read;
+                if buffer[..total]
+                    .windows(4)
+                    .any(|window| window == b"\r\n\r\n")
+                    || total == buffer.len()
+                {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&buffer[..total]);
+            let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+            let body = files
+                .iter()
+                .find(|(name, _)| path.ends_with(name))
+                .map(|(_, bytes)| bytes.clone());
+            match body {
+                Some(body) => {
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(header.as_bytes());
+                    let _ = stream.write_all(&body);
+                }
+                None => {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                }
+            }
+        }
+    });
+    format!("http://{address}")
+}
+
+fn crc32_hex(bytes: &[u8]) -> String {
+    let mut crc = flate2::Crc::new();
+    crc.update(bytes);
+    format!("{:08x}", crc.sum())
+}
+
+#[test]
+fn manifest_apply_url_patch_downloads_and_verifies() {
+    let temp = setup_temp_dir();
+    write_manifest_rom(&temp, "game.bin");
+    let patch_bytes = build_ips_patch(
+        vec![TestIpsRecord::Literal {
+            offset: 0,
+            data: vec![0xAA],
+        }],
+        None,
+    );
+    let integrity = crc32_hex(&patch_bytes);
+    let base_url = serve_files(vec![("/main.ips", patch_bytes)], 1);
+    fs::write(
+        temp.child("rw.json").path(),
+        format!(
+            r#"{{
+                "version": 1,
+                "rom": {{ "path": "game.bin" }},
+                "patches": [ {{ "url": "{base_url}/main.ips", "integrity": {{ "crc32": "{integrity}" }} }} ],
+                "output": {{ "compress": false }}
+            }}"#
+        ),
+    )
+    .expect("manifest fixture");
+    let output = temp.child("patched.bin");
+
+    let events = run_json_events(
+        &[
+            "patch-apply",
+            "--input",
+            temp.child("rw.json").path().to_str().expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+    assert_eq!(events.last().expect("terminal")["status"], "succeeded");
+    assert_eq!(
+        fs::read(output.path()).expect("output exists"),
+        patched_rom_bytes(&[(0, 0xAA)])
+    );
+}
+
+#[test]
+fn manifest_apply_url_download_integrity_mismatch_fails() {
+    let temp = setup_temp_dir();
+    write_manifest_rom(&temp, "game.bin");
+    let patch_bytes = build_ips_patch(
+        vec![TestIpsRecord::Literal {
+            offset: 0,
+            data: vec![0xAA],
+        }],
+        None,
+    );
+    let base_url = serve_files(vec![("/main.ips", patch_bytes)], 1);
+    fs::write(
+        temp.child("rw.json").path(),
+        format!(
+            r#"{{
+                "version": 1,
+                "rom": {{ "path": "game.bin" }},
+                "patches": [ {{ "url": "{base_url}/main.ips", "integrity": {{ "crc32": "00000000" }} }} ],
+                "output": {{ "compress": false }}
+            }}"#
+        ),
+    )
+    .expect("manifest fixture");
+
+    let events = run_json_events(
+        &[
+            "patch-apply",
+            "--input",
+            temp.child("rw.json").path().to_str().expect("path"),
+            "--output",
+            temp.child("patched.bin").path().to_str().expect("path"),
+            "--json",
+        ],
+        1,
+    );
+    let terminal = events.last().expect("terminal");
+    assert_eq!(terminal["status"], "failed");
+    assert!(
+        terminal["label"]
+            .as_str()
+            .expect("label")
+            .contains("manifest.integrity.mismatch"),
+        "unexpected label: {}",
+        terminal["label"]
+    );
+}
+
+#[test]
+fn manifest_apply_url_manifest_resolves_relative_entries() {
+    let temp = setup_temp_dir();
+    let rom = write_manifest_rom(&temp, "game.bin");
+    let patch_bytes = build_ips_patch(
+        vec![TestIpsRecord::Literal {
+            offset: 0,
+            data: vec![0xAA],
+        }],
+        None,
+    );
+    let manifest_json = br#"{
+        "version": 1,
+        "patches": [ { "url": "patches/main.ips" } ],
+        "output": { "compress": false }
+    }"#
+    .to_vec();
+    let base_url = serve_files(
+        vec![
+            ("/rw.json", manifest_json),
+            ("/patches/main.ips", patch_bytes),
+        ],
+        2,
+    );
+    let output = temp.child("patched.bin");
+
+    let events = run_json_events(
+        &[
+            "patch-apply",
+            "--input",
+            rom.to_str().expect("path"),
+            "--manifest",
+            &format!("{base_url}/packs/rw.json"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+    assert_eq!(events.last().expect("terminal")["status"], "succeeded");
+    assert_eq!(
+        fs::read(output.path()).expect("output exists"),
+        patched_rom_bytes(&[(0, 0xAA)])
+    );
+}
