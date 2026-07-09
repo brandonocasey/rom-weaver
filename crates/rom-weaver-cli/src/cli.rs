@@ -9,8 +9,8 @@ use std::sync::Arc;
 use clap::{CommandFactory, FromArgMatches, Parser};
 #[cfg(not(target_arch = "wasm32"))]
 use rom_weaver_app::{
-    Commands, JsonProgressSink, PatchCommands, RomWeaverRunOutputOptions, RunCommandOptions,
-    run_command,
+    Commands, JsonProgressSink, ManifestCommands, PatchCommands, RomWeaverRunOutputOptions,
+    RunCommandOptions, run_command,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use rom_weaver_core::{NoninteractivePrompter, ProgressSink, SelectionPrompter};
@@ -110,6 +110,12 @@ pub fn main_entry() -> ExitCode {
         && let Some((_, apply_matches)) = patch_matches.subcommand()
     {
         command.align_patch_header_modes(apply_matches);
+    }
+    if let Commands::Manifest(ManifestCommands::Create(command)) = &mut cli.command
+        && let Some((_, manifest_matches)) = matches.subcommand()
+        && let Some((_, create_matches)) = manifest_matches.subcommand()
+    {
+        command.align_manifest_patch_metadata(create_matches);
     }
     let stdout_is_tty = io::stdout().is_terminal();
     // Interactive prompting needs a terminal on both stdin (to read) and stderr (to draw), and is

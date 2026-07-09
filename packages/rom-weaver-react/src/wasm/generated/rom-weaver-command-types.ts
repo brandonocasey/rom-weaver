@@ -22,6 +22,7 @@ export const KNOWN_PATCH_COMMAND_TYPES = [
 ] as const;
 
 export const KNOWN_MANIFEST_COMMAND_TYPES = [
+  "create",
   "parse"
 ] as const;
 

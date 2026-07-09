@@ -1698,6 +1698,7 @@ name = "rom-weaver-app"
 version = "0.4.1"
 dependencies = [
  "clap",
+ "flate2",
  "rom-weaver-cheats",
  "rom-weaver-checksum",
  "rom-weaver-codecs",
@@ -1714,6 +1715,7 @@ dependencies = [
  "ts-rs",
  "ureq",
  "xdvdfs",
+ "zstd",
 ]
 
 [[package]]

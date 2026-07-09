@@ -90,6 +90,8 @@ export function createRomWeaverCommand<TType extends RomWeaverCommandLabel>(
       return { args: { args, type: "create" }, type: "patch" } as RomWeaverCommand;
     case "manifest-parse":
       return { args: { args, type: "parse" }, type: "manifest" } as RomWeaverCommand;
+    case "manifest-create":
+      return { args: { args, type: "create" }, type: "manifest" } as RomWeaverCommand;
     default:
       return assertNever(type);
   }
@@ -314,9 +316,10 @@ export function romWeaverCommandSupportsThreads(command: RomWeaverCommand): bool
     case "manifest":
       switch (command.args.type) {
         case "parse":
+        case "create":
           return true;
         default:
-          return assertNever(command.args.type);
+          return assertNever(command.args);
       }
     case "plan-extract-batch":
     case "match-sidecars":
@@ -369,6 +372,7 @@ function normalizeRomWeaverManifestCommand(manifestCommand: RomWeaverManifestCom
     isObjectRecord(manifestCommand.args) && !Array.isArray(manifestCommand.args) ? { ...manifestCommand.args } : {};
   switch (manifestType) {
     case "parse":
+    case "create":
       return {
         args: {
           args: manifestArgs,
@@ -385,8 +389,10 @@ function readRomWeaverManifestCommandBranch(command: RomWeaverManifestCommand): 
   switch (command.type) {
     case "parse":
       return { args: command.args, type: "manifest-parse" };
+    case "create":
+      return { args: command.args, type: "manifest-create" };
     default:
-      return assertNever(command.type);
+      return assertNever(command);
   }
 }
 
@@ -395,8 +401,12 @@ function collectRomWeaverManifestInputPaths(paths: Set<string>, command: RomWeav
     case "parse":
       pushPathValue(paths, command.args.source);
       return;
+    case "create":
+      pushPathValue(paths, command.args.rom);
+      pushPathValues(paths, command.args.patch);
+      return;
     default:
-      assertNever(command.type);
+      assertNever(command);
   }
 }
 

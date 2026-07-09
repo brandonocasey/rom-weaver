@@ -405,7 +405,15 @@ warnings: Array<string>, };
 
 export type ManifestParseCommand = { source: string, extract_dir?: string, threads?: ThreadBudget, };
 
-export type ManifestCommands = { "type": "parse", "args": ManifestParseCommand };
+export type ManifestCreateCommand = { rom?: string, rom_url?: string, rom_name?: string, patch?: Array<string>, patch_name?: Array<string>, patch_description?: Array<string>, patch_label?: Array<string>, patch_status?: Array<ManifestPatchStatus>, patch_source_url?: Array<string>, patch_header?: Array<PatchApplyHeaderMode>, name?: string, description?: string, output_name?: string, output_header?: PatchApplyOutputHeaderMode, no_compress?: boolean, compress_format?: string, compress_codec?: Array<string>, compress_level?: CompressionLevelProfile, output: string, bundle?: string, checksum?: Array<string>, threads?: ThreadBudget, };
+
+export type ManifestCreateResult = { manifest_path: string, bundle_path?: string | null,
+/**
+ * The canonical manifest as written (checksums computed and normalized).
+ */
+manifest: RomWeaverManifest, warnings: Array<string>, };
+
+export type ManifestCommands = { "type": "create", "args": ManifestCreateCommand } | { "type": "parse", "args": ManifestParseCommand };
 
 export type PlanExtractBatchCommand = { job_sizes?: Array<bigint>, threads?: ThreadBudget, max_concurrency?: number | null, total_memory_bytes?: bigint | null, memory_ceiling_bytes?: bigint | null, };
 

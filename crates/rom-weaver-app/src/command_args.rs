@@ -1211,3 +1211,276 @@ pub struct ManifestParseCommand {
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
 }
+
+/// One normalized `manifest create` patch entry, bound from the per-patch
+/// metadata flags (native argv alignment) or from index-aligned vectors on
+/// the wasm JSON path.
+#[derive(Clone, Debug, Default)]
+pub struct ManifestCreatePatchSpec {
+    pub path: PathBuf,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub label: Option<String>,
+    pub status: Option<ManifestPatchStatus>,
+    /// Emitted `url` source override (the local file still supplies integrity).
+    pub source_url: Option<String>,
+    pub header: Option<PatchApplyHeaderMode>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct ManifestCreateCommand {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Local ROM file; its checksums/size become the manifest's rom checks"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub rom: Option<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "rom-url",
+            help = "Emitted rom download url (combined with --rom the local file still supplies checks; alone it emits a url-only rom entry)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub rom_url: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "rom-name",
+            help = "Display/output-naming file name for the rom entry"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub rom_name: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch",
+            help = "Patch file to include, in apply order; repeat --patch for each entry. Per-patch metadata flags (--patch-name/-description/-label/-status/-source-url/-header) bind to the most recent preceding --patch"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch: Vec<PathBuf>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-name"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_name: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-description"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_description: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-label"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_label: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-status", value_enum))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_status: Vec<ManifestPatchStatus>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-source-url",
+            help = "Emitted url source for the preceding --patch (the local file still supplies integrity checksums)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_source_url: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-header", value_enum))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub patch_header: Vec<PatchApplyHeaderMode>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, help = "Manifest display name"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub name: Option<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, help = "Manifest description"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub description: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "output-name",
+            help = "Default output file name the manifest suggests"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub output_name: Option<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "output-header", value_enum))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub output_header: Option<PatchApplyOutputHeaderMode>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Emit output.compress: false (raw patched bytes by default)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub no_compress: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "compress-format"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub compress_format: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(long = "compress-codec", action = ArgAction::Append)
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub compress_codec: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "compress-level", value_enum))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub compress_level: Option<CompressionLevelProfile>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Where to write the manifest: rw.json, or rw.json.gz / rw.json.zst for a compressed one"
+        )
+    )]
+    pub output: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            help = "Also bundle the manifest plus the local rom/patch files into this archive (creatable formats only, for example .zip); manifest path entries then reference the archived names"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub bundle: Option<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "checksum",
+            help = "Checksum algorithm(s) for rom checks and patch integrity (repeatable; default crc32, md5, sha1)"
+        )
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub checksum: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub threads: ThreadBudget,
+    /// Normalized per-patch specs; filled natively by argv alignment, and on
+    /// the wasm path from the index-aligned metadata vectors.
+    #[cfg_attr(not(target_arch = "wasm32"), arg(skip))]
+    #[serde(skip)]
+    #[cfg_attr(feature = "typescript-types", ts(skip))]
+    pub patch_specs: Vec<ManifestCreatePatchSpec>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ManifestCreateCommand {
+    /// Bind each per-patch metadata occurrence to the most recent preceding
+    /// `--patch` (clap's parsed `Vec`s lose the interleave order, so this
+    /// re-derives it from the raw argv indices). The last occurrence bound to
+    /// a patch wins; an occurrence before any `--patch` binds to the first.
+    pub fn align_manifest_patch_metadata(&mut self, matches: &clap::ArgMatches) {
+        let patch_indices: Vec<usize> = matches
+            .indices_of("patch")
+            .map(Iterator::collect)
+            .unwrap_or_default();
+        if patch_indices.is_empty() {
+            return;
+        }
+        let mut specs: Vec<ManifestCreatePatchSpec> = self
+            .patch
+            .iter()
+            .map(|path| ManifestCreatePatchSpec {
+                path: path.clone(),
+                ..ManifestCreatePatchSpec::default()
+            })
+            .collect();
+        let patch_position = |value_index: usize| -> usize {
+            patch_indices
+                .partition_point(|patch_index| *patch_index < value_index)
+                .saturating_sub(1)
+        };
+        let bind =
+            |specs: &mut Vec<ManifestCreatePatchSpec>,
+             id: &str,
+             count: usize,
+             assign: &mut dyn FnMut(&mut ManifestCreatePatchSpec, usize)| {
+                let indices: Vec<usize> = matches
+                    .indices_of(id)
+                    .map(Iterator::collect)
+                    .unwrap_or_default();
+                if indices.len() != count {
+                    return;
+                }
+                for (occurrence, value_index) in indices.into_iter().enumerate() {
+                    let position = patch_position(value_index);
+                    assign(&mut specs[position], occurrence);
+                }
+            };
+        let names = self.patch_name.clone();
+        bind(&mut specs, "patch_name", names.len(), &mut |spec, index| {
+            spec.name = Some(names[index].clone());
+        });
+        let descriptions = self.patch_description.clone();
+        bind(
+            &mut specs,
+            "patch_description",
+            descriptions.len(),
+            &mut |spec, index| {
+                spec.description = Some(descriptions[index].clone());
+            },
+        );
+        let labels = self.patch_label.clone();
+        bind(
+            &mut specs,
+            "patch_label",
+            labels.len(),
+            &mut |spec, index| {
+                spec.label = Some(labels[index].clone());
+            },
+        );
+        let statuses = self.patch_status.clone();
+        bind(
+            &mut specs,
+            "patch_status",
+            statuses.len(),
+            &mut |spec, index| {
+                spec.status = Some(statuses[index]);
+            },
+        );
+        let source_urls = self.patch_source_url.clone();
+        bind(
+            &mut specs,
+            "patch_source_url",
+            source_urls.len(),
+            &mut |spec, index| {
+                spec.source_url = Some(source_urls[index].clone());
+            },
+        );
+        let headers = self.patch_header.clone();
+        bind(
+            &mut specs,
+            "patch_header",
+            headers.len(),
+            &mut |spec, index| {
+                spec.header = Some(headers[index]);
+            },
+        );
+        self.patch_specs = specs;
+    }
+}

@@ -9,6 +9,7 @@ version.workspace = true
 typescript-types = ["dep:ts-rs", "rom-weaver-core/typescript-types"]
 
 [dependencies]
+flate2.workspace = true
 rom-weaver-checksum = { path = "../rom-weaver-checksum" }
 rom-weaver-cheats = { path = "../rom-weaver-cheats" }
 rom-weaver-codecs = { path = "../rom-weaver-codecs" }
@@ -23,6 +24,7 @@ serde_json.workspace = true
 tracing.workspace = true
 ts-rs = { workspace = true, optional = true }
 xdvdfs.workspace = true
+zstd.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap.workspace = true

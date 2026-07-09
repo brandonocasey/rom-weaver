@@ -154,6 +154,14 @@ pub enum ManifestCommands {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         command(
+            about = "Build, validate, and write an rw.json manifest from local ROM/patch files",
+            long_about = "Build, validate, and write an rw.json manifest from local ROM/patch files.\n\nROM checks and per-patch integrity checksums are computed from the actual files (crc32/md5/sha1 by default). Per-patch metadata flags (--patch-name/-description/-label/-status/-source-url/-header) bind to the most recent preceding --patch. --output accepts rw.json, rw.json.gz, or rw.json.zst; --bundle additionally packs the manifest plus the local sources into one archive whose path entries reference the archived names."
+        )
+    )]
+    Create(Box<ManifestCreateCommand>),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(
             about = "Parse and validate an rw.json manifest (plain, stream-codec compressed, or inside an archive) and resolve its ROM/patch entries",
             long_about = "Parse and validate an rw.json manifest and resolve its ROM/patch entries.\n\nAccepted sources: a plain rw.json, a stream-codec-compressed rw.json.gz/.bz2/.xz/.zst, or an archive carrying rw.json at its root (an \"everything archive\" that also bundles the ROM and patches).\n\nManifest `path` entries refer to archive members (or files next to the manifest). With --extract-dir, members referenced by the manifest are extracted there and returned as resolved paths, and extracted patch entries include a full patch descriptor. URL entries are returned verbatim; relative URLs resolve against the manifest's own location on the caller's side."
         )
@@ -1033,11 +1041,15 @@ pub use manifest_command::{
     ManifestParseResult, ManifestPatchSource, ManifestSourceKind, ManifestSourceRef,
 };
 
+mod manifest_create;
+pub use manifest_create::ManifestCreateResult;
+
 mod command_args;
 pub use command_args::{
-    ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, ManifestParseCommand,
-    MatchSidecarsCommand, PatchApplyCommand, PatchCreateCandidatesCommand, PatchCreateCommand,
-    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
+    ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, ManifestCreateCommand,
+    ManifestCreatePatchSpec, ManifestParseCommand, MatchSidecarsCommand, PatchApplyCommand,
+    PatchCreateCandidatesCommand, PatchCreateCommand, PatchValidateCommand,
+    PlanExtractBatchCommand, ProbeCommand, TrimCommand,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
