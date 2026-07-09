@@ -207,9 +207,12 @@ two symmetric policies (`crates/rom-weaver-app/src/patch_apply.rs`):
   raw clap indices).
 - **`--output-header auto|keep|strip`** — whether the single final output
   carries the header. Auto keeps emulator-required format headers (iNES/FDS/
-  LNX/A78) and drops junk copier headers (SNES/PCE/Game Doctor). When the final
-  header state changes the ROM's conventional extension, the CLI adjusts the
-  `--output` extension (`.smc` ↔ `.sfc`) and notes it in the report label.
+  LNX/A78) and drops junk copier headers (SNES/PCE/Game Doctor) — except an
+  NSRT-signed SNES copier header (`NSRT` at 0x1e8), which carries real dump
+  metadata and comes back, matching the RUP handler's own normalization. When
+  the final header state changes the ROM's conventional extension, the CLI
+  adjusts the `--output` extension (`.smc` ↔ `.sfc`) and notes it in the
+  report label.
 
 The browser mirrors the decision instead of re-hashing: staging's checksum
 variants carry a `remove-header` row (`transforms.removeHeader` with

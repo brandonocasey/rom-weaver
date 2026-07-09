@@ -470,30 +470,39 @@ impl CliApp {
             // The output-header decision: on a headerless final state, `--output-header`
             // decides whether the stripped header returns (auto re-adds emulator-required
             // headers like iNES/fwNES/LNX/A78 and drops junk copier headers like SNES/PCE/
-            // Game Doctor). Explicit `--output-header strip` on a headered state removes
+            // Game Doctor — except NSRT-signed copier headers, which carry real dump
+            // metadata and come back, matching the RUP handler's own normalization).
+            // Explicit `--output-header strip` on a headered state removes
             // the still-present header during finalize. Evaluated here for the patch-0
             // state; chains re-evaluate after the loop from the final chain state (they
             // always stage, so the staging decision below is unaffected).
             let resolve_output_header = |state: &ChainHeaderState| -> (bool, bool) {
                 let add_header = state.headerless
-                    && state.stripped_header_match.as_ref().is_some_and(|header_match| {
-                        let add = match output_header_mode {
-                            PatchApplyOutputHeaderMode::Keep => true,
-                            PatchApplyOutputHeaderMode::Strip => false,
-                            PatchApplyOutputHeaderMode::Auto => {
-                                header_match.header.retained_on_output()
-                            }
-                        };
-                        debug!(
-                            header = ?header_match.header,
-                            output_header = ?output_header_mode,
-                            add_header = add,
-                            "output header resolved for stripped input"
-                        );
-                        add
-                    });
-                let strip_output_header = output_header
-                    == Some(PatchApplyOutputHeaderMode::Strip)
+                    && state
+                        .stripped_header_match
+                        .as_ref()
+                        .is_some_and(|header_match| {
+                            let nsrt_metadata = state
+                                .stripped_header
+                                .as_deref()
+                                .is_some_and(header_has_nsrt_metadata);
+                            let add = match output_header_mode {
+                                PatchApplyOutputHeaderMode::Keep => true,
+                                PatchApplyOutputHeaderMode::Strip => false,
+                                PatchApplyOutputHeaderMode::Auto => {
+                                    header_match.header.retained_on_output() || nsrt_metadata
+                                }
+                            };
+                            debug!(
+                                header = ?header_match.header,
+                                output_header = ?output_header_mode,
+                                nsrt_metadata,
+                                add_header = add,
+                                "output header resolved for stripped input"
+                            );
+                            add
+                        });
+                let strip_output_header = output_header == Some(PatchApplyOutputHeaderMode::Strip)
                     && !state.headerless
                     && !is_disc;
                 (add_header, strip_output_header)
@@ -1101,7 +1110,10 @@ impl CliApp {
     }
 
     /// Hash a reader's remaining bytes as the engine-formatted lowercase CRC32.
-    fn crc32_of_reader(reader: &mut impl Read, context: &OperationContext) -> Result<Option<String>> {
+    fn crc32_of_reader(
+        reader: &mut impl Read,
+        context: &OperationContext,
+    ) -> Result<Option<String>> {
         let values = checksum_reader_values_with_progress(
             reader,
             &["crc32".to_string()],
@@ -1158,8 +1170,7 @@ impl CliApp {
                     return Ok(());
                 }
                 if !state.headerless {
-                    let Ok(header_match) = Self::detect_strippable_rom_header(current_input)
-                    else {
+                    let Ok(header_match) = Self::detect_strippable_rom_header(current_input) else {
                         trace!(
                             required_crc32 = %required_crc32,
                             "chain header: checksum mismatch but no strippable header on the current bytes; leaving state for strict validation"

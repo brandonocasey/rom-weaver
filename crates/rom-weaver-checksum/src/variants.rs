@@ -30,7 +30,7 @@ use tracing::{trace, warn};
 use crate::rom_headers::{
     GBA_HEADER_MAGIC, KnownRomHeader, KnownRomHeaderMatch, N64_BIG_ENDIAN_MAGIC,
     N64_BYTE_SWAPPED_MAGIC, N64_LITTLE_ENDIAN_MAGIC, PCE_COPIER_HEADER_MODULUS, ROM_HEADER_BYTES,
-    ROM_HEADER_SCAN_BYTES, SNES_COPIER_HEADER_MODULUS,
+    ROM_HEADER_SCAN_BYTES, SNES_COPIER_HEADER_MODULUS, header_has_nsrt_metadata,
 };
 use crate::{StreamingChecksum, StreamingChecksumTiming};
 
@@ -775,6 +775,12 @@ impl StreamingVariantChecksums {
         let Some(checksum) = StreamingChecksum::new(&self.algorithms)? else {
             return Ok(None);
         };
+        // Kind-level retention plus the byte-level NSRT exception: an NSRT-signed
+        // SNES copier header is real dump metadata, so apply's `--output-header auto`
+        // re-adds it. The check is bounded to the header extent so a short format
+        // header (iNES) never reads ROM payload bytes at the NSRT offset.
+        let retain_on_output = header_match.header.retained_on_output()
+            || header.get(..stripped).is_some_and(header_has_nsrt_metadata);
         Ok(Some(VariantHasher {
             id: "remove-header".to_string(),
             label: "Remove header".to_string(),
@@ -787,7 +793,7 @@ impl StreamingVariantChecksums {
                     "headeredExtension": header_match.header.headered_extension(),
                     "headerlessExtension": header_match.header.headerless_extension(),
                     "profile": header_match.profile_name(),
-                    "retainOnOutput": header_match.header.retained_on_output(),
+                    "retainOnOutput": retain_on_output,
                     "strippedBytes": stripped,
                 }
             }),

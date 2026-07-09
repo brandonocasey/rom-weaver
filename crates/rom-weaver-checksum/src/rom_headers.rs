@@ -20,6 +20,8 @@ pub const N64_LITTLE_ENDIAN_MAGIC: [u8; 4] = [0x40, 0x12, 0x37, 0x80];
 pub const N64_BYTE_SWAPPED_MAGIC: [u8; 4] = [0x37, 0x80, 0x40, 0x12];
 pub const SNES_COPIER_HEADER_MODULUS: u64 = 1024;
 pub const PCE_COPIER_HEADER_MODULUS: u64 = 8192;
+pub const NSRT_METADATA_OFFSET: usize = 0x1e8;
+pub const NSRT_METADATA_MAGIC: [u8; 4] = *b"NSRT";
 const SMC_GAME_DOCTOR_1_MAGIC: [u8; 16] = [
     0x00, 0x01, 0x4D, 0x45, 0x20, 0x44, 0x4F, 0x43, 0x54, 0x4F, 0x52, 0x20, 0x53, 0x46, 0x20, 0x33,
 ];
@@ -136,7 +138,9 @@ impl KnownRomHeader {
     /// headers (iNES/fwNES/LNX/A78) carry emulator-required metadata, while SNES/PCE
     /// copier headers are junk left by copier devices — the modern convention (headerless
     /// `.sfc`) drops them. Only meaningful for strippable kinds; internal-header consoles
-    /// return true as the safe identity.
+    /// return true as the safe identity. This is the kind-level default: an NSRT-signed
+    /// SNES copier header carries real dump metadata and IS retained — callers with the
+    /// stripped bytes in hand check [`header_has_nsrt_metadata`] on top of this.
     pub const fn retained_on_output(self) -> bool {
         !matches!(
             self,
@@ -244,6 +248,16 @@ impl KnownRomHeader {
     }
 }
 
+/// Whether a stripped 512-byte SNES copier header carries NSRT dump metadata
+/// (the `NSRT` signature at offset 0x1e8). NSRT headers hold real information
+/// (title, region, dump checksums) unlike zero-padded copier junk, so output
+/// policies retain them — matching the RUP (NINJA2) handler's own
+/// normalization, which restores NSRT headers and drops the rest.
+pub fn header_has_nsrt_metadata(header: &[u8]) -> bool {
+    header.get(NSRT_METADATA_OFFSET..NSRT_METADATA_OFFSET + NSRT_METADATA_MAGIC.len())
+        == Some(NSRT_METADATA_MAGIC.as_slice())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KnownRomHeaderMatch {
     pub header: KnownRomHeader,
@@ -264,4 +278,29 @@ impl KnownRomHeaderMatch {
 pub struct StripHeaderResult {
     pub header_bytes: Vec<u8>,
     pub matched_header: Option<KnownRomHeaderMatch>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nsrt_metadata_detected_in_snes_copier_header() {
+        let mut header = vec![0_u8; ROM_HEADER_BYTES];
+        header[NSRT_METADATA_OFFSET..NSRT_METADATA_OFFSET + NSRT_METADATA_MAGIC.len()]
+            .copy_from_slice(&NSRT_METADATA_MAGIC);
+        assert!(header_has_nsrt_metadata(&header));
+    }
+
+    #[test]
+    fn zero_copier_header_has_no_nsrt_metadata() {
+        assert!(!header_has_nsrt_metadata(&vec![0_u8; ROM_HEADER_BYTES]));
+    }
+
+    #[test]
+    fn short_format_header_has_no_nsrt_metadata() {
+        // A 16-byte iNES header can never cover the NSRT offset; the check must
+        // not read past the header slice into ROM payload bytes.
+        assert!(!header_has_nsrt_metadata(&[0_u8; 16]));
+    }
 }

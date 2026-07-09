@@ -591,6 +591,13 @@ pub(crate) fn with_header(bytes: &[u8]) -> Vec<u8> {
     headered
 }
 
+pub(crate) fn with_nsrt_header(bytes: &[u8]) -> Vec<u8> {
+    let mut headered = vec![0u8; 512];
+    headered[0x1e8..0x1ec].copy_from_slice(b"NSRT");
+    headered.extend_from_slice(bytes);
+    headered
+}
+
 pub(crate) fn with_nes_header(bytes: &[u8]) -> Vec<u8> {
     let mut headered = vec![0u8; 16];
     headered[..4].copy_from_slice(b"NES\x1A");

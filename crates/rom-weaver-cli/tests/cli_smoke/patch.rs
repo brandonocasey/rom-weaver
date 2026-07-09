@@ -2581,6 +2581,88 @@ fn patch_apply_auto_output_header_drops_snes_copier_header() {
 }
 
 #[test]
+fn patch_apply_auto_output_header_retains_nsrt_snes_copier_header() {
+    let temp = setup_temp_dir();
+    // 512-byte NSRT-signed copier header + 32 KiB payload: still matches the SNES
+    // copier size rule, but the NSRT signature marks it as real dump metadata.
+    let base = vec![0xA5_u8; 32768];
+    let mut modified = base.clone();
+    modified[0] = b'Z';
+    fs::write(temp.child("base.sfc").path(), &base).expect("fixture");
+    fs::write(temp.child("modified.sfc").path(), &modified).expect("fixture");
+    fs::write(temp.child("input.smc").path(), with_nsrt_header(&base)).expect("fixture");
+    command_stdout(
+        &[
+            "patch",
+            "create",
+            "--original",
+            temp.child("base.sfc").path().to_str().expect("path"),
+            "--modified",
+            temp.child("modified.sfc").path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    // Default auto everywhere: strip proven by the BPS source checksum, but the
+    // NSRT header comes back on the output — it carries dump metadata, matching
+    // the RUP handler's own normalization rules.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.smc").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output-auto.smc").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(temp.child("output-auto.smc").path()).expect("output"),
+        with_nsrt_header(&modified)
+    );
+
+    // Explicit `--output-header strip` still overrides NSRT retention.
+    let output = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.smc").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output-strip.sfc")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--output-header",
+            "strip",
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(
+        fs::read(temp.child("output-strip.sfc").path()).expect("output"),
+        modified
+    );
+}
+
+#[test]
 fn patch_apply_output_header_strip_removes_kept_header() {
     let temp = setup_temp_dir();
     let base = b"abcdefgh".to_vec();
@@ -2806,7 +2888,11 @@ fn patch_apply_auto_header_keeps_header_when_patch_targets_raw_bytes() {
 
 /// Helper for the chain tests: `patch create --format bps` from `original` to
 /// `modified`, writing the patch at `output`.
-fn create_bps_patch(original: &std::path::Path, modified: &std::path::Path, output: &std::path::Path) {
+fn create_bps_patch(
+    original: &std::path::Path,
+    modified: &std::path::Path,
+    output: &std::path::Path,
+) {
     command_stdout(
         &[
             "patch",
