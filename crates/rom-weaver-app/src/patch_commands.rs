@@ -1,3 +1,4 @@
+use super::patch_filename_checksum::FilenameRequirements;
 use super::*;
 
 pub(super) const CREATE_PATCH_IPS_SIZE_LIMIT_BYTES: u64 = 16 * 1024 * 1024;
@@ -547,16 +548,44 @@ impl CliApp {
         expected_input_size: &mut Option<u64>,
         probe_threads: Option<ThreadExecution>,
     ) -> Option<OperationReport> {
-        let requirements = parse_filename_requirements(patch_name);
-        for (algorithm, hex) in requirements.checksums {
-            match expected_input_checksums.get(&algorithm) {
-                Some(existing) if existing != &hex => {
+        trace!(
+            command,
+            patch = %patch_path.display(),
+            "merging input requirements parsed from the patch file name"
+        );
+        self.merge_expected_input_requirements(
+            command,
+            "patch file name",
+            &parse_filename_requirements(patch_name),
+            expected_input_checksums,
+            expected_input_size,
+            probe_threads,
+        )
+    }
+
+    /// Merge one source's expected input-ROM requirements into the accumulated
+    /// expectation, failing on any conflicting value. Shared by the
+    /// patch-file-name requirements and rw.json manifest checks; merge order
+    /// (CLI flags, then manifest rom/patch checks, then file names) decides
+    /// which source a conflict is reported against.
+    pub(super) fn merge_expected_input_requirements(
+        &self,
+        command: &'static str,
+        source_description: &str,
+        requirements: &FilenameRequirements,
+        expected_input_checksums: &mut BTreeMap<String, String>,
+        expected_input_size: &mut Option<u64>,
+        probe_threads: Option<ThreadExecution>,
+    ) -> Option<OperationReport> {
+        for (algorithm, hex) in &requirements.checksums {
+            match expected_input_checksums.get(algorithm) {
+                Some(existing) if existing != hex => {
                     return Some(OperationReport::failed(
                         OperationFamily::Patch,
                         None,
                         "validate",
                         format!(
-                            "patch file name requires input {algorithm} {hex} but --validate-with-checksum expects {existing}"
+                            "{source_description} requires input {algorithm} {hex} but {existing} was already requested"
                         ),
                         probe_threads,
                     ));
@@ -565,12 +594,12 @@ impl CliApp {
                 None => {
                     trace!(
                         command,
-                        patch = %patch_path.display(),
+                        source = source_description,
                         algorithm = %algorithm,
                         checksum = %hex,
-                        "parsed input checksum requirement from patch file name"
+                        "merged expected input checksum requirement"
                     );
-                    expected_input_checksums.insert(algorithm, hex);
+                    expected_input_checksums.insert(algorithm.clone(), hex.clone());
                 }
             }
         }
@@ -582,7 +611,7 @@ impl CliApp {
                         None,
                         "validate",
                         format!(
-                            "patch file name requires input size {size} byte(s) but {existing} byte(s) was already requested"
+                            "{source_description} requires input size {size} byte(s) but {existing} byte(s) was already requested"
                         ),
                         probe_threads,
                     ));
@@ -591,9 +620,9 @@ impl CliApp {
                 None => {
                     trace!(
                         command,
-                        patch = %patch_path.display(),
+                        source = source_description,
                         size,
-                        "parsed input size requirement from patch file name"
+                        "merged expected input size requirement"
                     );
                     *expected_input_size = Some(size);
                 }

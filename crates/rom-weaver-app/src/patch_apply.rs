@@ -1,5 +1,6 @@
 use super::*;
 
+use super::manifest_apply::ManifestApplyResolution;
 use super::manifest_parse::manifest_validation;
 use super::patch_commands::{
     DiscoveredPatchApplySidecars, PatchApplyProgressSink, PatchApplyProgressTracker,
@@ -40,6 +41,38 @@ impl CliApp {
             threads = %args.threads,
             "starting patch-apply command"
         );
+        // Manifest-driven runs merge the rw.json into a plain command first.
+        // The context built here owns the temp namespace any manifest-extracted
+        // archive members live in, so it must outlive the whole apply — it is
+        // dropped (and its files cleaned) only after the run completes.
+        let mut args = args;
+        let manifest_context = self.context(args.threads);
+        let manifest_resolution = match self.resolve_manifest_apply(&mut args, &manifest_context) {
+            Ok(resolution) => resolution,
+            Err(error) => {
+                let thread_execution = manifest_context.single_thread_execution();
+                return self.finish(
+                    "patch-apply",
+                    OperationReport::failed(
+                        OperationFamily::Patch,
+                        None,
+                        "validate",
+                        error.to_string(),
+                        thread_execution,
+                    ),
+                );
+            }
+        };
+        self.run_patch_apply_resolved(args, manifest_resolution)
+    }
+
+    /// The body of `patch apply` after manifest resolution: `args` is a plain,
+    /// fully-merged command.
+    fn run_patch_apply_resolved(
+        &self,
+        args: PatchApplyCommand,
+        manifest_resolution: Option<ManifestApplyResolution>,
+    ) -> AppRunOutcome {
         // Everything downstream (staging, finalize, compression naming) needs a
         // concrete output path. A manifest-driven run fills this from
         // output.name before we get here, so only the flag-less, manifest-less
@@ -272,6 +305,24 @@ impl CliApp {
         }
 
         let mut expected_input_size: Option<u64> = None;
+        // Manifest checks merge after the CLI flags (already parsed into
+        // `expected_input_checksums`) and before the file-name requirements,
+        // so precedence is CLI > manifest > file name and any conflict names
+        // the manifest source that introduced it.
+        if !ignore_checksum_validation && let Some(resolution) = &manifest_resolution {
+            for (source_label, requirements) in &resolution.checks {
+                if let Some(report) = self.merge_expected_input_requirements(
+                    "patch-apply",
+                    source_label,
+                    requirements,
+                    &mut expected_input_checksums,
+                    &mut expected_input_size,
+                    probe_threads.clone(),
+                ) {
+                    return self.finish("patch-apply", report);
+                }
+            }
+        }
         if !ignore_checksum_validation
             && let Some(first_patch) = patches.first()
             && let Some(patch_name) = first_patch.file_name().and_then(|name| name.to_str())

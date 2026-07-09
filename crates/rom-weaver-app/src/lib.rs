@@ -1023,6 +1023,8 @@ mod manifest_parse;
 
 mod manifest_load;
 
+mod manifest_apply;
+
 mod manifest_command;
 pub use manifest_command::{
     ManifestParseResult, ManifestPatchSource, ManifestSourceKind, ManifestSourceRef,
