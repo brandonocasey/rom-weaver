@@ -6,6 +6,12 @@ import {
 import type { ParsedIngestResult } from "../../types/ingest.ts";
 import type { LogLevel } from "../../types/logging.ts";
 import type {
+  ManifestHeaderMode,
+  ManifestPatchStatus,
+  ParsedManifestCreateResult,
+  ParsedManifestParseResult,
+} from "../../types/manifest.ts";
+import type {
   RuntimePatchApplyWorkerInput,
   RuntimePatchCreateCandidatesWorkerInput,
   RuntimePatchCreateFormatCandidates,
@@ -39,6 +45,7 @@ import {
 } from "./compression-codec-args.ts";
 import { toThreadBudget } from "./compression-thread-budget.ts";
 import { parseIngestResult } from "./ingest-result.ts";
+import { parseManifestCreateResult, parseManifestParseResult } from "./manifest-result.ts";
 import {
   getPatchApplyOutputFileName,
   getPatchValidationRequirements,
@@ -774,11 +781,160 @@ const invokeRomWeaverIngestWorker = async (
   return { ...parsed, timing: getRunResultTiming(result) };
 };
 
+// Parse an rw.json manifest (plain, compressed, or bundled in an archive) via the `manifest parse`
+// command. Bundled ROM/patch members are extracted into `extractDirPath`; the parsed result's
+// `extracted` source refs point at those leaves.
+const invokeRomWeaverManifestParseWorker = async (
+  input: {
+    extractDirPath?: string;
+    knownInputPaths?: string[];
+    logLevel?: LogLevel | string;
+    signal?: AbortSignal;
+    sourcePath: string;
+  },
+  onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
+  onLog?: (log: WorkflowRuntimeLog) => void,
+): Promise<ParsedManifestParseResult> => {
+  const sourcePath = String(input.sourcePath || "").trim();
+  if (!sourcePath) throw new Error("Manifest parse source path is required");
+  const extractDirPath = String(input.extractDirPath || "").trim();
+  const command = createRomWeaverCommand("manifest-parse", {
+    source: sourcePath,
+    ...(extractDirPath ? { extract_dir: extractDirPath } : {}),
+  });
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson manifest-parse dispatch", {
+    command,
+    extractDirPath,
+    sourcePath,
+  });
+  const result = await runRomWeaverJson(
+    command,
+    toRomWeaverOptions({
+      knownInputPaths: input.knownInputPaths,
+      logLevel: input.logLevel,
+      onEvent: (event) => {
+        const progress = toSimpleProgress(event);
+        if (progress) onProgress?.(progress);
+      },
+      onLog,
+      signal: input.signal,
+    }),
+  );
+  ensureRomWeaverSuccess(result, "Manifest parse failed");
+  const terminal = getLastEvent(result);
+  const details = terminal ? getRomWeaverRunEventDetails(terminal) : undefined;
+  const parsed = parseManifestParseResult(details);
+  if (!parsed) {
+    throw withRomWeaverFailureKind(new Error("Manifest parse result was missing or malformed"), result);
+  }
+  return parsed;
+};
+
+// Write an rw.json manifest (and optional everything-bundle archive) from staged session files via
+// the `manifest create` command. Checks/integrity checksums are computed from the actual files by
+// Rust; the per-patch metadata arrays are index-aligned with `patchPaths` (or empty).
+const invokeRomWeaverManifestCreateWorker = async (
+  input: {
+    bundlePath?: string;
+    compressFormat?: string;
+    description?: string;
+    knownInputPaths?: string[];
+    logLevel?: LogLevel | string;
+    name?: string;
+    noCompress?: boolean;
+    outputHeader?: ManifestHeaderMode;
+    outputName?: string;
+    outputPath: string;
+    patchDescriptions?: string[];
+    patchHeaders?: ManifestHeaderMode[];
+    patchLabels?: string[];
+    patchNames?: string[];
+    patchPaths: string[];
+    patchStatuses?: ManifestPatchStatus[];
+    romPath?: string;
+    signal?: AbortSignal;
+  },
+  onProgress?: (progress: { label?: string; message?: string; percent?: number | null }) => void,
+  onLog?: (log: WorkflowRuntimeLog) => void,
+): Promise<ParsedManifestCreateResult> => {
+  const outputPath = String(input.outputPath || "").trim();
+  if (!outputPath) throw new Error("Manifest create output path is required");
+  const patchPaths = (input.patchPaths || []).map((path) => String(path || "").trim()).filter((path) => !!path);
+  if (!patchPaths.length) throw new Error("Manifest create requires at least one patch path");
+  const romPath = String(input.romPath || "").trim();
+  const bundlePath = String(input.bundlePath || "").trim();
+  // The Rust side requires each metadata array to match the patch count exactly (or be empty), so a
+  // partially-filled array is padded with empty strings; empty values round-trip as absent metadata.
+  const alignedStrings = (values: string[] | undefined): string[] | undefined => {
+    const normalized = (values || []).map((value) => String(value ?? "").trim());
+    if (!normalized.some((value) => !!value)) return undefined;
+    while (normalized.length < patchPaths.length) normalized.push("");
+    return normalized.slice(0, patchPaths.length);
+  };
+  const patchNames = alignedStrings(input.patchNames);
+  const patchDescriptions = alignedStrings(input.patchDescriptions);
+  const patchLabels = alignedStrings(input.patchLabels);
+  const patchStatuses =
+    input.patchStatuses && input.patchStatuses.length === patchPaths.length ? input.patchStatuses : undefined;
+  const patchHeaders =
+    input.patchHeaders?.length && input.patchHeaders.some((mode) => mode !== "auto")
+      ? patchPaths.map((_, index) => input.patchHeaders?.[index] || "auto")
+      : undefined;
+  const command = createRomWeaverCommand("manifest-create", {
+    output: outputPath,
+    patch: patchPaths,
+    ...(romPath ? { rom: romPath } : {}),
+    ...(bundlePath ? { bundle: bundlePath } : {}),
+    ...(input.name ? { name: input.name } : {}),
+    ...(input.description ? { description: input.description } : {}),
+    ...(input.outputName ? { output_name: input.outputName } : {}),
+    ...(input.outputHeader && input.outputHeader !== "auto" ? { output_header: input.outputHeader } : {}),
+    ...(input.noCompress ? { no_compress: true } : {}),
+    ...(input.compressFormat ? { compress_format: input.compressFormat } : {}),
+    ...(patchNames ? { patch_name: patchNames } : {}),
+    ...(patchDescriptions ? { patch_description: patchDescriptions } : {}),
+    ...(patchLabels ? { patch_label: patchLabels } : {}),
+    ...(patchStatuses ? { patch_status: patchStatuses } : {}),
+    ...(patchHeaders ? { patch_header: patchHeaders } : {}),
+  });
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson manifest-create dispatch", {
+    bundlePath,
+    command,
+    outputPath,
+    patchCount: patchPaths.length,
+    romPath,
+  });
+  const result = await runRomWeaverJson(
+    command,
+    toRomWeaverOptions({
+      invalidateMountCacheBeforeRun: true,
+      knownInputPaths: input.knownInputPaths,
+      logLevel: input.logLevel,
+      onEvent: (event) => {
+        const progress = toSimpleProgress(event);
+        if (progress) onProgress?.(progress);
+      },
+      onLog,
+      signal: input.signal,
+    }),
+  );
+  ensureRomWeaverSuccess(result, "Manifest create failed");
+  const terminal = getLastEvent(result);
+  const details = terminal ? getRomWeaverRunEventDetails(terminal) : undefined;
+  const parsed = parseManifestCreateResult(details);
+  if (!parsed) {
+    throw withRomWeaverFailureKind(new Error("Manifest create result was missing or malformed"), result);
+  }
+  return parsed;
+};
+
 export {
   invokeRomWeaverCompressionCreateWorker,
   invokeRomWeaverCreatePatchCandidatesWorker,
   invokeRomWeaverCreatePatchWorker,
   invokeRomWeaverIngestWorker,
+  invokeRomWeaverManifestCreateWorker,
+  invokeRomWeaverManifestParseWorker,
   invokeRomWeaverPatchApplyWorker,
   invokeRomWeaverPatchValidateWorker,
   invokeRomWeaverTrimWorker,

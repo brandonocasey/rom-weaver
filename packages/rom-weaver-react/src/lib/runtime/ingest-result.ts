@@ -70,7 +70,8 @@ const parseRomAsset = (value: unknown): ParsedIngestRomAsset | undefined => {
   return asset;
 };
 
-const parsePatchDescriptor = (value: unknown): ParsedPatchDescriptor | undefined => {
+/** Parse one wire `PatchDescriptor` record (shared with the manifest-parse result reader). */
+export const parsePatchDescriptor = (value: unknown): ParsedPatchDescriptor | undefined => {
   const record = asRecord(value) as WireRecord<PatchDescriptor> | undefined;
   if (!record) return undefined;
   const leafPath = toStringValue(record.leaf_path);

@@ -9,6 +9,12 @@ import type {
 import type { ChecksumVariant, RomTypeTag } from "./checksum.ts";
 import type { ParsedIngestResult } from "./ingest.ts";
 import type { LogLevel, LogRecord } from "./logging.ts";
+import type {
+  ManifestHeaderMode,
+  ManifestPatchStatus,
+  ParsedManifestCreateResult,
+  ParsedManifestParseResult,
+} from "./manifest.ts";
 import type { OutputStorageKind } from "./output.ts";
 import type { JsonObject, JsonValue } from "./runtime.ts";
 import type { SourceRef } from "./source.ts";
@@ -416,6 +422,45 @@ type WorkflowRuntimeIngest = {
   }) => Promise<{ result: ParsedIngestResult; outputs: PublicOutput[]; patchOutputs: PublicOutput[] }>;
 };
 
+type WorkflowRuntimeManifest = {
+  // Parse a dropped/fetched rw.json (plain, compressed, or an archive carrying one). Bundled
+  // ROM/patch members are extracted, materialized as plain `File`s keyed by their reported
+  // `extracted` path, and cleaned out of the runtime's staging area before returning — the caller
+  // routes the Files through the standard drop pipeline.
+  parse?: (input: {
+    source: unknown;
+    fileName?: string;
+    logLevel?: LogLevel;
+    onLog?: (log: WorkflowRuntimeLog) => void;
+    onProgress?: (progress: WorkflowRuntimeProgress) => void;
+    signal?: AbortSignal;
+  }) => Promise<{ result: ParsedManifestParseResult; extractedFiles: Map<string, File> }>;
+  // Write an rw.json manifest (and optional everything-bundle .zip) from the current session's
+  // files. Checks/integrity are computed by Rust from the staged bytes; the emitted file(s) are
+  // read back as plain `File`s for the browser download path and removed from staging.
+  create?: (input: {
+    rom?: { source: unknown; fileName?: string };
+    patches: Array<{
+      source: unknown;
+      fileName?: string;
+      name?: string;
+      description?: string;
+      label?: string;
+      status?: ManifestPatchStatus;
+      header?: ManifestHeaderMode;
+    }>;
+    name?: string;
+    description?: string;
+    outputName?: string;
+    outputHeader?: ManifestHeaderMode;
+    bundle?: boolean;
+    logLevel?: LogLevel;
+    onLog?: (log: WorkflowRuntimeLog) => void;
+    onProgress?: (progress: WorkflowRuntimeProgress) => void;
+    signal?: AbortSignal;
+  }) => Promise<{ result: ParsedManifestCreateResult; manifestFile: File; bundleFile?: File }>;
+};
+
 type WorkflowRuntimeTrim = {
   trim?: (input: {
     source: SourceRef;
@@ -481,6 +526,7 @@ type WorkflowRuntime = {
   compression: WorkflowRuntimeCompression;
   binary: WorkflowRuntimeBinary;
   ingest?: WorkflowRuntimeIngest;
+  manifest?: WorkflowRuntimeManifest;
   /** Declare a simultaneous I/O drop (source sizes in bytes) so the scheduler plans the whole batch as
    * one unit even though each file is staged independently. Optional — runtimes without a batch planner
    * omit it and ops are admitted as they arrive. */

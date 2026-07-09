@@ -1,9 +1,12 @@
+import { getPathBaseName } from "../../lib/path-utils.ts";
 import { romTypeFromEmittedFile } from "../../lib/runtime/run-result-parsing.ts";
 import { assertBrowserBinarySource } from "../../lib/runtime/source-normalization.ts";
 import {
   invokeRomWeaverCreatePatchCandidatesWorker,
   invokeRomWeaverCreatePatchWorker,
   invokeRomWeaverIngestWorker,
+  invokeRomWeaverManifestCreateWorker,
+  invokeRomWeaverManifestParseWorker,
   invokeRomWeaverPatchApplyWorker,
   invokeRomWeaverPatchValidateWorker,
   invokeRomWeaverTrimWorker,
@@ -176,6 +179,153 @@ const createBrowserIngestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime[
   },
 });
 
+// Read a small staged/emitted OPFS file back into a plain heap `File` (manifest leaves and the
+// emitted rw.json / bundle are patch-scale, so a full in-memory copy is fine here).
+const readBrowserVfsFileAsHeapFile = async (filePath: string, fileName: string): Promise<File> => {
+  const stat = await browserVfs.stat(filePath);
+  if (!stat) throw new Error(`Manifest file is not available: ${filePath}`);
+  const bytes = new Uint8Array(stat.size);
+  let readBytes = 0;
+  while (readBytes < stat.size) {
+    const chunk = await browserVfs.read(filePath, bytes, {
+      bufferOffset: readBytes,
+      fileOffset: readBytes,
+      length: stat.size - readBytes,
+    });
+    if (!chunk) break;
+    readBytes += chunk;
+  }
+  if (readBytes !== stat.size) {
+    throw new Error(`Manifest file read was truncated: ${filePath} (${readBytes}/${stat.size} bytes)`);
+  }
+  return new File([bytes], fileName, { type: "application/octet-stream" });
+};
+
+// Parse an rw.json manifest source (plain/compressed/archive). Bundled ROM/patch leaves land under
+// the worker OPFS mount; they are materialized as plain heap `File`s (keyed by extracted path) and
+// their OPFS copies removed, so the caller can hand them to the standard drop pipeline with nothing
+// left dangling in staging.
+const createBrowserManifestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["manifest"] => ({
+  create: async ({
+    rom,
+    patches,
+    name,
+    description,
+    outputName,
+    outputHeader,
+    bundle,
+    logLevel,
+    onLog,
+    onProgress,
+    signal,
+  }) => {
+    const staged: Array<{ cleanup: () => Promise<void> }> = [];
+    try {
+      let romPath: string | undefined;
+      if (rom) {
+        const stagedRom = await workerIo.stageSource({
+          fallbackFileName: rom.fileName || "rom.bin",
+          pathPrefix: "manifest-rom",
+          scope: "archive",
+          source: rom.source,
+          trace: { logLevel, onLog },
+        });
+        staged.push(stagedRom);
+        romPath = stagedRom.filePath;
+      }
+      const patchPaths: string[] = [];
+      for (const [index, patch] of patches.entries()) {
+        const stagedPatch = await workerIo.stageSource({
+          fallbackFileName: patch.fileName || `patch-${index + 1}.bin`,
+          pathPrefix: `manifest-patch-${index + 1}`,
+          scope: "archive",
+          source: patch.source,
+          trace: { logLevel, onLog },
+        });
+        staged.push(stagedPatch);
+        patchPaths.push(stagedPatch.filePath);
+      }
+      const outputPath = `${WORKER_OPFS_MOUNTPOINT}/rw.json`;
+      const bundlePath = bundle ? `${WORKER_OPFS_MOUNTPOINT}/rw-bundle.zip` : undefined;
+      const result = await invokeRomWeaverManifestCreateWorker(
+        {
+          ...(bundlePath ? { bundlePath } : {}),
+          ...(description ? { description } : {}),
+          knownInputPaths: [...(romPath ? [romPath] : []), ...patchPaths],
+          logLevel,
+          ...(name ? { name } : {}),
+          ...(outputHeader ? { outputHeader } : {}),
+          ...(outputName ? { outputName } : {}),
+          outputPath,
+          patchDescriptions: patches.map((patch) => patch.description || ""),
+          patchHeaders: patches.map((patch) => patch.header || "auto"),
+          patchLabels: patches.map((patch) => patch.label || ""),
+          patchNames: patches.map((patch) => patch.name || ""),
+          patchPaths,
+          patchStatuses: patches.map((patch) => patch.status || "default"),
+          ...(romPath ? { romPath } : {}),
+          signal,
+        },
+        onProgress,
+        onLog,
+      );
+      const manifestFile = await readBrowserVfsFileAsHeapFile(
+        result.manifestPath,
+        getPathBaseName(result.manifestPath, "rw.json"),
+      );
+      const bundleFile = result.bundlePath
+        ? await readBrowserVfsFileAsHeapFile(result.bundlePath, getPathBaseName(result.bundlePath, "rw-bundle.zip"))
+        : undefined;
+      await browserVfs.remove(result.manifestPath).catch(() => undefined);
+      if (result.bundlePath) await browserVfs.remove(result.bundlePath).catch(() => undefined);
+      return { ...(bundleFile ? { bundleFile } : {}), manifestFile, result };
+    } finally {
+      await Promise.all(staged.map((source) => source.cleanup().catch(() => undefined)));
+    }
+  },
+  parse: async ({ source, fileName, logLevel, onLog, onProgress, signal }) => {
+    const staged = await workerIo.stageSource({
+      fallbackFileName: fileName || "rw.json",
+      pathPrefix: "manifest-input",
+      scope: "archive",
+      source,
+      trace: { logLevel, onLog },
+    });
+    try {
+      const result = await invokeRomWeaverManifestParseWorker(
+        {
+          extractDirPath: WORKER_OPFS_MOUNTPOINT,
+          knownInputPaths: [staged.filePath],
+          logLevel,
+          signal,
+          sourcePath: staged.filePath,
+        },
+        onProgress,
+        onLog,
+      );
+      const extractedPaths = new Set<string>();
+      if (result.romSource?.kind === "extracted") extractedPaths.add(result.romSource.extractedPath);
+      for (const patchSource of result.patchSources) {
+        if (patchSource.source.kind === "extracted") extractedPaths.add(patchSource.source.extractedPath);
+      }
+      const extractedFiles = new Map<string, File>();
+      try {
+        for (const extractedPath of extractedPaths) {
+          extractedFiles.set(
+            extractedPath,
+            await readBrowserVfsFileAsHeapFile(extractedPath, getPathBaseName(extractedPath, "manifest-entry.bin")),
+          );
+        }
+      } finally {
+        await Promise.all([...extractedPaths].map((path) => browserVfs.remove(path).catch(() => undefined)));
+      }
+      return { extractedFiles, result };
+    } finally {
+      await staged.cleanup().catch(() => undefined);
+    }
+  },
+});
+
 const createBrowserRomSpecificRuntime = (workerIo: RuntimeWorkerIo): RomSpecificRuntimeAdapter => ({
   ...createBrowserChdRuntime(workerIo),
   ...createBrowserDiscFormatsRuntime(workerIo),
@@ -220,6 +370,7 @@ const createBrowserRuntime = (): WorkflowRuntime => {
     },
     compression: createBrowserCompressionRuntime(workerIo),
     ingest: createBrowserIngestRuntime(workerIo),
+    manifest: createBrowserManifestRuntime(workerIo),
     name: "browser",
     noteIoBatch: noteRomWeaverIoBatch,
     output: {
