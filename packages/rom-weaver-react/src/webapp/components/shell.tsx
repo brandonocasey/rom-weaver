@@ -278,13 +278,23 @@ const Selvage = ({
   threads,
   githubHref,
   donateHref,
+  confirmExternalNavigation,
 }: {
   version?: string;
   threads?: number;
   githubHref?: string;
   donateHref?: string;
+  /** Resolves false to block the navigation (e.g. staged work would be lost). */
+  confirmExternalNavigation?: (href: string) => Promise<boolean>;
 }) => {
   const localizer = useUiLocalizer();
+  const guardExternalClick = (event: { preventDefault: () => void }, href: string) => {
+    if (!confirmExternalNavigation) return;
+    event.preventDefault();
+    void confirmExternalNavigation(href).then((accepted) => {
+      if (accepted) window.open(href, "_blank", "noopener,noreferrer");
+    });
+  };
   return (
     <footer className="selvage">
       <div className="sv-inner">
@@ -296,12 +306,24 @@ const Selvage = ({
         ) : null}
         <span className="sv-spacer" />
         {githubHref ? (
-          <a className="sv-link" href={githubHref} rel="noreferrer" target="_blank">
+          <a
+            className="sv-link"
+            href={githubHref}
+            onClick={(event) => guardExternalClick(event, githubHref)}
+            rel="noreferrer"
+            target="_blank"
+          >
             GitHub
           </a>
         ) : null}
         {donateHref ? (
-          <a className="sv-link donate" href={donateHref} rel="noreferrer" target="_blank">
+          <a
+            className="sv-link donate"
+            href={donateHref}
+            onClick={(event) => guardExternalClick(event, donateHref)}
+            rel="noreferrer"
+            target="_blank"
+          >
             ♥ <span>{localizer.message("ui.footer.donate")}</span>
           </a>
         ) : null}

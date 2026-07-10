@@ -130,7 +130,13 @@ const ActivityWakeLockNotice = () => {
   return <ProcessingWakeLockNotice active={activity.state === "running"} />;
 };
 
-const ActivitySelvage = ({ threads }: { threads?: number }) => {
+const ActivitySelvage = ({
+  threads,
+  confirmExternalNavigation,
+}: {
+  threads?: number;
+  confirmExternalNavigation?: (href: string) => Promise<boolean>;
+}) => {
   const activity = useSyncExternalStore(subscribeWorkbenchActivity, getWorkbenchActivity, getWorkbenchActivity);
   // The bench settles out of a run (running/staging → ready/done) on the commit batched with the result
   // render. Close the perceived-latency tail (romweaver:after-finish) on the paint that reveals the result;
@@ -142,6 +148,7 @@ const ActivitySelvage = ({ threads }: { threads?: number }) => {
   });
   return (
     <Selvage
+      confirmExternalNavigation={confirmExternalNavigation}
       donateHref="https://www.paypal.me/marcrobledo/5"
       githubHref="https://github.com/marcrobledo/rom-weaver/"
       threads={threads}
@@ -321,7 +328,10 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions }: WebappRo
             <DropVeil />
           </main>
         </div>
-        <ActivitySelvage threads={resolveWorkerThreads(workerThreads)} />
+        <ActivitySelvage
+          confirmExternalNavigation={actions.onConfirmExternalNavigation}
+          threads={resolveWorkerThreads(workerThreads)}
+        />
         <LogDialog
           level={state.settings.logLevel}
           onClose={() => setLogOpen(false)}

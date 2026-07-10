@@ -60,6 +60,8 @@ type WebappRootProps = {
     onSaveClose: () => void;
     onCancelConfirmation: () => void;
     onConfirmConfirmation: () => void;
+    /** Resolves false to block an external link (footer GitHub/donate) when staged work would be lost. */
+    onConfirmExternalNavigation: (href: string) => Promise<boolean>;
     onCreatorModifiedChange: (file: unknown) => void;
     onCreatorOriginalChange: (file: unknown) => void;
     onCreatorPatchTypeChange: (patchType: string) => void;

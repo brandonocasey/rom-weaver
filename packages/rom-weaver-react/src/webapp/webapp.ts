@@ -312,6 +312,17 @@ const renderWebappRoot = (): undefined => {
             })();
           },
           onConfirmConfirmation: () => closeConfirmationDialog(true),
+          onConfirmExternalNavigation: async () => {
+            const navigationGuardState = getNavigationGuardState();
+            if (!shouldWarnBeforeUnload(navigationGuardState)) return true;
+            return requestConfirmation({
+              cancelLabel: "Stay here",
+              confirmLabel: "Open link",
+              level: "warning",
+              message: "Leaving the app may lose your staged files and finished output. Open the link anyway?",
+              title: "Leave and lose work?",
+            });
+          },
           onCreatorModifiedChange: (file) => webappController.setCreatorModifiedState(file),
           onCreatorOriginalChange: (file) => webappController.setCreatorOriginalState(file),
           onCreatorPatchTypeChange: (patchType) => webappController.setCreatorPatchType(patchType),
