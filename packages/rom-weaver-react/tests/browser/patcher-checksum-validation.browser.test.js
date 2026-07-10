@@ -113,6 +113,55 @@ const createChecksumOverrideHarnessElement = (
   return createElement(Harness);
 };
 
+test("removing the ROM clears patch validation errors", async () => {
+  const inputFile = new File([new Uint8Array([0, 1, 2, 3])], "game.bin", { type: "application/octet-stream" });
+  const patchFile = new File([new Uint8Array([0x42, 0x50, 0x53, 0x31])], "change.bps", {
+    type: "application/octet-stream",
+  });
+  const Harness = () => {
+    const { localNoticeController, localOutputController, localStackController, localUiController } =
+      useLocalApplyPatchFormSession({
+        applyPatches: vi.fn(async () => undefined),
+        applyReady: true,
+        defaultInputs: [inputFile],
+        defaultPatches: [patchFile],
+        downloadOutput: () => undefined,
+        stageInput: async (_snapshot, handlers) => {
+          const input = { fileName: "game.bin", id: "input-1", order: 0 };
+          handlers.onState(input);
+          return [input];
+        },
+        stagePatches: async () => [
+          {
+            fileName: "change.bps",
+            id: "patch-1",
+            order: 0,
+            validationMessage: "Patch validation failed",
+            validationState: "invalid",
+          },
+        ],
+      });
+    return createElement(ApplyWorkflowFormView, {
+      controllers: {
+        dialog: inertDialogController,
+        notice: localNoticeController,
+        output: localOutputController,
+        patchStack: localStackController,
+        ui: localUiController,
+      },
+    });
+  };
+
+  mount(createElement(Harness));
+  await expect.poll(() => document.body.textContent || "").toContain("Patch validation failed");
+
+  const removeButton = document.querySelector("button[aria-label='Clear ROM input']");
+  expect(removeButton).toBeInstanceOf(HTMLButtonElement);
+  removeButton.click();
+
+  await expect.poll(() => document.body.textContent || "").not.toContain("Patch validation failed");
+});
+
 test("strict checksum mismatch blocks apply until override is checked", async () => {
   mount(
     createElement(ApplyPatchForm, {

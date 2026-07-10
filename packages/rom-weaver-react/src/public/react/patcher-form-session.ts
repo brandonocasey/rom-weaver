@@ -739,6 +739,23 @@ const useLocalApplyPatchFormSession = ({
     (nextInputs: BinarySource[]) => {
       setChecksumOverrideChecked(false);
       invalidateCompletedOutputState();
+      setPatchInfoByKey((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([key, info]) => [
+            key,
+            {
+              ...info,
+              checksumPreflightMismatch: false,
+              sourceChecksumState: "unknown",
+              validationActualValue: "",
+              validationLabel: "",
+              validationMessage: "",
+              validationState: "",
+              validationValues: [],
+            },
+          ]),
+        ),
+      );
       const { generation, progressGeneration } = inputStageMachine.nextRunGeneration();
       emitSessionTrace("input list updated", {
         generation,
