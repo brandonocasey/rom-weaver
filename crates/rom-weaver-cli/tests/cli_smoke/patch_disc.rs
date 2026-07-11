@@ -316,6 +316,138 @@ fn patch_apply_disc_multi_track_requires_target() {
 }
 
 #[test]
+fn patch_apply_disc_auto_targets_track_by_patch_source_crc32() {
+    let temp = setup_temp_dir();
+    let (_track01, track02) = write_two_track_cd(&temp);
+    fs::write(
+        temp.child("update[crc32:590df36b].ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: DISC_PATCH_OFFSET as u32,
+                data: disc_patch_payload(),
+            }],
+            None,
+        ),
+    )
+    .expect("patch");
+
+    let out_dir = temp.child("out");
+    fs::create_dir_all(out_dir.path()).expect("out dir");
+    command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("disc.cue").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update[crc32:590df36b].ips")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--no-compress",
+            "--output",
+            out_dir.child("disc.cue").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    assert_eq!(
+        fs::read(out_dir.child("track01.bin").path()).expect("track01"),
+        (0..(8 * 2352)).map(|i| (i % 211) as u8).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        fs::read(out_dir.child("track02.bin").path()).expect("track02"),
+        apply_ips_literal(track02, DISC_PATCH_OFFSET, &disc_patch_payload())
+    );
+}
+
+#[test]
+fn patch_apply_disc_auto_target_errors_when_checksum_matches_no_track() {
+    let temp = setup_temp_dir();
+    write_two_track_cd(&temp);
+    fs::write(
+        temp.child("update[crc32:00000000].ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: DISC_PATCH_OFFSET as u32,
+                data: disc_patch_payload(),
+            }],
+            None,
+        ),
+    )
+    .expect("patch");
+
+    let out = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("disc.cue").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update[crc32:00000000].ips")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--no-compress",
+            "--output",
+            temp.child("out.cue").path().to_str().expect("path"),
+            "--json",
+        ],
+        1,
+    );
+    assert!(
+        parse_single_json_line(&out)["label"]
+            .as_str()
+            .expect("label")
+            .contains("matched none")
+    );
+}
+
+#[test]
+fn patch_apply_disc_auto_target_errors_when_checksum_matches_multiple_tracks() {
+    let temp = setup_temp_dir();
+    let (track01, _) = write_two_track_cd(&temp);
+    fs::write(temp.child("track02.bin").path(), &track01).expect("duplicate track");
+    fs::write(
+        temp.child("update[crc32:87987248].ips").path(),
+        build_ips_patch(
+            vec![TestIpsRecord::Literal {
+                offset: DISC_PATCH_OFFSET as u32,
+                data: disc_patch_payload(),
+            }],
+            None,
+        ),
+    )
+    .expect("patch");
+
+    let out = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("disc.cue").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update[crc32:87987248].ips")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--no-compress",
+            "--output",
+            temp.child("out.cue").path().to_str().expect("path"),
+            "--json",
+        ],
+        1,
+    );
+    assert!(
+        parse_single_json_line(&out)["label"]
+            .as_str()
+            .expect("label")
+            .contains("matched 2 tracks")
+    );
+}
+
+#[test]
 fn patch_apply_disc_single_track_targets_implicitly() {
     let temp = setup_temp_dir();
     let track = (0..(8 * 2352)).map(|i| (i % 251) as u8).collect::<Vec<_>>();

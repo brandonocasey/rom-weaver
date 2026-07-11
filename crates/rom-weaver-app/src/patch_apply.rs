@@ -218,7 +218,19 @@ impl CliApp {
         // A `.cue`/`.gdi` input is a multi-track disc: patch one referenced
         // track (chosen by `--target`) and reassemble the full disc. Plain
         // inputs return `None` here and follow the single-file path unchanged.
-        let disc_context = match self.build_disc_context(&input, target.as_deref()) {
+        let patch_source_crc32 = if ignore_checksum_validation {
+            None
+        } else {
+            patches
+                .first()
+                .and_then(|patch| self.patch_source_crc32_for_auto_target(patch, &context))
+        };
+        let disc_context = match self.build_disc_context(
+            &input,
+            target.as_deref(),
+            patch_source_crc32.as_deref(),
+            &context,
+        ) {
             Ok(context) => context,
             Err(error) => {
                 return self.finish("patch-apply", fail("prepare", error.to_string()));
@@ -1227,7 +1239,7 @@ impl CliApp {
     }
 
     /// Hash a reader's remaining bytes as the engine-formatted lowercase CRC32.
-    fn crc32_of_reader(
+    pub(super) fn crc32_of_reader(
         reader: &mut impl Read,
         context: &OperationContext,
     ) -> Result<Option<String>> {
@@ -1381,7 +1393,7 @@ impl CliApp {
     /// Read the first patch's embedded expected-source CRC32 (UPS/BPS store it in
     /// their header/footer) without applying the patch, formatted as the same
     /// lowercase 8-digit hex the checksum engine emits.
-    fn embedded_patch_source_crc32(
+    pub(super) fn embedded_patch_source_crc32(
         &self,
         patch_path: &Path,
         context: &OperationContext,

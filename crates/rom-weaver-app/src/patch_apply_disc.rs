@@ -13,6 +13,7 @@
 //! confirming when the directory holds unreferenced data files, and staging the
 //! reassembled disc for the compressor.
 
+use super::patch_filename_checksum::parse_filename_requirements;
 use super::*;
 
 /// One data file referenced by a disc sheet.
@@ -68,6 +69,25 @@ fn sheet_directory(input: &Path) -> &Path {
 }
 
 impl CliApp {
+    pub(super) fn patch_source_crc32_for_auto_target(
+        &self,
+        patch: &Path,
+        context: &OperationContext,
+    ) -> Option<String> {
+        self.embedded_patch_source_crc32(patch, context)
+            .or_else(|| {
+                patch
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| {
+                        parse_filename_requirements(name)
+                            .checksums
+                            .get("crc32")
+                            .cloned()
+                    })
+            })
+    }
+
     /// Resolve `input` as a disc sheet for patching. Returns `Ok(None)` when
     /// `input` is not a `.cue`/`.gdi` (the caller falls back to the plain
     /// single-file path). Errors when a referenced track is missing, when
@@ -77,6 +97,8 @@ impl CliApp {
         &self,
         input: &Path,
         target: Option<&str>,
+        patch_source_crc32: Option<&str>,
+        context: &OperationContext,
     ) -> Result<Option<DiscContext>> {
         let Some(kind) = detect_disc_sheet(input) else {
             return Ok(None);
@@ -118,7 +140,8 @@ impl CliApp {
         }
         trace!(tracks = files.len(), "enumerated disc tracks");
 
-        let target_index = self.select_disc_target(input, &files, target)?;
+        let target_index =
+            self.select_disc_target(input, &files, target, patch_source_crc32, context)?;
         let target_file = files[target_index].path.clone();
         trace!(target = %target_file.display(), "selected disc patch target track");
 
@@ -216,13 +239,16 @@ impl CliApp {
     }
 
     /// Resolve `--target` to exactly one track index. With no `--target`, a
-    /// single-track disc is targeted implicitly; a multi-track disc requires an
+    /// single-track disc is targeted implicitly. A multi-track disc uses the
+    /// first patch's source CRC32 when available, otherwise it requires an
     /// explicit `--target`. A glob must match exactly one track.
     fn select_disc_target(
         &self,
         input: &Path,
         files: &[DiscFile],
         target: Option<&str>,
+        patch_source_crc32: Option<&str>,
+        context: &OperationContext,
     ) -> Result<usize> {
         let track_list = || {
             files
@@ -234,6 +260,35 @@ impl CliApp {
         let Some(glob) = target else {
             if files.len() == 1 {
                 return Ok(0);
+            }
+            if let Some(expected) = patch_source_crc32 {
+                let mut matches = Vec::new();
+                for (index, file) in files.iter().enumerate() {
+                    let mut reader = BufReader::new(File::open(&file.path)?);
+                    if Self::crc32_of_reader(&mut reader, context)?
+                        .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+                    {
+                        matches.push(index);
+                    }
+                }
+                return match matches.as_slice() {
+                    [only] => Ok(*only),
+                    [] => Err(RomWeaverError::Validation(format!(
+                        "patch source crc32 `{expected}` matched none of the {} tracks in `{}` ({})",
+                        files.len(),
+                        input.display(),
+                        track_list()
+                    ))),
+                    many => Err(RomWeaverError::Validation(format!(
+                        "patch source crc32 `{expected}` matched {} tracks in `{}` ({}); pass --target <glob> to choose one",
+                        many.len(),
+                        input.display(),
+                        many.iter()
+                            .map(|index| files[*index].name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))),
+                };
             }
             return Err(RomWeaverError::Validation(format!(
                 "disc sheet `{}` references {} tracks; pass --target <glob> to choose one ({})",
