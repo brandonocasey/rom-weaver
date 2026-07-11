@@ -406,7 +406,16 @@ warnings: Array<string>, };
 
 export type ManifestParseCommand = { source: string, extract_dir?: string, threads?: ThreadBudget, };
 
-export type ManifestCreateCommand = { rom?: string, rom_url?: string, rom_name?: string, patch?: Array<string>, patch_name?: Array<string>, patch_description?: Array<string>, patch_label?: Array<string>, patch_optional?: Array<boolean>, patch_source_url?: Array<string>, patch_header?: Array<PatchApplyHeaderMode>, patch_input_check?: Array<string>, patch_output_check?: Array<string>, output_check?: Array<string>, output_name?: string, output_header?: PatchApplyOutputHeaderMode, output: string, bundle?: string,
+export type ManifestCreateCommand = { rom?: string,
+/**
+ * Cached ROM checksum values from a prior staging pass. The webapp uses
+ * this to avoid hashing the same prepared leaf during manifest export.
+ */
+rom_checksums?: Array<string>,
+/**
+ * Cached prepared ROM size from a prior staging pass.
+ */
+rom_size?: number | null, rom_url?: string, rom_name?: string, patch?: Array<string>, patch_name?: Array<string>, patch_description?: Array<string>, patch_label?: Array<string>, patch_optional?: Array<boolean>, patch_source_url?: Array<string>, patch_header?: Array<PatchApplyHeaderMode>, patch_input_check?: Array<string>, patch_output_check?: Array<string>, output_check?: Array<string>, output_name?: string, output_header?: PatchApplyOutputHeaderMode, output: string, bundle?: string,
 /**
  * Optional packaged ROM payload. Checks are still calculated from `rom`.
  */

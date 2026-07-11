@@ -1214,6 +1214,17 @@ pub struct ManifestCreateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub rom: Option<PathBuf>,
+    /// Cached ROM checksum values from a prior staging pass. The webapp uses
+    /// this to avoid hashing the same prepared leaf during manifest export.
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "rom-checksums", hide = true))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub rom_checksums: Vec<String>,
+    /// Cached prepared ROM size from a prior staging pass.
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "rom-size", hide = true))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, type = "number | null"))]
+    pub rom_size: Option<u64>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(

@@ -114,10 +114,10 @@ test("export manifest bundles the session from main-page options with a checks-o
   // The hand-typed crc32 differs from the rom checks, so the entry keeps its
   // own inputChecks instead of relying on rom.checks.
   expect(patchEntry.inputChecks?.checksums?.crc32).toBe("deadbeef");
-  // The single patch ends the chain: its output lives on output.checks, not
-  // on the entry.
+  // Export does not invent a final output check; only explicit/user-entered
+  // checks are retained.
   expect(patchEntry.outputChecks).toBeUndefined();
-  expect(Object.keys(result.manifest.output?.checks?.checksums || {})).toEqual(["crc32", "md5", "sha1"]);
+  expect(result.manifest.output?.checks).toBeUndefined();
   // Patch entries carry no file hashes - the format has no integrity field.
   expect(patchEntry.integrity).toBeUndefined();
 

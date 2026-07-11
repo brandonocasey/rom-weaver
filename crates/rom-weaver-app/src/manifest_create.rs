@@ -137,12 +137,16 @@ impl CliApp {
         if args.no_bundle_rom && args.rom.is_none() {
             warnings.push("--no-bundle-rom ignored: no local --rom given".to_string());
         }
-        // Overall hash-progress denominator: only the rom is hashed (when
-        // given locally) - patch files carry no checksums in the manifest.
+        let cached_rom_checks = manifest_entry_checks(&args.rom_checksums, "--rom-checksums")?
+            .filter(|checks| !checks.checksums.is_empty());
+        // Overall hash-progress denominator: only the rom is hashed when the
+        // caller did not provide the staged checks; patch files carry no
+        // checksums in the manifest.
         let total_hash_bytes: u64 = args
             .rom
             .as_deref()
             .filter(|path| path.is_file())
+            .filter(|_| cached_rom_checks.is_none())
             .map(|path| fs::metadata(path).map(|meta| meta.len()).unwrap_or(0))
             .unwrap_or(0);
         let mut hashed_bytes: u64 = 0;
@@ -161,14 +165,18 @@ impl CliApp {
                         path.display()
                     )));
                 }
-                let checksums = self.manifest_checksum_with_progress(
-                    path,
-                    &algorithms,
-                    context,
-                    &mut hashed_bytes,
-                    total_hash_bytes,
-                )?;
-                let size = fs::metadata(path)?.len();
+                let checksums = if let Some(cached) = cached_rom_checks.as_ref() {
+                    cached.checksums.clone()
+                } else {
+                    self.manifest_checksum_with_progress(
+                        path,
+                        &algorithms,
+                        context,
+                        &mut hashed_bytes,
+                        total_hash_bytes,
+                    )?
+                };
+                let size = args.rom_size.unwrap_or(fs::metadata(path)?.len());
                 let bundle_source = args.bundle_rom.as_deref().unwrap_or(path);
                 if !bundle_source.is_file() {
                     return Err(RomWeaverError::Validation(format!(

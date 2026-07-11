@@ -1,5 +1,6 @@
 import type { ChecksumRomProbe, ChecksumVariant, RomTypeTag } from "./checksum.ts";
 import type { SelectionCandidate } from "./selection.ts";
+import type { SourceRef } from "./source.ts";
 import type { WorkflowWarning } from "./workflow-controller.ts";
 
 type ApplyWorkflowSourceStatus = "empty" | "failed" | "loading" | "needsSelection" | "ready";
@@ -13,6 +14,25 @@ type ApplyWorkflowParentCompression = {
   sourceSize?: number;
   outputSize?: number;
   decompressionTimeMs?: number;
+};
+
+type ApplyWorkflowManifestSource = {
+  /** The already-prepared leaf used by apply (usually an OPFS/VFS path). */
+  source: SourceRef;
+  /** The original dropped source, retained for optional ROM bundling. */
+  originalSource: SourceRef;
+  fileName: string;
+  size?: number;
+};
+
+type ApplyWorkflowManifestRomSource = ApplyWorkflowManifestSource & {
+  checksums?: ApplyWorkflowChecksums;
+  recommendedFormat?: string;
+};
+
+type ApplyWorkflowManifestSources = {
+  rom: ApplyWorkflowManifestRomSource | null;
+  patches: ApplyWorkflowManifestSource[];
 };
 
 type ApplyWorkflowResolvedInput = {
@@ -126,6 +146,7 @@ type ApplyWorkflowPatchState = {
 export type {
   ApplyWorkflowChecksums,
   ApplyWorkflowInputState,
+  ApplyWorkflowManifestSources,
   ApplyWorkflowParentCompression,
   ApplyWorkflowPatchState,
   ApplyWorkflowResolvedInput,

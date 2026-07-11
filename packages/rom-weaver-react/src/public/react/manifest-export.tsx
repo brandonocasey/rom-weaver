@@ -1,10 +1,10 @@
 import { useCallback, useRef, useState } from "react";
-import { getPatchFileBytes, getPatchFileCleanup, getPatchFileExternalSource } from "../../lib/input/binary-service.ts";
-import { prepareInputFile } from "../../lib/input/input-preparation-service.ts";
-import { triggerBrowserDownload } from "../../platform/browser/browser-download.ts";
 import { browserRuntime } from "../../platform/browser/workflow-runtime.ts";
+import { createVfsFileRef } from "../../storage/vfs/source-ref.ts";
+import type { ApplyWorkflowManifestSources } from "../../types/apply-workflow.ts";
 import type { ManifestHeaderMode, ParsedManifestCreateResult } from "../../types/manifest.ts";
 import type { SourceRef } from "../../types/source.ts";
+import type { PublicOutput } from "../../types/workflow-runtime-types.ts";
 import { ROM_WEAVER_CREATE_CONTAINER_FORMATS } from "../../wasm/generated/rom-weaver-format-metadata.ts";
 import { getBinarySourceListStableIds } from "./input-session-helpers.ts";
 import type { BinarySource } from "./patcher-form.ts";
@@ -13,12 +13,9 @@ import type { ManifestPatchMeta } from "./use-manifest-apply-session.ts";
 import { getReactBinarySourceFileName } from "./workflow-adapters.ts";
 
 /**
- * The apply form's manifest export flow collects per-patch metadata and ROM
- * checks from the live session, then runs `manifest create` over its files.
- * Patch sources are resolved to their extracted leaves first, so a bundle
- * carries the actual patch files rather than the archives they arrived in.
- * The emitted rw.json (or the bundle archive) goes straight to the browser
- * download path.
+ * The apply form's manifest export flow reuses the leaves and metadata already
+ * prepared by the live session. That keeps export out of the ingest/extract/
+ * apply pipeline and keeps large outputs path-backed until download.
  */
 
 /** General-purpose multi-file archives the bundle output can be packed as. */
@@ -46,7 +43,7 @@ type ManifestExportRow = {
   header?: ManifestHeaderMode;
 };
 
-type ManifestExportSources = { inputs: BinarySource[]; patches: BinarySource[] };
+type ManifestExportSources = ApplyWorkflowManifestSources;
 
 type ManifestExportProgress = { label?: string; percent?: number | null };
 const CHECK_ALGORITHMS = ["crc32", "md5", "sha1"] as const;
@@ -104,6 +101,7 @@ type UseManifestExportOptions = {
   /** Originating per-patch metadata (name/label/description round-trips). */
   manifestMetaById: ReadonlyMap<string, ManifestPatchMeta>;
   initialName?: string;
+  ready: boolean;
   onComplete?: (result: ParsedManifestCreateResult) => void;
 };
 
@@ -129,6 +127,7 @@ const useManifestExport = ({
   disabledPatchIds,
   manifestMetaById,
   initialName,
+  ready,
   onComplete,
 }: UseManifestExportOptions) => {
   const [open, setOpen] = useState(false);
@@ -143,20 +142,19 @@ const useManifestExport = ({
   const [progress, setProgress] = useState<ManifestExportProgress | null>(null);
   // The sources captured when the dialog opened, so the export run stays aligned with its rows even
   // if the bench changes underneath the open dialog.
-  const sourcesRef = useRef<ManifestExportSources>({ inputs: [], patches: [] });
+  const sourcesRef = useRef<ManifestExportSources>({ patches: [], rom: null });
 
   const openDialog = useCallback(() => {
     const sources = getSessionSources();
     const items = getStackItems();
-    const ids = getBinarySourceListStableIds(sources.patches);
-    sourcesRef.current = { inputs: sources.inputs.slice(), patches: sources.patches.slice() };
+    const ids = getBinarySourceListStableIds(sources.patches.map((patch) => patch.originalSource as BinarySource));
+    sourcesRef.current = { patches: sources.patches.slice(), rom: sources.rom };
     setRows(
       sources.patches.map((patch, index) => {
         const id = ids[index] || "";
         const meta = id ? manifestMetaById.get(id) : undefined;
         const item = items[index];
-        const sourceName = getReactBinarySourceFileName(patch, `patch-${index + 1}.bin`);
-        const fileName = item?.fileName?.trim() || sourceName;
+        const fileName = item?.fileName?.trim() || patch.fileName || `patch-${index + 1}.bin`;
         const archiveFileName = item?.archiveFileName?.trim();
         const headerChoice = item?.headerChoice;
         // Toggled-off patches export as `optional`; a manifest session's locked
@@ -179,9 +177,8 @@ const useManifestExport = ({
     );
     // Auto-name: the originating manifest session's name, else the ROM file
     // name (else the first patch's) without its extension.
-    const romName = sources.inputs[0] ? getReactBinarySourceFileName(sources.inputs[0], "") : "";
-    const firstPatchName =
-      items[0]?.fileName || (sources.patches[0] ? getReactBinarySourceFileName(sources.patches[0], "") : "");
+    const romName = sources.rom?.fileName || "";
+    const firstPatchName = items[0]?.fileName || sources.patches[0]?.fileName || "";
     setName(initialName || stripFileExtension(romName) || stripFileExtension(firstPatchName));
     setFormat(MANIFEST_BUNDLE_FORMATS[0] || MANIFEST_ONLY_FORMAT);
     setBundleRom(false);
@@ -213,16 +210,27 @@ const useManifestExport = ({
     const create = browserRuntime.manifest?.create;
     const exportName = getName?.().trim() || name;
     const sources = getSessionSources();
-    const { inputs, patches } = sources;
-    if (!(create && patches.length)) return;
+    sourcesRef.current = { patches: sources.patches.slice(), rom: sources.rom };
+    const { rom, patches } = sources;
+    if (!create) {
+      setError("Manifest export is not available in this runtime");
+      return;
+    }
+    if (!rom) {
+      setError("A staged ROM is required to export a manifest");
+      return;
+    }
+    if (!patches.length) {
+      setError("At least one staged patch is required to export a manifest");
+      return;
+    }
     const items = getStackItems();
-    const ids = getBinarySourceListStableIds(patches);
+    const ids = getBinarySourceListStableIds(patches.map((patch) => patch.originalSource as BinarySource));
     const exportRows: ManifestExportRow[] = patches.map((patch, index) => {
       const id = ids[index] || "";
       const meta = id ? manifestMetaById.get(id) : undefined;
       const item = items[index];
-      const sourceName = getReactBinarySourceFileName(patch, `patch-${index + 1}.bin`);
-      const fileName = item?.fileName?.trim() || sourceName;
+      const fileName = item?.fileName?.trim() || patch.fileName || `patch-${index + 1}.bin`;
       const archiveFileName = item?.archiveFileName?.trim();
       const headerChoice = item?.headerChoice;
       const checks = Object.entries(meta?.inputChecks?.checksums || {})
@@ -249,86 +257,10 @@ const useManifestExport = ({
     setError("");
     setPhase("preparing");
     setProgress(null);
-    // Step-based determinate progress: each prepare/chain/hash/write stage
-    // advances one tick, so the export bar moves instead of sitting
-    // indeterminate for the whole run. The bundle branch's tick count is an
-    // estimate (its hash/compress steps are conditional) - the cap keeps the
-    // bar from reaching 100% before the export actually finishes.
-    const wantsBundleRom = bundleRom && format !== MANIFEST_ONLY_FORMAT;
-    const totalSteps = (inputs[0] ? 1 : 0) + patches.length * 2 + (wantsBundleRom ? 2 : 0) + 2;
-    let doneSteps = 0;
-    const stepProgress = (label: string) => {
-      setProgress({ label, percent: Math.min(99, (doneSteps / totalSteps) * 100) });
-      doneSteps += 1;
-    };
-    const cleanups: Array<() => Promise<void> | void> = [];
-    // Resolve a session source to its patch/ROM leaf so bundles carry the
-    // actual file, not the archive it arrived in. Degrades to the original
-    // source when the leaf cannot be materialized. Only leaves the resolver
-    // actually extracted are cleaned up afterwards - a passthrough leaf shares
-    // its backing resources with the live form session.
-    const prepareLeafSource = async (
-      source: BinarySource,
-      role: "rom" | "patch",
-      fallbackFileName: string,
-      selectedArchiveEntry: string | undefined,
-      index: number,
-    ): Promise<{ fileName: string; source: SourceRef }> => {
-      try {
-        const prepared = await prepareInputFile(source, role, undefined, browserRuntime, selectedArchiveEntry, index);
-        const leaf = prepared.file;
-        if (prepared.wasDecompressed) {
-          const cleanup = getPatchFileCleanup(leaf);
-          if (cleanup) cleanups.push(cleanup);
-        }
-        const fileName = leaf.fileName || fallbackFileName;
-        const external = getPatchFileExternalSource(leaf, fileName);
-        if (external) return { fileName, source: external.source as SourceRef };
-        // Copy into a plain ArrayBuffer-backed view: the leaf bytes may sit in
-        // shared wasm memory, which File() rejects.
-        const bytes = getPatchFileBytes(leaf);
-        const copy = new Uint8Array(new ArrayBuffer(bytes.byteLength));
-        copy.set(bytes);
-        return { fileName, source: new File([copy], fileName) };
-      } catch {
-        return { fileName: fallbackFileName, source: source as SourceRef };
-      }
-    };
+    const stepProgress = (label: string) => setProgress({ label, percent: 0 });
+    const outputs: PublicOutput[] = [];
+    const compressedRomOutputs: PublicOutput[] = [];
     try {
-      const rom = inputs[0];
-      if (rom) stepProgress("Preparing ROM");
-      const romLeaf = rom
-        ? await prepareLeafSource(rom, "rom", getReactBinarySourceFileName(rom, "rom.bin"), undefined, 0)
-        : undefined;
-      const patchLeaves = [];
-      for (const [index, patch] of patches.entries()) {
-        const row = exportRows[index];
-        stepProgress(`Preparing patch · ${index + 1}/${patches.length}`);
-        const fallbackFileName = row?.fileName || getReactBinarySourceFileName(patch, `patch-${index + 1}.bin`);
-        // When the leaf lives inside an archive, its own file name selects the
-        // matching entry (mirrors the apply workflow's selected-entry routing).
-        const selectedArchiveEntry = row?.archiveFileName ? row.fileName : undefined;
-        patchLeaves.push(await prepareLeafSource(patch, "patch", fallbackFileName, selectedArchiveEntry, index));
-      }
-      if (!romLeaf) throw new Error("A ROM is required to generate patch verification checks");
-      const hashSource = async (source: unknown, fileName: string, label: string) => {
-        const ingest = browserRuntime.ingest?.run;
-        if (!ingest) throw new Error("Checksum generation is not available in this runtime");
-        stepProgress(label);
-        const { result } = await ingest({
-          checksumAlgorithms: [...CHECK_ALGORITHMS],
-          fileName,
-          source,
-        });
-        const asset = result.assets[0];
-        const checksums = asset?.checksums || {};
-        return {
-          checksums: Object.fromEntries(
-            CHECK_ALGORITHMS.map((algorithm) => [algorithm, String(checksums[algorithm] || "").toLowerCase()]),
-          ) as Record<string, string>,
-          recommendedFormat: asset?.recommendedFormat?.toLowerCase(),
-        };
-      };
       // Per-patch entries carry ONLY checks the author specified (typed in the
       // dialog or the patch's Options) - chain intermediates are never hashed
       // or attached. A typed check may not contradict one built into the patch
@@ -342,11 +274,7 @@ const useManifestExport = ({
         }
         return formatChecks(explicit);
       };
-      let chainSource: SourceRef = romLeaf.source;
-      let chainFileName = romLeaf.fileName;
-      const applyPatch = browserRuntime.patch.applyPatch;
-      if (!applyPatch) throw new Error("Patch application is not available in this runtime");
-      for (const [index, leaf] of patchLeaves.entries()) {
+      for (const [index] of patches.entries()) {
         const row = exportRows[index];
         if (!row) continue;
         row.checks = validateRowChecks(row.checks, embeddedChecks(items[index], "in"), `Patch ${index + 1} input`);
@@ -355,68 +283,48 @@ const useManifestExport = ({
           embeddedChecks(items[index], "out"),
           `Patch ${index + 1} output`,
         );
-        stepProgress(`Applying patch chain · ${index + 1}/${patchLeaves.length}`);
-        const output = await applyPatch({
-          input: chainSource,
-          options: {
-            headerModes: [row.header || "auto"],
-            outputName: `manifest-chain-${index + 1}.bin`,
-          },
-          patches: [{ patchFile: leaf.source, patchFileName: leaf.fileName }],
-        });
-        const blob = await browserRuntime.publicOutput.getBlob(output);
-        chainFileName = output.fileName || `manifest-chain-${index + 1}.bin`;
-        chainSource = new File([blob], chainFileName);
-        await output.cleanup?.();
       }
-      // The manifest's endpoints stay self-validating: Rust hashes the ROM for
-      // rom.checks, and the full-chain result is hashed ONCE here for
-      // output.checks.
-      const finalOutputHash = await hashSource(chainSource, chainFileName, "Checksum generation · final output");
-      const finalOutputCheck = formatChecks(finalOutputHash.checksums);
       setPhase("exporting");
       stepProgress("Writing manifest");
       const wantsBundle = format !== MANIFEST_ONLY_FORMAT;
       const bundleFileName = wantsBundle ? `${slugFileName(exportName) || "rw-bundle"}.${format}` : undefined;
       let packagedRom: { fileName: string; source: SourceRef } | undefined;
       if (bundleRom && wantsBundle) {
-        const originalName = rom ? getReactBinarySourceFileName(rom, romLeaf.fileName) : romLeaf.fileName;
+        const originalName = getReactBinarySourceFileName(rom.originalSource as BinarySource, rom.fileName);
         const existingFormat = originalName.split(".").pop()?.toLowerCase();
-        // The ROM is hashed only here, and only for the packaging-format
-        // recommendation - rom.checks come from Rust during create.
-        const recommendedRomFormat =
-          rom && existingFormat && ["chd", "rvz", "z3ds"].includes(existingFormat)
-            ? undefined
-            : (await hashSource(romLeaf.source, romLeaf.fileName, "Checksum generation · ROM")).recommendedFormat;
-        if (rom && existingFormat && ["chd", "rvz", "z3ds"].includes(existingFormat)) {
-          packagedRom = { fileName: originalName, source: rom as SourceRef };
+        const recommendedRomFormat = rom.recommendedFormat?.toLowerCase();
+        if (["chd", "rvz", "z3ds"].includes(existingFormat || "")) {
+          packagedRom = { fileName: originalName, source: rom.originalSource };
         } else if (["chd", "rvz", "z3ds"].includes(recommendedRomFormat || "")) {
           const targetFormat = recommendedRomFormat as "chd" | "rvz" | "z3ds";
           const createCompression = browserRuntime.compression.create;
           if (!createCompression) throw new Error("ROM compression is not available in this runtime");
           stepProgress(`ROM compression · ${targetFormat.toUpperCase()}`);
-          const outputName = `${stripFileExtension(romLeaf.fileName)}.${targetFormat}`;
+          const outputName = `${stripFileExtension(rom.fileName)}.${targetFormat}`;
           const compressed = await createCompression({
-            fileName: romLeaf.fileName,
+            fileName: rom.fileName,
             format: targetFormat,
             outputName,
-            romSpecific: { [targetFormat]: { sourceFileName: romLeaf.fileName } },
-            source: romLeaf.source,
+            romSpecific: { [targetFormat]: { sourceFileName: rom.fileName } },
+            source: rom.source,
           });
           const output = "output" in compressed ? compressed.output : compressed;
-          const blob = await browserRuntime.publicOutput.getBlob(output);
-          packagedRom = { fileName: outputName, source: new File([blob], outputName) };
-          await output.cleanup?.();
+          compressedRomOutputs.push(output);
+          packagedRom = {
+            fileName: outputName,
+            source: createVfsFileRef(output.vfs, output.path, { fileName: outputName }),
+          };
         } else {
-          packagedRom = romLeaf;
+          packagedRom = { fileName: rom.fileName, source: rom.source };
         }
       }
       const outputHeader = getOutputHeader?.();
-      const { result, manifestFile, bundleFile } = await create({
+      const { result, manifestOutput, bundleOutput } = await create({
         ...(bundleFileName ? { bundleFileName } : {}),
         ...(packagedRom ? { bundleRom: packagedRom } : {}),
         ...(exportName.trim() ? { outputName: exportName.trim() } : {}),
-        ...(finalOutputCheck ? { outputCheck: finalOutputCheck } : {}),
+        ...(rom.checksums ? { romChecksums: formatChecks(rom.checksums) } : {}),
+        ...(typeof rom.size === "number" ? { romSize: rom.size } : {}),
         ...(outputHeader === "keep" || outputHeader === "strip" ? { outputHeader } : {}),
         // The ROM is never distributed unless explicitly bundled: its manifest
         // entry keeps checks only and the applying user supplies the file.
@@ -427,11 +335,11 @@ const useManifestExport = ({
             percent: typeof event.percent === "number" ? event.percent : null,
           });
         },
-        patches: patchLeaves.map((leaf, index) => {
+        patches: patches.map((patch, index) => {
           const row = exportRows[index];
           return {
-            fileName: leaf.fileName,
-            source: leaf.source,
+            fileName: patch.fileName,
+            source: patch.source,
             ...(row?.default === false ? { optional: true } : {}),
             ...(row?.name ? { name: row.name } : {}),
             ...(row?.description.trim() ? { description: row.description.trim() } : {}),
@@ -441,16 +349,17 @@ const useManifestExport = ({
             ...(row?.header ? { header: row.header } : {}),
           };
         }),
-        ...(romLeaf ? { rom: { fileName: romLeaf.fileName, source: romLeaf.source } } : {}),
+        rom: { fileName: rom.fileName, source: rom.source },
       });
+      outputs.push(manifestOutput, ...(bundleOutput ? [bundleOutput] : []));
       onComplete?.(result);
-      const downloadFile = wantsBundle && bundleFile ? bundleFile : manifestFile;
-      await triggerBrowserDownload(downloadFile, downloadFile.name);
+      const downloadOutput = wantsBundle && bundleOutput ? bundleOutput : manifestOutput;
+      await browserRuntime.publicOutput.saveAs(downloadOutput);
       setOpen(false);
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : String(runError));
     } finally {
-      await Promise.all(cleanups.map((cleanup) => Promise.resolve(cleanup()).catch(() => undefined)));
+      await Promise.all([...outputs, ...compressedRomOutputs].map((output) => output.dispose().catch(() => undefined)));
       setPhase("idle");
       setProgress(null);
       setBusy(false);
@@ -466,6 +375,7 @@ const useManifestExport = ({
     manifestMetaById,
     name,
     onComplete,
+    ready,
   ]);
 
   return {
@@ -479,6 +389,7 @@ const useManifestExport = ({
     openDialog,
     phase,
     progress,
+    ready,
     rows,
     runExport,
     setBundleRom,

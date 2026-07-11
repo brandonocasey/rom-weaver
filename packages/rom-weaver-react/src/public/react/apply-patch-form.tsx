@@ -3,7 +3,11 @@ import { emitTraceLog } from "../../lib/logging.ts";
 import type { ManifestApplySession } from "../../lib/manifest/manifest-session-model.ts";
 import { ApplyWorkflow, type BrowserApplyResult, type WorkflowProgress } from "../../platform/browser/browser-api.ts";
 import { getErrorCode } from "../../presentation/errors.ts";
-import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
+import type {
+  ApplyWorkflowInputState,
+  ApplyWorkflowManifestSources,
+  ApplyWorkflowPatchState,
+} from "../../types/apply-workflow.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
 import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type { StagedInputInfo } from "./apply-session-types.ts";
@@ -102,6 +106,8 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   const lastPatchOrderRef = useRef("");
   const forcePatchWorkflowRefreshRef = useRef(false);
   const workflowRef = useRef<ApplyWorkflow | null>(null);
+  const preparedWorkflowRef = useRef<ApplyWorkflow | null>(null);
+  const manifestSourcesRef = useRef<ApplyWorkflowManifestSources | null>(null);
   const workflowSyncRef = useRef<ApplyWorkflowSyncState>({
     executionSettingsKey: "",
     inputs: [],
@@ -135,6 +141,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     if (!sameBinarySourceLists(lastInputsRef.current, inputs)) {
       if (lastInputsRef.current.length > 0 && inputs.length === 0) forceInputWorkflowRefreshRef.current = true;
       lastInputsRef.current = inputs.slice();
+      manifestSourcesRef.current = null;
     }
   }, []);
 
@@ -150,6 +157,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
       const isAppend = previousOrder !== "" && patchOrder.startsWith(`${previousOrder}|`);
       if (!isAppend) forcePatchWorkflowRefreshRef.current = true;
       lastPatchOrderRef.current = patchOrder;
+      manifestSourcesRef.current = null;
     }
   }, []);
 
@@ -230,6 +238,8 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   const resetWorkflow = useCallback(() => {
     const workflow = workflowRef.current;
     workflowRef.current = null;
+    preparedWorkflowRef.current = null;
+    manifestSourcesRef.current = null;
     forceInputWorkflowRefreshRef.current = false;
     workflowSyncRef.current = { executionSettingsKey: "", inputs: [], patches: [], preparationSettingsKey: "" };
     workflowOutputOverridesKeyRef.current = "";
@@ -319,6 +329,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
       setResolvedOutputCompression(getApplyOutputCompression(snapshot, null));
       setResolvedOutputNameForSnapshot(snapshot, getAutomaticApplyOutputName(snapshot, null, []));
       const workflow = getWorkflow();
+      preparedWorkflowRef.current = workflow;
       prepareHandlersRef.current = handlers;
       const handleProgress = (event: WorkflowProgress) => handlers.onProgress?.(event);
       workflow.on("progress", handleProgress);
@@ -473,6 +484,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
 
         const input = workflow.getInput();
         const patches = workflow.getPatches();
+        manifestSourcesRef.current = workflow.getManifestExportSources();
         const checksums = input?.checksums || null;
         // Post-stage, the controller's output state is the authoritative resolved name + format
         // (it owns the auto-naming, including the disc-name special-casing, and the manual overrides
@@ -793,6 +805,8 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           },
         },
         async ({ input: stagedInput, workflow }) => {
+          preparedWorkflowRef.current = workflow;
+          manifestSourcesRef.current = workflow.getManifestExportSources();
           const infos = toStagedInputInfos(stagedInput, input.inputs);
           if (!input.patches.length) {
             const implicitPatchSources = workflow.getPatchSources().filter(isReactBinarySource);
@@ -848,6 +862,8 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           },
         },
         async ({ input: stagedInput, patches, workflow }) => {
+          preparedWorkflowRef.current = workflow;
+          manifestSourcesRef.current = workflow.getManifestExportSources();
           const inputLabelById = new Map(
             toStagedInputInfos(stagedInput, input.inputs).map((entry) => [entry.id || "", entry.fileName || "Input"]),
           );
@@ -1048,15 +1064,39 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
 
   // "Export manifest…" (output card secondary action): snapshots the current
   // session's files + enablement into an rw.json (or everything-bundle .zip).
+  const stagedManifestSources = (preparedWorkflowRef.current || workflowRef.current)?.getManifestExportSources();
+  const manifestExportReady =
+    (!!stagedManifestSources?.rom && stagedManifestSources.patches.length > 0) ||
+    (!!manifestSourcesRef.current?.rom && manifestSourcesRef.current.patches.length > 0);
   const manifestExport = useManifestExport({
     disabledPatchIds,
     getName: () => resolvedOutputController.getState().displayFileName,
     getOutputHeader: () => resolvedOutputController.getState().outputHeader,
-    getSessionSources: () => ({ inputs: lastInputsRef.current, patches: currentPatchesRef.current }),
+    getSessionSources: (): ApplyWorkflowManifestSources => {
+      const workflowSources = (preparedWorkflowRef.current || workflowRef.current)?.getManifestExportSources();
+      if (workflowSources?.rom || workflowSources?.patches.length) return workflowSources;
+      if (manifestSourcesRef.current?.rom || manifestSourcesRef.current?.patches.length)
+        return manifestSourcesRef.current;
+      return {
+        patches: currentPatchesRef.current.map((source, index) => ({
+          fileName: getReactBinarySourceFileName(source, `patch-${index + 1}.bin`),
+          originalSource: source,
+          source,
+        })),
+        rom: lastInputsRef.current[0]
+          ? {
+              fileName: getReactBinarySourceFileName(lastInputsRef.current[0], "rom.bin"),
+              originalSource: lastInputsRef.current[0],
+              source: lastInputsRef.current[0],
+            }
+          : null,
+      };
+    },
     getStackItems: () => resolvedStackController.getState().items,
     initialName:
       activeManifestSession?.name || resolvedOutputController.getState().displayFileName || "rom-weaver-manifest",
     manifestMetaById,
+    ready: manifestExportReady,
     ...(props.onManifestExportComplete ? { onComplete: props.onManifestExportComplete } : {}),
   });
 

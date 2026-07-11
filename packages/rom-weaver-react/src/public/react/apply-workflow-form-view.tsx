@@ -463,6 +463,7 @@ function ApplyWorkflowFormView({
     format: string;
     phase: "idle" | "preparing" | "exporting";
     progress: { label?: string; percent?: number | null } | null;
+    ready: boolean;
     runExport: () => Promise<void>;
     setBundleRom: (value: boolean) => void;
     setFormat: (value: string) => void;
@@ -900,7 +901,13 @@ function ApplyWorkflowFormView({
                 {manifestExport ? (
                   <button
                     className="btn ghost slim"
-                    disabled={manifestExport.busy || outputState.disabled || !romInputs.length || !patches.length}
+                    disabled={
+                      manifestExport.busy ||
+                      outputState.disabled ||
+                      !manifestExport.ready ||
+                      !romInputs.length ||
+                      !patches.length
+                    }
                     id="rom-weaver-button-export-manifest"
                     onClick={() => void manifestExport.runExport()}
                     type="button"

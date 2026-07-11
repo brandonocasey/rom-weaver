@@ -872,8 +872,9 @@ const invokeRomWeaverManifestParseWorker = async (
 };
 
 // Write an rw.json manifest (and optional everything-bundle archive) from staged session files via
-// the `manifest create` command. ROM checks are computed from the actual file by
-// Rust; the per-patch metadata arrays are index-aligned with `patchPaths` (or empty).
+// the `manifest create` command. Cached ROM checks are forwarded when available;
+// Rust hashes only as a compatibility fallback. Per-patch metadata arrays are
+// index-aligned with `patchPaths` (or empty).
 const invokeRomWeaverManifestCreateWorker = async (
   input: {
     bundlePath?: string;
@@ -884,6 +885,8 @@ const invokeRomWeaverManifestCreateWorker = async (
     /** Expected final-output checksums once the full chain is applied ("algo=hex", comma-separable). */
     outputCheck?: string;
     outputHeader?: ManifestHeaderMode;
+    romChecksums?: string;
+    romSize?: number;
     outputName?: string;
     outputPath: string;
     patchDescriptions?: string[];
@@ -938,6 +941,8 @@ const invokeRomWeaverManifestCreateWorker = async (
     ...(bundleRomPath ? { bundle_rom: bundleRomPath } : {}),
     ...(input.outputName ? { output_name: input.outputName } : {}),
     ...(input.outputHeader && input.outputHeader !== "auto" ? { output_header: input.outputHeader } : {}),
+    ...(input.romChecksums ? { rom_checksums: [input.romChecksums] } : {}),
+    ...(typeof input.romSize === "number" ? { rom_size: input.romSize } : {}),
     ...(outputCheck ? { output_check: [outputCheck] } : {}),
     ...(patchNames ? { patch_name: patchNames } : {}),
     ...(patchDescriptions ? { patch_description: patchDescriptions } : {}),

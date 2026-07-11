@@ -22,6 +22,7 @@ import { configureBrowserSourcePrimitives } from "../../storage/browser/browser-
 import {
   createRuntimeOutputFromBytes,
   createRuntimeOutputFromSource,
+  createRuntimeOutputFromVfs,
   getRuntimeOutputStorage,
   readRuntimeOutputBlob,
 } from "../../storage/vfs/runtime-output.ts";
@@ -35,7 +36,7 @@ import { WORKER_OPFS_MOUNTPOINT } from "../../workers/shared/worker-storage/stor
 import { triggerBrowserDownload } from "./browser-download.ts";
 import { createBrowserRuntimeVfsIo } from "./browser-runtime-vfs.ts";
 import { createBrowserArchiveRuntime } from "./workflow-runtime-archive.ts";
-import { createBrowserChdRuntime } from "./workflow-runtime-chd.ts";
+import { createBrowserChdRuntime, stripPrimaryChdTrackSuffix } from "./workflow-runtime-chd.ts";
 import { createBrowserDiscFormatsRuntime } from "./workflow-runtime-disc-formats.ts";
 import { browserVfs } from "./workflow-runtime-vfs-cleanup.ts";
 
@@ -132,7 +133,9 @@ const createBrowserIngestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime[
                     .catch(() => undefined),
                 ...(asset.cueText ? { cueText: asset.cueText } : {}),
                 ...(asset.discGroupId ? { discGroupId: asset.discGroupId } : {}),
-                fileName: asset.fileName,
+                // Rebase a split CD's primary track ("Game (Track 1).bin" -> "Game.bin") to match the
+                // descend/extract runtimes, which strip the same suffix; ingest emits the raw name.
+                fileName: asset.trackNumber === 1 ? stripPrimaryChdTrackSuffix(asset.fileName) : asset.fileName,
                 filePath: asset.path,
                 ...(asset.gdiText ? { gdiText: asset.gdiText } : {}),
                 romType: romTypeFromEmittedFile({
@@ -179,8 +182,8 @@ const createBrowserIngestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime[
   },
 });
 
-// Read a small staged/emitted OPFS file back into a plain heap `File` (manifest leaves and the
-// emitted rw.json / bundle are patch-scale, so a full in-memory copy is fine here).
+// Manifest parsing hands extracted members to the normal drop pipeline, so those
+// small leaves still need a browser File. Manifest creation never uses this path.
 const readBrowserVfsFileAsHeapFile = async (filePath: string, fileName: string): Promise<File> => {
   const stat = await browserVfs.stat(filePath);
   if (!stat) throw new Error(`Manifest file is not available: ${filePath}`);
@@ -212,6 +215,8 @@ const createBrowserManifestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntim
     patches,
     outputName,
     outputHeader,
+    romChecksums,
+    romSize,
     outputCheck,
     bundleFileName,
     noBundleRom,
@@ -271,6 +276,8 @@ const createBrowserManifestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntim
           logLevel,
           ...(noBundleRom ? { noBundleRom: true } : {}),
           ...(outputCheck ? { outputCheck } : {}),
+          ...(romChecksums ? { romChecksums } : {}),
+          ...(typeof romSize === "number" ? { romSize } : {}),
           ...(outputHeader ? { outputHeader } : {}),
           ...(outputName ? { outputName } : {}),
           outputPath,
@@ -288,16 +295,21 @@ const createBrowserManifestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntim
         onProgress,
         onLog,
       );
-      const manifestFile = await readBrowserVfsFileAsHeapFile(
+      const manifestOutput = await createRuntimeOutputFromVfs(
+        browserVfs,
         result.manifestPath,
         getPathBaseName(result.manifestPath, "rw.json"),
+        { cleanup: () => browserVfs.remove(result.manifestPath).catch(() => undefined) },
       );
-      const bundleFile = result.bundlePath
-        ? await readBrowserVfsFileAsHeapFile(result.bundlePath, getPathBaseName(result.bundlePath, "rw-bundle.zip"))
+      const bundleOutput = result.bundlePath
+        ? await createRuntimeOutputFromVfs(
+            browserVfs,
+            result.bundlePath,
+            getPathBaseName(result.bundlePath, "rw-bundle.zip"),
+            { cleanup: () => browserVfs.remove(result.bundlePath as string).catch(() => undefined) },
+          )
         : undefined;
-      await browserVfs.remove(result.manifestPath).catch(() => undefined);
-      if (result.bundlePath) await browserVfs.remove(result.bundlePath).catch(() => undefined);
-      return { ...(bundleFile ? { bundleFile } : {}), manifestFile, result };
+      return { ...(bundleOutput ? { bundleOutput } : {}), manifestOutput, result };
     } finally {
       await Promise.all(staged.map((source) => source.cleanup().catch(() => undefined)));
     }

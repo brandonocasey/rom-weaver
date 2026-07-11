@@ -828,6 +828,52 @@ fn manifest_create_computes_checks_and_aligns_metadata() {
 }
 
 #[test]
+fn manifest_create_uses_cached_rom_checks_and_size() {
+    let temp = setup_temp_dir();
+    let rom = write_manifest_rom(&temp, "game.bin");
+    let patch = write_offset_ips(&temp, "main.ips", 0, 0xAA);
+    let manifest_out = temp.child("rw.json");
+    let cached_crc = "deadbeef";
+    let cached_md5 = "00112233445566778899aabbccddeeff";
+    let cached_sha1 = "00112233445566778899aabbccddeeff00112233";
+
+    run_json_events(
+        &[
+            "manifest",
+            "create",
+            "--rom",
+            rom.to_str().expect("path"),
+            "--rom-checksums",
+            &format!("crc32={cached_crc},md5={cached_md5},sha1={cached_sha1}"),
+            "--rom-size",
+            "999",
+            "--patch",
+            patch.to_str().expect("path"),
+            "--output",
+            manifest_out.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    let events = run_json_events(
+        &[
+            "manifest",
+            "parse",
+            manifest_out.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+    let rom_checks =
+        &events.last().expect("terminal")["details"]["manifest"]["manifest"]["rom"]["checks"];
+    assert_eq!(rom_checks["checksums"]["crc32"], cached_crc);
+    assert_eq!(rom_checks["checksums"]["md5"], cached_md5);
+    assert_eq!(rom_checks["checksums"]["sha1"], cached_sha1);
+    assert_eq!(rom_checks["size"], 999);
+}
+
+#[test]
 fn manifest_create_gzip_output_parses_back() {
     let temp = setup_temp_dir();
     let main = write_offset_ips(&temp, "main.ips", 0, 0xAA);

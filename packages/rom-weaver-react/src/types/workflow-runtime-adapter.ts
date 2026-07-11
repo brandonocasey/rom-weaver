@@ -424,8 +424,7 @@ type WorkflowRuntimeManifest = {
     signal?: AbortSignal;
   }) => Promise<{ result: ParsedManifestParseResult; extractedFiles: Map<string, File> }>;
   // Write an rw.json manifest (and optional everything-bundle .zip) from the current session's
-  // files. ROM checks are computed by Rust from the staged bytes; the emitted file(s) are
-  // read back as plain `File`s for the browser download path and removed from staging.
+  // files. Cached ROM checks avoid a second hash; outputs stay as VFS-backed runtime outputs.
   create?: (input: {
     rom?: { source: unknown; fileName?: string };
     /** Optional packaged ROM payload; checks still come from the logical `rom`. */
@@ -446,6 +445,10 @@ type WorkflowRuntimeManifest = {
     }>;
     outputName?: string;
     outputHeader?: ManifestHeaderMode;
+    /** Cached checksums from apply staging; Rust hashes only when this is absent. */
+    romChecksums?: string;
+    /** Cached prepared ROM byte size. */
+    romSize?: number;
     /** Expected final-output checksums once the full chain is applied ("algo=hex", comma-separable). */
     outputCheck?: string;
     /** Bundle file name (base name; its extension picks the archive format, e.g. "pack.7z"). Absent = manifest only. */
@@ -456,7 +459,11 @@ type WorkflowRuntimeManifest = {
     onLog?: (log: WorkflowRuntimeLog) => void;
     onProgress?: (progress: WorkflowRuntimeProgress) => void;
     signal?: AbortSignal;
-  }) => Promise<{ result: ParsedManifestCreateResult; manifestFile: File; bundleFile?: File }>;
+  }) => Promise<{
+    result: ParsedManifestCreateResult;
+    manifestOutput: PublicOutput;
+    bundleOutput?: PublicOutput;
+  }>;
 };
 
 type WorkflowRuntimeTrim = {

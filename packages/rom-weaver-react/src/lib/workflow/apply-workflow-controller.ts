@@ -1,7 +1,13 @@
-import type { ApplyWorkflowInputState, ApplyWorkflowPatchState } from "../../types/apply-workflow.ts";
+import { createVfsFileRef, isVfsFileRef } from "../../storage/vfs/source-ref.ts";
+import type {
+  ApplyWorkflowInputState,
+  ApplyWorkflowManifestSources,
+  ApplyWorkflowPatchState,
+} from "../../types/apply-workflow.ts";
 import type { ApplyResult } from "../../types/public.ts";
 import type { CandidateSelectionRequest, SelectionCandidate } from "../../types/selection.ts";
 import type { ApplySettings, CompressionFormat } from "../../types/settings.ts";
+import type { SourceRef } from "../../types/source.ts";
 import type { WorkflowOptions } from "../../types/workflow-controller.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { ApplyWorkflowOptions, PatchInput } from "../../types/workflow-runtime-types.ts";
@@ -10,7 +16,7 @@ import { getPatchProbeRequirements } from "../apply/patch-apply-service.ts";
 import { patchWorkflowDeps, runApplyWorkflow } from "../apply/workflow.ts";
 import { isCompressionFormat } from "../compression/container-format-registry.ts";
 import { RomWeaverError, toRomWeaverError, withAbortSignal } from "../errors.ts";
-import { getPatchFileBlob, getPatchFileBytes } from "../input/binary-service.ts";
+import { getPatchFileBlob, getPatchFileBytes, getPatchFileExternalSource } from "../input/binary-service.ts";
 import type { InputAsset, InputParentCompression, PreparedSidecarPatch } from "../input/input-assets.ts";
 import {
   getPatchLeafFileForSelection,
@@ -69,7 +75,7 @@ import {
 } from "./base-workflow-controller.ts";
 import { cloneCandidate, cloneValue, getSourceFileName, getSourceSize, isRecord } from "./controller-utils.ts";
 import type { StagedRomSourceController } from "./staged-rom-source.ts";
-import { cloneChecksumRomProbe } from "./staged-source-checksums.ts";
+import { cloneChecksumRomProbe, getPrimaryInputAsset } from "./staged-source-checksums.ts";
 
 /** Side-channel chain attached to a fanned-out leaf patch File so a re-stage (which sees only the
  * raw patch, not its parent archive) can still render the archive-nesting "extract section". */
@@ -147,6 +153,60 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
 
   getPatchSources(): TSource[] {
     return this.patches.map((patch) => patch.source);
+  }
+
+  /**
+   * Export the exact leaves that staging prepared for apply. Keeping this on the controller avoids
+   * a second archive extraction/ingest pass when the user exports a manifest immediately afterward.
+   */
+  getManifestExportSources(): ApplyWorkflowManifestSources {
+    const session = this.inputSession;
+    const selectedOwner = this.getSelectedInputOwner();
+    const inputStage = selectedOwner || session?.view;
+    const primaryAsset = getPrimaryInputAsset(inputStage?.preparedInputAssets || []);
+    const sourceForFile = (file: PatchFileInstance | undefined, fallback: TSource, fileName: string): SourceRef => {
+      const external = file ? getPatchFileExternalSource(file, fileName) : undefined;
+      if (!external) return fallback as unknown as SourceRef;
+      if (isVfsFileRef(external.source)) {
+        return createVfsFileRef(external.source.vfs, external.source.path, {
+          fileName,
+          mediaType: external.source.mediaType,
+        });
+      }
+      return { fileName, size: external.size, source: external.source };
+    };
+    const rom =
+      primaryAsset && inputStage
+        ? {
+            fileName: primaryAsset.file.fileName || primaryAsset.fileName || inputStage.state.fileName || "rom.bin",
+            originalSource: inputStage.source as unknown as SourceRef,
+            size: primaryAsset.size,
+            source: sourceForFile(
+              primaryAsset.file,
+              inputStage.source,
+              primaryAsset.file.fileName || primaryAsset.fileName,
+            ),
+            ...(inputStage.state.checksums ? { checksums: { ...inputStage.state.checksums } } : {}),
+            ...(inputStage.state.romType?.recommendedFormat
+              ? { recommendedFormat: inputStage.state.romType.recommendedFormat }
+              : {}),
+          }
+        : null;
+    const patches = this.patches.map((stage) => {
+      const selectedCandidate = stage.state.candidates.find(
+        (candidate) => candidate.id === stage.state.selectedCandidateId,
+      );
+      const selectedFileName =
+        selectedCandidate && "fileName" in selectedCandidate ? selectedCandidate.fileName : undefined;
+      const fileName = stage.preparedPatchFile?.fileName || selectedFileName || stage.state.fileName || "patch.bin";
+      return {
+        fileName,
+        originalSource: stage.source as unknown as SourceRef,
+        size: stage.preparedPatchFile?.fileSize || stage.state.size,
+        source: sourceForFile(stage.preparedPatchFile, stage.source, fileName),
+      };
+    });
+    return { patches, rom };
   }
 
   async setInput(
