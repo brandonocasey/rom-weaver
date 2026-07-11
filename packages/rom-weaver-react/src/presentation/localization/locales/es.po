@@ -20,6 +20,11 @@ msgstr ""
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+#~ msgid "ui.hero.browser"
+#~ msgstr "directamente en tu navegador"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.info.threads"
 msgstr "«auto» usa el número de núcleos que reporta el navegador: {n}."
 
@@ -145,8 +150,23 @@ msgstr "Añade tus archivos en {loc} arriba para empezar"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.hero.local"
+msgstr "Todo local, en tu navegador — tus archivos nunca salen de tu equipo."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.opt.sizeGrowth"
 msgstr "Permitir crecimiento de tamaño (registro de truncado)"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.createThesis2"
+msgstr "y genera un parche para compartir —"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.trimThesis2"
+msgstr "y redúcelos para almacenarlos —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -172,6 +192,11 @@ msgstr "Aplicando parche"
 #: src/presentation/localization/messages.ts
 msgid "ui.info.romInput"
 msgstr "Los archivos se descomprimen y el ROM se localiza solo; los contenedores chd/rvz/z3ds se desempaquetan antes de parchear; los archivos anidados se resuelven recursivamente. Se admite el softpatch de RetroArch."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.accent"
+msgstr "a velocidad nativa"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -285,6 +310,11 @@ msgstr "Códecs"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.hero.createThesis"
+msgstr "Compara una ROM original con una modificada,"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.stage.compress"
 msgstr "Comprimir"
 
@@ -357,6 +387,11 @@ msgstr "Hoja cue"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.viewCurrent"
 msgstr "Actual"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.thesis"
+msgstr "Descomprime, parchea y recomprime ROM hacks,"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -835,6 +870,11 @@ msgstr "Opciones"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.hero.thesis2"
+msgstr "o exporta paquetes de ROM hacks para compartir —"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.step.original"
 msgstr "Original"
 
@@ -1105,6 +1145,11 @@ msgstr "Reintentar"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.hero.toolsThesis"
+msgstr "Revierte una ROM parcheada a su volcado original,"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.step.rom"
 msgstr "ROM"
 
@@ -1217,6 +1262,11 @@ msgstr "preparando"
 #: src/presentation/localization/messages.ts
 msgid "error.STORAGE_UNAVAILABLE"
 msgstr "El almacenamiento no está disponible."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.trimThesis"
+msgstr "Elimina relleno y bloques basura de tus volcados de ROM,"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -1412,6 +1462,11 @@ msgstr "Actualización lista"
 #: src/presentation/localization/messages.ts
 msgid "ui.picker.use"
 msgstr "Usar selección"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.toolsThesis2"
+msgstr "usando los datos de deshacer del propio parche —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

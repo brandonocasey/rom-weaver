@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { createLogger } from "../../../../lib/logging.ts";
 import { markDropReceived } from "../../../../lib/perf/op-perf-marks.ts";
+import type { MessageId } from "../../../../presentation/localization/catalog.ts";
+import { useUiLocalizer } from "../../settings-context.tsx";
 import { DropZone, InfoPopover, StepSection } from "./layout.tsx";
 
 /**
@@ -19,8 +21,11 @@ type SupportedFileGroup = {
 };
 
 type UnifiedDropZoneProps = {
-  label: ReactNode;
-  labelCoarse?: ReactNode;
+  /** Compact add-row label once files are staged. */
+  addLabel: ReactNode;
+  /** Hero (empty-state) drop instruction; `heroLabelCoarse` is the touch variant. */
+  heroLabel: ReactNode;
+  heroLabelCoarse: ReactNode;
   big?: boolean;
   disabled?: boolean;
   accept?: string;
@@ -30,10 +35,11 @@ type UnifiedDropZoneProps = {
   info?: ReactNode;
   /** Full per-bucket extension support, listed in the hero ticker and info popover. */
   supported?: readonly SupportedFileGroup[];
+  /** Per-workflow thesis lines for the empty-state lead (defaults to the apply copy). */
+  lead?: { line1: MessageId; line2: MessageId };
   /** Step number/title; the inputs step is 0x01 in every workflow. */
   num?: string;
   title?: ReactNode;
-  hintCoarse?: ReactNode;
   /** Fires at the drop gesture, before files enter routing or staging. */
   onDropStart?: () => void;
   onFiles: (files: File[]) => void;
@@ -43,8 +49,12 @@ type UnifiedDropZoneProps = {
 };
 
 const UnifiedDropZone = ({
+  addLabel,
   afterDropZone,
+  heroLabel,
+  heroLabelCoarse,
   info,
+  lead = { line1: "ui.hero.thesis", line2: "ui.hero.thesis2" },
   num = "0x01",
   onDropStart,
   onFiles,
@@ -52,6 +62,8 @@ const UnifiedDropZone = ({
   title = "Inputs",
   ...dropZoneProps
 }: UnifiedDropZoneProps) => {
+  const localizer = useUiLocalizer();
+  const big = Boolean(dropZoneProps.big);
   const emit = (files: File[]) => {
     // Open the perceived-latency window: a drop/selection just began, measured against the first wasm
     // progress event (see lib/perf/op-perf-marks.ts → romweaver:before-start).
@@ -79,17 +91,40 @@ const UnifiedDropZone = ({
       </InfoPopover>
     ) : undefined;
   return (
-    <StepSection
-      className={
-        dropZoneProps.big ? "is-input is-empty unified-drop-step unified-drop-step--hero" : "is-input unified-drop-step"
-      }
-      info={popover}
-      num={num}
-      title={title}
-    >
-      <DropZone {...dropZoneProps} bare formats={formats} multiple onDropStart={onDropStart} onFiles={emit} />
-      {afterDropZone}
-    </StepSection>
+    <>
+      {/* the empty page opens with the product thesis, above the 0x01 step */}
+      {big ? (
+        <div className="hero-lead">
+          <span className="lead-title">
+            <span className="lead-line">{localizer.message(lead.line1)}</span>{" "}
+            <span className="lead-line">
+              {localizer.message(lead.line2)} <span className="lead-accent">{localizer.message("ui.hero.accent")}</span>
+              .
+            </span>
+          </span>
+          <span className="lead-sub mono">{localizer.message("ui.hero.local")}</span>
+        </div>
+      ) : null}
+      <StepSection
+        className={big ? "is-input is-empty unified-drop-step unified-drop-step--hero" : "is-input unified-drop-step"}
+        info={popover}
+        num={num}
+        title={title}
+      >
+        <DropZone
+          {...dropZoneProps}
+          bare
+          formats={formats}
+          hintCoarse={big ? undefined : localizer.message("ui.drop.tap")}
+          label={big ? heroLabel : addLabel}
+          labelCoarse={big ? heroLabelCoarse : undefined}
+          multiple
+          onDropStart={onDropStart}
+          onFiles={emit}
+        />
+        {afterDropZone}
+      </StepSection>
+    </>
   );
 };
 

@@ -1,8 +1,10 @@
 import type { ComponentProps, ReactNode } from "react";
+import { GhostSteps } from "./components/ds/ghost-steps.tsx";
 import { ConfirmDialog } from "./components/ds/modal.tsx";
 import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
+import { useUiLocalizer } from "./settings-context.tsx";
 
 /**
  * Presentational shell for the trim workflow. The stateful TrimPatchForm
@@ -27,18 +29,28 @@ type TrimPatchFormViewModel = {
   sourceStep: ComponentProps<typeof WorkflowRomInputStep>;
 };
 
-const TrimPatchFormView = ({ confirm, dialog, dropZone, output, sourceEmpty, sourceStep }: TrimPatchFormViewModel) => (
-  <section className="panel" id="trim-builder-container">
-    <UnifiedDropZone {...dropZone} />
-    {sourceEmpty ? null : (
-      <>
-        <WorkflowRomInputStep {...sourceStep} />
-        <WorkflowOutputStep {...output} />
-      </>
-    )}
-    <ConfirmDialog {...confirm} />
-    {dialog}
-  </section>
-);
+const TrimPatchFormView = ({ confirm, dialog, dropZone, output, sourceEmpty, sourceStep }: TrimPatchFormViewModel) => {
+  const localizer = useUiLocalizer();
+  return (
+    <section className="panel" id="trim-builder-container">
+      <UnifiedDropZone {...dropZone} lead={{ line1: "ui.hero.trimThesis", line2: "ui.hero.trimThesis2" }} />
+      {sourceEmpty ? (
+        <GhostSteps
+          steps={[
+            { num: "0x02", title: localizer.message("ui.step.rom") },
+            { num: "0x03", title: localizer.message("ui.step.output") },
+          ]}
+        />
+      ) : (
+        <>
+          <WorkflowRomInputStep {...sourceStep} />
+          <WorkflowOutputStep {...output} />
+        </>
+      )}
+      <ConfirmDialog {...confirm} />
+      {dialog}
+    </section>
+  );
+};
 
 export { TrimPatchFormView, type TrimPatchFormViewModel };

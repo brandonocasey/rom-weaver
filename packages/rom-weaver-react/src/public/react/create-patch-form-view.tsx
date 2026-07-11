@@ -1,7 +1,9 @@
 import type { ComponentProps, ReactNode } from "react";
+import { GhostSteps } from "./components/ds/ghost-steps.tsx";
 import { UnifiedDropZone } from "./components/ds/unified-drop-zone.tsx";
 import { WorkflowOutputStep } from "./components/ds/workflow-output-step.tsx";
 import { WorkflowRomInputStep } from "./components/ds/workflow-rom-input-step.tsx";
+import { useUiLocalizer } from "./settings-context.tsx";
 
 /**
  * Presentational shell for the create-patch workflow. The stateful
@@ -36,35 +38,46 @@ const CreatePatchFormView = ({
   output,
   sourcesEmpty,
   swap,
-}: CreatePatchFormViewModel) => (
-  <section className="panel" id="patch-builder-container">
-    <UnifiedDropZone {...dropZone} />
-    {sourcesEmpty ? null : (
-      <>
-        <WorkflowRomInputStep {...originalStep} />
-        {swap ? (
-          <div className="swap-row">
-            <button
-              className="btn swap-btn"
-              disabled={swap.disabled}
-              id="patch-builder-button-swap-sources"
-              onClick={swap.onSwap}
-              title="Swap original and modified"
-              type="button"
-            >
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M16 4.5 20 8.5l-4 4M20 8.5H7M8 19.5l-4-4 4-4M4 15.5h13" />
-              </svg>
-              Swap
-            </button>
-          </div>
-        ) : null}
-        <WorkflowRomInputStep {...modifiedStep} />
-        <WorkflowOutputStep {...output} />
-      </>
-    )}
-    {dialog}
-  </section>
-);
+}: CreatePatchFormViewModel) => {
+  const localizer = useUiLocalizer();
+  return (
+    <section className="panel" id="patch-builder-container">
+      <UnifiedDropZone {...dropZone} lead={{ line1: "ui.hero.createThesis", line2: "ui.hero.createThesis2" }} />
+      {sourcesEmpty ? (
+        <GhostSteps
+          steps={[
+            { num: "0x02", title: localizer.message("ui.step.original") },
+            { num: "0x03", title: localizer.message("ui.step.modified") },
+            { num: "0x04", title: localizer.message("ui.step.output") },
+          ]}
+        />
+      ) : (
+        <>
+          <WorkflowRomInputStep {...originalStep} />
+          {swap ? (
+            <div className="swap-row">
+              <button
+                className="btn swap-btn"
+                disabled={swap.disabled}
+                id="patch-builder-button-swap-sources"
+                onClick={swap.onSwap}
+                title="Swap original and modified"
+                type="button"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M16 4.5 20 8.5l-4 4M20 8.5H7M8 19.5l-4-4 4-4M4 15.5h13" />
+                </svg>
+                Swap
+              </button>
+            </div>
+          ) : null}
+          <WorkflowRomInputStep {...modifiedStep} />
+          <WorkflowOutputStep {...output} />
+        </>
+      )}
+      {dialog}
+    </section>
+  );
+};
 
 export { CreatePatchFormView, type CreatePatchFormViewModel };

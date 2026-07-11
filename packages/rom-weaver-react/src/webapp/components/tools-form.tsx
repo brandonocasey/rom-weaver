@@ -190,11 +190,14 @@ const ToolsForm = ({
       </nav>
       <div aria-labelledby="tab-tools-ppf-undo" id="panel-tools-ppf-undo" role="tabpanel">
         <UnifiedDropZone
+          addLabel="Replace the patched ROM or PPF patch"
           big={workflowEmpty}
           disabled={busy}
+          heroLabel="Drop or click to add a patched ROM and PPF patch"
+          heroLabelCoarse="Tap to add a patched ROM and PPF patch"
           info={<p>A PPF3 patch must include undo data to restore the original ROM.</p>}
           inputId="tools-input-picker"
-          label={rom || patch ? "Replace the patched ROM or PPF patch" : "Drop a patched ROM and PPF patch"}
+          lead={{ line1: "ui.hero.toolsThesis", line2: "ui.hero.toolsThesis2" }}
           onFiles={stageFiles}
           supported={[
             { extensions: ["rom"], label: "Patched ROMs" },

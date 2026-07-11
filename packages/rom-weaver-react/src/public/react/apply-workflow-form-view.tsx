@@ -13,6 +13,7 @@ import {
 } from "./components/ds/compress-panel.tsx";
 import { FileProgress, InlineProgress, Notice } from "./components/ds/feedback.tsx";
 import { useFlatTransitionFlag } from "./components/ds/flat-transition.ts";
+import { GhostSteps } from "./components/ds/ghost-steps.tsx";
 import { InfoPopover, NeedsInput } from "./components/ds/layout.tsx";
 import { OutputField } from "./components/ds/output-card.tsx";
 import { StageStatus, stageBarValue, stagePercent, stageStatusLabel } from "./components/ds/staging-meta.tsx";
@@ -730,6 +731,7 @@ function ApplyWorkflowFormView({
     <section className={formReady ? "panel form-ready" : "panel"} id="rom-weaver-container">
       <UnifiedDropZone
         accept={fileInputAccept.unifiedApply}
+        addLabel="Replace the ROM or add patches"
         afterDropZone={
           pendingDrops.length ? (
             <div className="cards workflow-file-list" id="rom-weaver-pending-drops">
@@ -747,7 +749,8 @@ function ApplyWorkflowFormView({
           ) : null
         }
         big={workflowEmpty}
-        hintCoarse={workflowEmpty ? undefined : localizer.message("ui.drop.tap")}
+        heroLabel="Drop or click to add ROMs, patches, manifests, or archives"
+        heroLabelCoarse="Tap to add ROMs, patches, manifests, or archives"
         id="rom-weaver-row-unified-drop"
         info={
           <ul className="info-list">
@@ -758,17 +761,19 @@ function ApplyWorkflowFormView({
           </ul>
         }
         inputId="rom-weaver-input-file-unified"
-        label={
-          workflowEmpty
-            ? "Drop or click to add ROMs, patches, manifests, or archives"
-            : "Replace the ROM or add patches"
-        }
-        labelCoarse={workflowEmpty ? "Tap to add ROMs, patches, manifests, or archives" : undefined}
         onDropStart={() => setDropStarted(true)}
         onFiles={handleUnifiedDrop}
         supported={APPLY_SUPPORTED_FILES}
       />
-      {workflowActuallyEmpty ? null : (
+      {workflowActuallyEmpty ? (
+        <GhostSteps
+          steps={[
+            { num: "0x02", title: localizer.message("ui.step.rom") },
+            { num: "0x03", title: localizer.message("ui.step.patches") },
+            { num: "0x04", title: localizer.message("ui.step.apply") },
+          ]}
+        />
+      ) : (
         <>
           <WorkflowRomInputStep
             emptyState={romNeedsInput}

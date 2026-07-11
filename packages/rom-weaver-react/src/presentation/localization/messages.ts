@@ -150,6 +150,28 @@ const MESSAGES: Record<MessageId, MessageDescriptor> = {
   "ui.fault.remedyK": msg({ id: "ui.fault.remedyK", message: "Remedy" }),
   "ui.footer.donate": msg({ id: "ui.footer.donate", message: "Donate" }),
   "ui.gdi.label": msg({ id: "ui.gdi.label", message: "GDI" }),
+  "ui.hero.accent": msg({ id: "ui.hero.accent", message: "at native speed" }),
+  "ui.hero.createThesis": msg({
+    id: "ui.hero.createThesis",
+    message: "Compare an original ROM against a modified one,",
+  }),
+  "ui.hero.createThesis2": msg({ id: "ui.hero.createThesis2", message: "and produce a sharable patch —" }),
+  "ui.hero.local": msg({
+    id: "ui.hero.local",
+    message: "All local, in your browser — files never leave your machine.",
+  }),
+  "ui.hero.thesis": msg({ id: "ui.hero.thesis", message: "Decompress, patch, and recompress ROM hacks," }),
+  "ui.hero.thesis2": msg({ id: "ui.hero.thesis2", message: "or export sharable ROM hack bundles —" }),
+  "ui.hero.toolsThesis": msg({
+    id: "ui.hero.toolsThesis",
+    message: "Revert a patched ROM to its original dump,",
+  }),
+  "ui.hero.toolsThesis2": msg({ id: "ui.hero.toolsThesis2", message: "using the patch's own undo data —" }),
+  "ui.hero.trimThesis": msg({
+    id: "ui.hero.trimThesis",
+    message: "Strip padding and junk blocks from ROM dumps,",
+  }),
+  "ui.hero.trimThesis2": msg({ id: "ui.hero.trimThesis2", message: "and shrink them for storage —" }),
   "ui.info.aria": msg({ id: "ui.info.aria", message: "More info" }),
   "ui.info.chdCd": msg({
     id: "ui.info.chdCd",

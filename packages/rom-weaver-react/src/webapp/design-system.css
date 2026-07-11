@@ -395,13 +395,70 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 
 .rw-app .drop.hero { min-height: 0; gap: 8px; padding: 18px 24px 15px; }
 .rw-app .drop.hero .main { flex-direction: column; gap: 10px; font-size: clamp(.82rem, 2.2vw, 1.08rem); font-weight: 700; white-space: nowrap; }
+/* the hero opens with the product thesis - the page's one headline - and the
+   drop instruction steps down to a supporting line beneath it */
+/* the empty page opens with the product thesis - the one headline - above the
+   0x01 step, spoken in the loom's own voice: the closing clause takes the
+   thread accent (echoing the rom-weaver wordmark) and the privacy line reads
+   as one of the app's mono readout chips, complete with a status dot */
+.rw-app .hero-lead {
+  position: relative; overflow: clip;
+  display: flex; flex-direction: column; gap: 13px; align-items: center;
+  margin: 4px var(--pad) 20px; padding: 28px 24px; text-align: center;
+  border: 1px solid var(--seam); border-radius: var(--r-l);
+  background:
+    radial-gradient(120% 150% at 50% -35%, color-mix(in oklab, var(--thread) 12%, transparent), transparent 62%),
+    var(--plate);
+}
+:root[data-theme="light"] .hero-lead {
+  background:
+    radial-gradient(120% 150% at 50% -35%, color-mix(in oklab, var(--thread) 8%, transparent), transparent 62%),
+    var(--plate);
+}
+/* the loom's weave rises from the banner's lower edge - faint diagonal thread
+   lines drifting slowly through the cloth (the same 45° weave the progress
+   meter runs), fading out before the headline so the type stays crisp */
+.rw-app .hero-lead::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(45deg,
+    color-mix(in oklab, var(--thread) 55%, transparent) 25%, transparent 25% 50%,
+    color-mix(in oklab, var(--thread) 55%, transparent) 50% 75%, transparent 75%);
+  background-size: 18px 18px;
+  opacity: .08;
+  mask-image: linear-gradient(to top, #000, transparent 72%);
+  animation: weave-run 7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .rw-app .hero-lead::before { animation: none; } }
+/* selvage thread pulled across the top edge, fading at the ends */
+.rw-app .hero-lead::after {
+  content: ""; position: absolute; inset-inline: 0; top: 0; height: 2px; pointer-events: none;
+  background: linear-gradient(to right, transparent, var(--thread) 32% 68%, transparent);
+}
+/* copy sits above the woven layers */
+.rw-app .hero-lead > * { position: relative; }
+.rw-app .hero-lead .lead-title { font-size: clamp(1.05rem, 2.6vw, 1.45rem); font-weight: 750; letter-spacing: -.01em; color: var(--ink); text-wrap: balance; }
+/* deliberate two-line headline: each clause holds its own line (still wraps
+   balanced on narrow screens) */
+.rw-app .hero-lead .lead-line { display: block; }
+.rw-app .hero-lead .lead-accent { color: var(--thread-text); }
+.rw-app .hero-lead .lead-sub {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 11px; border: 1px solid var(--seam-soft); border-radius: 99px; background: var(--well);
+  font-size: var(--badge-fs); font-stretch: 86%; letter-spacing: .01em; color: var(--ink-2);
+}
+.rw-app .hero-lead .lead-sub::before {
+  content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%;
+  background: var(--thread-text);
+}
+.rw-app .step.is-input.is-empty .drop.hero .main { font-size: .92rem; font-weight: 600; color: var(--ink-2); }
 .rw-app .drop.hero .main svg {
   width: 21px; height: 21px; box-sizing: content-box; padding: 11px; border-radius: 13px;
   color: var(--thread-text); background: color-mix(in oklab, var(--thread) 13%, transparent);
 }
 .rw-app .drop.hero .formats {
   display: grid; flex: none; gap: 5px; width: min(100%, 34rem); margin-block-start: 2px; overflow: hidden; pointer-events: none;
-  mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+  /* wide fade lanes so pills dissolve instead of clipping mid-pill at the edges */
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
 }
 .rw-app .drop.hero .formats-lane { min-width: 0; overflow: hidden; }
 .rw-app .drop.hero .formats-track { display: flex; gap: 5px; width: max-content; animation: formats-ticker 120s linear infinite; }
@@ -491,12 +548,22 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .step.is-input .drop:not(.hero):hover .main.btnish { color: var(--thread-text); }
 .rw-app .step.is-input .drop:not(.hero) .main.btnish svg { color: var(--thread-text); }
 /* with nothing staged the hero is THE page: a big, obvious drop target that
-   claims most of the viewport, still capped so huge desktop screens don't
-   turn it into a void */
-.rw-app .step.is-input.is-empty .drop.hero { min-height: clamp(260px, 48dvh, 520px); padding-block: 32px; }
+   claims a healthy share of the viewport, capped so the thesis + ghost steps
+   below still fit above the fold */
+.rw-app .step.is-input.is-empty .drop.hero { min-height: clamp(200px, 26dvh, 320px); padding-block: 26px; }
 /* …and the empty bench centers vertically in the workbench instead of hugging
-   the masthead, so the hero sits in the middle of the free space */
-.rw-app .workbench:has(.step.is-input.is-empty) { align-content: center; }
+   the masthead, so the hero sits in the middle of the free space. Scoped to
+   the VISIBLE panel - the inactive mode's form stays mounted (and empty)
+   behind [hidden], and must not vote. */
+.rw-app .workbench:has(.panel.workflow:not([hidden]) .step.is-input.is-empty) { align-content: center; }
+/* while the bench is empty the page reads as a landing, not a form: the
+   workflow card chrome retires and the hero drop surface is the only frame,
+   while the 0x01 header stays and opens the step sequence the ghost steps
+   continue below. Everything returns with the crossfade when files arrive.
+   Per-panel :has so the other (hidden, empty) mode never strips the active
+   form's chrome. */
+.rw-app .panel.workflow:has(.step.is-input.is-empty) { border: 0; background: transparent; box-shadow: none; }
+.rw-app .step.is-input.is-empty .step-body { padding-block-end: 0; }
 
 /* secondary input sections (patches, modified), when empty, don't offer their
    own drop target - they point the user UP to the 0x01 hero. they share the
@@ -516,6 +583,37 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 }
 .rw-app .needs-input svg { width: 16px; height: 16px; flex: none; color: var(--thread-text); }
 .rw-app .needs-input .hexref { color: var(--thread-text); font-weight: 700; letter-spacing: .04em; }
+
+/* ═══ ghost steps ═══
+   faint preview of the stages the bench grows once files land - the empty
+   page shows the whole journey (0x02…), not just the door. Each slot shares
+   the empty-section family (solid seam, thread-tinted fill, rounded frame)
+   with a skeleton name line so it reads as the card it becomes; the steps
+   recede progressively. Purely decorative. */
+.rw-app .ghost-steps { pointer-events: none; user-select: none; }
+.rw-app .ghost-step { border-block-start: 1px solid var(--seam-soft); padding: 12px var(--pad) 16px; }
+/* heads borrow the real .step-num/.step-title type - only layout is local */
+.rw-app .ghost-step-head { display: flex; align-items: baseline; gap: 10px; }
+.rw-app .ghost-step-slot {
+  min-height: 34px; margin-block-start: 10px; padding-inline: 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border: 1px solid var(--seam); border-radius: var(--r-m);
+  background: color-mix(in oklab, var(--thread) 3%, var(--plate-2));
+}
+/* card silhouette: a name line on the left, a badge stub on the right - two
+   marks so the slot reads as the settled card it becomes, not a progress bar */
+.rw-app .ghost-step-slot::before {
+  content: ""; width: clamp(72px, 22%, 138px); height: 8px; flex: none;
+  border-radius: 99px; background: var(--seam);
+}
+.rw-app .ghost-step-slot::after {
+  content: ""; width: 42px; height: 12px; flex: none;
+  border: 1px solid var(--seam); border-radius: 5px;
+  background: var(--well);
+}
+.rw-app .ghost-step:nth-child(1) { opacity: .6; }
+.rw-app .ghost-step:nth-child(2) { opacity: .42; }
+.rw-app .ghost-step:nth-child(3) { opacity: .28; }
 
 /* ═══ file cards ═══ */
 .rw-app .cards { display: flex; flex-direction: column; gap: 13px; }
@@ -1633,8 +1731,15 @@ html.vt-theme .unified-drop-step .drop { view-transition-name: none !important; 
   /* drop surfaces (empty hero AND the compact add-row) + "needs input" directives
      match the cards' 6px inset so 0x01 is the same width as every other section */
   .rw-app .step.is-input .drop, .rw-app .needs-input { margin-inline: 6px; width: calc(100% - 12px); }
-  .rw-app .step.is-input.is-empty .drop.hero { min-height: clamp(220px, 42dvh, 340px); gap: 6px; padding: 16px 12px; }
+  .rw-app .step.is-input.is-empty .drop.hero { min-height: clamp(200px, 34dvh, 300px); gap: 6px; padding: 16px 12px; }
   .rw-app .drop.hero .main { gap: 6px; font-size: clamp(.76rem, 3.5vw, .9rem); white-space: normal; text-wrap: balance; }
+  .rw-app .hero-lead { gap: 9px; margin: 2px 6px 12px; padding: 16px 12px; }
+  /* phones scroll - trim the ghost preview so it hints without eating height;
+     inline padding drops to 0 (like .step-body) so the 6px head/slot insets
+     line the ghosts up with the hero panel and the real cards */
+  .rw-app .ghost-step { padding: 10px 0 14px; }
+  .rw-app .ghost-step-slot { min-height: 36px; margin-inline: 6px; }
+  .rw-app .ghost-step-head { padding-inline: 6px; }
   .rw-app .drop.hero .main svg { padding: 8px; border-radius: 11px; }
   .rw-app .needs-input { min-height: 54px; padding: 10px 14px; gap: 7px; font-size: .78rem; }
   /* the notice shares the same 6px inset as the cards/headers */
