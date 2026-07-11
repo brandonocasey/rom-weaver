@@ -322,7 +322,6 @@ const MESSAGES: Record<MessageId, MessageDescriptor> = {
   "ui.patch.stateOff": msg({ id: "ui.patch.stateOff", message: "Off" }),
   "ui.patch.target": msg({ id: "ui.patch.target", message: "Target" }),
   "ui.patch.toggle": msg({ id: "ui.patch.toggle", message: "Include {name}" }),
-  "ui.patch.undo": msg({ id: "ui.patch.undo", message: "Undo-aware re-apply (revalidates patched blocks)" }),
   "ui.picker.hint": msg({
     id: "ui.picker.hint",
     message: "The archive contains more than one candidate — pick the ones to stage.",
@@ -337,7 +336,6 @@ const MESSAGES: Record<MessageId, MessageDescriptor> = {
   "ui.req.rebuiltGdi": msg({ id: "ui.req.rebuiltGdi", message: "rebuilt gdi" }),
   "ui.req.sizesInOut": msg({ id: "ui.req.sizesInOut", message: "in {in} → out {out}" }),
   "ui.req.targetBlockcheck": msg({ id: "ui.req.targetBlockcheck", message: "target blockcheck" }),
-  "ui.req.undoData": msg({ id: "ui.req.undoData", message: "undo data" }),
   "ui.result.archive": msg({ id: "ui.result.archive", message: "{t} archive" }),
   "ui.result.created": msg({ id: "ui.result.created", message: "Patch created & verified" }),
   "ui.result.done": msg({ id: "ui.result.done", message: "Patched & verified" }),

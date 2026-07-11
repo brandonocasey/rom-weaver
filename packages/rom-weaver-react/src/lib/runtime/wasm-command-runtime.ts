@@ -410,7 +410,6 @@ const invokeRomWeaverPatchApplyWorker = async (
   const validateWithOutputChecksums = normalizePatchValidationChecksumEntries(
     applyOptionRecord?.validateWithOutputChecksums ?? applyOptionRecord?.validate_with_output_checksums,
   );
-  const ppfUndoAware = Boolean(applyOptionRecord?.ppfUndoAware ?? applyOptionRecord?.ppf_undo_aware);
   // One header mode per patch (chain order). The browser resolved the FIRST patch
   // against the staged checksum variants, so entry 0 is always concrete ("keep"/
   // "strip") and suppresses an engine re-hash of the OPFS input; later entries may
@@ -452,7 +451,6 @@ const invokeRomWeaverPatchApplyWorker = async (
     output: outputPath,
     patch_filter: true,
     patches: input.patchFiles.map((patch) => patch.patchFilePath),
-    ...(ppfUndoAware ? { ppf_undo_aware: true } : {}),
     repair_checksum: repairChecksum,
     rom_filter: true,
     ...(threadArg ? { threads: threadArg } : {}),

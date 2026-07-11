@@ -6,7 +6,7 @@ use super::{
     CREATE_THREAD_SCAN_CHUNK_BYTES, FILE_ID_BEGIN_MARKER, FILE_ID_END_MARKER, PPF_HEADER_MIN_SIZE,
     PPF_VALIDATION_BLOCK_SIZE, PPF2_BLOCKCHECK_OFFSET, PpfPatchHandler, PpfVersion,
     collect_ppf_chunk_diff_runs, collect_ppf_chunk_diff_runs_from_bytes, parse_ppf_bytes,
-    parse_ppf_file,
+    parse_ppf_file, undo_ppf,
 };
 use crate::{
     PPF, read_original_modified_chunk,
@@ -334,7 +334,7 @@ fn ppf3_blockcheck_overlap_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>, V3Record) {
 }
 
 #[test]
-fn apply_rejects_re_patch_when_not_undo_aware() {
+fn apply_rejects_re_patch_when_blockcheck_does_not_match() {
     let temp = TestDir::new();
     let input_path = temp.child("input.bin");
     let patch_path = temp.child("update.ppf");
@@ -367,109 +367,34 @@ fn apply_rejects_re_patch_when_not_undo_aware() {
 }
 
 #[test]
-fn apply_undo_aware_re_patches_already_patched_input() {
+fn undo_ppf_restores_the_original_rom() {
     let temp = TestDir::new();
     let input_path = temp.child("input.bin");
     let patch_path = temp.child("update.ppf");
-    let output_path = temp.child("output.bin");
+    let applied_path = temp.child("applied.bin");
+    let restored_path = temp.child("restored.bin");
 
-    let (_original, already_patched, block, record) = ppf3_blockcheck_overlap_fixture();
-    fs::write(&input_path, &already_patched).expect("fixture");
-    fs::write(
-        &patch_path,
-        build_ppf3_patch("PPF3 overlap", 1, true, true, Some(&block), vec![record]),
-    )
-    .expect("fixture");
-
-    let handler = PpfPatchHandler::new(&PPF);
-    let report = handler
-        .apply(
-            &PatchApplyRequest {
-                input: input_path,
-                patches: vec![patch_path],
-                output: output_path.clone(),
-            },
-            &test_context_with_threads(&temp, 1).with_ppf_undo_aware(true),
-        )
-        .expect("undo-aware re-apply should succeed");
-
-    // Output is the fully patched ROM (idempotent for byte writes).
-    assert_eq!(fs::read(output_path).expect("output"), already_patched);
-    assert!(report.label.contains("undo-aware re-apply"));
-}
-
-#[test]
-fn apply_undo_aware_is_noop_for_clean_input() {
-    let temp = TestDir::new();
-    let input_path = temp.child("input.bin");
-    let patch_path = temp.child("update.ppf");
-    let output_path = temp.child("output.bin");
-
-    let (original, already_patched, block, record) = ppf3_blockcheck_overlap_fixture();
+    let (original, _already_patched, block, record) = ppf3_blockcheck_overlap_fixture();
     fs::write(&input_path, &original).expect("fixture");
     fs::write(
         &patch_path,
-        build_ppf3_patch("PPF3 overlap", 1, true, true, Some(&block), vec![record]),
+        build_ppf3_patch("PPF3 undo", 1, true, true, Some(&block), vec![record]),
     )
     .expect("fixture");
 
-    let handler = PpfPatchHandler::new(&PPF);
-    let report = handler
+    PpfPatchHandler::new(&PPF)
         .apply(
             &PatchApplyRequest {
                 input: input_path,
-                patches: vec![patch_path],
-                output: output_path.clone(),
+                patches: vec![patch_path.clone()],
+                output: applied_path.clone(),
             },
-            &test_context_with_threads(&temp, 1).with_ppf_undo_aware(true),
-        )
-        .expect("undo-aware apply on clean input should succeed");
-
-    // Clean input patches normally and nothing is reconstructed.
-    assert_eq!(fs::read(output_path).expect("output"), already_patched);
-    assert!(!report.label.contains("undo-aware re-apply"));
-}
-
-#[test]
-fn apply_undo_aware_notes_already_patched_without_blockcheck() {
-    let temp = TestDir::new();
-    let input_path = temp.child("input.bin");
-    let patch_path = temp.child("update.ppf");
-    let output_path = temp.child("output.bin");
-
-    // Already-patched input (offset 2 holds "XYZ", the patch data; undo is "cde").
-    fs::write(&input_path, b"abXYZfghij").expect("fixture");
-    fs::write(
-        &patch_path,
-        build_ppf3_patch(
-            "PPF3 no blockcheck",
-            0,
-            false,
-            true,
-            None,
-            vec![V3Record {
-                offset: 2,
-                data: b"XYZ".to_vec(),
-                undo: b"cde".to_vec(),
-            }],
-        ),
-    )
-    .expect("fixture");
-
-    let handler = PpfPatchHandler::new(&PPF);
-    let report = handler
-        .apply(
-            &PatchApplyRequest {
-                input: input_path,
-                patches: vec![patch_path],
-                output: output_path.clone(),
-            },
-            &test_context_with_threads(&temp, 1).with_ppf_undo_aware(true),
+            &test_context_with_threads(&temp, 1),
         )
         .expect("apply");
+    undo_ppf(&applied_path, &patch_path, &restored_path).expect("undo");
 
-    assert_eq!(fs::read(output_path).expect("output"), b"abXYZfghij");
-    assert!(report.label.contains("input already patched"));
+    assert_eq!(fs::read(restored_path).expect("restored output"), original);
 }
 
 #[test]
@@ -1237,52 +1162,6 @@ fn validate_rejects_when_blockcheck_region_runs_past_input_eof() {
             .to_string()
             .contains("validation block read exceeded input length"),
         "error: {error}"
-    );
-}
-
-#[test]
-fn apply_undo_aware_clean_input_without_blockcheck_leaves_no_note() {
-    let temp = TestDir::new();
-    let input_path = temp.child("input.bin");
-    let patch_path = temp.child("update.ppf");
-    let output_path = temp.child("output.bin");
-
-    // Clean (unpatched) input: offset 2 holds the undo bytes ("cde"), not the patch data.
-    fs::write(&input_path, b"abcdefghij").expect("fixture");
-    fs::write(
-        &patch_path,
-        build_ppf3_patch(
-            "PPF3 clean no blockcheck",
-            0,
-            false,
-            true,
-            None,
-            vec![V3Record {
-                offset: 2,
-                data: b"XYZ".to_vec(),
-                undo: b"cde".to_vec(),
-            }],
-        ),
-    )
-    .expect("fixture");
-
-    let handler = PpfPatchHandler::new(&PPF);
-    let report = handler
-        .apply(
-            &PatchApplyRequest {
-                input: input_path,
-                patches: vec![patch_path],
-                output: output_path.clone(),
-            },
-            &test_context_with_threads(&temp, 1).with_ppf_undo_aware(true),
-        )
-        .expect("apply");
-
-    assert_eq!(fs::read(output_path).expect("output"), b"abXYZfghij");
-    assert!(
-        !report.label.contains("already patched"),
-        "label: {}",
-        report.label
     );
 }
 

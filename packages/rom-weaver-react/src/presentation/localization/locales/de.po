@@ -1393,16 +1393,6 @@ msgstr "Trimmen schreibt ein neues, kleineres ROM — das ist dauerhaft. Deine O
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.req.undoData"
-msgstr "Undo-Daten"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.patch.undo"
-msgstr "Undo-fähiges Wiederanwenden (prüft gepatchte Blöcke erneut)"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
 msgid "ui.update.dialogTitle"
 msgstr "Update"
 

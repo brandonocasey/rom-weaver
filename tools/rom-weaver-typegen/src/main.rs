@@ -8,9 +8,9 @@ use rom_weaver_app::{
     ManifestPatchSource, ManifestRom, ManifestSourceKind, ManifestSourceRef, MatchSidecarsCommand,
     N64ByteOrder, PatchApplyCommand, PatchApplyHeaderMode, PatchApplyOutputHeaderMode,
     PatchCommands, PatchCreateCandidatesCommand, PatchCreateCommand, PatchDescriptor,
-    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, RomWeaverManifest,
-    RomWeaverRunOutputOptions, RomWeaverRunRequest, TrimCommand, compression_metadata,
-    patch_create_format_policy_metadata,
+    PatchValidateCommand, PlanExtractBatchCommand, PpfUndoCommand, ProbeCommand, RomWeaverManifest,
+    RomWeaverRunOutputOptions, RomWeaverRunRequest, ToolsCommands, TrimCommand,
+    compression_metadata, patch_create_format_policy_metadata,
 };
 use rom_weaver_containers::{
     ArchiveExtensionAlias, ArchiveFormatMetadata, ContainerDefaultOutputMetadata,
@@ -191,6 +191,8 @@ fn render_types() -> String {
         export_decl::<PatchCreateCandidatesCommand>(&config),
         export_decl::<PatchCreateCommand>(&config),
         export_decl::<PatchCommands>(&config),
+        export_decl::<PpfUndoCommand>(&config),
+        export_decl::<ToolsCommands>(&config),
         export_decl::<ManifestChecks>(&config),
         export_decl::<ManifestRom>(&config),
         export_decl::<ManifestPatchEntry>(&config),

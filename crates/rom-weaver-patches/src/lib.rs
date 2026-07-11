@@ -43,6 +43,7 @@ use ninja1::Ninja1PatchHandler;
 use pat::{PatPatchHandler, has_pat_record_signature};
 use pmsr::PmsrPatchHandler;
 use ppf::PpfPatchHandler;
+pub use ppf::undo_ppf;
 use rom_weaver_core::{
     FormatDescriptor, OperationContext, OperationFamily, OperationReport, PatchCapabilities,
     PatchHandler, Result, RomWeaverError, ThreadExecution, ValidationCodeError,

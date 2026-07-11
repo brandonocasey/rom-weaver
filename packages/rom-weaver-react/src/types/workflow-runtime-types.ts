@@ -76,8 +76,6 @@ type PatchApplyUserOptions = {
   validateInputChecksum?: string;
   /** Raw hex checksum to validate the patched output after apply (algorithm auto-detected by length). */
   validateOutputChecksum?: string;
-  /** Enable PPF undo-aware apply for this patch (only meaningful for PPF patches). */
-  ppfUndo?: boolean;
   /** ROM copier-header handling: `remove` strips the detected header before apply and
    * re-adds it after. `undefined`/`keep` patches the input bytes as-is. */
   header?: "keep" | "strip";

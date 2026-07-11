@@ -590,7 +590,6 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
   async setPatchOption(
     index: number,
     option: {
-      ppfUndo?: boolean;
       validateInputChecksum?: string;
       validateOutputChecksum?: string;
       header?: "keep" | "strip";
@@ -599,7 +598,6 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
     return this.mutate("setPatchOption", async () => {
       const stage = this.patches[index];
       if (!stage) throw new RomWeaverError("INVALID_INPUT", `Patch ${index + 1} was not found`);
-      if ("ppfUndo" in option) stage.state.ppfUndo = option.ppfUndo;
       if ("validateInputChecksum" in option) {
         const value = option.validateInputChecksum?.trim();
         stage.state.validateInputChecksum = value ? value : undefined;
@@ -1302,7 +1300,6 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
         header:
           patch.state.headerChoice ??
           (patch.state.headerResolution?.decided ? patch.state.headerResolution.mode : undefined),
-        ppfUndo: patch.state.requirements?.format === "PPF" ? patch.state.ppfUndo !== false : false,
         validateInputChecksum: patch.state.validateInputChecksum,
         validateOutputChecksum: patch.state.validateOutputChecksum,
       })),

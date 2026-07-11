@@ -29,6 +29,7 @@ export type {
   PatchCreateCandidatesCommand,
   PatchCreateCommand,
   PatchValidateCommand,
+  PpfUndoCommand,
   ProbeCommand,
   RomWeaverCommand,
   RomWeaverProgressEvent,
@@ -37,6 +38,7 @@ export type {
   RomWeaverRunOutputOptions,
   RomWeaverRunRequest,
   ThreadBudget,
+  ToolsCommands,
   TrimCommand,
 } from "./generated/rom-weaver-rust-types.d.ts";
 

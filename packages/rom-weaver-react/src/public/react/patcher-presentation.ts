@@ -85,10 +85,6 @@ type PatchStackItemState = {
   targetValue?: string;
   /** Detected patch format (e.g. "PPF", "IPS"); drives format-specific options. */
   format?: string;
-  /** Whether the PPF undo-aware checkbox should be shown (PPF patches only). */
-  showPpfUndo?: boolean;
-  /** Current PPF undo-aware toggle; `undefined` means the default (on for PPF). */
-  ppfUndo?: boolean;
   /** Whether the header choice should be shown (strippable header + checksums undecided). */
   showHeaderOption?: boolean;
   /** Current header handling override; `undefined` means the default (keep). */

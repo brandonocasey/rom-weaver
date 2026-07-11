@@ -230,7 +230,6 @@ type RuntimePatchApplyOptions = Partial<Omit<PatchApplyCommand, "input" | "outpu
   n64ByteOrder?: PatchApplyCommand["n64_byte_order"];
   outputExtension?: string | null | undefined;
   outputName?: string | null | undefined;
-  ppfUndoAware?: PatchApplyCommand["ppf_undo_aware"];
   removeHeader?: boolean;
   requireInputChecksumMatch?: boolean;
   validateWithChecksums?: PatchApplyCommand["validate_with_checksums"];

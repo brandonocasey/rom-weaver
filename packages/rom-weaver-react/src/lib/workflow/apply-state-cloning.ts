@@ -101,7 +101,6 @@ const clonePatchState = (
   id: state.id,
   parentCompressions: parentCompressions.map((entry) => ({ ...entry })),
   patchValidation: clonePatchValidation(state.patchValidation),
-  ppfUndo: state.ppfUndo,
   requirements: clonePatchRequirements(state.requirements),
   selectedCandidateId: state.selectedCandidateId,
   size: state.size,

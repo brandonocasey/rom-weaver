@@ -38,6 +38,7 @@ impl CliApp {
                 ManifestCommands::Create(args) => self.run_manifest_create(*args),
                 ManifestCommands::Parse(args) => self.run_manifest_parse(args),
             },
+            Commands::Tools(command) => self.run_tools(command),
             Commands::PlanExtractBatch(args) => self.run_plan_extract_batch(args),
             Commands::MatchSidecars(args) => self.run_match_sidecars(args),
         }
@@ -57,6 +58,7 @@ impl CliApp {
             Commands::Patch(PatchCommands::Create(_)) => "patch-create",
             Commands::Manifest(ManifestCommands::Create(_)) => "manifest-create",
             Commands::Manifest(ManifestCommands::Parse(_)) => "manifest-parse",
+            Commands::Tools(ToolsCommands::PpfUndo(_)) => "tools-ppf-undo",
             Commands::PlanExtractBatch(_) => "plan-extract-batch",
             Commands::MatchSidecars(_) => "match-sidecars",
         }

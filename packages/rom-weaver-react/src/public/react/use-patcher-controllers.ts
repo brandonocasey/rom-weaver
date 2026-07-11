@@ -221,7 +221,6 @@ const usePatchStackController = (context: PatchStackControllerContext) => {
       setPatchOption: async (
         index: number,
         option: {
-          ppfUndo?: boolean;
           validateInputChecksum?: string;
           validateOutputChecksum?: string;
           header?: "keep" | "strip";

@@ -50,7 +50,6 @@ type StagedInputInfo = {
   checksumPreflightMismatch?: boolean;
   sourceChecksumState?: string;
   format?: string;
-  ppfUndo?: boolean;
   validateInputChecksum?: string;
   validateOutputChecksum?: string;
   /** User header override from the Options drawer (`undefined` = default keep). */
@@ -184,7 +183,6 @@ type LocalApplyPatchFormSessionOptions = Pick<
     input: ApplyWorkflowStageSnapshot,
     patchIndex: number,
     option: {
-      ppfUndo?: boolean;
       validateInputChecksum?: string;
       validateOutputChecksum?: string;
       header?: "keep" | "strip";

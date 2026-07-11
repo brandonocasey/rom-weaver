@@ -34,7 +34,6 @@ impl CliApp {
             n64_byte_order = ?args.n64_byte_order,
             ignore_checksum_validation = args.ignore_checksum_validation,
             validate_with_output_checksums = args.validate_with_output_checksums.len(),
-            ppf_undo_aware = args.ppf_undo_aware,
             code_count = args.codes.len(),
             code_system = ?args.code_system,
             code_kind = %args.code_kind,
@@ -130,7 +129,6 @@ impl CliApp {
             n64_byte_order,
             ignore_checksum_validation,
             validate_with_output_checksums,
-            ppf_undo_aware,
             codes,
             code_system,
             code_kind,
@@ -141,14 +139,13 @@ impl CliApp {
         let input_kind_filter =
             Self::archive_entry_kind_filter(rom_filter || discover_implicit_patches, false);
         let patch_kind_filter = Self::archive_entry_kind_filter(false, patch_filter);
-        let context = self
-            .context(threads)
-            .with_patch_checksum_validation(if ignore_checksum_validation {
-                PatchChecksumValidation::Ignore
-            } else {
-                PatchChecksumValidation::Strict
-            })
-            .with_ppf_undo_aware(ppf_undo_aware);
+        let context =
+            self.context(threads)
+                .with_patch_checksum_validation(if ignore_checksum_validation {
+                    PatchChecksumValidation::Ignore
+                } else {
+                    PatchChecksumValidation::Strict
+                });
         let probe_threads = context.single_thread_execution();
         let fail = |stage: &str, message: String| {
             OperationReport::failed(

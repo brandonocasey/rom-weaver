@@ -1393,16 +1393,6 @@ msgstr "Recortar escribe un ROM nuevo y más pequeño — es permanente. Tu arch
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.req.undoData"
-msgstr "datos de deshacer"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.patch.undo"
-msgstr "Reaplicación con deshacer (revalida los bloques parcheados)"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
 msgid "ui.update.dialogTitle"
 msgstr "Actualización"
 

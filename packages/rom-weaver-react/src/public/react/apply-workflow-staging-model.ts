@@ -229,7 +229,6 @@ const toPatchStageInfo = (
     id: patch.id,
     order,
     parentCompressions: patch.parentCompressions,
-    ppfUndo: patch.ppfUndo,
     // Only surface a header choice when there is actually a strippable header AND the
     // required checksums didn't already decide what to do with it.
     showHeaderOption: !!patch.headerResolution && !patch.headerResolution.decided,

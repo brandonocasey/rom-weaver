@@ -46,7 +46,6 @@ type PatcherStackController = StoreController<PatchStackState> & {
   setPatchOption?: (
     index: number,
     option: {
-      ppfUndo?: boolean;
       validateInputChecksum?: string;
       validateOutputChecksum?: string;
       header?: "keep" | "strip";

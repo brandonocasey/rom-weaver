@@ -971,7 +971,6 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
       input: ApplyWorkflowSessionInput,
       patchIndex: number,
       option: {
-        ppfUndo?: boolean;
         validateInputChecksum?: string;
         validateOutputChecksum?: string;
         header?: "keep" | "strip";

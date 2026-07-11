@@ -337,7 +337,6 @@ const useLocalApplyPatchFormSession = ({
     const info = patchInfoByKey[getPatchKey(patch)];
     return {
       ...(info?.headerChoice === "keep" || info?.headerChoice === "strip" ? { header: info.headerChoice } : {}),
-      ...(typeof info?.ppfUndo === "boolean" ? { ppfUndo: info.ppfUndo } : {}),
       ...(info?.validateInputChecksum ? { validateInputChecksum: info.validateInputChecksum } : {}),
       ...(info?.validateOutputChecksum ? { validateOutputChecksum: info.validateOutputChecksum } : {}),
     };

@@ -742,16 +742,6 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "ppf-undo-aware",
-            help = "For PPF patches that carry undo data, reconstruct the original validation region so an already-patched ROM can be safely re-applied (no-op for a clean ROM)"
-        )
-    )]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub ppf_undo_aware: bool,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
             long = "code",
             action = ArgAction::Append,
             help = "Cheat code (Game Genie or Pro Action Replay/GameShark) to bake into the input ROM; repeat --code for each. Codes are decoded against the input ROM and applied as a synthetic patch."
@@ -1528,4 +1518,30 @@ impl ManifestCreateCommand {
         );
         self.patch_specs = specs;
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+pub struct PpfUndoCommand {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(value_name = "ROM", help = "ROM produced by applying the PPF patch")
+    )]
+    pub rom: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(value_name = "PPF", help = "PPF3 patch containing undo data")
+    )]
+    pub patch: PathBuf,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short,
+            long,
+            value_name = "PATH",
+            help = "Output path for the restored ROM"
+        )
+    )]
+    pub output: PathBuf,
 }

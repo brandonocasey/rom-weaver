@@ -75,9 +75,6 @@ pub struct PatchPolicy {
     /// Whether patch apply/validate enforces the patch's declared input/output
     /// checksums strictly or ignores mismatches.
     pub patch_checksum_validation: PatchChecksumValidation,
-    /// When enabled, PPF apply uses the patch's stored undo data to reconstruct
-    /// any validation region a prior application already overwrote.
-    pub ppf_undo_aware: bool,
     /// Secondary-compression mode for xdelta/vcdiff patch create.
     pub xdelta_secondary_mode: XdeltaSecondaryMode,
     /// Per-operation override for the patch-apply in-memory size cap (bytes). `None` uses the
@@ -92,7 +89,6 @@ impl Default for PatchPolicy {
             extract_checksum_algorithms: Vec::new(),
             extract_checksum_rom_only: false,
             patch_checksum_validation: PatchChecksumValidation::Strict,
-            ppf_undo_aware: false,
             xdelta_secondary_mode: XdeltaSecondaryMode::default(),
             patch_apply_in_memory_limit: None,
         }
@@ -244,20 +240,6 @@ impl OperationContext {
 
     pub fn with_patch_checksum_validation(mut self, validation: PatchChecksumValidation) -> Self {
         self.patch_policy.patch_checksum_validation = validation;
-        self
-    }
-
-    /// When enabled, PPF apply uses the patch's stored undo data to reconstruct the
-    /// original bytes of any validation region that has already been overwritten by a
-    /// prior application of the same patch. This lets a PPF3 patch (with a blockcheck
-    /// validation block) be safely re-applied to an already-patched ROM. For a clean,
-    /// unpatched ROM it is a strict no-op.
-    pub fn ppf_undo_aware(&self) -> bool {
-        self.patch_policy.ppf_undo_aware
-    }
-
-    pub fn with_ppf_undo_aware(mut self, enabled: bool) -> Self {
-        self.patch_policy.ppf_undo_aware = enabled;
         self
     }
 

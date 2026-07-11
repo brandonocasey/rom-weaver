@@ -188,7 +188,6 @@ const PatchOptions = ({
 }) => {
   const setOption = patchStack.setPatchOption;
   const [invalidChecks, setInvalidChecks] = useState<Record<string, boolean>>({});
-  const ppfUndoChecked = item.ppfUndo !== false;
   const stripHeaderChecked = item.headerChoice === "strip";
   const headerLabel = item.headerStrippedBytes
     ? `Strip ${item.headerStrippedBytes}-byte ROM header before patching`
@@ -319,33 +318,20 @@ const PatchOptions = ({
           );
         })}
       </div>
-      {item.showPpfUndo || item.showHeaderOption ? (
+      {item.showHeaderOption ? (
         <div className="optschecks">
-          {item.showPpfUndo ? (
-            <label className="popt" title="Safely re-apply over an already-patched ROM using the PPF undo data">
-              <input
-                checked={ppfUndoChecked}
-                disabled={item.optionsDisabled}
-                onChange={(event) => setOption?.(index, { ppfUndo: event.currentTarget.checked })}
-                type="checkbox"
-              />
-              <span>PPF undo (safe re-apply)</span>
-            </label>
-          ) : null}
-          {item.showHeaderOption ? (
-            <label
-              className="popt"
-              title="Patch the headerless bytes when this patch was authored against a ROM without its copier header. Whether the header appears on the final output is the output card's separate ROM header setting (auto keeps emulator-required headers, drops copier junk)."
-            >
-              <input
-                checked={stripHeaderChecked}
-                disabled={item.optionsDisabled}
-                onChange={(event) => setOption?.(index, { header: event.currentTarget.checked ? "strip" : "keep" })}
-                type="checkbox"
-              />
-              <span>{headerLabel}</span>
-            </label>
-          ) : null}
+          <label
+            className="popt"
+            title="Patch the headerless bytes when this patch was authored against a ROM without its copier header. Whether the header appears on the final output is the output card's separate ROM header setting (auto keeps emulator-required headers, drops copier junk)."
+          >
+            <input
+              checked={stripHeaderChecked}
+              disabled={item.optionsDisabled}
+              onChange={(event) => setOption?.(index, { header: event.currentTarget.checked ? "strip" : "keep" })}
+              type="checkbox"
+            />
+            <span>{headerLabel}</span>
+          </label>
         </div>
       ) : null}
     </Drawer>

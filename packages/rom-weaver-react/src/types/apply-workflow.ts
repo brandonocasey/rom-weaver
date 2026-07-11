@@ -107,8 +107,6 @@ type ApplyWorkflowPatchState = {
   validateInputChecksum?: string;
   /** User-pasted checksum (raw hex) to validate the patched output after apply. */
   validateOutputChecksum?: string;
-  /** User toggle for PPF undo-aware apply; `undefined` means "default on for PPF patches". */
-  ppfUndo?: boolean;
   /** Computed header decision for this patch against its target ROM (absent when the ROM
    * has no strippable copier header). */
   headerResolution?: {

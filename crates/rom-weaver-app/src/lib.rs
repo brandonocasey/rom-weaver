@@ -87,6 +87,8 @@ pub enum Commands {
     Patch(PatchCommands),
     #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
     Manifest(ManifestCommands),
+    #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
+    Tools(ToolsCommands),
     #[cfg_attr(
         not(target_arch = "wasm32"),
         command(
@@ -167,6 +169,18 @@ pub enum ManifestCommands {
         )
     )]
     Parse(ManifestParseCommand),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Subcommand))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+#[serde(rename_all = "kebab-case", tag = "type", content = "args")]
+#[cfg_attr(
+    feature = "typescript-types",
+    ts(rename_all = "kebab-case", tag = "type", content = "args")
+)]
+pub enum ToolsCommands {
+    PpfUndo(PpfUndoCommand),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1015,6 +1029,7 @@ mod patch_apply_disc;
 mod patch_commands;
 mod patch_create;
 mod patch_validate;
+mod tools;
 pub use patch_commands::{PatchCreateFormatPolicyMetadata, patch_create_format_policy_metadata};
 
 #[path = "patch_filename_checksum.rs"]
@@ -1049,7 +1064,7 @@ pub use command_args::{
     ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, ManifestCreateCommand,
     ManifestCreatePatchSpec, ManifestParseCommand, MatchSidecarsCommand, PatchApplyCommand,
     PatchCreateCandidatesCommand, PatchCreateCommand, PatchValidateCommand,
-    PlanExtractBatchCommand, ProbeCommand, TrimCommand,
+    PlanExtractBatchCommand, PpfUndoCommand, ProbeCommand, TrimCommand,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -1393,16 +1393,6 @@ msgstr "Trimming writes a new, smaller ROM — this is permanent. Your original 
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.req.undoData"
-msgstr "undo data"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.patch.undo"
-msgstr "Undo-aware re-apply (revalidates patched blocks)"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
 msgid "ui.update.dialogTitle"
 msgstr "Update"
 
