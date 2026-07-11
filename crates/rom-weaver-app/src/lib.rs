@@ -1046,9 +1046,7 @@ mod command_args;
 pub use command_args::{
     ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, ManifestCreateCommand,
     ManifestCreatePatchSpec, ManifestParseCommand, PatchApplyCommand, PatchCreateCommand,
-    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
-    ManifestCreatePatchSpec, ManifestParseCommand, PatchApplyCommand, PatchCreateCommand,
-    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
+    PatchValidateCommand, PlanExtractBatchCommand, PpfUndoCommand, ProbeCommand, TrimCommand,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

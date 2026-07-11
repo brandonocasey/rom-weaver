@@ -8,9 +8,9 @@ use rom_weaver_app::{
     ManifestPatchSource, ManifestRom, ManifestSourceKind, ManifestSourceRef, N64ByteOrder,
     PatchApplyCommand, PatchApplyHeaderMode, PatchApplyOutputHeaderMode, PatchCommands,
     PatchCreateCommand, PatchDescriptor, PatchValidateCommand, PlanExtractBatchCommand,
-    ProbeCommand, RomWeaverManifest, RomWeaverRunOutputOptions, RomWeaverRunRequest, ToolsCommands,
-    TrimCommand,
-    compression_metadata, patch_create_format_policy_metadata,
+    PpfUndoCommand, ProbeCommand, RomWeaverManifest, RomWeaverRunOutputOptions,
+    RomWeaverRunRequest, ToolsCommands, TrimCommand, compression_metadata,
+    patch_create_format_policy_metadata,
 };
 use rom_weaver_containers::{
     ArchiveExtensionAlias, ArchiveFormatMetadata, ContainerDefaultOutputMetadata,

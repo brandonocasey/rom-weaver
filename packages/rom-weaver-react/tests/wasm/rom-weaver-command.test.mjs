@@ -22,6 +22,7 @@ describe("rom-weaver command boundary helpers", () => {
       "trim",
       "patch",
       "manifest",
+      "tools",
       "plan-extract-batch",
     ]);
     expect(KNOWN_PATCH_COMMAND_TYPES).toEqual(["apply", "validate", "create"]);
