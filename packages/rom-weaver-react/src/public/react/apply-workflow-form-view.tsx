@@ -1,15 +1,17 @@
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import { useEffect, useSyncExternalStore } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
+import type { ManifestRomExpectation } from "../../lib/manifest/manifest-session-model.ts";
 import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { createTiming, formatTiming } from "../../storage/shared/timing.ts";
 import { ApplyPatchListStep } from "./apply-patch-list-step.tsx";
+import { ChecksumRow } from "./components/ds/checksum-list.tsx";
 import {
   buildOutputCompressionPanel,
   FieldInfoToggle,
   getOutputCompressionFormatLabel,
 } from "./components/ds/compress-panel.tsx";
-import { FileProgress, Notice } from "./components/ds/feedback.tsx";
+import { FileProgress, InlineProgress, Notice } from "./components/ds/feedback.tsx";
 import { useFlatTransitionFlag } from "./components/ds/flat-transition.ts";
 import { InfoPopover, NeedsInput, StepSection } from "./components/ds/layout.tsx";
 import { OutputField } from "./components/ds/output-card.tsx";
@@ -35,6 +37,7 @@ import type { PatchStackItemState } from "./patcher-presentation.ts";
 import { ArchiveDialog as SharedArchiveDialog } from "./patcher-react-shared.tsx";
 import type { NoticeState, PatcherSectionNoticeKey, RomInputRowState } from "./patcher-ui-state.ts";
 import { useUiLocalizer } from "./settings-context.tsx";
+import type { ManifestPatchMeta } from "./use-manifest-apply-session.ts";
 import type { PendingDrop } from "./use-unified-apply-drop.ts";
 import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./workflow-run-hooks.ts";
 
@@ -92,6 +95,40 @@ const formatRomTypeTag = (romType: { platform?: string; discFormat?: string } | 
   return [platform, romType.discFormat].filter(Boolean).join(" · ");
 };
 
+const EXPECTED_ROM_CHECK_LABELS: Record<string, string> = { crc32: "CRC32", md5: "MD5", sha1: "SHA-1" };
+
+/**
+ * "Provide this ROM" card for a manifest that ships patches only: the expected
+ * file name plus copyable checksum/size rows in the standard checks language,
+ * shown in the ROM step until an input lands.
+ */
+const ManifestRomExpectationCard = ({ expectation }: { expectation: ManifestRomExpectation }) => (
+  <div className="patch-check-group manifest-rom-expectation" id="rom-weaver-manifest-rom-expectation">
+    <div className="ck-group-head">
+      <span>ROM not included — provide it yourself</span>
+    </div>
+    {expectation.name ? <div className="mre-name mono">{expectation.name}</div> : null}
+    <div className="verification-list">
+      {Object.entries(expectation.checks?.checksums || {}).map(([algorithm, value]) =>
+        value ? (
+          <ChecksumRow
+            key={algorithm}
+            label={EXPECTED_ROM_CHECK_LABELS[algorithm] || algorithm.toUpperCase()}
+            value={value}
+          />
+        ) : null,
+      )}
+      {typeof expectation.checks?.size === "number" ? (
+        <ChecksumRow
+          copyValue={String(expectation.checks.size)}
+          label="Size"
+          value={formatByteSize(expectation.checks.size)}
+        />
+      ) : null}
+    </div>
+  </div>
+);
+
 const SectionNotice = ({ id, onDismiss, state }: { id?: string; onDismiss?: () => void; state: NoticeState }) => {
   if (!state.visible) return null;
   return (
@@ -131,14 +168,21 @@ const matchPastedInputChecksum = (pasted: string, info: RomInputRowState["info"]
  * user-pasted input checksum, red on mismatch, and no color when there is
  * nothing to verify against. A mismatch from any signal wins over a match.
  */
-const buildRomVerificationStates = (patches: PatchStackItemState[], romInputs: RomInputRowState[]) => {
+const buildRomVerificationStates = (
+  patches: PatchStackItemState[],
+  romInputs: RomInputRowState[],
+  disabledFlags: boolean[],
+) => {
   const infoById = new Map(romInputs.map((rom) => [rom.id, rom.info]));
   const states = new Map<string, "bad" | "ok">();
   const apply = (romId: string, verdict: "bad" | "ok" | undefined) => {
     if (!verdict) return;
     if (verdict === "bad" || !states.has(romId)) states.set(romId, verdict);
   };
-  for (const patch of patches) {
+  for (const [patchIndex, patch] of patches.entries()) {
+    // A toggled-off patch will not apply, so its expectations say nothing
+    // about the ROM being used.
+    if (disabledFlags[patchIndex]) continue;
     const romId = patch.targetValue;
     if (!romId) continue;
     apply(
@@ -389,8 +433,6 @@ const renderDiscGroup = (
 type PatchEnablement = {
   disabledIds: ReadonlySet<string>;
   getPatchIds: () => string[];
-  /** Toggle-locked ids (a manifest's `required` patches stay on). */
-  lockedIds?: ReadonlySet<string>;
   onToggle: (index: number) => void;
 };
 
@@ -402,6 +444,8 @@ function ApplyWorkflowFormView({
   controllers,
   manifestExport,
   manifestMetaById,
+  manifestRomExpectation,
+  onManifestMetaChange,
   onUnifiedDrop,
   patchEnablement,
   pendingDrops = [],
@@ -414,10 +458,23 @@ function ApplyWorkflowFormView({
     notice?: NoticeController;
     dialog?: DialogController;
   };
-  /** Output-card secondary action: opens the "Export manifest…" dialog. */
-  manifestExport?: { onOpen: () => void };
+  /** Manifest export controls live directly in the Output options drawer. */
+  manifestExport?: {
+    bundleRom: boolean;
+    busy: boolean;
+    error: string;
+    format: string;
+    phase: "idle" | "preparing" | "exporting";
+    progress: { label?: string; percent?: number | null } | null;
+    runExport: () => Promise<void>;
+    setBundleRom: (value: boolean) => void;
+    setFormat: (value: string) => void;
+  };
   /** Per-patch manifest metadata (label/description chips), keyed by stable source id. */
-  manifestMetaById?: ReadonlyMap<string, { label?: string; description?: string }>;
+  manifestMetaById?: ReadonlyMap<string, ManifestPatchMeta>;
+  /** Shown while the manifest session waits for the user to supply the expected ROM. */
+  manifestRomExpectation?: ManifestRomExpectation;
+  onManifestMetaChange?: (id: string, updates: Partial<ManifestPatchMeta>) => void;
   onTrace?: (message: string, details?: Record<string, unknown>) => void;
   onUnifiedDrop?: (files: File[]) => void;
   patchEnablement?: PatchEnablement;
@@ -454,16 +511,42 @@ function ApplyWorkflowFormView({
     const id = patchIds[index];
     return !!patchEnablement && id !== undefined && patchEnablement.disabledIds.has(id);
   });
-  // Per-index locked flags (manifest `required` patches) + card metadata, resolved by stable id so
-  // reorders keep the right cards locked/annotated.
-  const lockedPatchFlags = patches.map((_, index) => {
-    const id = patchIds[index];
-    return !!patchEnablement?.lockedIds && id !== undefined && patchEnablement.lockedIds.has(id);
-  });
+  // Card metadata is resolved by stable id so reorders keep the right annotations.
   const manifestMeta = patches.map((_, index) => {
     const id = patchIds[index];
     return manifestMetaById && id !== undefined ? manifestMetaById.get(id) : undefined;
   });
+  const manifestVerificationError = (() => {
+    const lengths: Record<string, number> = { crc32: 8, md5: 32, sha1: 40 };
+    for (const [index, meta] of manifestMeta.entries()) {
+      for (const [side, checks] of [
+        ["input", meta?.inputChecks?.checksums],
+        ["output", meta?.outputChecks?.checksums],
+      ] as const) {
+        for (const [algorithm, rawValue] of Object.entries(checks || {})) {
+          const normalizedAlgorithm = algorithm.toLowerCase().replace("sha-1", "sha1");
+          const value = rawValue.trim().toLowerCase();
+          if (!value) continue;
+          const length = lengths[normalizedAlgorithm];
+          if (!(length && new RegExp(`^[0-9a-f]{${length}}$`).test(value))) {
+            return `Patch ${index + 1} ${side} ${algorithm.toUpperCase()} is malformed`;
+          }
+          const prefix = side === "input" ? "in " : "out ";
+          const embedded = patches[index]?.validationValues
+            .map((entry) => entry.split("=", 2))
+            .find(
+              ([label]) => label?.trim().toLowerCase().replace("sha-1", "sha1") === `${prefix}${normalizedAlgorithm}`,
+            )?.[1]
+            ?.trim()
+            .toLowerCase();
+          if (embedded && embedded !== value) {
+            return `Patch ${index + 1} ${side} ${algorithm.toUpperCase()} conflicts with the checksum built into the patch`;
+          }
+        }
+      }
+    }
+    return "";
+  })();
   const disabledPatchCount = disabledPatchFlags.filter(Boolean).length;
   const enabledPatchCount = patches.length - disabledPatchCount;
   const localizer = useUiLocalizer();
@@ -490,7 +573,7 @@ function ApplyWorkflowFormView({
   const running = !!applyProgress;
   const wovenSteps = running || applyDone;
 
-  const romVerificationStates = buildRomVerificationStates(patches, romInputs);
+  const romVerificationStates = buildRomVerificationStates(patches, romInputs, disabledPatchFlags);
   const romRowDeps: RomRowDeps = {
     romInputs,
     ui: uiController,
@@ -556,6 +639,49 @@ function ApplyWorkflowFormView({
       </select>
     </OutputField>
   ) : null;
+  const exportTypeInfo = {
+    items: [
+      "The archive holds rw.json plus the patch files — everything a player needs to apply the hack in one drop.",
+      "Patch names, descriptions, on/off defaults, and the ROM/output checks travel with it, so inputs verify automatically.",
+      "The “+ ROM” variants also pack the ROM into the archive; otherwise the manifest carries only its checks and the player supplies the file.",
+    ],
+    summary:
+      "Exports this session as a distributable rw.json manifest bundle for sharing a ROM hack with all of its patch and ROM information.",
+    title: "Export type",
+  };
+  const manifestOutputFields = manifestExport ? (
+    <>
+      {outputHeaderField}
+      <OutputField
+        className="export-type-field"
+        label="Export type"
+        labelInfo={<FieldInfoToggle info={exportTypeInfo} label="Export type" />}
+      >
+        <select
+          className="select"
+          disabled={manifestExport.busy}
+          id="rom-weaver-manifest-export-format"
+          onChange={(event) => {
+            const [format, contents] = event.currentTarget.value.split(":");
+            manifestExport.setFormat(format || "manifest");
+            manifestExport.setBundleRom(contents === "rom");
+          }}
+          value={
+            manifestExport.format === "manifest"
+              ? "manifest"
+              : `${manifestExport.format}:${manifestExport.bundleRom ? "rom" : "patches"}`
+          }
+        >
+          <option value="zip:patches">Manifest + patches (.zip)</option>
+          <option value="zip:rom">Manifest + ROM + patches (.zip)</option>
+          <option value="7z:patches">Manifest + patches (.7z)</option>
+          <option value="7z:rom">Manifest + ROM + patches (.7z)</option>
+        </select>
+      </OutputField>
+    </>
+  ) : (
+    outputHeaderField
+  );
 
   // Combined drop surface (--rom-filter + --patch-filter): the parent's unified
   // drop handler stages bare files immediately and shows an "identifying"
@@ -673,6 +799,9 @@ function ApplyWorkflowFormView({
             listId="rom-weaver-list-input-stack"
             notice={
               <>
+                {manifestRomExpectation && romInputs.length === 0 ? (
+                  <ManifestRomExpectationCard expectation={manifestRomExpectation} />
+                ) : null}
                 <SectionNotice
                   id="rom-weaver-input-notice-message"
                   onDismiss={dismissSectionNotice("inputNotice")}
@@ -694,8 +823,12 @@ function ApplyWorkflowFormView({
             disabledFlags={disabledPatchFlags}
             emptyState={patchesNeedsInput}
             fault={applyFailed}
-            lockedFlags={lockedPatchFlags}
+            internalDescription={uiState.patchDetails.description}
             manifestMeta={manifestMeta}
+            onManifestMetaChange={(index, updates) => {
+              const id = patchIds[index];
+              if (id) onManifestMetaChange?.(id, updates);
+            }}
             onTogglePatch={patchEnablement?.onToggle}
             patches={patches}
             patchInput={uiState.patchInput}
@@ -705,14 +838,6 @@ function ApplyWorkflowFormView({
             woven={wovenSteps}
           />
 
-          {uiState.patchDetails.description ? (
-            <div className="descblk" id="rom-weaver-row-patch-description">
-              <div className="k">Description</div>
-              <div className="v" id="rom-weaver-patch-description">
-                {uiState.patchDetails.description}
-              </div>
-            </div>
-          ) : null}
           {uiState.patchDetails.requirementsValue ? (
             <div className="descblk mono" id="rom-weaver-row-patch-requirements">
               <div className="k">{uiState.patchDetails.requirementsLabel}</div>
@@ -771,28 +896,47 @@ function ApplyWorkflowFormView({
             </div>
             <PatcherPrimaryAction
               controller={controllers.output}
-              disableRun={patches.length > 0 && enabledPatchCount === 0}
+              disableRun={(patches.length > 0 && enabledPatchCount === 0) || !!manifestVerificationError}
               totalTime={applyTotalTime || undefined}
             />
+            {manifestVerificationError ? <Notice level="error">{manifestVerificationError}</Notice> : null}
             {manifestExport ? (
               <button
                 className="btn ghost slim"
                 disabled={outputState.disabled || !romInputs.length || !patches.length}
                 id="rom-weaver-button-export-manifest"
-                onClick={manifestExport.onOpen}
+                onClick={() => void manifestExport.runExport()}
                 type="button"
               >
                 {localizer.message("ui.manifestExport.action")}
               </button>
             ) : null}
+            {manifestExport?.busy ? (
+              <InlineProgress
+                id="rom-weaver-manifest-export-progress"
+                indeterminate={typeof manifestExport.progress?.percent !== "number"}
+                label={
+                  manifestExport.progress?.label ||
+                  (manifestExport.phase === "preparing" ? "Preparing source files" : "Writing manifest bundle")
+                }
+                percent={manifestExport.progress?.percent ?? null}
+                value={
+                  typeof manifestExport.progress?.percent === "number"
+                    ? `${Math.round(manifestExport.progress.percent)}%`
+                    : ""
+                }
+              />
+            ) : null}
+            {manifestExport?.error ? <Notice level="error">{manifestExport.error}</Notice> : null}
           </>
         }
         compress={buildOutputCompressionPanel({
           disabled: outputState.disabled,
-          extraChildren: outputHeaderField,
+          extraChildren: manifestOutputFields,
           fields: outputState.compress?.fields,
           format: compressHeaderFormat,
           formatId: "rom-weaver-select-output-format-compress",
+          formatLabel: "Compression type",
           formatOptions: compressionTypeOptions,
           formatValue: outputState.compressionFormat,
           onFieldChange: (key, value, updates) => controllers.output.setOutputCompressOption?.(key, value, updates),

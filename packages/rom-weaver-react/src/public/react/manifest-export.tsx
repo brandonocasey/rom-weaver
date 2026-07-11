@@ -3,24 +3,18 @@ import { getPatchFileBytes, getPatchFileCleanup, getPatchFileExternalSource } fr
 import { prepareInputFile } from "../../lib/input/input-preparation-service.ts";
 import { triggerBrowserDownload } from "../../platform/browser/browser-download.ts";
 import { browserRuntime } from "../../platform/browser/workflow-runtime.ts";
-import { formatByteSize } from "../../presentation/workflow-presentation.ts";
-import type { ManifestHeaderMode, ManifestPatchStatus, ParsedManifestCreateResult } from "../../types/manifest.ts";
+import type { ManifestHeaderMode, ParsedManifestCreateResult } from "../../types/manifest.ts";
+import type { SourceRef } from "../../types/source.ts";
 import { ROM_WEAVER_CREATE_CONTAINER_FORMATS } from "../../wasm/generated/rom-weaver-format-metadata.ts";
-import { InlineProgress, Notice } from "./components/ds/feedback.tsx";
-import { FileCard } from "./components/ds/file-card.tsx";
-import { Modal } from "./components/ds/index.ts";
 import { getBinarySourceListStableIds } from "./input-session-helpers.ts";
 import type { BinarySource } from "./patcher-form.ts";
 import type { PatchStackItemState } from "./patcher-presentation.ts";
-import { useUiLocalizer } from "./settings-context.tsx";
 import type { ManifestPatchMeta } from "./use-manifest-apply-session.ts";
 import { getReactBinarySourceFileName } from "./workflow-adapters.ts";
 
 /**
- * The apply form's "Export manifest…" flow: a dialog collecting a manifest
- * name/description plus per-patch status/description/ROM-check requirements
- * (prefilled from the live enablement state and any originating manifest
- * session), then a `manifest create` run over the CURRENT session's files.
+ * The apply form's manifest export flow collects per-patch metadata and ROM
+ * checks from the live session, then runs `manifest create` over its files.
  * Patch sources are resolved to their extracted leaves first, so a bundle
  * carries the actual patch files rather than the archives they arrived in.
  * The emitted rw.json (or the bundle archive) goes straight to the browser
@@ -42,11 +36,12 @@ type ManifestExportRow = {
   archiveFileName?: string;
   fileSize?: number;
   format?: string;
-  status: ManifestPatchStatus;
+  default: boolean;
   name?: string;
   description: string;
   /** Expected pre-apply ROM checksums ("algo=hex", comma-separable). */
   checks: string;
+  outputChecks: string;
   label?: string;
   header?: ManifestHeaderMode;
 };
@@ -54,18 +49,61 @@ type ManifestExportRow = {
 type ManifestExportSources = { inputs: BinarySource[]; patches: BinarySource[] };
 
 type ManifestExportProgress = { label?: string; percent?: number | null };
+const CHECK_ALGORITHMS = ["crc32", "md5", "sha1"] as const;
+const CHECK_LENGTHS = { crc32: 8, md5: 32, sha1: 40 } as const;
+
+const parseChecks = (value: string, label: string): Record<string, string> => {
+  const checks: Record<string, string> = {};
+  for (const token of value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)) {
+    const [rawAlgorithm, rawValue, ...extra] = token.split("=");
+    const algorithm = rawAlgorithm?.trim().toLowerCase().replace("sha-1", "sha1");
+    const checksum = rawValue?.trim().toLowerCase();
+    if (extra.length || !algorithm || !checksum || !CHECK_ALGORITHMS.includes(algorithm as never)) {
+      throw new Error(`${label} contains an invalid checksum entry`);
+    }
+    const expectedLength = CHECK_LENGTHS[algorithm as keyof typeof CHECK_LENGTHS];
+    if (!new RegExp(`^[0-9a-f]{${expectedLength}}$`).test(checksum)) {
+      throw new Error(`${label} ${algorithm.toUpperCase()} must be ${expectedLength} hexadecimal characters`);
+    }
+    checks[algorithm] = checksum;
+  }
+  return checks;
+};
+
+const formatChecks = (checks: Record<string, string>) =>
+  CHECK_ALGORITHMS.map((algorithm) => (checks[algorithm] ? `${algorithm}=${checks[algorithm]}` : ""))
+    .filter(Boolean)
+    .join(",");
+
+const embeddedChecks = (item: PatchStackItemState | undefined, side: "in" | "out"): Record<string, string> => {
+  const checks: Record<string, string> = {};
+  for (const entry of item?.validationValues || []) {
+    const [rawLabel, rawValue] = entry.split("=", 2);
+    const label = rawLabel?.trim().toLowerCase();
+    const value = rawValue?.trim().toLowerCase();
+    if (!(label?.startsWith(`${side} `) && value)) continue;
+    const algorithm = label.slice(side.length + 1).replace("sha-1", "sha1");
+    if (CHECK_ALGORITHMS.includes(algorithm as never)) checks[algorithm] = value as string;
+  }
+  return checks;
+};
 
 type UseManifestExportOptions = {
   /** Live session sources, read at dialog-open time. */
   getSessionSources: () => ManifestExportSources;
   /** Live per-patch stack items (index-aligned with patches) for leaf names + header round-trips. */
   getStackItems: () => PatchStackItemState[];
+  getName?: () => string;
+  /** The output card's ROM header choice — a non-auto pick (only offered when the
+   * staged ROM has a strippable header) exports as the manifest's `output.header`. */
+  getOutputHeader?: () => "auto" | "keep" | "strip" | undefined;
   disabledPatchIds: ReadonlySet<string>;
-  lockedPatchIds: ReadonlySet<string>;
-  /** Originating manifest session metadata (name/label/description round-trips). */
+  /** Originating per-patch metadata (name/label/description round-trips). */
   manifestMetaById: ReadonlyMap<string, ManifestPatchMeta>;
   initialName?: string;
-  initialDescription?: string;
   onComplete?: (result: ParsedManifestCreateResult) => void;
 };
 
@@ -86,18 +124,17 @@ const slugFileName = (value: string): string =>
 const useManifestExport = ({
   getSessionSources,
   getStackItems,
+  getName,
+  getOutputHeader,
   disabledPatchIds,
-  lockedPatchIds,
   manifestMetaById,
   initialName,
-  initialDescription,
   onComplete,
 }: UseManifestExportOptions) => {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName] = useState(initialName || "");
   const [format, setFormat] = useState<string>(MANIFEST_BUNDLE_FORMATS[0] || MANIFEST_ONLY_FORMAT);
   const [bundleRom, setBundleRom] = useState(false);
   const [rows, setRows] = useState<ManifestExportRow[]>([]);
@@ -124,20 +161,17 @@ const useManifestExport = ({
         const headerChoice = item?.headerChoice;
         // Toggled-off patches export as `optional`; a manifest session's locked
         // `required` entries stay required; everything else is `default`.
-        const status: ManifestPatchStatus = disabledPatchIds.has(id)
-          ? "optional"
-          : lockedPatchIds.has(id)
-            ? "required"
-            : "default";
+        const defaultEnabled = !disabledPatchIds.has(id);
         return {
           fileName,
           ...(archiveFileName && archiveFileName !== fileName ? { archiveFileName } : {}),
           ...(item?.fileSize ? { fileSize: item.fileSize } : {}),
           ...(item?.format ? { format: item.format } : {}),
-          status,
+          default: defaultEnabled,
           ...(meta?.name ? { name: meta.name } : {}),
           checks: "",
           description: meta?.description || "",
+          outputChecks: "",
           ...(meta?.label ? { label: meta.label } : {}),
           ...(headerChoice === "keep" || headerChoice === "strip" ? { header: headerChoice } : {}),
         };
@@ -149,29 +183,22 @@ const useManifestExport = ({
     const firstPatchName =
       items[0]?.fileName || (sources.patches[0] ? getReactBinarySourceFileName(sources.patches[0], "") : "");
     setName(initialName || stripFileExtension(romName) || stripFileExtension(firstPatchName));
-    setDescription(initialDescription || "");
     setFormat(MANIFEST_BUNDLE_FORMATS[0] || MANIFEST_ONLY_FORMAT);
     setBundleRom(false);
     setPhase("idle");
     setProgress(null);
     setError("");
     setOpen(true);
-  }, [
-    disabledPatchIds,
-    getSessionSources,
-    getStackItems,
-    initialDescription,
-    initialName,
-    lockedPatchIds,
-    manifestMetaById,
-  ]);
+  }, [disabledPatchIds, getSessionSources, getStackItems, initialName, manifestMetaById]);
 
   const closeDialog = useCallback(() => {
     if (!busy) setOpen(false);
   }, [busy]);
 
-  const setRowStatus = useCallback((index: number, status: ManifestPatchStatus) => {
-    setRows((previous) => previous.map((row, rowIndex) => (rowIndex === index ? { ...row, status } : row)));
+  const setRowDefault = useCallback((index: number, defaultEnabled: boolean) => {
+    setRows((previous) =>
+      previous.map((row, rowIndex) => (rowIndex === index ? { ...row, default: defaultEnabled } : row)),
+    );
   }, []);
 
   const setRowDescription = useCallback((index: number, description: string) => {
@@ -184,8 +211,40 @@ const useManifestExport = ({
 
   const runExport = useCallback(async () => {
     const create = browserRuntime.manifest?.create;
-    const { inputs, patches } = sourcesRef.current;
+    const exportName = getName?.().trim() || name;
+    const sources = getSessionSources();
+    const { inputs, patches } = sources;
     if (!(create && patches.length)) return;
+    const items = getStackItems();
+    const ids = getBinarySourceListStableIds(patches);
+    const exportRows: ManifestExportRow[] = patches.map((patch, index) => {
+      const id = ids[index] || "";
+      const meta = id ? manifestMetaById.get(id) : undefined;
+      const item = items[index];
+      const sourceName = getReactBinarySourceFileName(patch, `patch-${index + 1}.bin`);
+      const fileName = item?.fileName?.trim() || sourceName;
+      const archiveFileName = item?.archiveFileName?.trim();
+      const headerChoice = item?.headerChoice;
+      const checks = Object.entries(meta?.inputChecks?.checksums || {})
+        .filter(([, value]) => value.trim())
+        .map(([algorithm, value]) => `${algorithm}=${value.trim()}`)
+        .join(",");
+      const outputChecks = Object.entries(meta?.outputChecks?.checksums || {})
+        .filter(([, value]) => value.trim())
+        .map(([algorithm, value]) => `${algorithm}=${value.trim()}`)
+        .join(",");
+      return {
+        fileName,
+        ...(archiveFileName && archiveFileName !== fileName ? { archiveFileName } : {}),
+        default: !disabledPatchIds.has(id),
+        ...(meta?.name ? { name: meta.name } : {}),
+        checks,
+        description: meta?.description || "",
+        outputChecks,
+        ...(meta?.label ? { label: meta.label } : {}),
+        ...(headerChoice === "keep" || headerChoice === "strip" ? { header: headerChoice } : {}),
+      };
+    });
     setBusy(true);
     setError("");
     setPhase("preparing");
@@ -202,7 +261,7 @@ const useManifestExport = ({
       fallbackFileName: string,
       selectedArchiveEntry: string | undefined,
       index: number,
-    ): Promise<{ fileName: string; source: unknown }> => {
+    ): Promise<{ fileName: string; source: SourceRef }> => {
       try {
         const prepared = await prepareInputFile(source, role, undefined, browserRuntime, selectedArchiveEntry, index);
         const leaf = prepared.file;
@@ -212,7 +271,7 @@ const useManifestExport = ({
         }
         const fileName = leaf.fileName || fallbackFileName;
         const external = getPatchFileExternalSource(leaf, fileName);
-        if (external) return { fileName, source: external.source };
+        if (external) return { fileName, source: external.source as SourceRef };
         // Copy into a plain ArrayBuffer-backed view: the leaf bytes may sit in
         // shared wasm memory, which File() rejects.
         const bytes = getPatchFileBytes(leaf);
@@ -220,7 +279,7 @@ const useManifestExport = ({
         copy.set(bytes);
         return { fileName, source: new File([copy], fileName) };
       } catch {
-        return { fileName: fallbackFileName, source };
+        return { fileName: fallbackFileName, source: source as SourceRef };
       }
     };
     try {
@@ -230,20 +289,121 @@ const useManifestExport = ({
         : undefined;
       const patchLeaves = [];
       for (const [index, patch] of patches.entries()) {
-        const row = rows[index];
+        const row = exportRows[index];
         const fallbackFileName = row?.fileName || getReactBinarySourceFileName(patch, `patch-${index + 1}.bin`);
         // When the leaf lives inside an archive, its own file name selects the
         // matching entry (mirrors the apply workflow's selected-entry routing).
         const selectedArchiveEntry = row?.archiveFileName ? row.fileName : undefined;
         patchLeaves.push(await prepareLeafSource(patch, "patch", fallbackFileName, selectedArchiveEntry, index));
       }
+      if (!romLeaf) throw new Error("A ROM is required to generate patch verification checks");
+      const hashSource = async (source: unknown, fileName: string, label: string) => {
+        const ingest = browserRuntime.ingest?.run;
+        if (!ingest) throw new Error("Checksum generation is not available in this runtime");
+        setProgress({ label, percent: null });
+        const { result } = await ingest({
+          checksumAlgorithms: [...CHECK_ALGORITHMS],
+          fileName,
+          source,
+        });
+        const asset = result.assets[0];
+        const checksums = asset?.checksums || {};
+        return {
+          checksums: Object.fromEntries(
+            CHECK_ALGORITHMS.map((algorithm) => [algorithm, String(checksums[algorithm] || "").toLowerCase()]),
+          ) as Record<string, string>,
+          recommendedFormat: asset?.recommendedFormat?.toLowerCase(),
+        };
+      };
+      // Per-patch entries carry ONLY checks the author specified (typed in the
+      // dialog or the patch's Options) — chain intermediates are never hashed
+      // or attached. A typed check may not contradict one built into the patch
+      // file itself.
+      const validateRowChecks = (raw: string, builtIn: Record<string, string>, label: string): string => {
+        const explicit = parseChecks(raw, label);
+        for (const algorithm of CHECK_ALGORITHMS) {
+          if (builtIn[algorithm] && explicit[algorithm] && builtIn[algorithm] !== explicit[algorithm]) {
+            throw new Error(`${label} ${algorithm.toUpperCase()} conflicts with the checksum built into the patch`);
+          }
+        }
+        return formatChecks(explicit);
+      };
+      let chainSource: SourceRef = romLeaf.source;
+      let chainFileName = romLeaf.fileName;
+      const applyPatch = browserRuntime.patch.applyPatch;
+      if (!applyPatch) throw new Error("Patch application is not available in this runtime");
+      for (const [index, leaf] of patchLeaves.entries()) {
+        const row = exportRows[index];
+        if (!row) continue;
+        row.checks = validateRowChecks(row.checks, embeddedChecks(items[index], "in"), `Patch ${index + 1} input`);
+        row.outputChecks = validateRowChecks(
+          row.outputChecks,
+          embeddedChecks(items[index], "out"),
+          `Patch ${index + 1} output`,
+        );
+        setProgress({ label: `Applying patch chain · ${index + 1}/${patchLeaves.length}`, percent: null });
+        const output = await applyPatch({
+          input: chainSource,
+          options: {
+            headerModes: [row.header || "auto"],
+            outputName: `manifest-chain-${index + 1}.bin`,
+          },
+          patches: [{ patchFile: leaf.source, patchFileName: leaf.fileName }],
+        });
+        const blob = await browserRuntime.publicOutput.getBlob(output);
+        chainFileName = output.fileName || `manifest-chain-${index + 1}.bin`;
+        chainSource = new File([blob], chainFileName);
+        await output.cleanup?.();
+      }
+      // The manifest's endpoints stay self-validating: Rust hashes the ROM for
+      // rom.checks, and the full-chain result is hashed ONCE here for
+      // output.checks.
+      const finalOutputHash = await hashSource(chainSource, chainFileName, "Checksum generation · final output");
+      const finalOutputCheck = formatChecks(finalOutputHash.checksums);
       setPhase("exporting");
+      setProgress({ label: "Writing manifest", percent: null });
       const wantsBundle = format !== MANIFEST_ONLY_FORMAT;
-      const bundleFileName = wantsBundle ? `${slugFileName(name) || "rw-bundle"}.${format}` : undefined;
+      const bundleFileName = wantsBundle ? `${slugFileName(exportName) || "rw-bundle"}.${format}` : undefined;
+      let packagedRom: { fileName: string; source: SourceRef } | undefined;
+      if (bundleRom && wantsBundle) {
+        const originalName = rom ? getReactBinarySourceFileName(rom, romLeaf.fileName) : romLeaf.fileName;
+        const existingFormat = originalName.split(".").pop()?.toLowerCase();
+        // The ROM is hashed only here, and only for the packaging-format
+        // recommendation — rom.checks come from Rust during create.
+        const recommendedRomFormat =
+          rom && existingFormat && ["chd", "rvz", "z3ds"].includes(existingFormat)
+            ? undefined
+            : (await hashSource(romLeaf.source, romLeaf.fileName, "Checksum generation · ROM")).recommendedFormat;
+        if (rom && existingFormat && ["chd", "rvz", "z3ds"].includes(existingFormat)) {
+          packagedRom = { fileName: originalName, source: rom as SourceRef };
+        } else if (["chd", "rvz", "z3ds"].includes(recommendedRomFormat || "")) {
+          const targetFormat = recommendedRomFormat as "chd" | "rvz" | "z3ds";
+          const createCompression = browserRuntime.compression.create;
+          if (!createCompression) throw new Error("ROM compression is not available in this runtime");
+          setProgress({ label: `ROM compression · ${targetFormat.toUpperCase()}`, percent: null });
+          const outputName = `${stripFileExtension(romLeaf.fileName)}.${targetFormat}`;
+          const compressed = await createCompression({
+            fileName: romLeaf.fileName,
+            format: targetFormat,
+            outputName,
+            romSpecific: { [targetFormat]: { sourceFileName: romLeaf.fileName } },
+            source: romLeaf.source,
+          });
+          const output = "output" in compressed ? compressed.output : compressed;
+          const blob = await browserRuntime.publicOutput.getBlob(output);
+          packagedRom = { fileName: outputName, source: new File([blob], outputName) };
+          await output.cleanup?.();
+        } else {
+          packagedRom = romLeaf;
+        }
+      }
+      const outputHeader = getOutputHeader?.();
       const { result, manifestFile, bundleFile } = await create({
         ...(bundleFileName ? { bundleFileName } : {}),
-        ...(description.trim() ? { description: description.trim() } : {}),
-        ...(name.trim() ? { name: name.trim() } : {}),
+        ...(packagedRom ? { bundleRom: packagedRom } : {}),
+        ...(exportName.trim() ? { outputName: exportName.trim() } : {}),
+        ...(finalOutputCheck ? { outputCheck: finalOutputCheck } : {}),
+        ...(outputHeader === "keep" || outputHeader === "strip" ? { outputHeader } : {}),
         // The ROM is never distributed unless explicitly bundled: its manifest
         // entry keeps checks only and the applying user supplies the file.
         ...(bundleRom && wantsBundle ? {} : { noBundleRom: true }),
@@ -254,14 +414,15 @@ const useManifestExport = ({
           });
         },
         patches: patchLeaves.map((leaf, index) => {
-          const row = rows[index];
+          const row = exportRows[index];
           return {
             fileName: leaf.fileName,
             source: leaf.source,
-            status: row?.status || "default",
+            ...(row?.default === false ? { optional: true } : {}),
             ...(row?.name ? { name: row.name } : {}),
             ...(row?.description.trim() ? { description: row.description.trim() } : {}),
-            ...(row?.checks.trim() ? { checks: row.checks.trim() } : {}),
+            ...(row?.checks.trim() ? { inputChecks: row.checks.trim() } : {}),
+            ...(row?.outputChecks.trim() ? { outputChecks: row.outputChecks.trim() } : {}),
             ...(row?.label ? { label: row.label } : {}),
             ...(row?.header ? { header: row.header } : {}),
           };
@@ -280,13 +441,23 @@ const useManifestExport = ({
       setProgress(null);
       setBusy(false);
     }
-  }, [bundleRom, description, format, name, onComplete, rows]);
+  }, [
+    bundleRom,
+    disabledPatchIds,
+    format,
+    getSessionSources,
+    getStackItems,
+    getName,
+    getOutputHeader,
+    manifestMetaById,
+    name,
+    onComplete,
+  ]);
 
   return {
     bundleRom,
     busy,
     closeDialog,
-    description,
     error,
     format,
     name,
@@ -297,199 +468,12 @@ const useManifestExport = ({
     rows,
     runExport,
     setBundleRom,
-    setDescription,
     setFormat,
     setName,
     setRowChecks,
+    setRowDefault,
     setRowDescription,
-    setRowStatus,
   };
 };
 
-type ManifestExportDialogProps = ReturnType<typeof useManifestExport>;
-
-const MANIFEST_STATUS_VALUES: ManifestPatchStatus[] = ["required", "default", "optional", "disabled"];
-
-const ManifestExportDialog = (props: ManifestExportDialogProps) => {
-  const localizer = useUiLocalizer();
-  const wantsBundle = props.format !== MANIFEST_ONLY_FORMAT;
-  const progressLabel =
-    props.progress?.label ||
-    (props.phase === "preparing"
-      ? localizer.message("ui.manifestExport.preparing")
-      : localizer.message("ui.manifestExport.exporting"));
-  const progressPercent = typeof props.progress?.percent === "number" ? props.progress.percent : null;
-  return (
-    <Modal
-      onClose={props.closeDialog}
-      open={props.open}
-      title={localizer.message("ui.manifestExport.title")}
-      variant="manifest-export-modal"
-    >
-      <div className="ofld">
-        <label className="ofld-l" htmlFor="rom-weaver-manifest-export-name">
-          {localizer.message("ui.manifestExport.name")}
-        </label>
-        <input
-          className="input"
-          disabled={props.busy}
-          id="rom-weaver-manifest-export-name"
-          onChange={(event) => props.setName(event.currentTarget.value)}
-          type="text"
-          value={props.name}
-        />
-      </div>
-      <div className="ofld">
-        <label className="ofld-l" htmlFor="rom-weaver-manifest-export-description">
-          {localizer.message("ui.manifestExport.description")}
-        </label>
-        <textarea
-          className="input tarea"
-          disabled={props.busy}
-          id="rom-weaver-manifest-export-description"
-          onChange={(event) => props.setDescription(event.currentTarget.value)}
-          rows={2}
-          value={props.description}
-        />
-      </div>
-      <div className="descblk" id="rom-weaver-manifest-export-patches">
-        <div className="k">{localizer.message("ui.manifestExport.patches")}</div>
-        <div className="cards patch-cards">
-          {props.rows.map((row, index) => (
-            <FileCard
-              key={`${index}:${row.fileName}`}
-              meta={
-                <>
-                  {row.fileSize ? <span className="fsize mono">{formatByteSize(row.fileSize)}</span> : null}
-                  {row.format ? <span className="meta-fmt mono">{row.format.toLowerCase()}</span> : null}
-                  {row.label ? <span className="meta-fmt mono">{row.label}</span> : null}
-                  {row.archiveFileName ? (
-                    <span className="meta-fmt mono">
-                      {localizer.message("ui.manifestExport.fromArchive", { name: row.archiveFileName })}
-                    </span>
-                  ) : null}
-                </>
-              }
-              name={<span className="mono">{row.name || row.fileName}</span>}
-            >
-              <div className="patch-body">
-                <div className="patch-body-inner">
-                  <div className="optsgrid">
-                    <div className="ofld">
-                      <label className="ofld-l" htmlFor={`rom-weaver-manifest-export-status-${index}`}>
-                        {localizer.message("ui.manifestExport.statusLabel", { n: index + 1 })}
-                      </label>
-                      <select
-                        className="select"
-                        disabled={props.busy}
-                        id={`rom-weaver-manifest-export-status-${index}`}
-                        onChange={(event) =>
-                          props.setRowStatus(index, event.currentTarget.value as ManifestPatchStatus)
-                        }
-                        value={row.status}
-                      >
-                        {MANIFEST_STATUS_VALUES.map((status) => (
-                          <option key={status} value={status}>
-                            {localizer.message(`ui.manifestExport.status.${status}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="ofld">
-                      <label className="ofld-l" htmlFor={`rom-weaver-manifest-export-checks-${index}`}>
-                        {localizer.message("ui.manifestExport.patchChecks")}
-                      </label>
-                      <input
-                        className="input mono"
-                        disabled={props.busy}
-                        id={`rom-weaver-manifest-export-checks-${index}`}
-                        onChange={(event) => props.setRowChecks(index, event.currentTarget.value)}
-                        placeholder="crc32=deadbeef, md5=…"
-                        type="text"
-                        value={row.checks}
-                      />
-                    </div>
-                  </div>
-                  <div className="ofld">
-                    <label className="ofld-l" htmlFor={`rom-weaver-manifest-export-desc-${index}`}>
-                      {localizer.message("ui.manifestExport.description")}
-                    </label>
-                    <textarea
-                      className="input tarea"
-                      disabled={props.busy}
-                      id={`rom-weaver-manifest-export-desc-${index}`}
-                      onChange={(event) => props.setRowDescription(index, event.currentTarget.value)}
-                      rows={2}
-                      value={row.description}
-                    />
-                  </div>
-                </div>
-              </div>
-            </FileCard>
-          ))}
-        </div>
-      </div>
-      <div className="ofld">
-        <label className="ofld-l" htmlFor="rom-weaver-manifest-export-format">
-          {localizer.message("ui.manifestExport.output")}
-        </label>
-        <select
-          className="select"
-          disabled={props.busy}
-          id="rom-weaver-manifest-export-format"
-          onChange={(event) => props.setFormat(event.currentTarget.value)}
-          value={props.format}
-        >
-          {MANIFEST_BUNDLE_FORMATS.map((format) => (
-            <option key={format} value={format}>
-              {localizer.message("ui.manifestExport.format.bundle", { format: `.${format}` })}
-            </option>
-          ))}
-          <option value={MANIFEST_ONLY_FORMAT}>{localizer.message("ui.manifestExport.format.manifestOnly")}</option>
-        </select>
-      </div>
-      {wantsBundle ? (
-        <label className="checkrow">
-          <input
-            checked={props.bundleRom}
-            disabled={props.busy}
-            id="rom-weaver-manifest-export-bundle-rom"
-            onChange={(event) => props.setBundleRom(event.currentTarget.checked)}
-            type="checkbox"
-          />
-          <span>{localizer.message("ui.manifestExport.bundleRom")}</span>
-        </label>
-      ) : null}
-      {props.busy ? (
-        <InlineProgress
-          id="rom-weaver-manifest-export-progress"
-          indeterminate={progressPercent === null}
-          label={progressLabel}
-          percent={progressPercent}
-          value={progressPercent === null ? "" : `${Math.round(progressPercent)}%`}
-        />
-      ) : null}
-      {props.error ? (
-        <Notice id="rom-weaver-manifest-export-error" level="error">
-          {localizer.message("ui.manifestExport.error")}: {props.error}
-        </Notice>
-      ) : null}
-      <div className="c-actions">
-        <button className="btn ghost" disabled={props.busy} onClick={props.closeDialog} type="button">
-          {localizer.message("ui.common.cancel")}
-        </button>
-        <button
-          className="btn primary"
-          disabled={props.busy || !props.rows.length}
-          id="rom-weaver-manifest-export-run"
-          onClick={() => void props.runExport()}
-          type="button"
-        >
-          {localizer.message("ui.manifestExport.export")}
-        </button>
-      </div>
-    </Modal>
-  );
-};
-
-export { ManifestExportDialog, useManifestExport };
+export { useManifestExport };

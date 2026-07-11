@@ -1,5 +1,6 @@
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.js";
 import type { ReactNode } from "react";
+import { join } from "./cx.ts";
 import { Drawer, DrawerReadout } from "./drawer.tsx";
 
 /**
@@ -42,13 +43,15 @@ type OutputCardProps = {
 const OutputField = ({
   label,
   labelInfo,
+  className,
   children,
 }: {
   label: ReactNode;
   labelInfo?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) => (
-  <div className="ofld ofield">
+  <div className={join("ofld ofield", className)}>
     <span className="ofld-l ofld-lbl">
       <span className="ofld-text">{label}</span>
       {labelInfo}

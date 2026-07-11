@@ -35,7 +35,7 @@ const buildZip = async (entries, outputName) => {
   }
 };
 
-test("export manifest bundles the session with per-patch metadata and a checks-only rom entry", async () => {
+test("export manifest bundles the session from main-page options with a checks-only rom entry", async () => {
   const [romFile, patchFile] = await Promise.all([loadFixtureFile(RAW_ROM), loadFixtureFile(RAW_PATCH)]);
   let exported = null;
   mount(
@@ -54,47 +54,52 @@ test("export manifest bundles the session with per-patch metadata and a checks-o
     return button instanceof HTMLButtonElement && !button.disabled ? button : null;
   });
   expect(exportButton).not.toBeNull();
-  exportButton.click();
-
-  // The manifest name auto-fills from the ROM file name (extension stripped).
-  const nameInput = await waitForState(() => document.getElementById("rom-weaver-manifest-export-name"));
+  const nameInput = document.getElementById("rom-weaver-input-output-file-name");
   expect(nameInput).not.toBeNull();
-  expect(nameInput.value).toBe("game");
   setFormControlValue(nameInput, "Exported Hack");
 
-  const statusSelect = document.getElementById("rom-weaver-manifest-export-status-0");
-  expect(statusSelect).not.toBeNull();
-  expect(statusSelect.value).toBe("default");
-  setFormControlValue(statusSelect, "required");
-
-  // Per-patch description and pre-apply ROM checksum requirement.
-  const descriptionInput = document.getElementById("rom-weaver-manifest-export-desc-0");
+  document.querySelector("#rom-weaver-list-patch-stack .optsblock .cks-head")?.click();
+  const patchNameInput = await waitForState(() => document.getElementById("rom-weaver-patch-name-0"));
+  expect(patchNameInput).not.toBeNull();
+  setFormControlValue(patchNameInput, "Core change");
+  patchNameInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+  const descriptionInput = document.getElementById("rom-weaver-patch-description-0");
   expect(descriptionInput).not.toBeNull();
   setFormControlValue(descriptionInput, "Adds the change");
-  const checksInput = document.getElementById("rom-weaver-manifest-export-checks-0");
+  descriptionInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+  await expect
+    .poll(() => document.getElementById("rom-weaver-patch-card-description-0")?.textContent)
+    .toBe("Adds the change");
+  const checksInput = document.getElementById("rom-weaver-patch-input-crc32-0");
   expect(checksInput).not.toBeNull();
-  setFormControlValue(checksInput, "crc32=deadbeef");
+  setFormControlValue(checksInput, "deadbeef");
+  checksInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+  await expect.poll(() => document.getElementById("rom-weaver-patch-input-crc32-0")?.value).toBe("deadbeef");
 
   // Default output is a .zip bundle with the ROM left out.
   const formatSelect = document.getElementById("rom-weaver-manifest-export-format");
   expect(formatSelect).not.toBeNull();
-  expect(formatSelect.value).toBe("zip");
-  const bundleRomToggle = document.getElementById("rom-weaver-manifest-export-bundle-rom");
-  expect(bundleRomToggle).not.toBeNull();
-  expect(bundleRomToggle.checked).toBe(false);
+  expect(formatSelect.value).toBe("zip:patches");
+  expect(Array.from(formatSelect.options, (option) => option.textContent)).toEqual([
+    "Manifest + patches (.zip)",
+    "Manifest + ROM + patches (.zip)",
+    "Manifest + patches (.7z)",
+    "Manifest + ROM + patches (.7z)",
+  ]);
+  expect(document.getElementById("rom-weaver-manifest-export-bundle-rom")).toBeNull();
 
-  const runButton = document.getElementById("rom-weaver-manifest-export-run");
-  expect(runButton).not.toBeNull();
-  runButton.click();
+  exportButton.click();
 
   // The runtime create call resolves with the canonical manifest — assert on it directly rather
   // than intercepting the browser download.
   const result = await waitForState(() => exported, 60000);
   expect(result).not.toBeNull();
   expect(result.manifest.version).toBe(1);
-  expect(result.manifest.name).toBe("Exported Hack");
+  // Manifests carry no display name; the export name feeds output naming only.
+  expect(result.manifest.name).toBeUndefined();
+  expect(result.manifest.output?.name).toBe("Exported Hack");
   expect(result.manifestPath.endsWith("rw.json")).toBe(true);
-  // The bundle download is named from the manifest name.
+  // The bundle download is named from the export name.
   expect(result.bundlePath.endsWith("Exported-Hack.zip")).toBe(true);
   // The ROM stays out of the bundle: its entry carries checks but no source.
   expect(result.manifest.rom?.path ?? null).toBeNull();
@@ -103,13 +108,20 @@ test("export manifest bundles the session with per-patch metadata and a checks-o
   expect(result.manifest.patches).toHaveLength(1);
   const patchEntry = result.manifest.patches[0];
   expect(patchEntry.path).toBe("change.ips");
-  expect(patchEntry.status).toBe("required");
+  expect(patchEntry.optional).toBeUndefined();
+  expect(patchEntry.name).toBe("Core change");
   expect(patchEntry.description).toBe("Adds the change");
-  expect(patchEntry.checks?.checksums?.crc32).toBe("deadbeef");
-  expect(Object.keys(patchEntry.integrity || {}).length).toBeGreaterThan(0);
+  // The hand-typed crc32 differs from the rom checks, so the entry keeps its
+  // own inputChecks instead of relying on rom.checks.
+  expect(patchEntry.inputChecks?.checksums?.crc32).toBe("deadbeef");
+  // The single patch ends the chain: its output lives on output.checks, not
+  // on the entry.
+  expect(patchEntry.outputChecks).toBeUndefined();
+  expect(Object.keys(result.manifest.output?.checks?.checksums || {})).toEqual(["crc32", "md5", "sha1"]);
+  // Patch entries carry no file hashes — the format has no integrity field.
+  expect(patchEntry.integrity).toBeUndefined();
 
-  // The dialog closes after a successful export.
-  await expect.poll(() => document.getElementById("rom-weaver-manifest-export-run")).toBeNull();
+  await expect.poll(() => exportButton.disabled).toBe(false);
 });
 
 test("export bundles the extracted patch leaf, not the archive it arrived in", async () => {
@@ -130,15 +142,15 @@ test("export bundles the extracted patch leaf, not the archive it arrived in", a
     const button = document.getElementById("rom-weaver-button-export-manifest");
     return button instanceof HTMLButtonElement && !button.disabled ? button : null;
   });
+  const formatSelect = document.getElementById("rom-weaver-manifest-export-format");
+  setFormControlValue(formatSelect, "zip:rom");
+  formatSelect.dispatchEvent(new Event("change", { bubbles: true }));
   exportButton.click();
-  await waitForState(() => document.getElementById("rom-weaver-manifest-export-run"));
-
-  document.getElementById("rom-weaver-manifest-export-run").click();
   const result = await waitForState(() => exported, 60000);
   expect(result).not.toBeNull();
   // The manifest references (and the bundle carries) the .ips leaf.
   expect(result.manifest.patches).toHaveLength(1);
   expect(result.manifest.patches[0].path).toBe("change.ips");
-  expect(Object.keys(result.manifest.patches[0].integrity || {}).length).toBeGreaterThan(0);
-  await expect.poll(() => document.getElementById("rom-weaver-manifest-export-run")).toBeNull();
+  expect(result.manifest.rom?.path).toBe(RAW_ROM.split("/").pop());
+  await expect.poll(() => exportButton.disabled).toBe(false);
 });
