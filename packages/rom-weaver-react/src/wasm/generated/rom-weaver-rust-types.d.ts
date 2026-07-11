@@ -270,7 +270,12 @@ export type ExtractCommand = { source: string, select?: Array<string>, rom_filte
 
 export type ChecksumCommand = { source: string, algo: Array<string>, select?: Array<string>, rom_filter?: boolean, patch_filter?: boolean, no_extract?: boolean, no_ignore?: boolean, no_trim_fix?: boolean, start?: bigint, length?: bigint, probe?: boolean, threads?: ThreadBudget, };
 
-export type IngestCommand = { source: string, out_dir: string, select?: Array<string>, no_ignore?: boolean, no_nested_extract?: boolean, split_bin?: boolean, checksum?: Array<string>, threads?: ThreadBudget, };
+export type IngestCommand = { source: string, out_dir: string, select?: Array<string>,
+/**
+ * Optional loose patch names to match against `source` without ingesting it. This keeps the
+ * browser's sibling-sidecar lookup on the ingest command surface while reusing Rust's matcher.
+ */
+sidecar_names?: Array<string>, sidecar_only?: boolean, no_ignore?: boolean, no_nested_extract?: boolean, split_bin?: boolean, checksum?: Array<string>, threads?: ThreadBudget, };
 
 export type CompressCommand = { input: Array<string>, format?: string, output: string, codec?: Array<string>, level?: CompressionLevelProfile, threads?: ThreadBudget, };
 
@@ -280,11 +285,9 @@ export type PatchApplyCommand = { input: string, select?: Array<string>, target?
 
 export type PatchValidateCommand = { input: string, select?: Array<string>, rom_filter?: boolean, patch_filter?: boolean, no_extract?: boolean, no_ignore?: boolean, patches: Array<string>, checksum_cache?: Array<string>, validate_with_checksums?: Array<string>, validate_with_size?: bigint, validate_with_min_size?: bigint, strip_header?: boolean, n64_byte_order?: N64ByteOrder, ignore_checksum_validation?: boolean, threads?: ThreadBudget, };
 
-export type PatchCreateCandidatesCommand = { original: string, modified: string, threads?: ThreadBudget, };
+export type PatchCreateCommand = { original: string, modified?: string, format?: string, output?: string, plan?: boolean, ignore_checksum_validation?: boolean, checksum_name?: boolean, source_crc32?: string, codes?: Array<string>, code_system?: string, code_kind?: string, threads?: ThreadBudget, xdelta_secondary?: string, };
 
-export type PatchCreateCommand = { original: string, modified?: string, format?: string, output: string, ignore_checksum_validation?: boolean, checksum_name?: boolean, source_crc32?: string, codes?: Array<string>, code_system?: string, code_kind?: string, threads?: ThreadBudget, xdelta_secondary?: string, };
-
-export type PatchCommands = { "type": "apply", "args": PatchApplyCommand } | { "type": "validate", "args": PatchValidateCommand } | { "type": "create-candidates", "args": PatchCreateCandidatesCommand } | { "type": "create", "args": PatchCreateCommand };
+export type PatchCommands = { "type": "apply", "args": PatchApplyCommand } | { "type": "validate", "args": PatchValidateCommand } | { "type": "create", "args": PatchCreateCommand };
 
 export type PpfUndoCommand = { rom: string, patch: string, output: string, };
 
@@ -419,9 +422,7 @@ export type ManifestCommands = { "type": "create", "args": ManifestCreateCommand
 
 export type PlanExtractBatchCommand = { job_sizes?: Array<bigint>, threads?: ThreadBudget, max_concurrency?: number | null, total_memory_bytes?: bigint | null, memory_ceiling_bytes?: bigint | null, };
 
-export type MatchSidecarsCommand = { rom_name: string, patch_names?: Array<string>, };
-
-export type Commands = { "type": "probe", "args": ProbeCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "ingest", "args": IngestCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "patch", "args": PatchCommands } | { "type": "manifest", "args": ManifestCommands } | { "type": "tools", "args": ToolsCommands } | { "type": "plan-extract-batch", "args": PlanExtractBatchCommand } | { "type": "match-sidecars", "args": MatchSidecarsCommand };
+export type Commands = { "type": "probe", "args": ProbeCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "ingest", "args": IngestCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "patch", "args": PatchCommands } | { "type": "manifest", "args": ManifestCommands } | { "type": "tools", "args": ToolsCommands } | { "type": "plan-extract-batch", "args": PlanExtractBatchCommand };
 
 export type RomWeaverRunOutputOptions = { json?: boolean, progress?: boolean, trace?: boolean, interactive_selection_enabled?: boolean, };
 

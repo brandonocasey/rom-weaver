@@ -188,6 +188,8 @@ impl CliApp {
             source = %args.source.display(),
             out_dir = %args.out_dir.display(),
             selections = args.select.len(),
+            sidecar_count = args.sidecar_names.len(),
+            sidecar_only = args.sidecar_only,
             no_ignore = args.no_ignore,
             no_nested_extract = args.no_nested_extract,
             checksum_algorithms = args.checksum.len(),
@@ -198,6 +200,8 @@ impl CliApp {
             source,
             out_dir,
             select,
+            sidecar_names,
+            sidecar_only,
             no_ignore,
             no_nested_extract,
             split_bin,
@@ -225,6 +229,28 @@ impl CliApp {
             .with_extract_checksum_algorithms(algorithms.clone())
             .with_extract_checksum_rom_only(true);
         let thread_execution = context.single_thread_execution();
+        if sidecar_only {
+            let matches = Self::match_libretro_sidecars(&source.to_string_lossy(), &sidecar_names);
+            let mut report = OperationReport::succeeded(
+                OperationFamily::Command,
+                Some("ingest".to_string()),
+                "ingest",
+                format!(
+                    "matched {} sidecar patch file(s) for `{}`",
+                    matches.len(),
+                    source.display()
+                ),
+                Some(100.0),
+                thread_execution.clone(),
+            );
+            report.details = Some(json!({
+                "sidecar_matches": matches
+                    .iter()
+                    .map(|(name, order)| json!({ "name": name, "order": order }))
+                    .collect::<Vec<_>>()
+            }));
+            return self.finish("ingest", report);
+        }
         if let Some(invalid) = algorithms.iter().find(|algorithm| {
             !supported_algorithms()
                 .iter()

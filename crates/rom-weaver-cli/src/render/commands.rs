@@ -10,11 +10,20 @@ use super::{Surface, humanize_bytes};
 pub fn render_success(surface: &Surface, event: &ProgressEvent) {
     match event.command.as_str() {
         "probe" => render_container_or_patch(surface, event),
-        "extract" | "compress" | "patch-apply" | "patch-create" => {
-            render_emitted_files(surface, event)
+        "extract" | "compress" | "patch-apply" => render_emitted_files(surface, event),
+        "patch-create" => {
+            if event
+                .details
+                .as_ref()
+                .and_then(|details| details.get("patch_create_format_candidates"))
+                .is_some()
+            {
+                render_candidates(surface, event);
+            } else {
+                render_emitted_files(surface, event);
+            }
         }
         "checksum" => render_checksum(surface, event),
-        "patch-create-candidates" => render_candidates(surface, event),
         _ => render_details_or_label(surface, event),
     }
     render_elapsed(surface, event);
@@ -109,7 +118,7 @@ fn render_checksum(surface: &Surface, event: &ProgressEvent) {
     }
 }
 
-/// Patch create-candidates: the ranked formats with the default marked, plus the flattened context.
+/// Patch create planning: the ranked formats with the default marked.
 fn render_candidates(surface: &Surface, event: &ProgressEvent) {
     let candidates = event
         .details

@@ -81,6 +81,41 @@ fn ingest_bin_asset_count(terminal: &Value) -> usize {
 }
 
 #[test]
+fn ingest_sidecar_preflight_matches_loose_siblings() {
+    let temp = setup_temp_dir();
+    let rom = temp.child("game.bin");
+    fs::write(rom.path(), b"rom").expect("rom fixture");
+    let out_dir = temp.child("sidecar-preflight");
+    let rom_path = rom.path().to_str().expect("rom path");
+    let first_patch = temp.child("game.ips");
+    let second_patch = temp.child("game.ips1");
+    let unrelated = temp.child("other.ips");
+
+    let terminal = ingest_terminal(&[
+        "ingest",
+        rom_path,
+        "--out-dir",
+        out_dir.path().to_str().expect("out dir"),
+        "--sidecar-only",
+        "--sidecar-name",
+        first_patch.path().to_str().expect("first patch path"),
+        "--sidecar-name",
+        second_patch.path().to_str().expect("second patch path"),
+        "--sidecar-name",
+        unrelated.path().to_str().expect("unrelated patch path"),
+        "--json",
+    ]);
+    let matches = terminal["details"]["sidecar_matches"]
+        .as_array()
+        .expect("sidecar matches");
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0]["name"], first_patch.path().to_str().unwrap());
+    assert_eq!(matches[0]["order"], 0);
+    assert_eq!(matches[1]["name"], second_patch.path().to_str().unwrap());
+    assert_eq!(matches[1]["order"], 1);
+}
+
+#[test]
 fn ingest_chd_split_bin_false_merges_to_single_bin() {
     let temp = setup_temp_dir();
     let chd = create_two_track_cd_chd(&temp);

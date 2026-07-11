@@ -97,14 +97,6 @@ pub enum Commands {
         )
     )]
     PlanExtractBatch(PlanExtractBatchCommand),
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        command(
-            name = "match-sidecars",
-            about = "Match RetroArch-style sidecar patches against a ROM by name (no I/O)"
-        )
-    )]
-    MatchSidecars(MatchSidecarsCommand),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -132,15 +124,6 @@ pub enum PatchCommands {
         )
     )]
     Validate(PatchValidateCommand),
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        command(
-            name = "create-candidates",
-            about = "List recommended patch-create formats for an original/modified input pair",
-            long_about = "List recommended patch-create formats for an original/modified input pair.\n\nThe result includes the ranked candidate formats and the default format the create UI should select for the supplied inputs."
-        )
-    )]
-    CreateCandidates(PatchCreateCandidatesCommand),
     Create(Box<PatchCreateCommand>),
 }
 
@@ -1062,9 +1045,10 @@ pub use manifest_create::ManifestCreateResult;
 mod command_args;
 pub use command_args::{
     ChecksumCommand, CompressCommand, ExtractCommand, IngestCommand, ManifestCreateCommand,
-    ManifestCreatePatchSpec, ManifestParseCommand, MatchSidecarsCommand, PatchApplyCommand,
-    PatchCreateCandidatesCommand, PatchCreateCommand, PatchValidateCommand,
-    PlanExtractBatchCommand, PpfUndoCommand, ProbeCommand, TrimCommand,
+    ManifestCreatePatchSpec, ManifestParseCommand, PatchApplyCommand, PatchCreateCommand,
+    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
+    ManifestCreatePatchSpec, ManifestParseCommand, PatchApplyCommand, PatchCreateCommand,
+    PatchValidateCommand, PlanExtractBatchCommand, ProbeCommand, TrimCommand,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

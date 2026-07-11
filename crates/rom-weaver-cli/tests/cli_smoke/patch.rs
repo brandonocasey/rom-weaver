@@ -1707,7 +1707,8 @@ fn patch_create_candidates_default_to_bps_for_small_inputs() {
     let output = command_stdout(
         &[
             "patch",
-            "create-candidates",
+            "create",
+            "--plan",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1718,7 +1719,7 @@ fn patch_create_candidates_default_to_bps_for_small_inputs() {
     );
 
     let json = parse_single_json_line(&output);
-    assert_patch_envelope(&json, "patch-create-candidates", "bps", "succeeded");
+    assert_patch_envelope(&json, "patch-create", "bps", "succeeded");
     let candidates = &json["details"]["patch_create_format_candidates"];
     assert_eq!(candidates["default"], "bps");
     let formats = candidates["formats"].as_array().expect("formats array");
@@ -1746,7 +1747,8 @@ fn patch_create_candidates_default_to_xdelta_for_special_compression_inputs() {
     let output = command_stdout(
         &[
             "patch",
-            "create-candidates",
+            "create",
+            "--plan",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1757,7 +1759,7 @@ fn patch_create_candidates_default_to_xdelta_for_special_compression_inputs() {
     );
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "patch-create-candidates");
+    assert_eq!(json["command"], "patch-create");
     assert_eq!(json["format"], "xdelta");
     assert_eq!(json["status"], "succeeded");
     let candidates = &json["details"]["patch_create_format_candidates"];
@@ -1784,7 +1786,8 @@ fn patch_create_candidates_default_to_xdelta_for_archives_above_64_mib() {
     let output = command_stdout(
         &[
             "patch",
-            "create-candidates",
+            "create",
+            "--plan",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1795,7 +1798,7 @@ fn patch_create_candidates_default_to_xdelta_for_archives_above_64_mib() {
     );
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "patch-create-candidates");
+    assert_eq!(json["command"], "patch-create");
     assert_eq!(json["format"], "xdelta");
     assert_eq!(json["status"], "succeeded");
     let candidates = &json["details"]["patch_create_format_candidates"];
@@ -1820,7 +1823,8 @@ fn patch_create_candidates_default_to_xdelta_from_128_mib() {
     let output = command_stdout(
         &[
             "patch",
-            "create-candidates",
+            "create",
+            "--plan",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1831,7 +1835,7 @@ fn patch_create_candidates_default_to_xdelta_from_128_mib() {
     );
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "patch-create-candidates");
+    assert_eq!(json["command"], "patch-create");
     assert_eq!(json["format"], "xdelta");
     assert_eq!(json["status"], "succeeded");
     let candidates = &json["details"]["patch_create_format_candidates"];
@@ -1859,7 +1863,8 @@ fn patch_create_candidates_default_to_xdelta_above_256_mib_while_allowing_ppf() 
     let output = command_stdout(
         &[
             "patch",
-            "create-candidates",
+            "create",
+            "--plan",
             "--original",
             original.path().to_str().expect("path"),
             "--modified",
@@ -1870,7 +1875,7 @@ fn patch_create_candidates_default_to_xdelta_above_256_mib_while_allowing_ppf() 
     );
 
     let json = parse_single_json_line(&output);
-    assert_eq!(json["command"], "patch-create-candidates");
+    assert_eq!(json["command"], "patch-create");
     assert_eq!(json["format"], "xdelta");
     assert_eq!(json["status"], "succeeded");
     let candidates = &json["details"]["patch_create_format_candidates"];

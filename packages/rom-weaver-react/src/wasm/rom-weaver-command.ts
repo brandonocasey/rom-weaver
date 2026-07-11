@@ -89,14 +89,11 @@ export function createRomWeaverCommand<TType extends RomWeaverCommandLabel>(
     case "compress":
     case "trim":
     case "plan-extract-batch":
-    case "match-sidecars":
       return { args, type } as RomWeaverCommand;
     case "patch-apply":
       return { args: { args, type: "apply" }, type: "patch" } as RomWeaverCommand;
     case "patch-validate":
       return { args: { args, type: "validate" }, type: "patch" } as RomWeaverCommand;
-    case "patch-create-candidates":
-      return { args: { args, type: "create-candidates" }, type: "patch" } as RomWeaverCommand;
     case "patch-create":
       return { args: { args, type: "create" }, type: "patch" } as RomWeaverCommand;
     case "manifest-parse":
@@ -152,7 +149,6 @@ function normalizeRomWeaverCommand(command: RomWeaverCommand): RomWeaverCommand 
     case "compress":
     case "trim":
     case "plan-extract-batch":
-    case "match-sidecars":
       return { args, type } as RomWeaverCommand;
     default:
       return assertNever(type);
@@ -189,7 +185,6 @@ function readRomWeaverCommandBranch(command: RomWeaverCommand): RomWeaverCommand
     case "compress":
     case "trim":
     case "plan-extract-batch":
-    case "match-sidecars":
       return {
         args: command.args,
         type: command.type,
@@ -225,7 +220,9 @@ export function collectRomWeaverRunInputPaths(
     case "extract":
     case "checksum":
     case "ingest":
-      pushPathValue(paths, command.args.source);
+      if (command.type !== "ingest" || !command.args.sidecar_only) {
+        pushPathValue(paths, command.args.source);
+      }
       break;
     case "compress":
       pushPathValues(paths, command.args.input);
@@ -244,7 +241,6 @@ export function collectRomWeaverRunInputPaths(
       pushPathValue(paths, command.args.args.patch);
       break;
     case "plan-extract-batch":
-    case "match-sidecars":
       // Pure planning over sizes passed in the args — no file inputs to reference.
       break;
     default:
@@ -329,7 +325,6 @@ export function romWeaverCommandSupportsThreads(command: RomWeaverCommand): bool
       switch (command.args.type) {
         case "apply":
         case "validate":
-        case "create-candidates":
         case "create":
           return true;
         default:
@@ -346,7 +341,6 @@ export function romWeaverCommandSupportsThreads(command: RomWeaverCommand): bool
     case "tools":
       return false;
     case "plan-extract-batch":
-    case "match-sidecars":
       // Pure planning: the `threads` field is the budget to plan for, not a worker spawn, so it is
       // passed through untouched (no clamp/inject/force).
       return false;
@@ -369,7 +363,6 @@ function normalizeRomWeaverPatchCommand(patchCommand: RomWeaverPatchCommand): Ro
   switch (patchType) {
     case "apply":
     case "validate":
-    case "create-candidates":
     case "create":
       return {
         args: {
@@ -457,8 +450,6 @@ function readRomWeaverPatchCommandBranch(command: RomWeaverPatchCommand): RomWea
       return { args: command.args, type: "patch-apply" };
     case "validate":
       return { args: command.args, type: "patch-validate" };
-    case "create-candidates":
-      return { args: command.args, type: "patch-create-candidates" };
     case "create":
       return { args: command.args, type: "patch-create" };
     default:
@@ -474,7 +465,6 @@ function collectRomWeaverPatchInputPaths(paths: Set<string>, command: RomWeaverP
       pushPathValues(paths, command.args.patches);
       return;
     case "create":
-    case "create-candidates":
       pushPathValue(paths, command.args.original);
       pushPathValue(paths, command.args.modified);
       return;
@@ -502,7 +492,6 @@ function replaceRomWeaverCommandArgs(command: RomWeaverCommand, args: Record<str
     case "compress":
     case "trim":
     case "plan-extract-batch":
-    case "match-sidecars":
       return {
         ...command,
         args,

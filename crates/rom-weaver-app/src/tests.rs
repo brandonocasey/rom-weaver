@@ -995,7 +995,7 @@ fn header_repair_finalize_restores_original_n64_order() {
 
 // Golden cases shared with the TypeScript conformance test
 // (`sidecar-patch-resolution.browser.test.js`) so the native matcher and the browser's
-// `match-sidecars` command can never drift on the RetroArch `<rom-stem>.<patch-ext>` convention.
+// Ingest sidecar preflight can never drift on the RetroArch `<rom-stem>.<patch-ext>` convention.
 #[test]
 fn libretro_sidecar_matches_basename_stem_and_order() {
     let rom = "bundle/game.bin";

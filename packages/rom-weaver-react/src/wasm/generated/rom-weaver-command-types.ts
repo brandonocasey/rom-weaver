@@ -11,14 +11,12 @@ export const KNOWN_COMMAND_TYPES = [
   "patch",
   "manifest",
   "tools",
-  "plan-extract-batch",
-  "match-sidecars"
+  "plan-extract-batch"
 ] as const;
 
 export const KNOWN_PATCH_COMMAND_TYPES = [
   "apply",
   "validate",
-  "create-candidates",
   "create"
 ] as const;
 

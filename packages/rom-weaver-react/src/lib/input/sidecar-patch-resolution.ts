@@ -1,5 +1,5 @@
 import { extractPatchFileLabel } from "../output/patch-output-label.ts";
-import { runRomWeaverMatchSidecarsWorker } from "../runtime/wasm-command-runtime.ts";
+import { runRomWeaverIngestSidecarsWorker } from "../runtime/wasm-command-runtime.ts";
 
 const PATH_DIRECTORY_PREFIX_REGEX = /^.*[/\\]/;
 
@@ -26,9 +26,8 @@ const getSidecarPatchOutputLabel = (fileName: string): string | undefined =>
   extractPatchFileLabel(String(fileName || "").replace(PATH_DIRECTORY_PREFIX_REGEX, ""));
 
 /**
- * Resolve the RetroArch/libretro sidecar patches for a ROM by delegating the `<rom-stem>.<patch-ext>`
- * match to Rust's `match-sidecars` command (the single source of truth, shared with the native CLI), then
- * mapping the matched names back to the caller's entries. Rust returns them already sorted in apply order.
+ * Resolve loose RetroArch/libretro sidecar patches for a ROM through ingest's Rust preflight, then map
+ * the matched names back to the caller's entries. Rust returns them already sorted in apply order.
  */
 const resolveSidecarPatchEntries = async <TEntry extends SidecarPatchEntry>(
   romFileName: string,
@@ -43,7 +42,7 @@ const resolveSidecarPatchEntries = async <TEntry extends SidecarPatchEntry>(
     byName.set(fileName, entry);
     patchNames.push(fileName);
   }
-  const matches = await runRomWeaverMatchSidecarsWorker({ patchNames, romName: romFileName });
+  const matches = await runRomWeaverIngestSidecarsWorker({ patchNames, romName: romFileName });
   const resolved: Array<ResolvedSidecarPatch<TEntry>> = [];
   for (const match of matches) {
     const entry = byName.get(match.name);

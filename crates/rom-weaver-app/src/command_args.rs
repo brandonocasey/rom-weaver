@@ -294,6 +294,19 @@ pub struct IngestCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub select: Vec<String>,
+    /// Optional loose patch names to match against `source` without ingesting it. This keeps the
+    /// browser's sibling-sidecar lookup on the ingest command surface while reusing Rust's matcher.
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(long = "sidecar-name", action = ArgAction::Append, hide = true)
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub sidecar_names: Vec<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "sidecar-only", hide = true))]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub sidecar_only: bool,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -998,7 +1011,16 @@ pub struct PatchCreateCommand {
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub format: Option<String>,
     #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
-    pub output: PathBuf,
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub output: Option<PathBuf>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(long, help = "Only return recommended formats; do not create a patch")
+    )]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub plan: bool,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -1079,20 +1101,6 @@ pub struct PatchCreateCommand {
     pub xdelta_secondary: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
-#[cfg_attr(feature = "typescript-types", derive(TS))]
-pub struct PatchCreateCandidatesCommand {
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
-    pub original: PathBuf,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
-    pub modified: PathBuf,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub threads: ThreadBudget,
-}
-
 /// Compute a memory-/thread-aware concurrent extraction schedule from per-job source sizes, without
 /// touching any files. The result (an `extract_batch_plan` in the report details) groups the jobs
 /// into concurrent waves with a per-job thread allotment, so the host can run a batch of extractions
@@ -1147,38 +1155,6 @@ pub struct PlanExtractBatchCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub memory_ceiling_bytes: Option<u64>,
-}
-
-/// Match RetroArch/libretro sidecar patches against a ROM by name — the single source of truth for the
-/// `<rom-stem>.<patch-ext>` soft-patch convention, so the browser (which has no native access to the
-/// matcher) and the native CLI agree exactly. Given a ROM path and candidate patch paths (full paths so
-/// the same-directory rule applies), the report details carry a `sidecar_matches` array of the matched
-/// patches in apply order (`{ name, order }`). Pure name logic — no I/O — so it runs the same on native
-/// and in the browser.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
-#[cfg_attr(feature = "typescript-types", derive(TS))]
-pub struct MatchSidecarsCommand {
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long = "rom-name",
-            value_name = "PATH",
-            help = "ROM path the sidecar patches must match"
-        )
-    )]
-    pub rom_name: String,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long = "patch-name",
-            value_name = "PATH",
-            help = "Candidate patch path; repeat once per candidate"
-        )
-    )]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub patch_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

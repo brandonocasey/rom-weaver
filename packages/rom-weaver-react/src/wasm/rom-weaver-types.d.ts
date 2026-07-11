@@ -26,7 +26,6 @@ export type {
   ListCommand,
   PatchApplyCommand,
   PatchCommands,
-  PatchCreateCandidatesCommand,
   PatchCreateCommand,
   PatchValidateCommand,
   PpfUndoCommand,

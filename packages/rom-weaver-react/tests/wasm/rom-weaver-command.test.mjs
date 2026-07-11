@@ -23,9 +23,8 @@ describe("rom-weaver command boundary helpers", () => {
       "patch",
       "manifest",
       "plan-extract-batch",
-      "match-sidecars",
     ]);
-    expect(KNOWN_PATCH_COMMAND_TYPES).toEqual(["apply", "validate", "create-candidates", "create"]);
+    expect(KNOWN_PATCH_COMMAND_TYPES).toEqual(["apply", "validate", "create"]);
   });
 
   it("builds nested patch commands and preserves patch labels", () => {

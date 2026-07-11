@@ -1,11 +1,5 @@
 import type { LargeFileVfs } from "../storage/vfs/types.ts";
-import type {
-  PatchApplyCommand,
-  PatchCreateCandidatesCommand,
-  PatchCreateCommand,
-  PatchValidateCommand,
-  ThreadBudget,
-} from "../wasm/index.ts";
+import type { PatchApplyCommand, PatchCreateCommand, PatchValidateCommand, ThreadBudget } from "../wasm/index.ts";
 import type { ChecksumVariant, RomTypeTag } from "./checksum.ts";
 import type { ParsedIngestResult } from "./ingest.ts";
 import type { LogLevel, LogRecord } from "./logging.ts";
@@ -276,10 +270,10 @@ type RuntimePatchCreateWorkerInput = {
   logLevel?: LogLevel;
   metadata: Record<string, JsonValue>;
   modifiedFileName: string;
-  modifiedFilePath: PatchCreateCommand["modified"];
+  modifiedFilePath: NonNullable<PatchCreateCommand["modified"]>;
   originalFileName: string;
   originalFilePath: PatchCreateCommand["original"];
-  outputName: PatchCreateCommand["output"];
+  outputName: NonNullable<PatchCreateCommand["output"]>;
   signal?: AbortSignal;
   sourceCrc32?: PatchCreateCommand["source_crc32"];
   workerThreads?: RuntimeThreadBudgetInput;
@@ -288,9 +282,9 @@ type RuntimePatchCreateWorkerInput = {
 type RuntimePatchCreateCandidatesWorkerInput = {
   logLevel?: LogLevel;
   modifiedFileName: string;
-  modifiedFilePath: PatchCreateCandidatesCommand["modified"];
+  modifiedFilePath: PatchCreateCommand["modified"];
   originalFileName: string;
-  originalFilePath: PatchCreateCandidatesCommand["original"];
+  originalFilePath: PatchCreateCommand["original"];
   signal?: AbortSignal;
   workerThreads?: RuntimeThreadBudgetInput;
 };
@@ -367,7 +361,7 @@ type WorkflowRuntimePatch = {
     modified: SourceRef;
     format: NonNullable<PatchCreateCommand["format"]>;
     metadata: JsonObject;
-    outputName: PatchCreateCommand["output"];
+    outputName: NonNullable<PatchCreateCommand["output"]>;
     checksumName?: PatchCreateCommand["checksum_name"];
     sourceCrc32?: PatchCreateCommand["source_crc32"];
     workerThreads?: RuntimeThreadBudgetInput;

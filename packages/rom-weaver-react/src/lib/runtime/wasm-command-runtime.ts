@@ -243,20 +243,21 @@ const getSidecarMatchesFromResult = (result: RomWeaverRunJsonResult): LibretroSi
   return matches;
 };
 
-// Match RetroArch/libretro sidecar patches against a ROM via Rust's `match-sidecars` command, so the
-// browser shares the native matcher instead of re-implementing the `<rom-stem>.<patch-ext>` rule. Pure
-// name logic — no I/O — returning the matched patches in Rust's apply order.
-const runRomWeaverMatchSidecarsWorker = async (
+// Match loose RetroArch/libretro sidecar patches through ingest, so archive-bundled and sibling files
+// share the same Rust matcher and report shape.
+const runRomWeaverIngestSidecarsWorker = async (
   input: { romName: string; patchNames: string[]; logLevel?: LogLevel | string; signal?: AbortSignal },
   onLog?: (log: WorkflowRuntimeLog) => void,
 ): Promise<LibretroSidecarMatch[]> => {
   const romName = String(input.romName || "").trim();
   if (!(romName && input.patchNames.length)) return [];
-  const command = createRomWeaverCommand("match-sidecars", {
-    patch_names: input.patchNames,
-    rom_name: romName,
+  const command = createRomWeaverCommand("ingest", {
+    out_dir: "/work/sidecar-match",
+    sidecar_names: input.patchNames,
+    sidecar_only: true,
+    source: romName,
   });
-  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson match-sidecars dispatch", {
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson ingest sidecar dispatch", {
     patchCount: input.patchNames.length,
     romName,
   });
@@ -548,12 +549,13 @@ const invokeRomWeaverCreatePatchCandidatesWorker = async (
   onLog?: (log: WorkflowRuntimeLog) => void,
 ): Promise<RuntimePatchCreateFormatCandidates> => {
   const threadArg = toThreadBudget(input.workerThreads);
-  const command = createRomWeaverCommand("patch-create-candidates", {
+  const command = createRomWeaverCommand("patch-create", {
     modified: input.modifiedFilePath,
     original: input.originalFilePath,
+    plan: true,
     ...(threadArg ? { threads: threadArg } : {}),
   });
-  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson patch-create-candidates dispatch", {
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson patch-create plan dispatch", {
     command,
     modifiedFileName: input.modifiedFileName,
     modifiedFilePath: input.modifiedFilePath,
@@ -948,7 +950,7 @@ export {
   normalizeChdCodecArgs,
   normalizeCodecEntries,
   resolvePatchApplyThreadArg,
-  runRomWeaverMatchSidecarsWorker,
+  runRomWeaverIngestSidecarsWorker,
   runRomWeaverProbeWorker,
   selectRomWeaverOutputPath,
 };

@@ -194,90 +194,6 @@ impl CliApp {
             },
         })
     }
-    pub(super) fn run_patch_create_candidates(
-        &self,
-        args: PatchCreateCandidatesCommand,
-    ) -> AppRunOutcome {
-        trace!(
-            original = %args.original.display(),
-            modified = %args.modified.display(),
-            threads = %args.threads,
-            "starting patch-create-candidates command"
-        );
-        let context = self.context(args.threads);
-        let probe_threads = context.single_thread_execution();
-        if let Some(report) = self.require_existing_path(
-            "patch-create-candidates",
-            OperationFamily::Patch,
-            None,
-            &args.original,
-            probe_threads.clone(),
-        ) {
-            return self.finish("patch-create-candidates", report);
-        }
-        if let Some(report) = self.require_existing_path(
-            "patch-create-candidates",
-            OperationFamily::Patch,
-            None,
-            &args.modified,
-            probe_threads.clone(),
-        ) {
-            return self.finish("patch-create-candidates", report);
-        }
-        let input_info = match self.inspect_patch_create_input_info(
-            "patch-create-candidates",
-            None,
-            &args.original,
-            &args.modified,
-            probe_threads.clone(),
-        ) {
-            Ok(input_info) => input_info,
-            Err(report) => return self.finish("patch-create-candidates", *report),
-        };
-        let sizes = create_patch_input_sizes(&input_info);
-        let candidates = create_patch_format_candidates_for_sources(&input_info);
-        let formats = candidates.formats.to_vec();
-        let mut report = OperationReport::succeeded(
-            OperationFamily::Patch,
-            Some(candidates.default_format.to_string()),
-            "recommend",
-            format!(
-                "recommended patch create format {}; candidates={}",
-                candidates.default_format,
-                formats.join(",")
-            ),
-            Some(100.0),
-            context.single_thread_execution(),
-        );
-        report.details = Some(json!({
-            "patch_create_format_candidates": {
-                "default": candidates.default_format,
-                "formats": formats,
-                "limits": {
-                    "archive_default_size_bytes": CREATE_PATCH_ARCHIVE_DEFAULT_LIMIT_BYTES,
-                    "bps_default_size_bytes": CREATE_PATCH_BPS_DEFAULT_LIMIT_BYTES,
-                    "ips_size_limit_bytes": CREATE_PATCH_IPS_SIZE_LIMIT_BYTES,
-                    "legacy_size_limit_bytes": CREATE_PATCH_LEGACY_SIZE_LIMIT_BYTES,
-                },
-                "source_values": {
-                    "original": {
-                        "path": args.original.display().to_string(),
-                        "archive": input_info.original.archive,
-                        "size": sizes.original,
-                        "special_compression": input_info.original.special_compression,
-                    },
-                    "modified": {
-                        "path": args.modified.display().to_string(),
-                        "archive": input_info.modified.archive,
-                        "size": sizes.modified,
-                        "special_compression": input_info.modified.special_compression,
-                    },
-                },
-            }
-        }));
-        self.finish("patch-create-candidates", report)
-    }
-
     /// Resolve the patch format for `patch create` from an explicit `--format` and/or the output
     /// extension, mirroring [`CliApp::resolve_container_output_format`]: the extension is
     /// authoritative when no flag is given; an explicit flag wins (with a warning) when it disagrees
@@ -354,7 +270,7 @@ impl CliApp {
         trace!(
             original = %args.original.display(),
             modified = ?args.modified,
-            output = %args.output.display(),
+            output = ?args.output.as_ref().map(|path| path.display().to_string()),
             format = ?args.format,
             ignore_checksum_validation = args.ignore_checksum_validation,
             checksum_name = args.checksum_name,
@@ -367,6 +283,108 @@ impl CliApp {
         );
         let base_context = self.context(args.threads);
         let probe_threads = base_context.single_thread_execution();
+        if args.plan {
+            let modified = match args.modified.as_ref() {
+                Some(path) => path,
+                None => {
+                    return self.finish(
+                        "patch-create",
+                        OperationReport::failed(
+                            OperationFamily::Patch,
+                            None,
+                            "validate",
+                            "patch create --plan requires --modified".to_string(),
+                            probe_threads,
+                        ),
+                    );
+                }
+            };
+            if let Some(report) = self.require_existing_path(
+                "patch-create",
+                OperationFamily::Patch,
+                None,
+                &args.original,
+                base_context.single_thread_execution(),
+            ) {
+                return self.finish("patch-create", report);
+            }
+            if let Some(report) = self.require_existing_path(
+                "patch-create",
+                OperationFamily::Patch,
+                None,
+                modified,
+                base_context.single_thread_execution(),
+            ) {
+                return self.finish("patch-create", report);
+            }
+            let input_info = match self.inspect_patch_create_input_info(
+                "patch-create",
+                None,
+                &args.original,
+                modified,
+                base_context.single_thread_execution(),
+            ) {
+                Ok(input_info) => input_info,
+                Err(report) => return self.finish("patch-create", *report),
+            };
+            let sizes = create_patch_input_sizes(&input_info);
+            let candidates = create_patch_format_candidates_for_sources(&input_info);
+            let formats = candidates.formats.to_vec();
+            let mut report = OperationReport::succeeded(
+                OperationFamily::Patch,
+                Some(candidates.default_format.to_string()),
+                "recommend",
+                format!(
+                    "recommended patch create format {}; candidates={}",
+                    candidates.default_format,
+                    formats.join(",")
+                ),
+                Some(100.0),
+                base_context.single_thread_execution(),
+            );
+            report.details = Some(json!({
+                "patch_create_format_candidates": {
+                    "default": candidates.default_format,
+                    "formats": formats,
+                    "limits": {
+                        "archive_default_size_bytes": CREATE_PATCH_ARCHIVE_DEFAULT_LIMIT_BYTES,
+                        "bps_default_size_bytes": CREATE_PATCH_BPS_DEFAULT_LIMIT_BYTES,
+                        "ips_size_limit_bytes": CREATE_PATCH_IPS_SIZE_LIMIT_BYTES,
+                        "legacy_size_limit_bytes": CREATE_PATCH_LEGACY_SIZE_LIMIT_BYTES,
+                    },
+                    "source_values": {
+                        "original": {
+                            "path": args.original.display().to_string(),
+                            "archive": input_info.original.archive,
+                            "size": sizes.original,
+                            "special_compression": input_info.original.special_compression,
+                        },
+                        "modified": {
+                            "path": modified.display().to_string(),
+                            "archive": input_info.modified.archive,
+                            "size": sizes.modified,
+                            "special_compression": input_info.modified.special_compression,
+                        },
+                    },
+                }
+            }));
+            return self.finish("patch-create", report);
+        }
+        let output = match args.output.clone() {
+            Some(output) => output,
+            None => {
+                return self.finish(
+                    "patch-create",
+                    OperationReport::failed(
+                        OperationFamily::Patch,
+                        args.format.clone(),
+                        "validate",
+                        "patch create requires --output unless --plan is used".to_string(),
+                        probe_threads.clone(),
+                    ),
+                );
+            }
+        };
         let fail = |format: Option<String>, stage: &str, message: String| {
             OperationReport::failed(
                 OperationFamily::Patch,
@@ -392,23 +410,22 @@ impl CliApp {
                 PatchChecksumValidation::Strict
             })
             .with_xdelta_secondary_mode(xdelta_secondary_mode);
-        let resolution =
-            match self.resolve_patch_create_format(args.format.as_deref(), &args.output) {
-                Ok(resolution) => resolution,
-                Err(error) => {
-                    return self.finish(
-                        "patch-create",
-                        fail(args.format.clone(), "validate", error.to_string()),
-                    );
-                }
-            };
+        let resolution = match self.resolve_patch_create_format(args.format.as_deref(), &output) {
+            Ok(resolution) => resolution,
+            Err(error) => {
+                return self.finish(
+                    "patch-create",
+                    fail(args.format.clone(), "validate", error.to_string()),
+                );
+            }
+        };
         let requested_format = resolution.format;
         let format_warning = resolution.warning;
         if let Some(warning) = format_warning.as_deref() {
             warn!(
                 command = "patch-create",
                 format = %requested_format,
-                output = %args.output.display(),
+                output = %output.display(),
                 "{warning}"
             );
         }
@@ -518,7 +535,7 @@ impl CliApp {
             );
         }
 
-        let mut create_output = args.output;
+        let mut create_output = output;
         if args.checksum_name {
             // Prefer a caller-supplied source crc32 (the browser already hashes the
             // original during input prep) to avoid re-reading the original here; fall

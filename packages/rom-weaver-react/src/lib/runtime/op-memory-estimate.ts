@@ -22,7 +22,6 @@ const patchMultiplier = (command: Extract<RomWeaverCommand, { type: "patch" }>):
     case "apply":
     case "validate":
     case "create":
-    case "create-candidates":
       return MULTIPLIER_DECODED;
     default:
       return MULTIPLIER_DECODED;
