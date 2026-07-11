@@ -487,9 +487,13 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 }
 .rw-app .step.is-input .drop:not(.hero):hover .main.btnish { color: var(--thread-text); }
 .rw-app .step.is-input .drop:not(.hero) .main.btnish svg { color: var(--thread-text); }
-/* with nothing staged the hero is a clear drop target, but capped so it doesn't
-   dominate the form on tall desktop viewports */
-.rw-app .step.is-input.is-empty .drop.hero { min-height: clamp(180px, 26dvh, 240px); padding-block: 24px; }
+/* with nothing staged the hero is THE page: a big, obvious drop target that
+   claims most of the viewport, still capped so huge desktop screens don't
+   turn it into a void */
+.rw-app .step.is-input.is-empty .drop.hero { min-height: clamp(260px, 48dvh, 520px); padding-block: 32px; }
+/* …and the empty bench centers vertically in the workbench instead of hugging
+   the masthead, so the hero sits in the middle of the free space */
+.rw-app .workbench:has(.step.is-input.is-empty) { align-content: center; }
 
 /* secondary input sections (patches, modified), when empty, don't offer their
    own drop target - they point the user UP to the 0x01 hero. they share the
@@ -1320,6 +1324,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
   padding: 7px 0 max(7px, env(safe-area-inset-bottom));
   background: color-mix(in srgb, var(--plate) 88%, transparent);
   border: 1px solid var(--seam);
+  border-radius: var(--r-l) var(--r-l) 0 0;
   font-size: .82rem; color: var(--ink-3);
 }
 .rw-app .selvage::before {
@@ -1552,7 +1557,9 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
   .rw-app .brand-mark { width: 38px; height: 38px; }
 }
 @media (max-width: 560px) {
-  .rw-app .selvage { max-width: none; width: 100%; }
+  /* edge-to-edge footer: the rounded top corners only make sense while the
+     strip floats inside the page gutter */
+  .rw-app .selvage { max-width: none; width: 100%; border-radius: 0; }
   /* keep the form container (just inset from the screen); cards run to its
      inner edge, and the 0x* headers keep a gutter that lines up with card text */
   /* shrink the row controls on a phone so the badges + buttons don't crowd the
@@ -1580,6 +1587,13 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
   /* every section's content shares ONE left/right inset (6px) so the 0x* headers,
      cards, drop zones and notices all line up on the same vertical edge */
   .rw-app .step-head { padding-inline: 6px; }
+  /* phones scroll: shave the vertical rhythm (section head/body padding, masthead,
+     workbench tail) so the whole workflow needs less page height */
+  .rw-app .step-head { padding-block: 10px 2px; }
+  .rw-app .step-body { padding-block: 4px 14px; }
+  .rw-app .masthead { padding-block: 8px 6px; }
+  .rw-app .workbench { padding-block-end: 8px; }
+  .rw-app .step.is-input .drop:not(.hero) { padding-block: 9px; }
   /* cards stay framed on all four sides (the verified/fault border must read as
      a full outline, not just top+bottom) - inset slightly from the container and
      keep tight inline padding so checksum hashes still get room */
@@ -1592,7 +1606,7 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
   /* drop surfaces (empty hero AND the compact add-row) + "needs input" directives
      match the cards' 6px inset so 0x01 is the same width as every other section */
   .rw-app .step.is-input .drop, .rw-app .needs-input { margin-inline: 6px; width: calc(100% - 12px); }
-  .rw-app .step.is-input.is-empty .drop.hero { min-height: 180px; gap: 6px; padding: 16px 12px; }
+  .rw-app .step.is-input.is-empty .drop.hero { min-height: clamp(220px, 42dvh, 340px); gap: 6px; padding: 16px 12px; }
   .rw-app .drop.hero .main { gap: 6px; font-size: clamp(.76rem, 3.5vw, .9rem); white-space: normal; text-wrap: balance; }
   .rw-app .drop.hero .main svg { padding: 8px; border-radius: 11px; }
   .rw-app .needs-input { min-height: 54px; padding: 10px 14px; gap: 7px; font-size: .78rem; }
