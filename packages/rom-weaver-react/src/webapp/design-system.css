@@ -952,6 +952,16 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .ck.bad { background: color-mix(in oklab, var(--fault) 10%, var(--well)); }
 .rw-app .ck .ck-k { font-size: .76rem; color: var(--ink-3); margin: 0; }
 .rw-app .ck .ck-v { margin: 0; font-size: .97rem; color: var(--weft); word-break: break-all; text-transform: uppercase; letter-spacing: .03em; }
+/* long hashes (md5/sha1) hold ONE line at any card width: the value scales
+   with the row list (container) instead of wrapping - same treatment as the
+   expected-ROM card - and the staging shimmer carries the identical size, so
+   pending and resolved rows agree (no CLS, no wrapped shimmer bar). The
+   divisor ≈ char count × mono advance; the subtrahend covers label/copy/gaps. */
+.rw-app .ckrows { container-type: inline-size; }
+.rw-app .ck .ck-v.ck-fit {
+  white-space: nowrap; word-break: normal;
+  font-size: clamp(.55rem, calc((100cqi - 100px) / (var(--ck-chars, 40) * .6)), .97rem);
+}
 .rw-app .ck .ck-v .exp { color: var(--fault); }
 /* hash + verification readout values ride the brand orange in dark mode (was
    the cream label-stock); light mode keeps its rich amber --weft */
