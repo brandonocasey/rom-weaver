@@ -33,7 +33,7 @@
     "i18n:compile": "lingui compile --typescript",
     "lint:types": "tsc -p tsconfig.json --noEmit",
     "prepare:dist": "node ./scripts/sync-dist.mjs",
-    "test": "npm run test:browser",
+    "test": "npm run test:browser:parallel",
     "test:unit": "vitest --config ./vitest.unit.config.mjs run",
     "test:browser": "vitest --config ./vitest.browser.config.mjs run",
     "test:browser:coverage": "ROM_WEAVER_COVERAGE=1 vitest --config ./vitest.browser.config.mjs run --coverage",
