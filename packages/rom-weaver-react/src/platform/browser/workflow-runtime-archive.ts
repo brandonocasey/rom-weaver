@@ -137,6 +137,31 @@ const createArchiveEntrySource = (
   return null;
 };
 
+// Split-bin extraction is valid only for CD-class CHDs. The Rust chd-extract REJECTS the flag on DVD
+// media ("only supported for cd media"), and the ingest command returns an explicit split intent
+// unchanged (it auto-detects media only when the flag is absent). A pre-ingest probe reports the
+// container's entries; a cue entry marks a CD (splittable) image, its absence a DVD/single-track
+// image. Restores the media gate the descend used before `probe` replaced the removed `list` command.
+const isDescendCdChd = async (
+  archivePath: string,
+  options: {
+    logLevel?: Parameters<typeof runRomWeaverProbeWorker>[0]["logLevel"];
+    onLog?: Parameters<typeof runRomWeaverProbeWorker>[2];
+    signal?: AbortSignal;
+  },
+): Promise<boolean> => {
+  const probed = await runRomWeaverProbeWorker(
+    {
+      logLevel: options.logLevel,
+      signal: options.signal,
+      sourcePath: archivePath,
+    },
+    undefined,
+    options.onLog,
+  ).catch(() => null);
+  return !!probed?.entries?.some((entry) => /\.cue$/i.test(String(entry.filename || entry.fileName || "")));
+};
+
 const stageBrowserCompressionEntries = async (
   entries: RuntimeArchiveCreateInput["entries"],
   workerIo: RuntimeWorkerIo,
@@ -265,23 +290,33 @@ const createBrowserArchiveRuntime = (workerIo: RuntimeWorkerIo): Partial<Workflo
             select: selectedEntries,
             signal: workflowInput.options?.signal,
             sourcePath: archive.filePath,
-            // Pass the user's split intent raw; the Rust ingest owns CD-vs-DVD gating (it only
-            // splits a multi-track CD), matching the direct-CHD extract path.
-            splitBin: workflowInput.options?.chdSplitBin,
+            // Force a split only when the user asked AND a pre-ingest probe shows a CD (cue-bearing)
+            // container; otherwise pass an explicit false. Passing the raw intent breaks two ways: an
+            // explicit true on DVD media makes Rust chd-extract error, and an absent flag lets a
+            // multi-track CD default to per-track split, overriding the descend's merged-single-bin
+            // default.
+            splitBin:
+              workflowInput.options?.chdSplitBin === true &&
+              (await isDescendCdChd(archive.filePath, {
+                logLevel: workflowInput.options?.logLevel,
+                onLog: workflowInput.options?.onLog,
+                signal: workflowInput.options?.signal,
+              })),
             workerThreads: workflowInput.options?.workerThreads,
           },
           forwardArchiveProgress("input", workflowInput.options?.onProgress, `Extracting ${archive.fileName}...`),
           workflowInput.options?.onLog,
         );
-        // The primary-track suffix strip below applies only to CD-class discs. Derive that from the
-        // disc format ingest already reports per asset (cd/gd), so no separate `list`/`probe`
-        // round-trip is needed.
-        const chdSplitBinEligible = extracted.assets.some((asset) => {
-          const discFormat = String(asset.discFormat || "")
-            .trim()
-            .toLowerCase();
-          return discFormat === "cd" || discFormat.includes("gd");
-        });
+        // A split extraction fans a multi-track CD into per-track bins named "(Track N)"; the primary
+        // ("Track 1") is rebased onto the source stem below. Ingest does not tag these per-track bins
+        // with a disc_format, so detect the fan-out by counting the non-cue data leaves - only a split
+        // (>1 data leaf) yields a "(Track 1)" primary to strip.
+        const chdSplitBinEligible =
+          extracted.assets.filter((asset) => {
+            const entryKind = String(asset.kind || "").toLowerCase();
+            const entryName = asset.fileName || getPathBaseName(asset.path, asset.path);
+            return entryKind !== "cue" && !isCueEntryName(entryName);
+          }).length > 1;
         const normalizedFormat = String(workflowInput.format || "")
           .trim()
           .toLowerCase();
