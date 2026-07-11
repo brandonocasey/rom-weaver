@@ -12,4 +12,8 @@ describe("settingsDraftHasChanges (numeric-aware equality)", () => {
     const webappState = { draftSettings: { workerThreads: "6" }, settings: { workerThreads: 8 } };
     expect(shouldConfirmDiscardSettings(webappState)).toBe(true);
   });
+
+  it("flags staged tools inputs", () => {
+    expect(shouldWarnBeforeUnload({ toolsActive: true })).toBe(true);
+  });
 });

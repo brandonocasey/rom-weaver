@@ -44,6 +44,22 @@ describe("createWebappRootController over the vanilla store", () => {
     expect(controller.getState().currentView).toBe("trim");
   });
 
+  it("routes and tracks the tools workflow", () => {
+    const controller = createController();
+    expect(controller.selectView("tools")).toBe("tools");
+    expect(window.location.hash).toBe("#/tools");
+    controller.setToolsSessionState(true);
+    expect(controller.getState().toolsSession.active).toBe(true);
+  });
+
+  it("does not notify subscribers when the tools session state is unchanged", () => {
+    const controller = createController();
+    const listener = vi.fn();
+    controller.subscribe(listener);
+    controller.setToolsSessionState(false);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it("commits and persists a language change", () => {
     const controller = createController();
     controller.setLanguage("de");
