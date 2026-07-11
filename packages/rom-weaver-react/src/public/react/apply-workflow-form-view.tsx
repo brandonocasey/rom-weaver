@@ -687,9 +687,9 @@ function ApplyWorkflowFormView({
   // The empty bench fills (or clears) inside a flat crossfade - the 0x01 hero
   // shrinking into the add-row otherwise snaps. A pending placeholder also counts
   // as "not empty" so the hero shrinks the instant something is dropped.
-  const workflowEmpty = useFlatTransitionFlag(
-    romInputs.length === 0 && patches.length === 0 && pendingDrops.length === 0,
-  );
+  const workflowActuallyEmpty =
+    romInputs.length === 0 && patches.length === 0 && pendingDrops.length === 0 && !inputsStaging;
+  const workflowEmpty = useFlatTransitionFlag(workflowActuallyEmpty);
   // "Needs input" directives forward to the 0x01 unified picker.
   const openUnifiedPicker = () => document.getElementById("rom-weaver-input-file-unified")?.click();
   // Each section keeps its empty fixture whenever its own list is empty - not
@@ -758,7 +758,7 @@ function ApplyWorkflowFormView({
         onFiles={handleUnifiedDrop}
         supported={APPLY_SUPPORTED_FILES}
       />
-      {workflowEmpty ? null : (
+      {workflowActuallyEmpty ? null : (
         <>
           <WorkflowRomInputStep
             emptyState={romNeedsInput}

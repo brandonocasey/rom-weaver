@@ -754,7 +754,8 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     buildCreateSourceStep({ ...options, runtimeNotice: sourceStepRuntimeNotice });
 
   const createFileInputAccept = getFileInputAcceptAttributes();
-  const createSourcesEmpty = useFlatTransitionFlag(!(original || modified));
+  const createSourcesActuallyEmpty = !(original || modified || createPreparationPending);
+  const createSourcesEmpty = useFlatTransitionFlag(createSourcesActuallyEmpty);
   // The selvage status strip mirrors this workflow's job state.
   useWorkbenchActivity(workflowIdRef.current, { busy, completed: !!completedOutput, queued: createQueued });
 
@@ -886,7 +887,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
       onFormatChange: updatePatchType,
       title: "Patch",
     },
-    sourcesEmpty: createSourcesEmpty,
+    sourcesEmpty: createSourcesActuallyEmpty,
     swap: createInputsSelected
       ? { disabled: uploadDisabled || createPreparationPending || createQueued, onSwap: swapCreateSources }
       : null,

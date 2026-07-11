@@ -763,7 +763,8 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       : null,
   );
 
-  const trimSourceEmpty = useFlatTransitionFlag(!source);
+  const trimSourceActuallyEmpty = !(source || trimPreparationPending);
+  const trimSourceEmpty = useFlatTransitionFlag(trimSourceActuallyEmpty);
   // The selvage status strip mirrors this workflow's job state.
   useWorkbenchActivity(workflowIdRef.current, { busy, completed: !!completedOutput, queued: trimQueued });
 
@@ -877,7 +878,7 @@ function TrimPatchForm(props: TrimPatchFormProps) {
       onFormatChange: updateOutputFormat,
       title: "Trim",
     },
-    sourceEmpty: trimSourceEmpty,
+    sourceEmpty: trimSourceActuallyEmpty,
     sourceStep: {
       id: "trim-builder-row-source",
       info: (
