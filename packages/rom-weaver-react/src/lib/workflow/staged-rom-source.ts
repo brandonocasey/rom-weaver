@@ -211,7 +211,12 @@ class StagedRomSourceController<TSource, TState extends SharedRomSourceState> {
         sources.reduce((total, source) => total + (getBinarySourceSize(source as never) || 0), 0) ||
         view.state.sourceSize;
       this.applyPreparedSourceMetadata(view);
-      if (this.clearRequestsWhenSinglePatchableAsset && directAssets.filter((asset) => asset.patchable).length === 1) {
+      const hasDiscSheet = directAssets.some((asset) => asset.kind === "cue" || asset.kind === "gdi");
+      if (
+        this.clearRequestsWhenSinglePatchableAsset &&
+        !hasDiscSheet &&
+        directAssets.filter((asset) => asset.patchable).length === 1
+      ) {
         requests.length = 0;
       }
       for (const request of requests) this.addCandidateRequest(view, request);

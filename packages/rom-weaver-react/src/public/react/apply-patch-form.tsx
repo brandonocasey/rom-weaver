@@ -98,6 +98,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   // id matches webapp-root's `currentView` so root routing targets the active tab.
   useInputSelectionHandler("patcher", selectFile);
   const lastInputsRef = useRef<BinarySource[]>([]);
+  const forceInputWorkflowRefreshRef = useRef(false);
   const lastPatchOrderRef = useRef("");
   const forcePatchWorkflowRefreshRef = useRef(false);
   const workflowRef = useRef<ApplyWorkflow | null>(null);
@@ -131,7 +132,10 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   );
 
   const syncInputSelectionRefs = useCallback((inputs: BinarySource[]) => {
-    if (!sameBinarySourceLists(lastInputsRef.current, inputs)) lastInputsRef.current = inputs.slice();
+    if (!sameBinarySourceLists(lastInputsRef.current, inputs)) {
+      if (lastInputsRef.current.length > 0 && inputs.length === 0) forceInputWorkflowRefreshRef.current = true;
+      lastInputsRef.current = inputs.slice();
+    }
   }, []);
 
   const syncPatchSelectionRefs = useCallback((patches: BinarySource[]) => {
@@ -226,6 +230,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   const resetWorkflow = useCallback(() => {
     const workflow = workflowRef.current;
     workflowRef.current = null;
+    forceInputWorkflowRefreshRef.current = false;
     workflowSyncRef.current = { executionSettingsKey: "", inputs: [], patches: [], preparationSettingsKey: "" };
     workflowOutputOverridesKeyRef.current = "";
     prepareHandlersRef.current = null;
@@ -325,7 +330,9 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         const executionSettingsChanged = previousSync.executionSettingsKey !== executionSettingsKey;
         const preparationSettingsChanged = previousSync.preparationSettingsKey !== preparationSettingsKey;
         const inputsChanged =
-          preparationSettingsChanged || !sameBinarySourceLists(previousSync.inputs, snapshot.inputs);
+          forceInputWorkflowRefreshRef.current ||
+          preparationSettingsChanged ||
+          !sameBinarySourceLists(previousSync.inputs, snapshot.inputs);
         const patchesChanged =
           forcePatchWorkflowRefreshRef.current ||
           preparationSettingsChanged ||
@@ -461,6 +468,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           patches: snapshot.patches.slice(),
           preparationSettingsKey,
         };
+        if (snapshot.inputs.length) forceInputWorkflowRefreshRef.current = false;
         forcePatchWorkflowRefreshRef.current = false;
 
         const input = workflow.getInput();
@@ -1083,6 +1091,13 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     }
     if (request.role !== "input") return;
     const romInputs = resolvedUiController.getState().romInputs;
+    // A "which one?" prompt over several separately-provided ROMs spans every pending row, so
+    // cancelling it abandons the whole pending input. Clear them all - removing a single row would
+    // leave the other ROM(s) to auto-stage as if one had been chosen.
+    if (romInputs.length > 1) {
+      resolvedUiController.provideRomInputFile?.(null);
+      return;
+    }
     const matchingInput = romInputs.find((entry) =>
       [entry.info.fileName, entry.info.archiveName].some(
         (value) => value.trim().toLowerCase() === normalizedSourceName,

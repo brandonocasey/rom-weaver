@@ -177,6 +177,8 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
         });
         const endStage = startStageSpan("setInput:stageInputSession");
         this.inputSession = await this.stageInputSession(this.inputs);
+        const stagedSession = this.inputSession;
+        if (!stagedSession) return;
         endStage();
         this.trace("input.set.staged", {
           selectedCandidateId: this.inputSession.view.state.selectedCandidateId,
@@ -194,6 +196,16 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
         const endFinalize = startStageSpan("setInput:finalizeStableState");
         await this.finalizeInputStableState();
         endFinalize();
+        if (!this.inputSession) {
+          options?.onFinalized?.(
+            cloneInputState(
+              stagedSession.view.state,
+              stagedSession.view.parentCompressions || [],
+              cloneResolvedInputStatesForStage(stagedSession.view, true),
+            ),
+          );
+          return;
+        }
         this.trace("input.set.finalized", {
           hasChecksums: !!this.inputSession.view.state.checksums,
           status: this.inputSession.view.state.status,

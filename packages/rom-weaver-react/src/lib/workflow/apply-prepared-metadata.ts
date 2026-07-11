@@ -2,6 +2,7 @@ import type { ApplyWorkflowParentCompression } from "../../types/apply-workflow.
 import { getInputPreparationMetrics, type InputParentCompression } from "../input/input-assets.ts";
 import type { prepareInputFile } from "../input/input-preparation-service.ts";
 import { getBaseFileName } from "../input/path-utils.ts";
+import { chdModeFromMetadata } from "../input/rom-specific-file-utils.ts";
 import { getPreparedAssetFileName } from "./apply-source-staging.ts";
 import type { StagedSource } from "./apply-workflow-state.ts";
 import { getInputAssetChecksums, getPrimaryInputAsset } from "./staged-source-checksums.ts";
@@ -28,6 +29,11 @@ const applyPreparedInputMetadata = <TSource>(stage: StagedSource<TSource>) => {
     (typeof preparation?.sourceSize === "number" && Number.isFinite(preparation.sourceSize)
       ? preparation.sourceSize
       : stage.state.sourceSize) || stage.state.size;
+  stage.state.chdMode =
+    assets.map((asset) => chdModeFromMetadata(asset.file.metadata)).find((mode) => mode) ||
+    (assets.some((asset) => asset.kind === "cue" || asset.file.metadata?.cuePath || asset.file.metadata?.cueText)
+      ? "cd"
+      : stage.state.chdMode);
   stage.state.decompressionTimeMs =
     typeof preparation?.decompressionTimeMs === "number" && Number.isFinite(preparation.decompressionTimeMs)
       ? preparation.decompressionTimeMs

@@ -4,6 +4,7 @@ import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { ApplyWorkflowOptions, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
 import type { ExtractedFileEntry, ExtractStepDetails } from "../../wasm/index.ts";
 import { createArchiveSourceBlob } from "../archive-utils.ts";
+import { RomWeaverError } from "../errors.ts";
 import { createPatchFileFromPublicOutput } from "../runtime/public-output-bin-file.ts";
 import { romTypeFromEmittedFile } from "../runtime/run-result-parsing.ts";
 import { isCueEntryFileName, isGdiEntryFileName } from "./archive.ts";
@@ -443,7 +444,44 @@ const resolveArchiveInputAssetsByDescent = async (
     },
     ...(options?.signal ? { signal: options.signal } : {}),
   });
-  if (!outputs.length) throw new Error(`${archiveFile.fileName || "Archive"} produced no extractable payload`);
+  if (compressionFormat === "chd") {
+    const discFormats = ingestResult.assets.map((asset) => String(asset.discFormat || "").toLowerCase());
+    const chdMode =
+      ingestResult.assets.some((asset) => asset.kind === "cue" || asset.kind === "gdi") ||
+      discFormats.some((format) => format === "cd" || format.includes("gd"))
+        ? "cd"
+        : "dvd";
+    options?.onProgress?.({
+      details: { chdMode },
+      label: `Extracting ${archiveFile.fileName || "CHD"}...`,
+      percent: null,
+      stage: "decompress",
+    } as never);
+    traceArchivePreparation(options, "input.archive.chd-mode", { chdMode, sourceIndex });
+  }
+  if (!outputs.length) {
+    // A patch-only bundle (no ROM payload, but the descent DID surface patch leaves) was routed to
+    // the ROM bucket - typically a NESTED patch archive whose top-level entries are just inner
+    // archives, so the drop-time content probe could not see the patches and defaulted to ROM.
+    // Surface the same `is_rom === false` verdict the host already reclassifies on, then abort this
+    // ROM staging so its session (and OPFS handles) release cleanly before the patch bucket re-stages
+    // the same file - completing here would leave the source claimed by the ROM stage and deadlock the
+    // patch extraction. The `reclassifiedToPatch` marker lets the host swallow this expected teardown.
+    if (patchOutputs.length) {
+      options?.onProgress?.({ details: { probe_manifest: { is_rom: false } } } as never);
+      traceArchivePreparation(options, "input.archive.descent.reclassify-patch-only", {
+        file: describeArchiveFileForTrace(archiveFile),
+        patchOutputCount: patchOutputs.length,
+        sourceIndex,
+      });
+      throw new RomWeaverError(
+        "INVALID_INPUT",
+        `${archiveFile.fileName || "Archive"} is a patch-only bundle; re-homing it to the patch list`,
+        { details: { reclassifiedToPatch: true } },
+      );
+    }
+    throw new Error(`${archiveFile.fileName || "Archive"} produced no extractable payload`);
+  }
   const files = await Promise.all(
     outputs.map(async (output, index) => {
       const fileName = getBaseFileName(output.fileName || `payload-${index + 1}.bin`);

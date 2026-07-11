@@ -23,6 +23,14 @@ import type { RomInputRowState } from "./patcher-ui-state.ts";
 import { useLatestRef } from "./use-latest-ref.ts";
 import { createWaitingWorkflowProgress } from "./workflow-run-hooks.ts";
 
+// A patch-only archive that was optimistically staged in the ROM bucket throws this (carrying the
+// `reclassifiedToPatch` detail) once its descent surfaces patch leaves but no ROM payload, so the ROM
+// staging tears down and the is_rom=false progress it emitted re-homes it into the patch bucket.
+const isArchiveReclassifiedToPatchError = (error: unknown): boolean =>
+  !!error &&
+  typeof error === "object" &&
+  (error as { details?: { reclassifiedToPatch?: unknown } }).details?.reclassifiedToPatch === true;
+
 type SessionState = ReturnType<typeof useLocalPatcherSessionState>;
 type RomInputPatch = Omit<Partial<RomInputRowState>, "info"> & { info?: Partial<RomInputRowState["info"]> };
 
@@ -510,7 +518,10 @@ const useInputStaging = (context: InputStagingContext) => {
                 return createRomInputRow({
                   ...(stableId ? byId.get(stableId) : undefined),
                   chdMode: info.chdMode ?? byId.get(stableId)?.chdMode,
+                  cueText: info.cueText,
                   disabled: disabledRef.current || busyRef.current,
+                  gdiText: info.gdiText,
+                  groupId: info.groupId,
                   id: stableId,
                   info: {
                     archiveName: info.archiveName || "",
@@ -545,6 +556,13 @@ const useInputStaging = (context: InputStagingContext) => {
         .catch((error) => {
           const normalizedError = toError(error);
           if (isWorkflowDisposedError(normalizedError)) return;
+          // A patch-only archive optimistically staged in the ROM bucket aborts its ROM staging so the
+          // reclassify (driven by the is_rom=false progress it already emitted) can re-home it to the
+          // patch bucket. That teardown is expected, not a failure - do not surface it.
+          if (isArchiveReclassifiedToPatchError(normalizedError)) {
+            emitSessionTrace("stageInput reclassified to patch bucket", { generation });
+            return;
+          }
           if (inputStageGenerationRef.current !== generation) {
             emitSessionTrace("stageInput failure ignored", {
               currentGeneration: inputStageGenerationRef.current,

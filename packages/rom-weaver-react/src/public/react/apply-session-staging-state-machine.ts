@@ -74,7 +74,26 @@ const useStableSourceKeys = (sources: BinarySource[], prefix: "input" | "patch")
       }),
     [prefix],
   );
-  const keys = useMemo(() => getKeys(sources), [getKeys, sources]);
+  const keys = useMemo(() => {
+    // Forget keys for sources no longer in the list: once a source is cleared/removed, its
+    // signature→key and object→key bindings must not survive, or re-adding the same file (same object
+    // OR same name/size/lastModified signature) would silently reuse the old key - reusing the prior
+    // extraction/selection instead of re-staging and re-prompting. Rebuild both maps from the current
+    // list so a fresh re-add mints a new key. Pure appends keep every existing binding, so the
+    // append fast-path (no full re-stage) is preserved.
+    const liveStableIds = new Set(getBinarySourceListStableIds(sources));
+    for (const stableId of [...stableKeyMapRef.current.keys()]) {
+      if (!liveStableIds.has(stableId)) stableKeyMapRef.current.delete(stableId);
+    }
+    const result = getKeys(sources);
+    const nextObjectKeyMap = new WeakMap<object, string>();
+    sources.forEach((source, index) => {
+      const key = result[index];
+      if (source && typeof source === "object" && key) nextObjectKeyMap.set(source as object, key);
+    });
+    objectKeyMapRef.current = nextObjectKeyMap;
+    return result;
+  }, [getKeys, sources]);
   const getKey = useCallback(
     (source: BinarySource, sourceList: BinarySource[] = sources) => {
       const index = sourceList.indexOf(source);

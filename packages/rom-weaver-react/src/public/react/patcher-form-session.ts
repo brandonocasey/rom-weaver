@@ -169,17 +169,25 @@ const useLocalApplyPatchFormSession = ({
   const busyRef = useRef(busy);
   const disabledRef = useRef(disabled);
   const inputStageMachine = useStageGenerationMachine();
-  const inputStageSyncRef = useRef<{ inputs: BinarySource[]; settingsKey: string }>({
+  // `keys` snapshots the stable source keys AT sync time. A cleared/removed then re-added source keeps
+  // its name/size/lastModified signature but is minted a FRESH key (useStableSourceKeys forgets a
+  // removed source), so comparing keys - not raw signatures - lets the coalescing effect below see a
+  // re-add as a genuine change and re-stage (re-prompting selection) even when the debounce swallowed
+  // the intermediate empty state.
+  const inputStageSyncRef = useRef<{ inputs: BinarySource[]; keys: string[]; settingsKey: string }>({
     inputs: [],
+    keys: [],
     settingsKey: "",
   });
   const patchStageMachine = useStageGenerationMachine();
   const patchStageSyncRef = useRef<{
     inputs: BinarySource[];
+    keys: string[];
     patches: BinarySource[];
     settingsKey: string;
   }>({
     inputs: [],
+    keys: [],
     patches: [],
     settingsKey: "",
   });
@@ -868,6 +876,13 @@ const useLocalApplyPatchFormSession = ({
   // first and every patch's readiness evaluates against a fully staged input.
   useEffect(() => {
     if (!(stageInput || stagePatches)) return;
+    // Identity by stable KEY, not raw name/size/lastModified signature: a source that was cleared and
+    // re-added (even the exact same File) is minted a fresh key, so a re-add is detected as a real
+    // change here even though the debounce swallowed the intermediate empty list.
+    const currentInputKeys = effectiveInputs.map((source) => getInputKey(source, effectiveInputs));
+    const currentPatchKeys = activePatches.map((source) => getPatchKey(source, activePatches));
+    const sameKeyList = (left: string[], right: string[]) =>
+      left.length === right.length && left.every((key, index) => key === right[index]);
     // Reflect "preparation pending" synchronously the moment sources change, so a click landing in
     // the coalesce window below queues instead of starting against not-yet-staged sources. Only the
     // pending flags move earlier here; the staging *work* stays debounced in the timeout. (syncRomInput
@@ -877,26 +892,27 @@ const useLocalApplyPatchFormSession = ({
     if (
       stageInput &&
       effectiveInputs.length > 0 &&
-      (!sameBinarySourceLists(inputStageSyncRef.current.inputs, effectiveInputs) ||
+      (!sameKeyList(inputStageSyncRef.current.keys, currentInputKeys) ||
         inputStageSyncRef.current.settingsKey !== stageSettingsKey)
     ) {
       setInputStaging(true);
     }
     if (stagePatches && activePatches.length > 0) {
-      const previousPatchIds = new Set(getBinarySourceListStableIds(patchStageSyncRef.current.patches));
-      const hasNewPatch = getBinarySourceListStableIds(activePatches).some((id) => !previousPatchIds.has(id));
+      const previousPatchKeys = new Set(patchStageSyncRef.current.keys);
+      const hasNewPatch = currentPatchKeys.some((key) => !previousPatchKeys.has(key));
       const patchSettingsChanged = patchStageSyncRef.current.settingsKey !== stageSettingsKey;
       if (hasNewPatch || patchSettingsChanged) setPatchStaging(true);
     }
     const handle = setTimeout(() => {
       if (stageInput) {
         const previousSync = inputStageSyncRef.current;
-        const inputsChanged = !sameBinarySourceLists(previousSync.inputs, effectiveInputs);
+        const inputsChanged = !sameKeyList(previousSync.keys, currentInputKeys);
         const settingsChanged = previousSync.settingsKey !== stageSettingsKey;
         if (!effectiveInputs.length) {
           const shouldClearStagedInput = previousSync.inputs.length > 0;
           inputStageSyncRef.current = {
             inputs: [],
+            keys: [],
             settingsKey: stageSettingsKey,
           };
           inputStageMachine.invalidateStage();
@@ -925,6 +941,7 @@ const useLocalApplyPatchFormSession = ({
           const previousInputs = previousSync.inputs.slice();
           inputStageSyncRef.current = {
             inputs: effectiveInputs.slice(),
+            keys: currentInputKeys,
             settingsKey: stageSettingsKey,
           };
           syncRomInput(createStageSnapshot(), previousInputs);
@@ -934,23 +951,23 @@ const useLocalApplyPatchFormSession = ({
       if (stagePatches) {
         const previousSync = patchStageSyncRef.current;
         const inputsChanged = !sameBinarySourceLists(previousSync.inputs, effectiveInputs);
-        const patchesChanged = !sameBinarySourceLists(previousSync.patches, activePatches);
+        const patchesChanged = !sameKeyList(previousSync.keys, currentPatchKeys);
         // Reordering and removing patches only rearrange/drop files already staged in OPFS;
         // as long as no current patch is new, there is nothing to (re-)stage - just record order.
-        const previousPatchIds = new Set(getBinarySourceListStableIds(previousSync.patches));
-        const noNewPatches =
-          patchesChanged && getBinarySourceListStableIds(activePatches).every((id) => previousPatchIds.has(id));
+        const previousPatchKeys = new Set(previousSync.keys);
+        const noNewPatches = patchesChanged && currentPatchKeys.every((key) => previousPatchKeys.has(key));
         // Appending patches keeps the existing prefix staged; only the new tail needs work.
         const patchesAppended =
           patchesChanged &&
-          activePatches.length > previousSync.patches.length &&
-          sameBinarySourceLists(previousSync.patches, activePatches.slice(0, previousSync.patches.length));
+          currentPatchKeys.length > previousSync.keys.length &&
+          previousSync.keys.every((key, index) => currentPatchKeys[index] === key);
         const previousPatchCount = previousSync.patches.length;
         const settingsChanged = previousSync.settingsKey !== stageSettingsKey;
         if (inputsChanged || patchesChanged || settingsChanged) {
           if (activePatches.length) {
             patchStageSyncRef.current = {
               inputs: effectiveInputs.slice(),
+              keys: currentPatchKeys,
               patches: activePatches.slice(),
               settingsKey: stageSettingsKey,
             };
@@ -973,6 +990,7 @@ const useLocalApplyPatchFormSession = ({
           } else {
             patchStageSyncRef.current = {
               inputs: effectiveInputs.slice(),
+              keys: [],
               patches: [],
               settingsKey: stageSettingsKey,
             };
@@ -989,6 +1007,8 @@ const useLocalApplyPatchFormSession = ({
     createStageSnapshot,
     effectiveInputs,
     emitSessionTrace,
+    getInputKey,
+    getPatchKey,
     inputStageMachine,
     onError,
     patchStageMachine,
