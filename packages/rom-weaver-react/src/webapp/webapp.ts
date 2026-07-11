@@ -8,6 +8,7 @@ import { configureLogger, createLogger } from "../lib/logging.ts";
 import { getBrowserStorageEstimateState } from "../storage/browser/browser-storage-estimate.ts";
 import { beginOpfsCleanupGate, markOpfsCleanupSettled } from "../storage/browser/opfs-cleanup-gate.ts";
 import { markRomWeaverRunnerStale } from "../workers/rom-weaver/rom-weaver-runner.ts";
+import { APP_BUILD_VERSION } from "./build-version.ts";
 import { installLogStore } from "./log-store.ts";
 import { createEmptyVitePageUpdateState, createVitePageUpdateState, getPageUpdateState } from "./page-update-state.ts";
 import { createPwaServiceWorkerClient } from "./pwa/pwa-service-worker-client.ts";
@@ -412,6 +413,8 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
 const initializeWebapp = () => {
   if (webappRootInitialized) return;
   webappRootInitialized = true;
+
+  logger.info("Initializing webapp", { config: appConfig, version: APP_BUILD_VERSION });
 
   serviceWorkerClient.refreshCacheVersion();
   webappController.setStartupState("loading");
