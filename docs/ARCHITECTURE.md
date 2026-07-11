@@ -266,17 +266,24 @@ require reproducing DiscUtils' exact ISO9660 layout and is deferred.
 ## rw.json manifests
 
 An `rw.json` manifest is a distributable patching-workflow definition: ordered
-`patches` (each with optional `name`/`description`, a `status` selection
-default — `required`/`default`/`optional`/`disabled` — a free-form maturity
-`label`, expected input-ROM `checks`, patch-file `integrity` checksums, and a
-per-patch `header` mode), an optional `rom` entry, and overridable `output`
-defaults (`name`/`header`/`compress`). Every patch entry's source is either a
-download `url` or a `path` relative to the manifest (an archive member when
-the manifest ships inside an "everything archive" that also bundles the ROM
-and patches). The `rom` entry may instead be *sourceless* (checks/name only):
-the applying user supplies the ROM themselves and the checks validate it —
-the default shape for distributable patch bundles. Schema and the single
-shared parser live in
+`patches` (each with editable `name`/`description`, an `optional` flag
+(absent/false = applied by default), a free-form maturity `label`, and a
+per-patch `header` mode), an optional `rom` entry, and
+overridable `output` defaults (`name`/`header`). ROM state checks live on the
+chain's endpoints: `rom.checks` describes the input ROM and `output.checks`
+the result of applying the full chain. A patch only carries its own
+`inputChecks`/`outputChecks` when they differ from those endpoints (mid-chain
+steps) — `manifest create` drops endpoint-equal per-patch checks
+automatically, so patches rely on the rom/output checks unless they differ.
+Output compression always remains the applying user's choice. Every patch
+entry's source is either a download `url` or a `path` relative to the manifest
+(an archive member when the manifest ships inside an "everything archive" that
+also bundles the ROM and patches). The `rom` entry may instead be *sourceless*
+(checks/name only): the applying user supplies the ROM themselves and the
+checks validate it — the default shape for distributable patch bundles; the
+apply error for a sourceless bundle input and the webapp's ROM step both
+surface the expected name/checksums/size so the user knows which ROM to
+supply. Schema and the single shared parser live in
 `rom-weaver-app/src/manifest_schema.rs` / `manifest_parse.rs`; validation
 failures use stable `manifest.*` `ValidationCode`s. Manifest-ness is
 filename-based: exactly `rw.json`, `rw.json.<gz|bz2|xz|zst>`, or a root-level
@@ -287,10 +294,11 @@ worker runtime-caches that name.
   entries (extracting referenced archive members into `--extract-dir`,
   attaching ingest-grade patch descriptors), and returns a typed
   `ManifestParseResult` under `details.manifest`. `manifest create` builds a
-  validated manifest from local files (checks/integrity computed from the
-  real bytes, per-patch metadata flags — including `--patch-check`
-  pre-apply ROM requirements — bound to the preceding `--patch` by argv
-  index), emits plain/`.gz`/`.zst`, and `--bundle`s manifest + sources into
+  validated manifest from local files (ROM checks computed from the
+  real bytes, per-patch metadata flags — including
+  `--patch-input-check`/`--patch-output-check` chain-state requirements —
+  bound to the preceding `--patch` by argv index; `--output-check` pins the
+  final `output.checks`), emits plain/`.gz`/`.zst`, and `--bundle`s manifest + sources into
   a creatable archive (the extension picks the format, e.g. `.zip`/`.7z`).
   `--no-bundle-rom` keeps the local ROM out of the bundle and emits its
   entry checks-only. Create re-parses before writing, so it can never emit
@@ -301,26 +309,35 @@ worker runtime-caches that name.
   `rw.json[.codec]` input, or an archive with a root `rw.json` and no
   explicit `--patch`. The resolver merges the manifest into a plain command;
   precedence is decided by field shape (explicit CLI value > manifest >
-  built-in default — that is why `output` and `--compress-level` are
-  `Option`s). Statuses select patches (`--with`/`--without` override; an
-  interactive session prompts over default+optional entries and Cancel keeps
-  required+default). Native builds download `url` entries via `ureq`
-  (target-gated out of wasm); relative entry URLs resolve against the
+  built-in default). Non-optional patches seed the selection
+  (`--with`/`--without` override; an interactive session prompts over every
+  entry and Cancel keeps the defaults). Input validation merges `rom.checks`
+  plus the FIRST selected patch's `inputChecks`; the expected output is the
+  LAST selected patch's `outputChecks`, falling back to `output.checks` when
+  the selection ends the full chain. A selected patch whose `inputChecks`
+  disagree with its predecessor's `outputChecks` logs a warning (skipped
+  chain step) rather than failing. Native builds download `url` entries via
+  `ureq` (target-gated out of wasm); relative entry URLs resolve against the
   manifest's own URL.
 - **Browser flow.** The webapp's URL API (`?manifest=<url>` or
   `?rom=<url>&patch=<url>…`, parsed once at boot in
   `src/webapp/url-session/`) fetches sources with JS `fetch` (hosts must
   allow CORS), runs `manifest parse` in wasm, and delivers the resolved
   files through the standard page-drop pipeline. Manifest metadata seeds the
-  patch enablement switches (required = on + locked, optional = off) and the
-  output defaults, all still user-editable. The apply form's output card
-  offers "Export manifest…": a dialog with an auto-filled manifest name,
-  per-patch status/description/ROM-check fields, and an output-format
-  select (`.zip`/`.7z` bundle named after the manifest, or bare `rw.json`).
+  patch enablement switches (`optional: true` = off, everything else = on;
+  every patch remains toggleable) and output defaults; each entry's effective
+  chain checks are reconstructed from the rom/output endpoints
+  (`resolveManifestEntryChecks`). The session display name derives from the
+  output/rom naming (manifests carry no name field). Patch name, description,
+  and six input/output checksum fields live in each patch's Options drawer.
+  Default output name, bundle format, original-ROM inclusion, export
+  progress, and the direct Export action live in Output. Local drops may include `rw.json`
+  plus its relative-path companions.
   Patch sources are resolved to their extracted leaves first
   (`prepareInputFile`), so bundles carry the actual patch files rather than
-  the archives they arrived in; the ROM stays out of the bundle (its entry
-  is checks-only) unless "Bundle ROM into the archive" is switched on.
+  the archives they arrived in. The ROM stays out by default; when bundled,
+  its logical bytes remain the checksum source while CHD/RVZ/Z3DS is reused
+  or produced where the detected content identity recommends it.
 
 ## Rust ⇄ TypeScript boundary
 
