@@ -200,7 +200,7 @@ pub(crate) fn lzma2_threads_for_budget(total_bytes: u64, level: u32, budget_byte
 }
 
 fn lzma2_memory_thread_cap(total_bytes: u64, level: u32) -> usize {
-    // On wasm the budget is a slice of the linear-memory ceiling (~2 GiB, never
+    // On wasm the budget is a slice of the linear-memory ceiling (~4 GiB, never
     // shrinks). Workers plus the base heap, thread stacks, and input must stay
     // under that ceiling, so cap workers at 1 GiB; native falls back here only
     // when RAM can't be queried.

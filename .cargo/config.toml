@@ -20,6 +20,7 @@ rustflags = [
   # more than 1 GiB when several raw encoders run concurrently. Threaded wasm needs
   # *shared* memory, which the threads spec requires to declare a fixed maximum (the
   # engine reserves the address range up front and cannot grow a SharedArrayBuffer
-  # past it). 2147483648 = 2 GiB = 32768 * 64 KiB pages.
-  "-C", "link-arg=--max-memory=2147483648",
+  # past it). 4294967296 = 4 GiB = 65536 * 64 KiB pages - the full wasm32 address
+  # space; the browser runtime's allocation ladder steps down when reserving fails.
+  "-C", "link-arg=--max-memory=4294967296",
 ]

@@ -2,8 +2,11 @@ import { isErrorLike } from "./browser-wasi-thread-errors.ts";
 import { WASI_ERRNO_AGAIN } from "./browser-wasi-thread-protocol.ts";
 
 const DEFAULT_SHARED_MEMORY_INITIAL_PAGES = 256;
-const DEFAULT_SHARED_MEMORY_MAX_PAGES = 32768;
-const FALLBACK_SHARED_MEMORY_MAX_PAGES = [24576, 16384, 8192, 4096];
+// 65536 pages * 64 KiB = 4 GiB, matching the module's link-time --max-memory
+// (.cargo/config.toml). Engines reserve the maximum's address range up front, so
+// constrained hosts (notably iOS) may refuse it - the ladder steps down until one fits.
+const DEFAULT_SHARED_MEMORY_MAX_PAGES = 65536;
+const FALLBACK_SHARED_MEMORY_MAX_PAGES = [49152, 32768, 24576, 16384, 8192, 4096];
 
 function storeThreadSpawnResult(
   wasmMemory: WebAssembly.Memory,
