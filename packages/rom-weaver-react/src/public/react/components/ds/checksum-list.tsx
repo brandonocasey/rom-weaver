@@ -1,7 +1,7 @@
 import Check from "lucide-react/dist/esm/icons/check.js";
 import Copy from "lucide-react/dist/esm/icons/copy.js";
 import X from "lucide-react/dist/esm/icons/x.js";
-import { type CSSProperties, Fragment, type ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { join } from "./cx.ts";
 import { Drawer, DrawerMark, DrawerReadout } from "./drawer.tsx";
 import { useClipboardCopy } from "./use-clipboard-copy.ts";
@@ -13,11 +13,10 @@ import { useClipboardCopy } from "./use-clipboard-copy.ts";
  * verification so the copy behaviour lives in one place.
  */
 
-/* Values at least this long (md5, sha1) scale down with the row via --ck-chars
-   so the hash holds ONE line at any card width instead of wrapping. */
+/* Values at least this long (md5, sha1) get the ck-fit marker: on narrow row
+   lists the stylesheet hands them the full row width so the hash holds ONE
+   line at the table's unified value size instead of wrapping. */
 const FIT_VALUE_MIN_CHARS = 16;
-const fitStyle = (chars: number | undefined): CSSProperties | undefined =>
-  chars === undefined ? undefined : ({ "--ck-chars": chars } as CSSProperties);
 
 /** A single label/value checksum row. Click (or Enter/Space) copies `copyValue`. */
 const ChecksumRow = ({
@@ -33,7 +32,7 @@ const ChecksumRow = ({
 }) => {
   const text = copyValue ?? (typeof value === "string" ? value : "");
   const { copied, copy } = useClipboardCopy(text);
-  const fitChars = typeof value === "string" && value.length >= FIT_VALUE_MIN_CHARS ? value.length : undefined;
+  const fit = typeof value === "string" && value.length >= FIT_VALUE_MIN_CHARS;
 
   return (
     <button
@@ -43,9 +42,7 @@ const ChecksumRow = ({
       type="button"
     >
       <span className="ck-k">{label}</span>
-      <span className={join("ck-v", fitChars !== undefined && "ck-fit")} style={fitStyle(fitChars)}>
-        {value}
-      </span>
+      <span className={join("ck-v", fit && "ck-fit")}>{value}</span>
       <span aria-hidden="true" className={join("copy", copied && "copied")}>
         {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       </span>
@@ -62,10 +59,7 @@ const ChecksumRow = ({
 const PendingChecksumRow = ({ label, length }: { label: ReactNode; length: number }) => (
   <div className="ck mono pending">
     <span className="ck-k">{label}</span>
-    <span
-      className={join("ck-v", length >= FIT_VALUE_MIN_CHARS && "ck-fit")}
-      style={fitStyle(length >= FIT_VALUE_MIN_CHARS ? length : undefined)}
-    >
+    <span className={join("ck-v", length >= FIT_VALUE_MIN_CHARS && "ck-fit")}>
       <span className="pend">{"0".repeat(Math.max(1, length))}</span>
     </span>
     <span aria-hidden="true" className="copy">
