@@ -75,10 +75,12 @@ const patchItem = (fileName: string): PatchStackItemState =>
 const renderView = ({
   patches = [] as PatchStackItemState[],
   patchEnablement,
+  pendingDrops,
   ui,
 }: {
   patches?: PatchStackItemState[];
   patchEnablement?: Parameters<typeof ApplyWorkflowFormView>[0]["patchEnablement"];
+  pendingDrops?: Parameters<typeof ApplyWorkflowFormView>[0]["pendingDrops"];
   ui: PatcherUiState;
 }) => {
   const controllers = {
@@ -89,7 +91,7 @@ const renderView = ({
   };
   return render(
     <RomWeaverSettingsProvider settings={{}}>
-      <ApplyWorkflowFormView controllers={controllers} patchEnablement={patchEnablement} />
+      <ApplyWorkflowFormView controllers={controllers} patchEnablement={patchEnablement} pendingDrops={pendingDrops} />
     </RomWeaverSettingsProvider>,
   );
 };
@@ -105,6 +107,18 @@ describe("apply workflow view - empty bench", () => {
     const numbers = Array.from(container.querySelectorAll(".step-num")).map((el) => el.textContent);
     expect(numbers).toEqual(["0x01"]);
     expect(container.querySelector("#rom-weaver-input-output-file-name")).toBeNull();
+  });
+
+  it("shapes an identifying archive like the patch card it will most likely become", () => {
+    const { container } = renderView({
+      pendingDrops: [{ extracting: true, id: "pending-1", kind: "patch", name: "bundle.zip" }],
+      ui: createEmptyPatcherUiState(),
+    });
+    const card = container.querySelector(".rw-pending .card.pending-card");
+    expect(card?.textContent).toContain("bundle");
+    expect(card?.textContent).toContain("Identifying");
+    expect(card?.textContent).toContain("Extract");
+    expect(card?.textContent).toContain("Options");
   });
 });
 

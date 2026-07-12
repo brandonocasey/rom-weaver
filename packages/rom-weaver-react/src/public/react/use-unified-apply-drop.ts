@@ -20,12 +20,19 @@ import { classifyDroppedFiles, isArchiveFileName, isPatchFileName, isRomFileName
  */
 
 const logger = createLogger("unified-apply-drop");
+const MIN_PENDING_DISPLAY_MS = 180;
 
 /** UI-only row shown while an archive or manifest is being identified and routed. */
 type PendingDrop = {
+  entryCount?: number;
+  extracting: boolean;
   id: string;
+  kind: "patch" | "rom";
+  manifest?: boolean;
   name: string;
 };
+
+type PendingDropUpdate = Partial<Pick<PendingDrop, "entryCount" | "kind" | "manifest">>;
 
 type UnifiedDropController = {
   provideRomInputFiles?: (files: File[]) => void;
@@ -44,35 +51,26 @@ type UnifiedApplyDrop = {
  * (`is_rom = has_rom || !has_patch`). Defaults to the ROM bucket on any listing failure - the safe
  * direction, since Rust's reclassify still moves a misrouted patch bundle afterwards.
  */
-const classifyArchiveBucket = async (archive: File): Promise<"rom" | "patch"> => {
-  try {
-    const names = await listDroppedArchiveEntryNames(archive);
-    const hasRom = names.some(isRomFileName);
-    const hasPatch = names.some(isPatchFileName);
-    // A container whose top-level entries are ONLY nested plain archives (no direct rom - rvz/chd/iso
-    // are rom names so a nested rom container sets hasRom - and no direct patch) is a nested patch
-    // bundle whose patches live a level down (e.g. B_bundle → B_discN.zip → patchBN.ips). Route it to
-    // the patch bucket so the patch-leaf enumeration fans the branches into one multi-select, instead
-    // of the ROM keep-one prompt that several sibling archives would otherwise trigger. Rust's is_rom
-    // reclassify still moves a genuinely-ROM misroute back.
-    const hasNestedArchive = names.some(isArchiveFileName);
-    const bucket = hasRom ? "rom" : hasPatch || hasNestedArchive ? "patch" : "rom";
-    logger.trace("archive content classified", {
-      bucket,
-      entryCount: names.length,
-      hasNestedArchive,
-      hasPatch,
-      hasRom,
-      name: archive.name,
-    });
-    return bucket;
-  } catch (error) {
-    logger.trace("archive content classify failed; defaulting to ROM bucket", {
-      error: String(error),
-      name: archive.name,
-    });
-    return "rom";
-  }
+const classifyArchiveBucket = (archive: File, names: string[]): "rom" | "patch" => {
+  const hasRom = names.some(isRomFileName);
+  const hasPatch = names.some(isPatchFileName);
+  // A container whose top-level entries are ONLY nested plain archives (no direct rom - rvz/chd/iso
+  // are rom names so a nested rom container sets hasRom - and no direct patch) is a nested patch
+  // bundle whose patches live a level down (e.g. B_bundle → B_discN.zip → patchBN.ips). Route it to
+  // the patch bucket so the patch-leaf enumeration fans the branches into one multi-select, instead
+  // of the ROM keep-one prompt that several sibling archives would otherwise trigger. Rust's is_rom
+  // reclassify still moves a genuinely-ROM misroute back.
+  const hasNestedArchive = names.some(isArchiveFileName);
+  const bucket = hasRom ? "rom" : hasPatch || hasNestedArchive ? "patch" : "rom";
+  logger.trace("archive content classified", {
+    bucket,
+    entryCount: names.length,
+    hasNestedArchive,
+    hasPatch,
+    hasRom,
+    name: archive.name,
+  });
+  return bucket;
 };
 
 const routeUnifiedDrop = async (
@@ -80,6 +78,7 @@ const routeUnifiedDrop = async (
   controller: UnifiedDropController,
   onManifestSession?: (session: ManifestApplySession) => void,
   isCancelled?: () => boolean,
+  onPendingUpdate?: (file: File, update: PendingDropUpdate) => void,
 ): Promise<void> => {
   const { archives, inputs, patches } = classifyDroppedFiles(files);
   const directManifests = files.filter((file) => isManifestFileName(file.name));
@@ -89,9 +88,17 @@ const routeUnifiedDrop = async (
   const manifestArchives = archives.filter((_archive, index) =>
     archiveEntries[index]?.some((name) => normalizeArchivePath(name).toLowerCase() === "rw.json"),
   );
+  const archiveBuckets = archives.map((archive, index) => classifyArchiveBucket(archive, archiveEntries[index] || []));
+  archives.forEach((archive, index) => {
+    onPendingUpdate?.(archive, { entryCount: archiveEntries[index]?.length || 0, kind: archiveBuckets[index] });
+  });
+  // Yield one task so React can paint the newly learned shape before routing
+  // replaces the placeholder. This does not wait on a timer interval.
+  if (archives.length && onPendingUpdate) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   const manifests = [...directManifests, ...manifestArchives.filter((file) => !directManifests.includes(file))];
   if (manifests.length > 1) throw new Error("Drop contains more than one manifest");
   if (manifests[0]) {
+    onPendingUpdate?.(manifests[0], { manifest: true });
     const loaded = await loadLocalManifestSession(manifests[0], files);
     if (isCancelled?.()) return;
     onManifestSession?.(loaded.session);
@@ -104,7 +111,6 @@ const routeUnifiedDrop = async (
     controller.providePatchInputFiles?.(loaded.patchFiles);
     return;
   }
-  const archiveBuckets = await Promise.all(archives.map(classifyArchiveBucket));
   if (isCancelled?.()) return;
   const romArchives = archives.filter((_archive, index) => archiveBuckets[index] === "rom");
   const patchArchives = archives.filter((_archive, index) => archiveBuckets[index] === "patch");
@@ -136,16 +142,32 @@ const useUnifiedApplyDrop = (
       if (isCancelled?.()) return;
       const { archives } = classifyDroppedFiles(files);
       const identifiedFiles = files.filter((file) => archives.includes(file) || isManifestFileName(file.name));
-      const pending = identifiedFiles.map((file) => {
+      const pending: PendingDrop[] = identifiedFiles.map((file) => {
         nextIdRef.current += 1;
-        return { id: `pending-${nextIdRef.current}`, name: file.name };
+        return {
+          extracting: isArchiveFileName(file.name),
+          id: `pending-${nextIdRef.current}`,
+          kind: isRomFileName(file.name) ? "rom" : "patch",
+          name: file.name,
+        };
       });
       if (pending.length) setPendingDrops((current) => [...current, ...pending]);
-      const pendingIds = new Set(pending.map((entry) => entry.id));
-      const clearPending = () => {
-        if (pendingIds.size) setPendingDrops((current) => current.filter((entry) => !pendingIds.has(entry.id)));
+      const pendingIdsByFile = new Map(identifiedFiles.map((file, index) => [file, pending[index]?.id]));
+      const updatePending = (file: File, update: PendingDropUpdate) => {
+        const id = pendingIdsByFile.get(file);
+        if (id)
+          setPendingDrops((current) => current.map((entry) => (entry.id === id ? { ...entry, ...update } : entry)));
       };
-      void routeUnifiedDrop(files, controller, onManifestSession, isCancelled)
+      const pendingIds = new Set(pending.map((entry) => entry.id));
+      const pendingStartedAt = performance.now();
+      const clearPending = () => {
+        if (!pendingIds.size) return;
+        const clear = () => setPendingDrops((current) => current.filter((entry) => !pendingIds.has(entry.id)));
+        const remaining = MIN_PENDING_DISPLAY_MS - (performance.now() - pendingStartedAt);
+        if (remaining > 0) setTimeout(clear, remaining);
+        else clear();
+      };
+      void routeUnifiedDrop(files, controller, onManifestSession, isCancelled, updatePending)
         .catch((error) => {
           logger.error("manifest drop failed", { error: String(error) });
           onError?.(error instanceof Error ? error : new Error(String(error)));

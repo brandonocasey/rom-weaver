@@ -102,4 +102,14 @@ describe("DropZone", () => {
     expect(onFiles).toHaveBeenCalledTimes(1);
     expect(onFiles.mock.calls[0]?.[0]?.[0]?.name).toBe("a.ips");
   });
+
+  it("repeats a short format list so its ticker cannot scroll fully out of view", () => {
+    const { container } = render(
+      <DropZone big formats={["rom", "ppf3"]} label="Drop files" onFiles={() => undefined} />,
+    );
+    const lanes = container.querySelectorAll(".formats-lane");
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]?.querySelectorAll(".formats-set:first-child .fmt")).toHaveLength(12);
+    expect(lanes[0]?.querySelectorAll(".formats-set")).toHaveLength(2);
+  });
 });

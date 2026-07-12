@@ -111,7 +111,11 @@ const DropZone = ({
   const [dragging, setDragging] = useState(false);
   const [reading, setReading] = useState(false);
   const formatSplit = Math.ceil((formats?.length || 0) / 2);
-  const formatRows = formats ? [formats.slice(0, formatSplit), formats.slice(formatSplit)] : [];
+  const formatRows = formats?.length
+    ? formats.length < 4
+      ? [Array.from({ length: 12 }, (_, index) => formats[index % formats.length])]
+      : [formats.slice(0, formatSplit), formats.slice(formatSplit)]
+    : [];
 
   const emit = (list: FileList | null) => {
     if (!list || list.length === 0) return;
@@ -180,8 +184,8 @@ const DropZone = ({
               <span className="formats-track">
                 {[0, 1].map((copy) => (
                   <span className="formats-set" key={copy}>
-                    {row.map((format) => (
-                      <span className="fmt mono" key={`${copy}-${format}`}>
+                    {row.map((format, index) => (
+                      <span className="fmt mono" key={`${copy}-${index}-${format}`}>
                         {format}
                       </span>
                     ))}

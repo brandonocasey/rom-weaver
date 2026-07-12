@@ -30,6 +30,7 @@ describe("useUnifiedApplyDrop", () => {
     act(() => result.current.onDrop([file("bundle.zip")]));
 
     expect(result.current.pendingDrops).toHaveLength(1);
+    expect(result.current.pendingDrops[0]).toMatchObject({ extracting: true, kind: "patch", name: "bundle.zip" });
     await waitFor(() => expect(controller.provideRomInputFiles).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(result.current.pendingDrops).toHaveLength(0));
     expect(controller.provideRomInputFiles.mock.calls[0]?.[0].map((entry: File) => entry.name)).toEqual(["bundle.zip"]);

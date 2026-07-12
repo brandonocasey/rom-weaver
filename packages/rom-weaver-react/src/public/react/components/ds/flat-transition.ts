@@ -10,7 +10,7 @@ import { flushSync } from "react-dom";
  * entrance as a flicker.
  */
 
-const ENTRY_ANIMATION_SELECTOR = ".workflow-body, .card, .notice, .result, .prog-panel, .fault";
+const ENTRY_ANIMATION_SELECTOR = ".workflow-body, .card:not(.pending-card), .notice, .result, .prog-panel, .fault";
 
 const lockEntryAnimations = () => {
   for (const element of document.querySelectorAll<HTMLElement>(ENTRY_ANIMATION_SELECTOR)) {

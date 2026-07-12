@@ -1,6 +1,6 @@
 import Download from "lucide-react/dist/esm/icons/download.js";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import type { ManifestRomExpectation } from "../../lib/manifest/manifest-session-model.ts";
 import { formatByteSize, type ProgressViewModel } from "../../presentation/workflow-presentation.ts";
@@ -12,7 +12,10 @@ import {
   FieldInfoToggle,
   getOutputCompressionFormatLabel,
 } from "./components/ds/compress-panel.tsx";
-import { FileProgress, Notice } from "./components/ds/feedback.tsx";
+import { Drawer, DrawerReadout } from "./components/ds/drawer.tsx";
+import { ExtractName } from "./components/ds/extraction-tree.tsx";
+import { Notice } from "./components/ds/feedback.tsx";
+import { FileCard } from "./components/ds/file-card.tsx";
 import { useFlatTransitionFlag } from "./components/ds/flat-transition.ts";
 import { GhostSteps } from "./components/ds/ghost-steps.tsx";
 import { InfoPopover, NeedsInput } from "./components/ds/layout.tsx";
@@ -42,6 +45,91 @@ import { useUiLocalizer } from "./settings-context.tsx";
 import type { ManifestPatchMeta } from "./use-manifest-apply-session.ts";
 import type { PendingDrop } from "./use-unified-apply-drop.ts";
 import { toWorkflowChecksumProgressProps, toWorkflowFileProgressProps } from "./workflow-run-hooks.ts";
+
+const usePendingCardMorph = (pendingCount: number, resolvedCount: number) => {
+  const knownCards = useRef(new WeakSet<Element>());
+  const sourceRects = useRef<DOMRect[]>([]);
+
+  useLayoutEffect(() => {
+    const panel = document.getElementById("rom-weaver-container");
+    if (!panel) return;
+    const cards = Array.from(panel.querySelectorAll<HTMLElement>(".workflow-file-list > .card.file"));
+    if (pendingCount > 0) {
+      sourceRects.current = Array.from(panel.querySelectorAll<HTMLElement>(".rw-pending"), (row) =>
+        row.getBoundingClientRect(),
+      );
+      return;
+    }
+
+    const sources = sourceRects.current;
+    if (sources.length && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      cards
+        .filter((card) => !knownCards.current.has(card))
+        .forEach((card, index) => {
+          const source = sources[Math.min(index, sources.length - 1)];
+          if (!source) return;
+          const target = card.getBoundingClientRect();
+          card.animate(
+            [
+              {
+                opacity: 0.35,
+                transform: `translate(${source.left - target.left}px, ${source.top - target.top}px) scale(${source.width / target.width}, ${source.height / target.height})`,
+                transformOrigin: "top left",
+              },
+              { offset: 0.78, opacity: 1, transform: "scale(1.012)", transformOrigin: "top left" },
+              { opacity: 1, transform: "none", transformOrigin: "top left" },
+            ],
+            {
+              delay: Math.min(index, 3) * 25,
+              duration: 280,
+              easing: "cubic-bezier(.2,.8,.2,1)",
+              fill: "backwards",
+            },
+          );
+        });
+    }
+    sourceRects.current = [];
+    for (const card of cards) knownCards.current.add(card);
+  }, [pendingCount, resolvedCount]);
+};
+
+const PendingDropCard = ({ drop }: { drop: PendingDrop }) => (
+  <FileCard
+    className="pending-card"
+    meta={
+      <StageStatus
+        id={`rom-weaver-progress-identify-${drop.id}`}
+        label={drop.manifest ? "Reading manifest" : drop.entryCount === undefined ? "Identifying" : "Identified"}
+        percent={null}
+      />
+    }
+    name={<ExtractName fileName={drop.name} />}
+    stageBar="indeterminate"
+  >
+    {drop.extracting ? (
+      <Drawer
+        bodyClassName="taskbody"
+        className="extract-d"
+        label="Extract"
+        readouts={
+          drop.entryCount === undefined ? undefined : (
+            <DrawerReadout>
+              {drop.entryCount} {drop.entryCount === 1 ? "item" : "items"}
+            </DrawerReadout>
+          )
+        }
+      >
+        <span />
+      </Drawer>
+    ) : null}
+    <Drawer
+      bodyClassName={drop.kind === "patch" ? "optsbody" : "ckrows"}
+      label={drop.kind === "patch" ? "Options" : "Checks"}
+    >
+      <span />
+    </Drawer>
+  </FileCard>
+);
 
 /**
  * Apply-workflow view, rebuilt on the dark-pro design-system primitives. It is
@@ -703,6 +791,7 @@ function ApplyWorkflowFormView({
   // crossfade begin before input staging publishes its first row.
   const workflowActuallyEmpty = !(workflowHasContent || dropStarted);
   const workflowEmpty = useFlatTransitionFlag(workflowActuallyEmpty);
+  usePendingCardMorph(pendingDrops.length, romInputs.length + patches.length);
   // "Needs input" directives forward to the 0x01 unified picker.
   const openUnifiedPicker = () => document.getElementById("rom-weaver-input-file-unified")?.click();
   // Each section keeps its empty fixture whenever its own list is empty - not
@@ -740,12 +829,7 @@ function ApplyWorkflowFormView({
             <div className="cards workflow-file-list" id="rom-weaver-pending-drops">
               {pendingDrops.map((drop) => (
                 <div className="rw-pending" key={drop.id}>
-                  <FileProgress
-                    id={`rom-weaver-pending-${drop.id}`}
-                    indeterminate
-                    label={`${drop.name} - identifying…`}
-                    value="…"
-                  />
+                  <PendingDropCard drop={drop} />
                 </div>
               ))}
             </div>
@@ -768,7 +852,7 @@ function ApplyWorkflowFormView({
         onFiles={handleUnifiedDrop}
         supported={APPLY_SUPPORTED_FILES}
       />
-      {workflowActuallyEmpty ? (
+      {workflowEmpty ? (
         <GhostSteps
           steps={[
             { num: "0x02", title: localizer.message("ui.step.rom") },

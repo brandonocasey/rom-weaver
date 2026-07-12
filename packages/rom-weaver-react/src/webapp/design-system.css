@@ -379,7 +379,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .workflow-body { min-width: 0; animation: panel-in .3s var(--ease); }
 /* Identification has its own indeterminate row; once routing clears, bring the
    actual form sections in as a second, quieter beat. */
-.rw-app .form-ready > .step:not(.unified-drop-step) { animation: form-ready-in .34s var(--ease) both; }
+.rw-app .form-ready > .step:not(.unified-drop-step) { animation: form-ready-in .22s var(--ease) both; }
 
 /* step = a loom stage */
 .rw-app .step { position: relative; border-block-start: 1px solid var(--seam-soft); }
@@ -509,14 +509,27 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .drop.hero .formats {
   display: grid; flex: none; gap: 5px; width: min(100%, 34rem); margin-block-start: 2px; overflow: hidden; pointer-events: none;
   /* wide fade lanes so pills dissolve instead of clipping mid-pill at the edges */
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
   mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
 }
 .rw-app .drop.hero .formats-lane { min-width: 0; overflow: hidden; }
-.rw-app .drop.hero .formats-track { display: flex; gap: 5px; width: max-content; animation: formats-ticker 120s linear infinite; }
+.rw-app .drop.hero .formats-track {
+  display: flex; gap: 5px; width: max-content;
+  animation: formats-ticker 120s linear infinite;
+  backface-visibility: hidden; will-change: transform;
+}
 .rw-app .drop.hero .formats-lane:nth-child(2) .formats-track { animation-direction: reverse; }
 .rw-app .drop.hero .formats-set { display: flex; gap: 5px; }
 .rw-app .drop.hero .fmt { flex: none; font-size: .68rem; font-weight: 600; letter-spacing: .04em; padding: 3px 12px; border: 1px solid var(--seam); border-radius: 99px; color: var(--ink-3); background: var(--plate); }
-@keyframes formats-ticker { to { transform: translateX(calc(-50% - 2.5px)); } }
+@keyframes formats-ticker {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(calc(-50% - 2.5px), 0, 0); }
+}
+/* iOS WebKit can defer or drop a masked animated layer during first paint.
+   Keep the ticker immediate and reliable there; the edge fade is decorative. */
+@supports (-webkit-touch-callout: none) {
+  .rw-app .drop.hero .formats { -webkit-mask-image: none; mask-image: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .rw-app .drop.hero .formats-track { animation: none; margin-inline: auto; }
   .rw-app .drop.hero .formats-set + .formats-set { display: none; }
@@ -1764,6 +1777,9 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 }
 ::view-transition-old(root) { z-index: 0; }
 ::view-transition-new(root) { z-index: 1; }
+/* State handoffs should register immediately: the view transition communicates
+   continuity, but never becomes another wait after the user's drop. */
+:root.vt-flat::view-transition-old(root), :root.vt-flat::view-transition-new(root) { animation-duration: .2s; }
 /* scenario morphs (vt-rom / vt-<pid> / vt-action) share one longer, softer
    ease, and the snapshots STRETCH to the morphing box (height/width 100%)
    instead of sliding past it - the stretch is what makes a button→panel or
@@ -1802,7 +1818,7 @@ html.vt-theme .unified-drop-step .drop { view-transition-name: none !important; 
 @keyframes vt-drop-in { from { opacity: 0; } }
 /* while a scenario view transition runs, the morph IS the animation - suppress
    the entry keyframes so cards/panels don't replay card-in underneath it */
-.vt-quiet .card, .vt-quiet .workflow-body, .vt-quiet .notice, .vt-quiet .result, .vt-quiet .prog-panel { animation: none !important; }
+.vt-quiet .card:not(.pending-card), .vt-quiet .workflow-body, .vt-quiet .notice, .vt-quiet .result, .vt-quiet .prog-panel { animation: none !important; }
 
 /* ═══ keyframes ═══ */
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
@@ -1812,10 +1828,12 @@ html.vt-theme .unified-drop-step .drop { view-transition-name: none !important; 
 @keyframes panel-in { from { opacity: 0; translate: 0 6px; } }
 @keyframes form-ready-in { from { opacity: 0; translate: 0 8px; } }
 @keyframes chip-in { from { opacity: 0; translate: 0 5px; scale: .9; } }
-/* The instant "identifying…" drop placeholder: shown the moment an archive lands, then dropped (no
-   animation) once its bucket resolves and the real staging card takes over. The swap never blocks
-   staging. The list gets breathing room so the chip doesn't crowd the drop zone above it. */
+@keyframes pending-card-in { from { opacity: 0; translate: 0 -6px; scale: .985; } }
+/* The instant "identifying…" source bundle: shown the moment an archive lands, then its footprint
+   fans into the resolved card(s). The motion never blocks staging. The list gets breathing room so
+   the chip doesn't crowd the drop zone above it. */
 .rw-app #rom-weaver-pending-drops { margin-block: 14px 6px; }
+.rw-app .pending-card { animation: pending-card-in .18s var(--ease) both; }
 @keyframes fault-in { 0% { opacity: 0; translate: 0 -4px; } 55% { translate: 2px 0; } 70% { translate: -2px 0; } 85% { translate: 1px 0; } 100% { translate: 0 0; } }
 @keyframes trace-in { from { opacity: 0; translate: -4px 0; } }
 @keyframes indet { 0% { margin-inline-start: -32%; } 100% { margin-inline-start: 100%; } }
