@@ -475,6 +475,11 @@ msgstr "Descargar"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.action"
+msgstr "Descargar manifiesto"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.patch.reorder"
 msgstr "Arrastra para reordenar - las flechas mueven"
 
@@ -562,11 +567,6 @@ msgstr "Exportar"
 #: src/presentation/localization/messages.ts
 msgid "ui.manifestExport.title"
 msgstr "Exportar manifiesto"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.manifestExport.action"
-msgstr "Exportar manifiesto…"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

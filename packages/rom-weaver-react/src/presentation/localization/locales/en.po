@@ -475,6 +475,11 @@ msgstr "Download"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.action"
+msgstr "Download manifest"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.patch.reorder"
 msgstr "Drag to reorder - arrow keys move"
 
@@ -562,11 +567,6 @@ msgstr "Export"
 #: src/presentation/localization/messages.ts
 msgid "ui.manifestExport.title"
 msgstr "Export manifest"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.manifestExport.action"
-msgstr "Export manifest…"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

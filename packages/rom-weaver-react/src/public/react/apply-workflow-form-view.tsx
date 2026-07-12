@@ -1,3 +1,4 @@
+import Download from "lucide-react/dist/esm/icons/download.js";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
@@ -910,11 +911,7 @@ function ApplyWorkflowFormView({
                     <ProgressActionButton
                       cancelLabel="Cancel manifest export"
                       disabled
-                      label={
-                        manifestExport.downloadable
-                          ? localizer.message("ui.result.download")
-                          : localizer.message("ui.manifestExport.action")
-                      }
+                      label={localizer.message("ui.manifestExport.action")}
                       onCancel={manifestExport.cancelExport}
                       onClick={() => undefined}
                       progress={manifestExport.progress}
@@ -922,15 +919,14 @@ function ApplyWorkflowFormView({
                     />
                   ) : (
                     <button
-                      className="btn ghost slim"
+                      className="btn ghost slim manifest-dl"
                       disabled={outputState.disabled || !manifestExport.ready || !romInputs.length || !patches.length}
                       id="rom-weaver-button-export-manifest"
                       onClick={() => void manifestExport.runExport()}
                       type="button"
                     >
-                      {manifestExport.downloadable
-                        ? localizer.message("ui.result.download")
-                        : localizer.message("ui.manifestExport.action")}
+                      <Download aria-hidden="true" />
+                      {localizer.message("ui.manifestExport.action")}
                     </button>
                   )
                 ) : null}

@@ -264,7 +264,7 @@ const MESSAGES: Record<MessageId, MessageDescriptor> = {
   "ui.log.viewCurrent": msg({ id: "ui.log.viewCurrent", message: "Current" }),
   "ui.log.viewLabel": msg({ id: "ui.log.viewLabel", message: "Shown log" }),
   "ui.log.viewPrevious": msg({ id: "ui.log.viewPrevious", message: "Previous" }),
-  "ui.manifestExport.action": msg({ id: "ui.manifestExport.action", message: "Export manifest…" }),
+  "ui.manifestExport.action": msg({ id: "ui.manifestExport.action", message: "Download manifest" }),
   "ui.manifestExport.bundleRom": msg({
     id: "ui.manifestExport.bundleRom",
     message: "Bundle ROM into the archive",

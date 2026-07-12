@@ -475,6 +475,11 @@ msgstr "Herunterladen"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.manifestExport.action"
+msgstr "Manifest herunterladen"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.patch.reorder"
 msgstr "Zum Umsortieren ziehen - Pfeiltasten verschieben"
 
@@ -562,11 +567,6 @@ msgstr "Exportieren"
 #: src/presentation/localization/messages.ts
 msgid "ui.manifestExport.title"
 msgstr "Manifest exportieren"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.manifestExport.action"
-msgstr "Manifest exportieren…"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
