@@ -1,7 +1,7 @@
 import CircleX from "lucide-react/dist/esm/icons/circle-x.js";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import X from "lucide-react/dist/esm/icons/x.js";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { join } from "./cx.ts";
 
 /**
@@ -63,7 +63,9 @@ const ProgressTrack = ({
     <div aria-hidden="true" className={join("meter track live", isIndeterminate && "indet", className)}>
       <div
         className="fill bar"
-        style={isIndeterminate ? undefined : { transform: `scaleX(${(clamped ?? 0) / 100})` }}
+        // --scale (not an inline transform) so the stylesheet can counter-scale
+        // the cloth texture and shuttle inside the scaled fill
+        style={isIndeterminate ? undefined : ({ "--scale": (clamped ?? 0) / 100 } as CSSProperties)}
       />
     </div>
   );
