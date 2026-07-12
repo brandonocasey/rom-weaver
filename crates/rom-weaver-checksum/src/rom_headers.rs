@@ -26,6 +26,9 @@ const SMC_GAME_DOCTOR_1_MAGIC: [u8; 16] = [
     0x00, 0x01, 0x4D, 0x45, 0x20, 0x44, 0x4F, 0x43, 0x54, 0x4F, 0x52, 0x20, 0x53, 0x46, 0x20, 0x33,
 ];
 const SMC_GAME_DOCTOR_2_MAGIC: [u8; 16] = *b"GAME DOCTOR SF 3";
+/// Super Wild Card copier ID bytes at header offset 8 (the check NSRT/uCON64 use).
+const SWC_ID_OFFSET: usize = 8;
+const SWC_ID_MAGIC: [u8; 3] = [0xAA, 0xBB, 0x04];
 pub const GAME_BOY_NINTENDO_LOGO: [u8; 48] = [
     0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
     0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
@@ -180,7 +183,8 @@ impl KnownRomHeader {
             Self::Lnx => LNX_HEADER_MAGIC.len(),
             Self::Nes => INES_HEADER_MAGIC.len(),
             Self::Fds => FDS_HEADER_MAGIC.len(),
-            Self::SnesCopier | Self::PceCopier => 0,
+            Self::SnesCopier => SWC_ID_OFFSET + SWC_ID_MAGIC.len(),
+            Self::PceCopier => 0,
             Self::SmcZero => ROM_HEADER_BYTES,
             Self::SmcGameDoctor1 => SMC_GAME_DOCTOR_1_MAGIC.len(),
             Self::SmcGameDoctor2 => SMC_GAME_DOCTOR_2_MAGIC.len(),
@@ -208,6 +212,12 @@ impl KnownRomHeader {
         match self {
             Self::N64 => ".v64".eq_ignore_ascii_case(extension_with_dot),
             Self::Nds => ".srl".eq_ignore_ascii_case(extension_with_dot),
+            // Copier-device dump extensions: Super Wild Card, Pro Fighter, Game Doctor SF.
+            Self::SnesCopier | Self::SmcZero | Self::SmcGameDoctor1 | Self::SmcGameDoctor2 => {
+                [".swc", ".fig", ".gd3", ".gd7"]
+                    .iter()
+                    .any(|extension| extension.eq_ignore_ascii_case(extension_with_dot))
+            }
             _ => false,
         }
     }
@@ -221,7 +231,12 @@ impl KnownRomHeader {
             Self::Lnx => bytes[..LNX_HEADER_MAGIC.len()] == LNX_HEADER_MAGIC,
             Self::Nes => bytes[..INES_HEADER_MAGIC.len()] == INES_HEADER_MAGIC,
             Self::Fds => bytes[..FDS_HEADER_MAGIC.len()] == FDS_HEADER_MAGIC,
-            Self::SnesCopier | Self::PceCopier => false,
+            // A Super Wild Card-written copier header carries its ID bytes; plain SMC and PCE
+            // copier headers have no magic and are only detectable by size modulus.
+            Self::SnesCopier => {
+                bytes[SWC_ID_OFFSET..SWC_ID_OFFSET + SWC_ID_MAGIC.len()] == SWC_ID_MAGIC
+            }
+            Self::PceCopier => false,
             Self::SmcZero => bytes[3..ROM_HEADER_BYTES].iter().all(|value| *value == 0),
             Self::SmcGameDoctor1 => {
                 bytes[..SMC_GAME_DOCTOR_1_MAGIC.len()] == SMC_GAME_DOCTOR_1_MAGIC

@@ -297,13 +297,22 @@ fn medium_for(console: Option<&str>, cd_raw: bool, total_len: u64) -> Option<Dis
 
 /// Detect a cartridge platform from a header magic. Extension-matching headers
 /// are tried first so an ambiguous magic resolves to the format the file claims
-/// to be; size-only copier headers (which match no magic) are never used here.
+/// to be. Copier headers only participate when they carry a real signature
+/// (Game Doctor magic, Super Wild Card ID bytes); the size-only PCE copier
+/// header matches no magic and is never used here.
 fn detect_cartridge_platform(prefix: &[u8], extension: Option<&str>) -> Option<&'static str> {
     let mut ordered: Vec<KnownRomHeader> = KnownRomHeader::ALL.to_vec();
     if let Some(extension) = extension {
         ordered.sort_by_key(|header| !header.matches_extension(extension));
     }
     for header in ordered {
+        // A zero-filled 512-byte prefix is common in unrelated binary/audio tracks. It is only a
+        // meaningful SNES copier-header signal when the file also claims a SNES extension.
+        if header == KnownRomHeader::SmcZero
+            && !extension.is_some_and(|extension| header.matches_extension(extension))
+        {
+            continue;
+        }
         if header.signature_matches(prefix)
             && let Some(console) = platform_detection::platform_for_rom_header(header)
         {
@@ -425,6 +434,39 @@ mod tests {
         let noise = vec![0x42u8; 0x8000];
         let identity = detect_rom_identity(&noise, noise.len() as u64, Some(".bin"));
         assert!(identity.is_empty());
+    }
+
+    #[test]
+    fn zero_filled_binary_track_is_not_misidentified_as_snes() {
+        let track = vec![0u8; 0x8000];
+
+        assert!(detect_rom_identity(&track, track.len() as u64, Some(".bin")).is_empty());
+        assert!(detect_rom_identity(&track, track.len() as u64, None).is_empty());
+        // Any SNES dump/copier extension corroborates the zero copier header, not just `.smc`.
+        for extension in [".smc", ".sfc", ".swc", ".fig", ".gd3"] {
+            assert_eq!(
+                detect_rom_identity(&track, track.len() as u64, Some(extension)).platform,
+                Some(platform::SNES),
+                "extension {extension} should corroborate the zero copier header"
+            );
+        }
+    }
+
+    #[test]
+    fn swc_id_bytes_identify_snes_without_extension_corroboration() {
+        let mut dump = vec![0u8; 0x8000];
+        dump[8] = 0xAA;
+        dump[9] = 0xBB;
+        dump[10] = 0x04;
+
+        // The Super Wild Card ID bytes are a positive signal, so no extension is needed.
+        for extension in [None, Some(".bin"), Some(".swc"), Some(".smc")] {
+            assert_eq!(
+                detect_rom_identity(&dump, dump.len() as u64, extension).platform,
+                Some(platform::SNES),
+                "extension {extension:?} should detect the SWC copier header"
+            );
+        }
     }
 
     #[test]
