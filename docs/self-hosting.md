@@ -90,3 +90,43 @@ crossOriginIsolated === true
 
 If it is false, check the document's COOP/COEP response headers, HTTPS trust,
 and whether `cache-service-worker.js` controls the page.
+
+## Ingesting existing OPFS files
+
+A host on the same origin can place inputs under the OPFS
+`rom-weaver-imports/` directory and send their mounted paths through the same
+pipeline as files dropped onto the Apply page. Include a manifest in the list
+when using one; it does not need a separate option.
+
+Applications importing the package can call `ingest`:
+
+```js
+import { ingest } from "rom-weaver-react";
+
+ingest([
+  "/work/rom-weaver-imports/rw.json",
+  "/work/rom-weaver-imports/game.bin",
+  "/work/rom-weaver-imports/change.ips",
+]);
+```
+
+Hosts serving the prebuilt webapp can dispatch the equivalent event after its
+module script has loaded:
+
+```js
+document.dispatchEvent(
+  new CustomEvent("rom-weaver:ingest", {
+    detail: [
+      "/work/rom-weaver-imports/rw.json",
+      "/work/rom-weaver-imports/game.bin",
+      "/work/rom-weaver-imports/change.ips",
+    ],
+  }),
+);
+```
+
+The mounted `/work/rom-weaver-imports/example.bin` path refers to
+`rom-weaver-imports/example.bin` below the origin's OPFS root. RomWeaver
+preserves that directory during startup cleanup and does not delete supplied
+files. OPFS is origin-private, so another origin cannot populate or ingest
+these paths.
