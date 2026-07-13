@@ -5,6 +5,7 @@ import { toThreadBudget } from "../../lib/runtime/compression-thread-budget.ts";
 import {
   estimateOpWorkingSetBytes,
   estimateScheduledThreads,
+  resolveAppleMobileSharedMemoryMaximumPages,
   resolveMemoryCeilingBytes,
 } from "../../lib/runtime/op-memory-estimate.ts";
 import { perfNow, recordCommandLatency } from "../../lib/runtime/perf-latency.ts";
@@ -294,6 +295,7 @@ const createBrowserRunnerInitOptions = (
   wasmModule?: WebAssembly.Module,
 ) => {
   const defaultThreads = normalizeRunnerDefaultThreads(options?.workerThreads);
+  const sharedMemoryMaximumPages = resolveAppleMobileSharedMemoryMaximumPages();
   return {
     runtimeMounts: [WORKER_OPFS_MOUNTPOINT],
     // Pass the precompiled module when cached (#4); keep wasmUrl as the worker-side compile fallback.
@@ -302,6 +304,7 @@ const createBrowserRunnerInitOptions = (
     ...(wasmAsset.threadWorkerUrl ? { threadWorkerUrl: wasmAsset.threadWorkerUrl } : {}),
     ...(wasmAsset.opfsProxyWorkerUrl ? { opfsProxyWorkerUrl: wasmAsset.opfsProxyWorkerUrl } : {}),
     ...(defaultThreads ? { defaultThreads } : {}),
+    ...(sharedMemoryMaximumPages ? { sharedMemoryMaximumPages } : {}),
     workGuestPath: WORKER_OPFS_MOUNTPOINT,
   };
 };
@@ -659,9 +662,16 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
       throw error;
     } finally {
       removeAbortListener?.();
-      // No-op if the runner was terminated above; otherwise returns the warm runner to the pool (or
-      // disposes it when marked stale).
-      lease.release();
+      if (resolveAppleMobileSharedMemoryMaximumPages()) {
+        // WebKit does not promptly reclaim per-command shared-memory reservations in a long-lived
+        // worker. End the worker with the command so sequential mobile operations cannot accumulate
+        // reservations until the next WebAssembly.Memory allocation fails.
+        lease.terminate();
+      } else {
+        // No-op if the runner was terminated above; otherwise returns the warm runner to the pool (or
+        // disposes it when marked stale).
+        lease.release();
+      }
       // After a heavy op, restore the clean-heap baseline during the next idle gap (debounced) so a
       // following op starts as fast as the first instead of on a heap left near its cap.
       scheduleIdleRecycle(operationBytes);

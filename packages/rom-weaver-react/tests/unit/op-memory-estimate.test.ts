@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   estimateOpWorkingSetBytes,
   estimateScheduledThreads,
+  resolveAppleMobileSharedMemoryMaximumPages,
   resolveMemoryCeilingBytes,
 } from "../../src/lib/runtime/op-memory-estimate.ts";
 import type { RomWeaverCommand } from "../../src/wasm/index.ts";
@@ -80,6 +81,19 @@ describe("resolveMemoryCeilingBytes", () => {
   it("leaves desktop runtimes uncapped by the mobile ceiling", () => {
     const desktopSafari = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15";
     expect(resolveMemoryCeilingBytes({ navigator: { deviceMemory: 8, userAgent: desktopSafari } })).toBe(2 * GIB);
+  });
+});
+
+describe("resolveAppleMobileSharedMemoryMaximumPages", () => {
+  it("caps Apple mobile shared WASM memory without changing Android or desktop allocation", () => {
+    const iosSafari =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1";
+    const androidChrome = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36";
+    expect(resolveAppleMobileSharedMemoryMaximumPages({ navigator: { userAgent: iosSafari } })).toBe(16384);
+    expect(resolveAppleMobileSharedMemoryMaximumPages({ navigator: { userAgent: androidChrome } })).toBeUndefined();
+    expect(
+      resolveAppleMobileSharedMemoryMaximumPages({ navigator: { userAgent: "Mozilla/5.0 (Macintosh)" } }),
+    ).toBeUndefined();
   });
 });
 

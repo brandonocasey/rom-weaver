@@ -115,6 +115,7 @@ const MOBILE_MEMORY_CEILING_BYTES = 1024 * 1024 * 1024;
 // `navigator.deviceMemory` coarsely (and not at all on some engines), so stay well below total RAM.
 const DEVICE_MEMORY_FRACTION = 0.5;
 const BYTES_PER_GIB = 1024 * 1024 * 1024;
+const WASM_PAGE_BYTES = 64 * 1024;
 
 // Any phone/tablet web runtime: every iOS/iPadOS WebKit (incl. iPadOS desktop mode) plus Android and
 // other engines that carry the `Mobile/<build>` UA marker. Composed from the centralized WebKit/mobile
@@ -146,4 +147,20 @@ export function resolveMemoryCeilingBytes(root: DeviceMemoryRoot | null = global
       : FALLBACK_MEMORY_CEILING_BYTES;
   if (isMobileWebRuntime(root?.navigator)) return Math.min(ceiling, MOBILE_MEMORY_CEILING_BYTES);
   return ceiling;
+}
+
+export function resolveAppleMobileSharedMemoryMaximumPages(
+  root: DeviceMemoryRoot | null = globalThis as DeviceMemoryRoot,
+): number | undefined {
+  const navigatorLike = root?.navigator;
+  if (!navigatorLike) return undefined;
+  if (
+    !isAppleMobileWebKit({
+      maxTouchPoints: navigatorLike.maxTouchPoints,
+      platform: navigatorLike.platform,
+      userAgent: navigatorLike.userAgent,
+    })
+  )
+    return undefined;
+  return Math.floor(resolveMemoryCeilingBytes(root) / WASM_PAGE_BYTES);
 }
