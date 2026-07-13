@@ -20,6 +20,7 @@ const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const BIND_HOST = "0.0.0.0";
 const DEFAULT_DEV_PORT = 5173;
 const DEFAULT_PREVIEW_PORT = 4173;
+const E2E_CORPUS_PREFIX = "/__rom_weaver_corpus__/";
 const CERT_VALID_DAYS = parseInt(process.env.DEV_CERT_DAYS || "30", 10);
 const DYNAMIC_BROTLI_MAX_BYTES = 256 * 1024;
 const DYNAMIC_BROTLI_TYPES = new Set([".css", ".html", ".js", ".json", ".mjs", ".svg"]);
@@ -142,6 +143,74 @@ const send = (res, status, headers, body, securityOptions) => {
   setSecurityHeaders(res, securityOptions);
   res.writeHead(status, headers || {});
   res.end(body);
+};
+
+const handleE2eCorpusRequest = (req, res, securityOptions) => {
+  const corpusDir = process.env.ROM_WEAVER_E2E_CORPUS_DIR;
+  const requestPath = String(req.url || "/").split("?")[0];
+  if (!(corpusDir && requestPath.startsWith(E2E_CORPUS_PREFIX))) return false;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    send(res, 405, { Allow: "GET, HEAD" }, "Method Not Allowed", securityOptions);
+    return true;
+  }
+  let relativePath;
+  try {
+    relativePath = decodeURIComponent(requestPath.slice(E2E_CORPUS_PREFIX.length));
+  } catch {
+    send(res, 400, { "Content-Type": "text/plain; charset=utf-8" }, "Bad Request", securityOptions);
+    return true;
+  }
+  if (relativePath !== "manifest.json" && !relativePath.startsWith("files/")) {
+    send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found", securityOptions);
+    return true;
+  }
+  const root = path.resolve(corpusDir);
+  const filePath = path.resolve(root, relativePath);
+  const allowedRoot = relativePath === "manifest.json" ? root : path.join(root, "files");
+  const allowedFile =
+    relativePath === "manifest.json"
+      ? filePath === path.join(root, "manifest.json")
+      : filePath.startsWith(`${allowedRoot}${path.sep}`);
+  if (!allowedFile) {
+    send(res, 403, { "Content-Type": "text/plain; charset=utf-8" }, "Forbidden", securityOptions);
+    return true;
+  }
+  if (relativePath.startsWith("files/")) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+      const listedPaths = new Set(
+        (Array.isArray(manifest.cases) ? manifest.cases : []).map((entry) =>
+          decodeURIComponent(String(entry?.url || "").replace(E2E_CORPUS_PREFIX, "")),
+        ),
+      );
+      if (!listedPaths.has(relativePath)) {
+        send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found", securityOptions);
+        return true;
+      }
+    } catch {
+      send(res, 500, { "Content-Type": "text/plain; charset=utf-8" }, "Invalid corpus manifest", securityOptions);
+      return true;
+    }
+  }
+  fs.stat(filePath, (error, stat) => {
+    if (error || !stat.isFile()) {
+      send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found", securityOptions);
+      return;
+    }
+    setSecurityHeaders(res, securityOptions);
+    res.writeHead(200, {
+      "Content-Length": stat.size,
+      "Content-Type": relativePath.endsWith(".json") ? "application/json; charset=utf-8" : "application/octet-stream",
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", () => res.destroy());
+    stream.pipe(res);
+  });
+  return true;
 };
 
 const getLanAddresses = () => {
@@ -387,6 +456,7 @@ const startDevServer = async (options) => {
     },
     (req, res) => {
       setSecurityHeaders(res, securityOptions);
+      if (handleE2eCorpusRequest(req, res, securityOptions)) return;
       if (!viteServer) {
         send(
           res,
@@ -430,6 +500,11 @@ const startDevServer = async (options) => {
   }
   installShutdown([portMuxServer, httpsServer, httpRedirectServer], viteServer);
   printUrls("RomWeaver React Vite dev server:", options.port, lanAddresses, certificate.paths.cert, securityOptions);
+  if (process.env.ROM_WEAVER_E2E_CORPUS_DIR) {
+    for (const address of lanAddresses) {
+      console.log(`  iOS stress: https://${address}:${options.port}/mobile-safari-matrix.html?profile=stress`);
+    }
+  }
   if (options.open) openBrowser(getLocalUrl(options.port));
 };
 

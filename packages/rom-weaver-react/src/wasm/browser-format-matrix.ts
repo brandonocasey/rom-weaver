@@ -7,7 +7,9 @@
  * `src/webapp/mobile-safari-matrix.ts`) to verify formats on real iOS Safari /
  * WebKit. The app itself never imports this module.
  */
+import { resolveAppleMobileSharedMemoryMaximumPages } from "../lib/runtime/op-memory-estimate.ts";
 import {
+  ROM_WEAVER_COMPRESSION_METADATA,
   ROM_WEAVER_CONTAINER_FORMATS,
   ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY,
   ROM_WEAVER_PATCH_FORMATS,
@@ -54,6 +56,7 @@ type BrowserFormatMatrixOptions = {
   initOptions?: Record<string, unknown>;
   onEvent?: (event: RomWeaverRunJsonEvent) => void;
   onStep?: (step: BrowserFormatMatrixStep) => void;
+  profile?: BrowserFormatMatrixProfile;
   prefix?: string;
   sourceContents?: BrowserFormatMatrixBytes;
   sourceFileName?: string;
@@ -75,9 +78,11 @@ type BrowserFormatMatrixCoreOptions = {
   onEvent?: (event: RomWeaverRunJsonEvent) => void;
   onStep?: (step: BrowserFormatMatrixStep) => void;
   opfsHandle: FileSystemDirectoryHandle;
+  profile?: BrowserFormatMatrixProfile;
   runJson: BrowserFormatMatrixRunJson;
   sourcePath: string;
 };
+export type BrowserFormatMatrixProfile = "fast" | "exhaustive";
 export type BrowserFormatMatrixStep = {
   command: string;
   durationMs?: number;
@@ -125,12 +130,51 @@ const CONTAINER_SUFFIX_BY_FORMAT: ReadonlyMap<string, string> = new Map(
 );
 const PATCH_EXTENSION_BY_FORMAT = createPatchExtensionMap();
 const BROWSER_FORMAT_MATRIX_PATCH_FORMATS = createBrowserFormatMatrixPatchFormats();
+type ExhaustiveContainerCase = {
+  codec: string;
+  format: "7z" | "chd" | "z3ds" | "zip";
+  level?: (typeof ROM_WEAVER_COMPRESSION_METADATA.profiles)[number]["name"];
+  threads: 1 | 2 | "auto";
+};
+
+export function createExhaustiveContainerCases(): ExhaustiveContainerCase[] {
+  const threads = [1, 2, "auto"] as const;
+  const formats = [
+    { codecs: ROM_WEAVER_COMPRESSION_METADATA.codecFields.zipCodec.codecs, format: "zip" },
+    { codecs: ROM_WEAVER_COMPRESSION_METADATA.codecFields.sevenZipCodec.codecs, format: "7z" },
+    { codecs: ["lzma2", "zlib", "huff", "flac", "zstd"], format: "chd" },
+    { codecs: [ROM_WEAVER_COMPRESSION_METADATA.defaults.z3dsCodec], format: "z3ds" },
+  ] as const;
+  const cases: ExhaustiveContainerCase[] = [];
+  for (const { codecs, format } of formats) {
+    for (const codec of codecs) {
+      const codecMetadata = ROM_WEAVER_COMPRESSION_METADATA.codecs[codec];
+      const minimum = format === "chd" && codec === "zlib" ? 1 : codecMetadata?.level?.min;
+      const maximum = codecMetadata?.level?.max;
+      const levels = codecMetadata?.level
+        ? ROM_WEAVER_COMPRESSION_METADATA.profiles
+            .filter((profile) => {
+              const value = codecMetadata.profileKind === "zstd" ? profile.zstdLevel : profile.standardLevel;
+              return value >= (minimum ?? value) && value <= (maximum ?? value);
+            })
+            .map((profile) => profile.name)
+        : [undefined];
+      for (const level of levels) {
+        for (const threadCount of threads) {
+          cases.push({ codec, format, ...(level ? { level } : {}), threads: threadCount });
+        }
+      }
+    }
+  }
+  return cases;
+}
 
 export function getBrowserFormatMatrixMetadataCoverage() {
   return {
     containerCompressFailureFormats: Array.from(createContainerCompressFailureExpectations().keys()),
     containerFormats: ROM_WEAVER_CONTAINER_FORMATS.map((format) => format.name),
     containerRoundTripFormats: BROWSER_FORMAT_MATRIX_CONTAINER_ROUND_TRIP_FORMATS,
+    exhaustiveContainerCodecs: Array.from(new Set(createExhaustiveContainerCases().map((entry) => entry.codec))),
     patchFormats: BROWSER_FORMAT_MATRIX_PATCH_FORMATS,
   };
 }
@@ -142,16 +186,35 @@ export async function runBrowserFullFormatMatrix(options: BrowserFormatMatrixOpt
     .slice(2)}`;
   await root.getDirectoryHandle(fixtureName, { create: true });
   const fixtureGuestRoot = joinGuestPath(OPFS_GUEST_ROOT, fixtureName);
-  const worker = createBrowserWorkerClient(options.clientOptions || {});
+  const sharedMemoryMaximumPages = resolveAppleMobileSharedMemoryMaximumPages();
+  const wasmUrl = options.wasmUrl || new URL("./rom-weaver-app.wasm", import.meta.url).href;
+  let sharedWorker: ReturnType<typeof createBrowserWorkerClient> | null = null;
 
   try {
-    const init = await worker.init({
-      runtimeMounts: [OPFS_GUEST_ROOT],
-      wasmUrl: options.wasmUrl || new URL("./rom-weaver-app.wasm", import.meta.url).href,
-      workGuestPath: OPFS_GUEST_ROOT,
-      ...(options.initOptions || {}),
-    });
-    assert(init?.mode === "browser-opfs", `expected browser-opfs init mode, got ${String(init?.mode)}`);
+    const mobileModule = sharedMemoryMaximumPages
+      ? options.initOptions?.module instanceof WebAssembly.Module
+        ? options.initOptions.module
+        : await WebAssembly.compileStreaming(fetch(wasmUrl))
+      : undefined;
+    const createWorker = async () => {
+      const worker = createBrowserWorkerClient(options.clientOptions || {});
+      try {
+        const init = await worker.init({
+          runtimeMounts: [OPFS_GUEST_ROOT],
+          ...(sharedMemoryMaximumPages ? { sharedMemoryMaximumPages } : {}),
+          ...(mobileModule ? { module: mobileModule } : {}),
+          wasmUrl,
+          workGuestPath: OPFS_GUEST_ROOT,
+          ...(options.initOptions || {}),
+        });
+        assert(init?.mode === "browser-opfs", `expected browser-opfs init mode, got ${String(init?.mode)}`);
+        return worker;
+      } catch (error) {
+        worker.terminate();
+        throw error;
+      }
+    };
+    sharedWorker = sharedMemoryMaximumPages ? null : await createWorker();
 
     const sourcePath = joinGuestPath(fixtureGuestRoot, options.sourceFileName || "input.bin");
     await writeGuestFile(root, sourcePath, toBytes(options.sourceContents || "rom-weaver format matrix fixture"));
@@ -178,12 +241,21 @@ export async function runBrowserFullFormatMatrix(options: BrowserFormatMatrixOpt
       onEvent: options.onEvent,
       onStep: options.onStep,
       opfsHandle: root,
-      runJson: (command, runOptions) => worker.runJson(command, runOptions),
+      ...(options.profile ? { profile: options.profile } : {}),
+      runJson: async (command, runOptions) => {
+        if (sharedWorker) return sharedWorker.runJson(command, runOptions);
+        const worker = await createWorker();
+        try {
+          return await worker.runJson(command, runOptions);
+        } finally {
+          worker.terminate();
+        }
+      },
       sourcePath,
     });
   } finally {
     try {
-      worker.terminate();
+      sharedWorker?.terminate();
     } catch (_error) {
       // Best-effort cleanup; the original matrix error is more relevant.
     }
@@ -192,7 +264,7 @@ export async function runBrowserFullFormatMatrix(options: BrowserFormatMatrixOpt
 }
 
 export async function runBrowserFullFormatMatrixCore(input: BrowserFormatMatrixCoreOptions) {
-  const { dir, fixtures, onEvent, onStep, opfsHandle, runJson } = input;
+  const { dir, fixtures, onEvent, onStep, opfsHandle, profile = "fast", runJson } = input;
   const state = createMatrixState({ onEvent, onStep });
   const runCommand: BrowserFormatMatrixRunCommand = (name, command, options) =>
     runMatrixCommand(state, runJson, name, command, options);
@@ -207,32 +279,73 @@ export async function runBrowserFullFormatMatrixCore(input: BrowserFormatMatrixC
 
   const containerRoundTripFormats = BROWSER_FORMAT_MATRIX_CONTAINER_ROUND_TRIP_FORMATS;
   for (const format of containerRoundTripFormats) {
-    const archivePath = joinGuestPath(dir, `roundtrip-${formatToken(format)}.${containerSuffix(format)}`);
-    assertRunJsonSucceeded(
-      await runCommand(
-        `compress ${format}`,
+    for (const threads of profile === "exhaustive" ? ([1, 2, "auto"] as const) : ([1] as const)) {
+      const token = `${formatToken(format)}-${threads}`;
+      const archivePath = joinGuestPath(dir, `roundtrip-${token}.${containerSuffix(format)}`);
+      const compressResult = await runCommand(
+        `compress ${format} threads=${threads}`,
         createRomWeaverCommand("compress", {
           format,
           input: [archiveSourcePath],
           output: archivePath,
-          threads: 1,
+          threads,
         }),
-      ),
-      { command: "compress" },
-    );
+        { invalidateMountCacheAfterRun: true },
+      );
+      assertRunJsonSucceeded(compressResult, { command: "compress" });
+      await waitForGuestFile(opfsHandle, archivePath, compressResult);
+      const archiveBytes = await readGuestFile(opfsHandle, archivePath);
 
-    const extractDir = joinGuestPath(dir, `roundtrip-${formatToken(format)}-extract`);
-    assertRunJsonSucceeded(
-      await runCommand(
-        `ingest ${format}`,
-        createRomWeaverCommand("ingest", {
-          out_dir: extractDir,
-          source: archivePath,
-          threads: 1,
+      const extractDir = joinGuestPath(dir, `roundtrip-${token}-extract`);
+      assertRunJsonSucceeded(
+        await runCommand(
+          `ingest ${format} threads=${threads}`,
+          createRomWeaverCommand("ingest", {
+            out_dir: extractDir,
+            source: archivePath,
+            threads,
+          }),
+          { virtualFiles: [{ bytes: archiveBytes, path: archivePath }] },
+        ),
+        { command: "ingest" },
+      );
+    }
+  }
+
+  if (profile === "exhaustive") {
+    for (const matrixCase of createExhaustiveContainerCases()) {
+      const token = [matrixCase.format, matrixCase.codec, matrixCase.level || "no-level", matrixCase.threads]
+        .map((value) => formatToken(String(value)))
+        .join("-");
+      const archivePath = joinGuestPath(dir, `options-${token}.${containerSuffix(matrixCase.format)}`);
+      const compressResult = await runCommand(
+        `compress ${matrixCase.format} codec=${matrixCase.codec} level=${matrixCase.level || "none"} threads=${matrixCase.threads}`,
+        createRomWeaverCommand("compress", {
+          codec: [matrixCase.codec],
+          format: matrixCase.format,
+          input: [archiveSourcePath],
+          ...(matrixCase.level ? { level: matrixCase.level } : {}),
+          output: archivePath,
+          threads: matrixCase.threads,
         }),
-      ),
-      { command: "ingest" },
-    );
+        { invalidateMountCacheAfterRun: true },
+      );
+      assertRunJsonSucceeded(compressResult, { command: "compress" });
+      await waitForGuestFile(opfsHandle, archivePath, compressResult);
+      const archiveBytes = await readGuestFile(opfsHandle, archivePath);
+      assertRunJsonSucceeded(
+        await runCommand(
+          `ingest options ${token}`,
+          createRomWeaverCommand("ingest", {
+            out_dir: joinGuestPath(dir, `options-${token}-extract`),
+            source: archivePath,
+            threads: matrixCase.threads,
+          }),
+          { virtualFiles: [{ bytes: archiveBytes, path: archivePath }] },
+        ),
+        { command: "ingest" },
+      );
+    }
   }
 
   const containerCompressFailureExpectations = createContainerCompressFailureExpectations();
@@ -315,61 +428,78 @@ export async function runBrowserFullFormatMatrixCore(input: BrowserFormatMatrixC
   ]);
 
   for (const format of patchFormats) {
-    const extension = patchExtension(format);
-    assert(typeof extension === "string", `missing patch extension for ${format}`);
-    const patchPath = joinGuestPath(dir, `patch-${format}.${extension}`);
-    const createResult = await runCommand(
-      `patch-create ${format}`,
-      createRomWeaverCommand("patch-create", {
-        format,
-        modified: modifiedPath,
-        original: originalPath,
-        output: patchPath,
-        threads: 1,
-      }),
-    );
+    // Most patch codecs are intrinsically sequential. Exercise the thread interaction on xdelta,
+    // whose create/apply paths actually use the requested pool, without multiplying ignored values
+    // across every sequential format.
+    const threadModes = profile === "exhaustive" && format === "xdelta" ? ([1, 2, "auto"] as const) : ([1] as const);
+    for (const threads of threadModes) {
+      const extension = patchExtension(format);
+      assert(typeof extension === "string", `missing patch extension for ${format}`);
+      const patchPath = joinGuestPath(dir, `patch-${format}-${threads}.${extension}`);
+      const createResult = await runCommand(
+        `patch-create ${format} threads=${threads}`,
+        createRomWeaverCommand("patch-create", {
+          format,
+          modified: modifiedPath,
+          original: originalPath,
+          output: patchPath,
+          threads,
+        }),
+        {
+          virtualFiles: [
+            { bytes: original, path: originalPath },
+            { bytes: modified, path: modifiedPath },
+          ],
+        },
+      );
 
-    if (createResult.ok) {
-      const { applyResult } = await runCreatedPatchApply(runCommand, {
-        createResult,
-        format,
-        originalPath,
-        patchPath,
-      });
-      if (applyResult.ok) {
-        assertRunJsonSucceeded(applyResult, { command: "patch-apply" });
+      if (createResult.ok) {
+        await waitForGuestFile(opfsHandle, patchPath, createResult);
+        const patchBytes = await readGuestFile(opfsHandle, patchPath);
+        const { applyResult } = await runCreatedPatchApply(runCommand, {
+          createResult,
+          format,
+          originalBytes: original,
+          originalPath,
+          patchBytes,
+          patchPath,
+          threads,
+        });
+        if (applyResult.ok) {
+          assertRunJsonSucceeded(applyResult, { command: "patch-apply" });
+          continue;
+        }
+
+        if (applyFailureExpectations.has(format)) {
+          assertFailedByPattern(applyResult, applyFailureExpectations.get(format), `patch-apply ${format}`);
+          continue;
+        }
+
+        throw new Error(
+          `patch-apply ${format} unexpectedly failed: ${String(
+            getTerminalEvent(applyResult).label || applyResult.stderr || "",
+          )}`,
+        );
+      }
+
+      if (createUnsupportedExpectations.has(format)) {
+        assertFailedByPattern(createResult, createUnsupportedExpectations.get(format), `patch-create ${format}`);
+        assert(getTerminalEvent(createResult).status === "unsupported", `patch-create ${format} should be unsupported`);
         continue;
       }
 
-      if (applyFailureExpectations.has(format)) {
-        assertFailedByPattern(applyResult, applyFailureExpectations.get(format), `patch-apply ${format}`);
+      const createFailurePattern = createFailureExpectations.get(format) ?? applyFailureExpectations.get(format);
+      if (createFailurePattern) {
+        assertFailedByPattern(createResult, createFailurePattern, `patch-create ${format}`);
         continue;
       }
 
       throw new Error(
-        `patch-apply ${format} unexpectedly failed: ${String(
-          getTerminalEvent(applyResult).label || applyResult.stderr || "",
+        `patch-create ${format} unexpectedly failed: ${String(
+          getTerminalEvent(createResult).label || createResult.stderr || "",
         )}`,
       );
     }
-
-    if (createUnsupportedExpectations.has(format)) {
-      assertFailedByPattern(createResult, createUnsupportedExpectations.get(format), `patch-create ${format}`);
-      assert(getTerminalEvent(createResult).status === "unsupported", `patch-create ${format} should be unsupported`);
-      continue;
-    }
-
-    const createFailurePattern = createFailureExpectations.get(format) ?? applyFailureExpectations.get(format);
-    if (createFailurePattern) {
-      assertFailedByPattern(createResult, createFailurePattern, `patch-create ${format}`);
-      continue;
-    }
-
-    throw new Error(
-      `patch-create ${format} unexpectedly failed: ${String(
-        getTerminalEvent(createResult).label || createResult.stderr || "",
-      )}`,
-    );
   }
 
   await runHdiffApplyFixture({ dir, fixtures, opfsHandle, runCommand });
@@ -515,18 +645,40 @@ async function runCreatedPatchApply(
   {
     createResult,
     format,
+    originalBytes,
     originalPath,
+    patchBytes,
     patchPath,
-  }: { createResult: BrowserFormatMatrixRunJsonResult; format: string; originalPath: string; patchPath: string },
+    threads,
+  }: {
+    createResult: BrowserFormatMatrixRunJsonResult;
+    format: string;
+    originalBytes: Uint8Array;
+    originalPath: string;
+    patchBytes: Uint8Array;
+    patchPath: string;
+    threads: 1 | 2 | "auto";
+  },
 ) {
   assert(createResult.ok, `patch-create ${format} should succeed`);
   assert(getTerminalEvent(createResult).status === "succeeded", `patch-create ${format} should finish succeeded`);
-  const applyPath = joinGuestPath(pathDirname(patchPath), `patch-applied-${format}.bin`);
-  const applyResult = await runPatchApplyNoCompress(runCommand, {
-    inputPath: originalPath,
-    outputPath: applyPath,
-    patchPath,
-  });
+  const applyPath = joinGuestPath(pathDirname(patchPath), `patch-applied-${format}-${threads}.bin`);
+  const applyResult = await runCommand(
+    `patch-apply ${pathBasename(patchPath)} threads=${threads}`,
+    createRomWeaverCommand("patch-apply", {
+      input: originalPath,
+      no_compress: true,
+      output: applyPath,
+      patches: [patchPath],
+      threads,
+    }),
+    {
+      virtualFiles: [
+        { bytes: originalBytes, path: originalPath },
+        { bytes: patchBytes, path: patchPath },
+      ],
+    },
+  );
   return { applyPath, applyResult };
 }
 
@@ -750,6 +902,24 @@ async function readGuestFile(rootHandle: FileSystemDirectoryHandle, guestPath: s
   const fileHandle = await getGuestFileHandle(rootHandle, guestPath);
   const file = await fileHandle.getFile();
   return new Uint8Array(await file.arrayBuffer());
+}
+
+async function waitForGuestFile(
+  rootHandle: FileSystemDirectoryHandle,
+  guestPath: string,
+  result: BrowserFormatMatrixRunJsonResult,
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      const handle = await getGuestFileHandle(rootHandle, guestPath);
+      const file = await handle.getFile();
+      if (file.size > 0) return;
+    } catch {
+      // OPFS visibility can lag a completed threaded writer briefly.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`command succeeded without output ${guestPath}; events=${JSON.stringify(result.events)}`);
 }
 
 async function writeGuestFile(rootHandle: FileSystemDirectoryHandle, guestPath: string, contents: Uint8Array) {

@@ -5,6 +5,7 @@
     "src/webapp/mobile-safari-matrix.ts",
     "src/wasm/workers/browser-runner-worker.ts",
     "src/wasm/workers/browser-wasi-thread-worker.ts",
+    "scripts/generate-e2e-corpus.mjs",
     "scripts/version.mjs",
     "tests/wasm/*.test.mjs",
     "tests/wasm/*.bench.mjs",

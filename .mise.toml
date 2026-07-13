@@ -177,6 +177,18 @@ run = "npm --prefix packages/rom-weaver-react run dev --"
 description = "Preview the built React webapp"
 run = "npm --prefix packages/rom-weaver-react run preview --"
 
+[tasks.test-e2e-fast]
+description = "Run CLI, WASM, browser, and real webapp E2E checks in parallel"
+run = "npm --prefix packages/rom-weaver-react run test:e2e:fast"
+
+[tasks.test-e2e-nightly]
+description = "Run exhaustive CLI/WASM interaction matrices plus WebKit and webapp E2E"
+run = "npm --prefix packages/rom-weaver-react run test:e2e:nightly"
+
+[tasks.test-e2e-ios]
+description = "Generate the archive corpus and serve the iOS matrix over HTTPS on the LAN"
+run = "npm --prefix packages/rom-weaver-react run test:e2e:ios --"
+
 [tasks.ci]
 description = "Run the full local quality gate (mirrors CI)"
 depends = ["fmt", "clippy", "typegen-check", "wasm-check", "thread-guards", "licenses-check", "test-rust", "build-wasm-prod"]
@@ -187,5 +199,6 @@ npm --prefix packages/rom-weaver-react run lint
 npm --prefix packages/rom-weaver-react run test:unit
 npm --prefix packages/rom-weaver-react run test:browser:wasm
 npm --prefix packages/rom-weaver-react run test:browser:parallel
+npm --prefix packages/rom-weaver-react run test:e2e:webapp
 npm --prefix packages/rom-weaver-react run build
 '''

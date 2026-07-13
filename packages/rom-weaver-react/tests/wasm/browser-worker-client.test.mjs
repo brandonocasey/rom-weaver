@@ -21,6 +21,7 @@ import {
 } from "./test-helpers.mjs";
 
 const RUN_1GB_STRESS = typeof __ROM_WEAVER_WASM_STRESS_1GB__ !== "undefined" && __ROM_WEAVER_WASM_STRESS_1GB__ === true;
+const RUN_EXHAUSTIVE = typeof __ROM_WEAVER_WASM_EXHAUSTIVE__ !== "undefined" && __ROM_WEAVER_WASM_EXHAUSTIVE__ === true;
 const LONG_MATRIX_TIMEOUT_MS = 10 * 60 * 1000;
 // Minimal WASI module: write a running JSON line, spin, then write succeeded.
 const STREAMING_WASI_MODULE_BYTES = new Uint8Array([
@@ -572,6 +573,21 @@ describe("rom-weaver-wasm browser runner parity", () => {
       });
     },
     LONG_MATRIX_TIMEOUT_MS,
+  );
+
+  it.runIf(RUN_EXHAUSTIVE)(
+    "runJson exhaustive matrix covers valid codec level and thread interactions",
+    async () => {
+      await withTempFixture(async ({ dir, worker, opfsHandle, fixtures }) => {
+        await runMatrix(runFullFormatMatrix, worker, {
+          dir,
+          fixtures,
+          opfsHandle,
+          profile: "exhaustive",
+        });
+      });
+    },
+    45 * 60 * 1000,
   );
 
   it("runner supports explicit wasm module URL paths", async () => {

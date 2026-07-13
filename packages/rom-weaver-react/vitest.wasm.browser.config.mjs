@@ -22,6 +22,7 @@ const GIT_COMMON_ROOT = (() => {
   }
 })();
 const STRESS_1GB = process.env.ROM_WEAVER_WASM_STRESS_1GB === "1";
+const EXHAUSTIVE = process.env.ROM_WEAVER_WASM_EXHAUSTIVE === "1";
 const BENCH_OUTPUT_JSON = process.env.ROM_WEAVER_WASM_BENCH_OUTPUT_JSON;
 const BENCH_ENV = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => key.startsWith("ROM_WEAVER_WASM_")),
@@ -43,6 +44,7 @@ export default defineConfig({
     outputFile: BENCH_OUTPUT_JSON || undefined,
   },
   define: {
+    __ROM_WEAVER_WASM_EXHAUSTIVE__: JSON.stringify(EXHAUSTIVE),
     __ROM_WEAVER_WASM_BENCH_ENV__: JSON.stringify(BENCH_ENV),
     __ROM_WEAVER_WASM_STRESS_1GB__: JSON.stringify(STRESS_1GB),
   },

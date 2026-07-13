@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getBrowserFormatMatrixMetadataCoverage } from "../../src/wasm/browser-format-matrix.ts";
 import {
+  createExhaustiveContainerCases,
+  getBrowserFormatMatrixMetadataCoverage,
+} from "../../src/wasm/browser-format-matrix.ts";
+import {
+  ROM_WEAVER_COMPRESSION_METADATA,
   ROM_WEAVER_CONTAINER_FORMATS,
   ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY,
   ROM_WEAVER_FILE_FILTERS,
@@ -35,5 +39,17 @@ describe("generated format metadata parity", () => {
     expect(coverage.patchFormats).toContain("xdelta");
     expect(coverage.patchFormats).not.toContain("mod");
     expect(coverage.patchFormats).not.toContain("vcdiff");
+  });
+
+  it("keeps the exhaustive matrix covering every compression profile and thread mode", () => {
+    const cases = createExhaustiveContainerCases();
+    expect(unique(cases.map((entry) => entry.format)).sort()).toEqual(["7z", "chd", "z3ds", "zip"]);
+    expect(unique(cases.map((entry) => entry.threads)).sort()).toEqual([1, 2, "auto"]);
+    expect(unique(cases.map((entry) => entry.level).filter(Boolean)).sort()).toEqual(
+      ROM_WEAVER_COMPRESSION_METADATA.profiles.map((profile) => profile.name).sort(),
+    );
+    expect(
+      unique(cases.map((entry) => `${entry.format}:${entry.codec}:${entry.level || "none"}:${entry.threads}`)),
+    ).toHaveLength(cases.length);
   });
 });

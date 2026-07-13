@@ -58,7 +58,9 @@
         opacity: 0.55;
       }
 
-      #matrix-run {
+      #matrix-run,
+      #matrix-run-exhaustive,
+      #matrix-run-stress {
         background: #2f6f5e;
         border-color: #2f6f5e;
         color: white;
@@ -101,8 +103,11 @@
     <main>
       <h1>RomWeaver Mobile Safari Matrix</h1>
       <div class="toolbar">
-        <button id="matrix-run" type="button">Run full matrix</button>
+        <button id="matrix-run" type="button">Run fast matrix</button>
+        <button id="matrix-run-exhaustive" type="button">Run exhaustive matrix</button>
+        <button id="matrix-run-stress" type="button">Run archive stress</button>
         <button disabled id="matrix-copy" type="button">Copy report</button>
+        <button disabled id="matrix-download" type="button">Download report</button>
       </div>
       <section class="panel">
         <div class="grid" id="matrix-summary"></div>

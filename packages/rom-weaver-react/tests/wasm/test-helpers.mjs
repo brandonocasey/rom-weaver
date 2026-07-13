@@ -714,8 +714,8 @@ export async function runPatchMatrix({ runJson, opfsHandle, dir, sourcePath, fix
   );
 }
 
-export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures }) {
-  return runBrowserFullFormatMatrixCore({ dir, fixtures, opfsHandle, runJson });
+export async function runFullFormatMatrix({ runJson, opfsHandle, dir, fixtures, profile }) {
+  return runBrowserFullFormatMatrixCore({ dir, fixtures, opfsHandle, profile, runJson });
 }
 
 async function runPatchApplyNoCompress(runJson, { inputPath, patchPath, outputPath }, runOptions = undefined) {
