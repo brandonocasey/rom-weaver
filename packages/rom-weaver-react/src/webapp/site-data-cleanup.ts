@@ -26,11 +26,15 @@ const listOpfsRootEntries = async (root: OpfsDirectoryHandle): Promise<string[]>
   return entries;
 };
 
-const clearOpfsRootDirectory = async (root: OpfsDirectoryHandle): Promise<ClearOpfsResult> => {
+const clearOpfsRootDirectory = async (
+  root: OpfsDirectoryHandle,
+  preserveEntries: ReadonlySet<string> = new Set(),
+): Promise<ClearOpfsResult> => {
   const names = await listOpfsRootEntries(root);
   let deletedEntries = 0;
   let failedEntries = 0;
   for (const name of names) {
+    if (preserveEntries.has(name)) continue;
     try {
       await root.removeEntry(name, { recursive: true });
       deletedEntries++;
@@ -43,9 +47,11 @@ const clearOpfsRootDirectory = async (root: OpfsDirectoryHandle): Promise<ClearO
 
 const clearOpfsOnPageLoad = async ({
   enabled = true,
+  preserveEntries = new Set<string>(),
   storage = typeof navigator === "undefined" ? undefined : (navigator.storage as StorageWithOpfsDirectory | undefined),
 }: {
   enabled?: boolean;
+  preserveEntries?: ReadonlySet<string>;
   storage?: StorageWithOpfsDirectory;
 } = {}): Promise<ClearOpfsResult> => {
   if (!enabled) return { deletedEntries: 0, failedEntries: 0, skippedReason: "cleanup-disabled" };
@@ -53,7 +59,7 @@ const clearOpfsOnPageLoad = async ({
     return { deletedEntries: 0, failedEntries: 0, skippedReason: "opfs-unavailable" };
 
   try {
-    return await clearOpfsRootDirectory(await storage.getDirectory());
+    return await clearOpfsRootDirectory(await storage.getDirectory(), preserveEntries);
   } catch (_err) {
     return { deletedEntries: 0, failedEntries: 1 };
   }

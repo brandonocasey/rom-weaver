@@ -23,6 +23,7 @@ import { LogDialog } from "./components/log-dialog.tsx";
 import { Masthead, Selvage, UpdateBanner } from "./components/shell.tsx";
 import { ToolsForm } from "./components/tools-form.tsx";
 import { ProcessingWakeLockNotice } from "./components/wake-lock-notice.tsx";
+import { resolveHostIngestFiles, subscribeHostIngest } from "./host-ingest.ts";
 import { getSettingsUiState } from "./settings/settings-state.ts";
 import { UrlSessionBanner } from "./url-session/url-session-banner.tsx";
 import { useUrlSessionBoot } from "./url-session/use-url-session-boot.ts";
@@ -194,16 +195,29 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions, urlSession
 
   // URL-session sources land in the apply tab's drop pipeline exactly like a
   // page-level drop (classification and routing stay Rust/extension-driven).
-  const deliverUrlSessionFiles = useCallback((files: File[]) => {
-    pageDropIdRef.current += 1;
-    setPageDrop({
-      drop: {
-        files,
-        id: pageDropIdRef.current,
-      },
-      view: "patcher",
-    });
-  }, []);
+  const deliverUrlSessionFiles = useCallback(
+    (files: File[]) => {
+      actions.onSelectView("patcher");
+      pageDropIdRef.current += 1;
+      setPageDrop({
+        drop: {
+          files,
+          id: pageDropIdRef.current,
+        },
+        view: "patcher",
+      });
+    },
+    [actions],
+  );
+  useEffect(
+    () =>
+      subscribeHostIngest((paths) => {
+        void resolveHostIngestFiles(paths)
+          .then(deliverUrlSessionFiles)
+          .catch((error) => logger.error("host OPFS ingest failed", { error: String(error) }));
+      }),
+    [deliverUrlSessionFiles],
+  );
   // The `?manifest=` boot's decorated session (enablement seed + output defaults + patch metadata);
   // the apply form consumes it once its patch list matches the manifest's delivery.
   const [manifestSession, setManifestSession] = useState<ManifestApplySession | null>(null);

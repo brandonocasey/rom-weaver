@@ -50,3 +50,14 @@ test("clearOpfsOnPageLoad reports skipped and failed cleanup states", async () =
     failedEntries: 1,
   });
 });
+
+test("clearOpfsOnPageLoad preserves host-owned import entries", async () => {
+  const { removed, storage } = createOpfsStorage(["rom-weaver-imports", "stale-output.bin"]);
+
+  await expect(clearOpfsOnPageLoad({ preserveEntries: new Set(["rom-weaver-imports"]), storage })).resolves.toEqual({
+    deletedEntries: 1,
+    failedEntries: 0,
+  });
+
+  expect(removed).toEqual([{ name: "stale-output.bin", options: { recursive: true } }]);
+});

@@ -9,6 +9,7 @@ import { getBrowserStorageEstimateState } from "../storage/browser/browser-stora
 import { beginOpfsCleanupGate, markOpfsCleanupSettled } from "../storage/browser/opfs-cleanup-gate.ts";
 import { markRomWeaverRunnerStale } from "../workers/rom-weaver/rom-weaver-runner.ts";
 import { APP_BUILD_VERSION } from "./build-version.ts";
+import { HOST_INGEST_ROOT_ENTRY } from "./host-ingest.ts";
 import { installLogStore } from "./log-store.ts";
 import { createEmptyVitePageUpdateState, createVitePageUpdateState, getPageUpdateState } from "./page-update-state.ts";
 import { createPwaServiceWorkerClient } from "./pwa/pwa-service-worker-client.ts";
@@ -438,7 +439,7 @@ const bootWebappWithBackgroundCleanup = () => {
   // first paint waiting on it.
   beginOpfsCleanupGate();
   initializeWebapp();
-  void clearOpfsOnPageLoad()
+  void clearOpfsOnPageLoad({ preserveEntries: new Set([HOST_INGEST_ROOT_ENTRY]) })
     .then((result) => {
       logger.debug("OPFS cleanup on page load complete", { result });
     })
