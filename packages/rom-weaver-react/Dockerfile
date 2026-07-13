@@ -23,7 +23,8 @@ RUN test -f src/wasm/rom-weaver-app.wasm || ( \
       echo "Build it first from the repo root: mise run build-wasm" >&2; \
       exit 1 )
 
-RUN npm run build
+# Docker's runtime server is configured to serve precompressed siblings.
+RUN npm run build -- --mode docker
 
 # ---- runtime stage ---------------------------------------------------------
 # static-web-server: a ~5 MB single static binary. Serves the prebuilt *.br

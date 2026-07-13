@@ -285,7 +285,7 @@ const preloadPrimaryFont = () => ({
   },
 });
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
   const buildInfo = getBuildInfo();
   const devServiceWorkerEnabled = process.env.VITE_SW_DEV === "1";
   const serviceWorkerEnabled = command === "build" || devServiceWorkerEnabled;
@@ -382,7 +382,7 @@ export default defineConfig(({ command }) => {
         strategies: "injectManifest",
       }),
       preloadPrimaryFont(),
-      writePreviewBrotliAssets(),
+      ...(mode === "docker" ? [writePreviewBrotliAssets()] : []),
     ],
     preview: {
       headers: securityHeaders,
