@@ -1,18 +1,11 @@
 import type { Messages } from "@lingui/core";
-import type { WorkflowProgressStage } from "../../types/progress.ts";
 import { messages as deMessages } from "./locales/de.ts";
 import { messages as enMessages } from "./locales/en.ts";
 import { messages as esMessages } from "./locales/es.ts";
 
 type LocaleCode = string;
 
-type MessageId =
-  | `candidate.${string}`
-  | `error.${string}`
-  | `output.${string}`
-  | `progress.${WorkflowProgressStage}`
-  | `settings.${string}`
-  | `ui.${string}`;
+type MessageId = `candidate.${string}` | `error.${string}` | `settings.${string}` | `ui.${string}`;
 
 const DEFAULT_LOCALE: LocaleCode = "en";
 

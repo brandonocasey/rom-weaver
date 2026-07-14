@@ -10,9 +10,6 @@ import { createLocalizer } from "../../src/presentation/localization/index.ts";
  */
 
 const LOAD_BEARING_UI_IDS = [
-  "ui.mode.apply",
-  "ui.mode.create",
-  "ui.mode.trim",
   "ui.theme.toLight",
   "ui.theme.toDark",
   "ui.tools.log",
@@ -26,12 +23,6 @@ const LOAD_BEARING_UI_IDS = [
   "ui.drop.release",
   "ui.footer.donate",
   "ui.env.threads",
-  "ui.status.idle",
-  "ui.status.ready",
-  "ui.status.running",
-  "ui.status.failed",
-  "ui.status.done",
-  "ui.announce.copied",
   "ui.log.filter",
   "ui.log.filterLabel",
 ] as const;
@@ -51,9 +42,9 @@ describe("ui catalog", () => {
     const en = createLocalizer("en");
     const es = createLocalizer("es");
     const de = createLocalizer("de");
-    expect(es.message("ui.mode.apply")).toBe("Aplicar");
-    expect(de.message("ui.mode.apply")).toBe("Anwenden");
-    expect(en.message("ui.mode.apply")).toBe("Apply");
+    expect(es.message("ui.common.copy")).toBe("Copiar");
+    expect(de.message("ui.common.copy")).toBe("Kopieren");
+    expect(en.message("ui.common.copy")).toBe("Copy");
   });
 
   it("falls back to English per-id for unknown ids in a partial locale", () => {
@@ -67,10 +58,11 @@ describe("ui catalog", () => {
 describe("messageCount", () => {
   it("selects plural categories per locale", () => {
     const en = createLocalizer("en");
-    expect(en.messageCount("ui.roms.files", 1)).toBe("1 file");
-    expect(en.messageCount("ui.roms.files", 3)).toBe("3 files");
+    expect(en.messageCount("ui.patch.offCount", 1)).toBe("1 patch is off - tick it to include it");
+    expect(en.messageCount("ui.patch.offCount", 3)).toBe("3 patches are off - tick them to include them");
     const es = createLocalizer("es");
-    expect(es.messageCount("ui.roms.files", 1)).toBe("1 archivo");
-    expect(es.messageCount("ui.roms.files", 2)).toBe("2 archivos");
+    // Spanish selects a distinct plural form and translates instead of echoing English.
+    expect(es.messageCount("ui.patch.offCount", 1)).toMatch(/^1 parche está/);
+    expect(es.messageCount("ui.patch.offCount", 2)).toMatch(/^2 parches están/);
   });
 });
