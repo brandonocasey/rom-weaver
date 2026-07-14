@@ -723,6 +723,18 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
   color: var(--ink-3); cursor: grab; touch-action: none;
   transition: color .15s, border-color .15s;
 }
+.rw-app .phandle { width: auto; min-width: var(--ctrl-h); padding-inline: 5px; grid-auto-flow: column; gap: 4px; user-select: none; }
+.rw-app .phandle-number {
+  font-size: .8rem; font-weight: 800; line-height: 1; color: var(--ink-2);
+  text-decoration: underline dotted; text-decoration-color: var(--ink-4); text-underline-offset: 3px;
+}
+.rw-app .phandle-input {
+  width: var(--ctrl-h); min-width: 0; padding-inline: 2px; cursor: text; text-align: center;
+  appearance: textfield; -moz-appearance: textfield;
+}
+.rw-app .phandle-input::-webkit-inner-spin-button, .rw-app .phandle-input::-webkit-outer-spin-button {
+  appearance: none; -webkit-appearance: none; margin: 0;
+}
 .rw-app .handle svg { width: calc(var(--ctrl-h) * .6); height: calc(var(--ctrl-h) * .6); }
 .rw-app .handle:hover:not(:disabled), .rw-app .handle:focus-visible { color: var(--thread-text); border-color: var(--thread); }
 /* press feedback so the handle reads as live on touch (no hover on mobile) - mirrors
@@ -2248,6 +2260,30 @@ html.vt-theme .unified-drop-step .drop { view-transition-name: none !important; 
   .rw-app .meter:not(.indet) .fill::after { animation: none; }
 }
 
+/* Keep patch controls in the same left / content / right order at every width. */
+@media (max-width: 1099px) {
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-top {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto auto;
+    align-items: start; column-gap: 9px; row-gap: 5px;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name { display: contents; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name > .nmline {
+    grid-column: 2; grid-row: 1; align-self: center;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name > .patch-desc { grid-column: 1 / -1; grid-row: 2; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name > .card-meta { grid-column: 1 / -1; grid-row: 2; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name:has(> .patch-desc) > .card-meta { grid-row: 3; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-actions,
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-btns { display: contents; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .phandle {
+    grid-column: 1; grid-row: 1; width: var(--ctrl-h); height: var(--ctrl-h); min-height: 0;
+    display: flex; align-items: center; justify-content: center; padding: 2px;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .rm {
+    grid-column: 3; grid-row: 1; align-self: start;
+  }
+}
+
 /* ── wide-bench layout ──
    Desktops get real use out of the width: the app column widens and the two
    parallel input stages sit side by side - ROM | Patches on apply, Original |
@@ -2263,8 +2299,35 @@ html.vt-theme .unified-drop-step .drop { view-transition-name: none !important; 
     display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
   .rw-app #rom-weaver-container > *, .rw-app #patch-builder-container > * { grid-column: 1 / -1; min-width: 0; }
-  .rw-app #rom-weaver-container > #rom-weaver-row-file-rom { grid-column: 1; }
-  .rw-app #rom-weaver-container > #rom-weaver-row-patch-stack { grid-column: 2; border-inline-start: 1px solid var(--seam-soft); }
+  .rw-app #rom-weaver-container { grid-template-columns: minmax(0, 1fr); }
+  .rw-app #rom-weaver-container > #rom-weaver-row-patch-stack { border-block-start: 1px solid var(--seam-soft); }
+  .rw-app #rom-weaver-list-patch-stack.patch-cards {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-top {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto auto;
+    align-items: start; column-gap: 9px; row-gap: 5px;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name { display: contents; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name > .nmline {
+    grid-column: 2; grid-row: 1; align-self: center;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name > .patch-desc { grid-column: 1 / -1; grid-row: 2; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name > .card-meta { grid-column: 1 / -1; grid-row: 2; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-name:has(> .patch-desc) > .card-meta { grid-row: 3; }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-actions {
+    display: contents;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .card-btns {
+    display: contents;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .phandle {
+    grid-column: 1; grid-row: 1; width: var(--ctrl-h); height: var(--ctrl-h); min-height: 0;
+    display: flex; align-items: center; justify-content: center; padding: 2px;
+  }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch .rm {
+    grid-column: 3; grid-row: 1; align-self: start;
+  }
   .rw-app #patch-builder-container > #patch-builder-row-original { grid-column: 1; grid-row: 2; }
   .rw-app #patch-builder-container > #patch-builder-row-modified { grid-column: 2; grid-row: 2; border-inline-start: 1px solid var(--seam-soft); }
   /* the swap hinge floats centered on the seam between the two source columns */

@@ -1,8 +1,7 @@
 import Check from "lucide-react/dist/esm/icons/check.js";
 import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
-import GripVertical from "lucide-react/dist/esm/icons/grip-vertical.js";
 import X from "lucide-react/dist/esm/icons/x.js";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { InfoToggle } from "../../presentation/react/info-toggle.tsx";
 import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { createTiming, formatTiming } from "../../storage/shared/timing.ts";
@@ -363,29 +362,113 @@ const PatchOptions = ({
 
 type ReorderHandleProps = ReturnType<ReturnType<typeof useListReorder>["handleProps"]>;
 
-/** Drag handle in the patch card's action column: grip glyph, drag or arrow keys to reorder. */
+/** Numbered drag target that turns into a position editor on click. */
 const PatchDragHandle = ({
   disabled,
   handleProps,
   index,
+  onReorder,
+  position,
   total,
 }: {
   disabled: boolean;
   handleProps: ReorderHandleProps;
   index: number;
+  onReorder: (from: number, to: number) => void;
+  position: number;
   total: number;
-}) => (
-  <button
-    aria-label={`Patch ${index + 1} of ${total}. Drag or press the up and down arrow keys to reorder.`}
-    className="handle phandle"
-    disabled={disabled}
-    title="Drag to reorder · ↑ / ↓ keys"
-    type="button"
-    {...handleProps}
-  >
-    <GripVertical aria-hidden="true" className="phandle-grip" />
-  </button>
-);
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(position));
+  const cancelEditRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    const input = inputRef.current;
+    if (!input) return;
+    input.select();
+
+    const keepInputVisible = () => {
+      const viewport = window.visualViewport;
+      const viewportTop = viewport?.offsetTop ?? 0;
+      const viewportBottom = viewportTop + (viewport?.height ?? window.innerHeight);
+      const rect = input.getBoundingClientRect();
+      const margin = 24;
+      if (rect.top < viewportTop + margin || rect.bottom > viewportBottom - margin) {
+        input.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      }
+    };
+    const frame = window.requestAnimationFrame(keepInputVisible);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", keepInputVisible);
+    viewport?.addEventListener("scroll", keepInputVisible);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      viewport?.removeEventListener("resize", keepInputVisible);
+      viewport?.removeEventListener("scroll", keepInputVisible);
+    };
+  }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    if (cancelEditRef.current) {
+      cancelEditRef.current = false;
+      return;
+    }
+    const position = Number.parseInt(draft, 10);
+    if (!Number.isInteger(position)) return;
+    const target = Math.max(1, Math.min(total, position)) - 1;
+    if (target !== index) onReorder(index, target);
+  };
+
+  if (editing) {
+    return (
+      <input
+        aria-label={`Edit patch position, currently ${position} of ${total}`}
+        className="handle phandle phandle-input mono"
+        max={total}
+        min={1}
+        onBlur={commit}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.currentTarget.blur();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            cancelEditRef.current = true;
+            event.currentTarget.blur();
+          }
+        }}
+        ref={inputRef}
+        type="number"
+        value={draft}
+      />
+    );
+  }
+
+  return (
+    <button
+      aria-label={`Patch ${position} of ${total}. Drag to reorder, click to edit its position, or press the up and down arrow keys.`}
+      className="handle phandle"
+      disabled={disabled}
+      {...handleProps}
+      onClick={(event) => {
+        handleProps.onClick?.(event);
+        if (event.defaultPrevented) return;
+        setDraft(String(position));
+        setEditing(true);
+      }}
+      title="Drag to reorder · click to edit position · ↑ / ↓ keys"
+      type="button"
+    >
+      <span aria-hidden="true" className="phandle-number mono">
+        {position}
+      </span>
+    </button>
+  );
+};
 
 /** The patch's track/target on the meta line - inline select when there is a choice. */
 const PatchTarget = ({
@@ -481,10 +564,10 @@ const ApplyPatchListStep = ({
   woven?: boolean;
 }) => {
   const total = patches.length;
-  // Reordering only makes sense for a multi-patch stack. Dragging is additionally
-  // suspended while any patch is staging or the stack is otherwise busy.
+  // Reordering only makes sense for a multi-patch stack. A patch may still be
+  // moved while it is staging; other busy/locked rows remain non-reorderable.
   const reorderable = total > 1;
-  const canReorder = reorderable && patches.every((item) => !item.progress && item.canRemove);
+  const canReorder = reorderable && patches.every((item) => item.progress || item.canRemove);
   const reorderList = useListReorder({ count: total, disabled: !canReorder, onReorder: patchStack.reorder });
   const disabledCount = (disabledFlags || []).filter(Boolean).length;
   const enabledBytes = patches.reduce(
@@ -587,11 +670,13 @@ const ApplyPatchListStep = ({
                 ) : undefined
               }
               handle={
-                reorderable && !staging ? (
+                reorderable ? (
                   <PatchDragHandle
                     disabled={!canReorder}
                     handleProps={reorderList.handleProps(index)}
                     index={index}
+                    onReorder={patchStack.reorder}
+                    position={reorderList.displayIndex(index) + 1}
                     total={total}
                   />
                 ) : undefined
