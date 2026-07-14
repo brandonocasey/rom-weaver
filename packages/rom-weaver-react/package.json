@@ -21,7 +21,7 @@
     }
   },
   "scripts": {
-    "dev": "node scripts/dev-server.mjs",
+    "dev": "node scripts/ensure-wasm-build.mjs && node scripts/dev-server.mjs",
     "build": "vite build",
     "preview": "node scripts/ensure-preview-build.mjs && node scripts/dev-server.mjs preview",
     "lint": "npm run lint:i18n && npm run lint:code && npm run lint:types && npm run lint:browser-compat && npm run lint:knip && npm run audit:strings",

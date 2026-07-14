@@ -16,22 +16,19 @@
 // Override with ROM_WEAVER_PREVIEW_FORCE=wasm|vite|all to force a rebuild, or
 // ROM_WEAVER_PREVIEW_SKIP_BUILD=1 to skip the gate entirely.
 
-import childProcess from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import {
+  mtimeMs,
+  newestMtime,
+  PACKAGE_DIR,
+  REPO_ROOT,
+  run,
+  WASM_ARTIFACT,
+  wasmRebuildReason,
+} from "./wasm-build-gate.mjs";
 
-const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const REPO_ROOT = path.resolve(PACKAGE_DIR, "..", "..");
-const WASM_ARTIFACT = path.join(PACKAGE_DIR, "src", "wasm", "rom-weaver-app.wasm");
-const WASM_BROTLI = `${WASM_ARTIFACT}.br`;
 const DIST_INDEX = path.join(PACKAGE_DIR, "dist", "index.html");
-
-// Inputs that gate the WASM rebuild. Dirty edits bump these files' mtimes.
-const RUST_ROOTS = [path.join(REPO_ROOT, "crates")];
-const RUST_FILES = [path.join(REPO_ROOT, "Cargo.toml"), path.join(REPO_ROOT, "Cargo.lock")];
-const RUST_EXTENSIONS = new Set([".rs", ".toml"]);
 
 // Inputs that gate the vite rebuild (in addition to the WASM artifact itself).
 const WEB_ROOTS = [path.join(PACKAGE_DIR, "src")];
@@ -43,62 +40,6 @@ const WEB_FILES = [
 
 const log = (level, message) => console.log(`[ensure-preview-build] ${level}: ${message}`);
 
-const mtimeMs = (filePath) => {
-  try {
-    return fs.statSync(filePath).mtimeMs;
-  } catch {
-    return null;
-  }
-};
-
-// Walk roots + explicit files, returning the newest mtime and the file holding it.
-const newestMtime = (roots, files, extensions) => {
-  let newest = { mtimeMs: 0, file: null };
-  const consider = (filePath, ms) => {
-    if (ms !== null && ms > newest.mtimeMs) newest = { mtimeMs: ms, file: filePath };
-  };
-
-  const walk = (dir) => {
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (extensions && !extensions.has(path.extname(entry.name))) continue;
-      consider(full, mtimeMs(full));
-    }
-  };
-
-  for (const root of roots) walk(root);
-  for (const file of files) consider(file, mtimeMs(file));
-  return newest;
-};
-
-const run = (command, args, label) => {
-  log("info", `running: ${command} ${args.join(" ")}`);
-  const result = childProcess.spawnSync(command, args, { cwd: REPO_ROOT, stdio: "inherit" });
-  if (result.error) {
-    if (result.error.code === "ENOENT") {
-      log("error", `${label} failed: command not found: ${command}`);
-    } else {
-      log("error", `${label} failed: ${result.error.message}`);
-    }
-    process.exit(1);
-  }
-  if (result.status !== 0) {
-    log("error", `${label} exited with status ${result.status}`);
-    process.exit(result.status || 1);
-  }
-};
-
 const force = String(process.env.ROM_WEAVER_PREVIEW_FORCE || "").toLowerCase();
 const forceWasm = force === "wasm" || force === "all";
 const forceVite = force === "vite" || force === "all";
@@ -107,20 +48,10 @@ if (String(process.env.ROM_WEAVER_PREVIEW_SKIP_BUILD || "") === "1") {
   log("warn", "ROM_WEAVER_PREVIEW_SKIP_BUILD=1 set; skipping build gate");
 } else {
   // --- WASM gate ----------------------------------------------------------
-  const wasmMtime = mtimeMs(WASM_ARTIFACT);
-  const brotliMtime = mtimeMs(WASM_BROTLI);
-  const newestRust = newestMtime(RUST_ROOTS, RUST_FILES, RUST_EXTENSIONS);
-
-  let wasmReason = null;
-  if (forceWasm) wasmReason = "forced via ROM_WEAVER_PREVIEW_FORCE";
-  else if (wasmMtime === null) wasmReason = "artifact missing";
-  else if (brotliMtime === null) wasmReason = "brotli sibling missing (artifact is a dev build, not prod)";
-  else if (newestRust.mtimeMs > wasmMtime)
-    wasmReason = `Rust source newer than artifact (${path.relative(REPO_ROOT, newestRust.file)})`;
-
+  const wasmReason = wasmRebuildReason({ force: forceWasm, requireBrotli: true });
   if (wasmReason) {
     log("info", `WASM rebuild needed: ${wasmReason}`);
-    run("mise", ["run", "build-wasm-prod"], "build-wasm-prod");
+    run("mise", ["run", "build-wasm-prod"], { label: "build-wasm-prod", log });
   } else {
     log("debug", "WASM artifact up to date; skipping prod build");
   }
@@ -139,7 +70,7 @@ if (String(process.env.ROM_WEAVER_PREVIEW_SKIP_BUILD || "") === "1") {
 
   if (viteReason) {
     log("info", `vite rebuild needed: ${viteReason}`);
-    run("npm", ["--prefix", "packages/rom-weaver-react", "run", "build"], "vite build");
+    run("npm", ["--prefix", "packages/rom-weaver-react", "run", "build"], { label: "vite build", log });
   } else {
     log("debug", "dist up to date; skipping vite build");
   }
