@@ -69,14 +69,19 @@ export function createSharedThreadMemory({
     DEFAULT_SHARED_MEMORY_INITIAL_PAGES,
     "sharedMemoryInitialPages",
   );
-  const hasConfiguredMaximum = maximumPages !== undefined && maximumPages !== null;
   const maximum = normalizePositiveInteger(maximumPages, DEFAULT_SHARED_MEMORY_MAX_PAGES, "sharedMemoryMaximumPages");
   if (maximum < initial) {
     throw new Error("sharedMemoryMaximumPages must be >= sharedMemoryInitialPages");
   }
-  const candidates = hasConfiguredMaximum
-    ? [maximum]
-    : [maximum, ...FALLBACK_SHARED_MEMORY_MAX_PAGES.filter((candidate) => candidate < maximum && candidate >= initial)];
+  // Always seed the step-down ladder with the requested maximum as its top rung, whether it came from
+  // the default or an explicit (mobile-ceiling) configuration. The ladder only ever steps DOWN
+  // (`candidate < maximum`), so a configured cap is honored as a ceiling while still recovering on
+  // constrained hosts (notably iOS, which reserves the full maximum's address range up front and may
+  // refuse even the mobile 1 GiB ceiling - without a lower rung that would hard-OOM at warmup).
+  const candidates = [
+    maximum,
+    ...FALLBACK_SHARED_MEMORY_MAX_PAGES.filter((candidate) => candidate < maximum && candidate >= initial),
+  ];
   let allocationError: unknown = null;
   for (const candidate of candidates) {
     try {
