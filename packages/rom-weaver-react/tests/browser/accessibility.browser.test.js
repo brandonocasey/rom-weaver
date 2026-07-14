@@ -14,6 +14,13 @@
  *  4. Full-page scans (WCAG A/AA + best-practice incl. landmarks) of the Apply
  *     (staged/empty/verdict/done), Create (empty + staged) and Trim (empty +
  *     staged) pages, in the production shell (Masthead + <main> + Selvage).
+ *  5. A dense Apply page - one disc ROM with every panel + three patches
+ *     spanning every verdict - with every collapsible drawer clicked OPEN, so
+ *     the control-heavy patch Options fields (name/description/verification
+ *     inputs/header checkbox) that render closed elsewhere get audited too.
+ *
+ * Every scan runs at WCAG 2.0 + 2.1 + 2.2 (A/AA) across a viewport ladder that
+ * lands inside each responsive layout regime (see VIEWPORTS), in both themes.
  *
  * Forms render inert: Apply via controllers-as-stores, Create/Trim via their
  * presentational views (Create/TrimPatchFormView) fed a staged model, the empty
@@ -22,10 +29,12 @@
  * rather than @axe-core/playwright, because vitest browser mode's `page` is not
  * a Playwright Page.
  */
+
 import axeModule from "axe-core";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { page } from "vitest/browser";
 import { ApplyWorkflowFormView } from "../../src/public/react/apply-workflow-form-view.tsx";
 import { CandidateSelectionDialog } from "../../src/public/react/candidate-selection.tsx";
 import { ChecksumList, ChecksumRow } from "../../src/public/react/components/ds/checksum-list.tsx";
@@ -53,6 +62,28 @@ import "../../src/webapp/design-system.css";
 const axe = axeModule.default ?? axeModule;
 const THEMES = ["light", "dark"];
 
+// One viewport landing inside each layout regime the design system actually
+// defines (breakpoints in design-system.css: 380/560/720/820/860/1100px), plus
+// a short-height landscape-phone case for `(max-width: 860px) and
+// (max-height: 520px)`. Every axe scan runs at each, so responsive layouts -
+// masthead tool labels, the ≥1100px two-column split, the ≤820px verification
+// stack, coarse-pointer targets - are all exercised, not just the default width.
+const VIEWPORTS = [
+  { height: 740, name: "360w smallest phone", width: 360 },
+  { height: 860, name: "400w phone", width: 400 },
+  { height: 900, name: "680w phablet gap", width: 680 },
+  { height: 1024, name: "768w portrait tablet", width: 768 },
+  { height: 1112, name: "834w tablet gap", width: 834 },
+  { height: 768, name: "1024w small laptop", width: 1024 },
+  { height: 900, name: "1280w desktop", width: 1280 },
+  { height: 430, name: "740w landscape phone", width: 740 },
+];
+// Matches the vitest browser config default (vitest.browser.config.mjs), so the
+// viewport-agnostic tests (colour-distinctness guards, keyboard nav) run at a
+// stable width after afterEach restores it.
+const DEFAULT_VIEWPORT = { height: 900, width: 1280 };
+const setViewport = (viewport) => page.viewport(viewport.width, viewport.height);
+
 let mountedRoot = null;
 let host = null;
 let noMotion = null;
@@ -73,10 +104,11 @@ beforeEach(() => {
   mountedRoot = createRoot(host);
 });
 
-afterEach(() => {
+afterEach(async () => {
   mountedRoot?.unmount?.();
   mountedRoot = null;
   document.documentElement.removeAttribute("data-theme");
+  await setViewport(DEFAULT_VIEWPORT);
 });
 
 // two RAFs so React's commit + layout settle before reading styles / running axe
@@ -86,7 +118,7 @@ const settle = () => new Promise((resolve) => requestAnimationFrame(() => reques
 const Sample = () =>
   createElement(
     "div",
-    { className: "rw-app", style: { background: "var(--chassis)", padding: "24px", width: "560px" } },
+    { className: "rw-app", style: { background: "var(--chassis)", maxWidth: "560px", padding: "24px", width: "100%" } },
     createElement(
       FileCard,
       { meta: "8.00 MiB · GBA ROM", name: "Pokemon Emerald.gba" },
@@ -150,7 +182,7 @@ const bgString = (selector) => getComputedStyle(host.querySelector(selector)).ba
 // or lone modal has no landmarks). Always assert against [] so failures show
 // exactly what broke.
 const scanViolations = async (context, { bestPractice = false, region = false } = {}) => {
-  const tags = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
+  const tags = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
   if (bestPractice) tags.push("best-practice");
   const results = await axe.run(context, {
     resultTypes: ["violations"],
@@ -169,10 +201,13 @@ const scanViolations = async (context, { bestPractice = false, region = false } 
 
 describe("design-system accessibility", () => {
   for (const theme of THEMES) {
-    test(`checksum card passes WCAG 2.1 A/AA (${theme} theme)`, async () => {
-      await renderSample(theme);
-      expect(await scanViolations(host)).toEqual([]);
-    });
+    for (const viewport of VIEWPORTS) {
+      test(`checksum card passes WCAG 2.1 A/AA (${theme} theme, ${viewport.name})`, async () => {
+        await setViewport(viewport);
+        await renderSample(theme);
+        expect(await scanViolations(host)).toEqual([]);
+      });
+    }
   }
 
   test("light: opened checksum drawer stays a distinct recessed well", async () => {
@@ -243,7 +278,7 @@ const ROM_CHECKSUMS = {
 const SectionsGallery = () =>
   createElement(
     "div",
-    { className: "rw-app", style: { background: "var(--chassis)", padding: "24px", width: "640px" } },
+    { className: "rw-app", style: { background: "var(--chassis)", maxWidth: "640px", padding: "24px", width: "100%" } },
     createElement(
       Notice,
       { level: "error", onDismiss: noop },
@@ -311,12 +346,15 @@ const SectionsGallery = () =>
 
 describe("design-system sections + states (expanded)", () => {
   for (const theme of THEMES) {
-    test(`every section open + progress/error primitives pass WCAG 2.1 A/AA (${theme} theme)`, async () => {
-      await renderNode(createElement(SectionsGallery), theme);
-      // sanity: the sections really are open (axe skips visibility:hidden content)
-      expect(host.querySelectorAll(".cks.is-open").length).toBeGreaterThanOrEqual(3);
-      expect(await scanViolations(host)).toEqual([]);
-    });
+    for (const viewport of VIEWPORTS) {
+      test(`every section open + progress/error primitives pass WCAG 2.1 A/AA (${theme} theme, ${viewport.name})`, async () => {
+        await setViewport(viewport);
+        await renderNode(createElement(SectionsGallery), theme);
+        // sanity: the sections really are open (axe skips visibility:hidden content)
+        expect(host.querySelectorAll(".cks.is-open").length).toBeGreaterThanOrEqual(3);
+        expect(await scanViolations(host)).toEqual([]);
+      });
+    }
   }
 });
 
@@ -479,6 +517,118 @@ const verdictApplyPage = () =>
   });
 const doneApplyPage = () => applyPage(stagedUi(), [stagedPatchItem("rebalance.ips")], { output: doneOutput() });
 
+// A single disc ROM row wired to surface EVERY drawer the apply card can render:
+// checksums (open) with a headerless variant sub-group + a trim readout + a lead
+// blurb, a cue-sheet drawer, and an Extract drawer (it came from an archive).
+const richRomRow = (fileName) => {
+  const base = createEmptyPatcherUiState();
+  return {
+    ...base.romInput,
+    archivePathEntries: [
+      {
+        decompressionTimeMs: 120,
+        fileName: "games.7z",
+        kind: "archive",
+        outputSize: 700_000_000,
+        sourceSize: 350_000_000,
+      },
+    ],
+    cueText: 'FILE "Final Fantasy VII (Disc 1).bin" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00',
+    decompressionTimeMs: 120,
+    groupId: "",
+    id: `rom:${fileName}`,
+    info: {
+      ...base.romInfo,
+      archiveName: "games.7z",
+      checksumsExpanded: true,
+      checksumTiming: "12 ms",
+      checksumVariants: [
+        {
+          checksums: {
+            crc32: "1234ABCD",
+            md5: "D7E7F3D6A4B2C9E1F8A0B1C2D3E4F5A6",
+            sha1: "E7D6C5B4A3F2E1D0C9B8A7F6E5D4C3B2A1F0E9D8",
+          },
+          id: "remove-header",
+          label: "Headerless",
+          transforms: { removeHeader: { strippedBytes: 512 } },
+        },
+      ],
+      crc32: "C6FB1252",
+      fileName,
+      md5: "D7E7F3D6A4B2C9E1F8A0B1C2D3E4F5A6",
+      romInfo: "Final Fantasy VII (USA) - PlayStation disc image.",
+      romProbe: { trim: { detected: true, mode: "auto", trimmedInputBytes: 1_048_576 } },
+      romType: { discFormat: "CD", platform: "psx" },
+      sha1: "E7D6C5B4A3F2E1D0C9B8A7F6E5D4C3B2A1F0E9D8",
+    },
+    kind: "rom",
+    order: 0,
+    size: 700_000_000,
+    wasDecompressed: true,
+  };
+};
+
+// Three patches spanning every drawer/verdict the patch card can show: one from
+// an archive with input+output requirements (Extract + Checks + Options), one
+// with a strippable-header option, one that fails source verification. Each also
+// carries the reorder/remove affordances (move-up/down, remove) so those touch
+// targets ride along.
+const densePatchItems = () => [
+  {
+    ...stagedPatchItem("intro-skip.ips"),
+    archiveFileName: "patchpack.zip",
+    archivePathEntries: [
+      { decompressionTimeMs: 20, fileName: "patchpack.zip", kind: "archive", outputSize: 2048, sourceSize: 900 },
+    ],
+    canMoveDown: true,
+    canMoveUp: false,
+    canRemove: true,
+    checksumTiming: "4 ms",
+    format: "IPS",
+    index: 0,
+    key: "p0",
+    validationValues: ["in crc32=C6FB1252", "out crc32=AABBCCDD"],
+  },
+  {
+    ...stagedPatchItem("rebalance.bps"),
+    canMoveDown: true,
+    canMoveUp: true,
+    canRemove: true,
+    format: "BPS",
+    headerStrippedBytes: 512,
+    index: 1,
+    key: "p1",
+    showHeaderOption: true,
+    validationValues: ["in crc32=C6FB1252"],
+  },
+  {
+    ...badPatchItem("broken.ppf"),
+    canMoveDown: false,
+    canMoveUp: true,
+    canRemove: true,
+    format: "PPF",
+    index: 2,
+    key: "p2",
+    validationValues: ["in crc32=DEADBEEF"],
+  },
+];
+
+const denseRom = () => ({ ...createEmptyPatcherUiState(), romInputs: [richRomRow("Final Fantasy VII (Disc 1).bin")] });
+
+const densePatchApplyPage = () => applyPage(denseRom(), densePatchItems());
+
+// Same dense page, but with the per-patch On/Off enable toggles present and the
+// middle patch toggled OFF. A disabled patch dims to `.card.is-disabled` (dashed
+// plate, --ink-3 text), drops its verdict + Checks drawer, and keeps only an
+// (editable) Options drawer - a distinct set of surfaces/targets: the switch
+// input itself, the dimmed name/meta, and the Options fields on the disabled
+// card background. openAllDrawers still expands every remaining drawer.
+const disabledPatchApplyPage = () =>
+  applyPage(denseRom(), densePatchItems(), {
+    patchEnablement: { disabledIds: new Set(["p1"]), getPatchIds: () => ["p0", "p1", "p2"], onToggle: noop },
+  });
+
 const emptyCreatePage = () =>
   Shell(
     "creator",
@@ -613,10 +763,53 @@ describe("webapp page accessibility", () => {
   ];
   for (const { factory, name } of PAGES) {
     for (const theme of THEMES) {
-      test(`${name} page passes WCAG 2.1 A/AA + best-practice (${theme} theme)`, async () => {
-        await renderPage(factory(), theme);
-        expect(await scanViolations(host, { bestPractice: true, region: true })).toEqual([]);
-      });
+      for (const viewport of VIEWPORTS) {
+        test(`${name} page passes WCAG 2.1 A/AA + best-practice (${theme} theme, ${viewport.name})`, async () => {
+          await setViewport(viewport);
+          await renderPage(factory(), theme);
+          expect(await scanViolations(host, { bestPractice: true, region: true })).toEqual([]);
+        });
+      }
+    }
+  }
+});
+
+// ── Dense apply page: multiple patches + every drawer open ───────────────────
+// The staged/verdict apply scans leave the patch Options drawers (name,
+// description, input/output verification fields, header-strip checkbox) and the
+// ROM's cue/variant/extract drawers CLOSED - axe skips visibility:hidden
+// content, so those dense, control-heavy states were never audited. This mounts
+// the worst case (a disc ROM with every panel + three patches spanning every
+// verdict) and clicks every collapsed drawer OPEN before scanning.
+const openAllDrawers = async (root) => {
+  // nested drawers reveal more toggles once a parent opens, so loop until dry
+  for (let pass = 0; pass < 8; pass += 1) {
+    const closed = root.querySelectorAll('button.cks-head[aria-expanded="false"]');
+    if (closed.length === 0) return;
+    for (const toggle of closed) toggle.click();
+    await settle();
+  }
+};
+
+describe("webapp dense apply page accessibility", () => {
+  const DENSE_PAGES = [
+    { factory: densePatchApplyPage, name: "3 patches, all enabled" },
+    { factory: disabledPatchApplyPage, name: "3 patches, middle disabled + On/Off toggles" },
+  ];
+  for (const { factory, name } of DENSE_PAGES) {
+    for (const theme of THEMES) {
+      for (const viewport of VIEWPORTS) {
+        test(`dense apply (${name}, all drawers open) passes WCAG 2.1 A/AA + best-practice (${theme} theme, ${viewport.name})`, async () => {
+          await setViewport(viewport);
+          await renderPage(factory(), theme);
+          await openAllDrawers(host);
+          // sanity: nothing left collapsed (else axe silently skips it) and the
+          // page really is dense - many open drawers across the ROM + 3 patches
+          expect(host.querySelectorAll('button.cks-head[aria-expanded="false"]').length).toBe(0);
+          expect(host.querySelectorAll(".cks.is-open").length).toBeGreaterThanOrEqual(5);
+          expect(await scanViolations(host, { bestPractice: true, region: true })).toEqual([]);
+        });
+      }
     }
   }
 });
@@ -636,10 +829,13 @@ const Banners = () =>
 
 describe("webapp banner accessibility", () => {
   for (const theme of THEMES) {
-    test(`update + wake-lock banners pass WCAG 2.1 A/AA + best-practice (${theme} theme)`, async () => {
-      await renderNode(createElement(Banners), theme);
-      expect(await scanViolations(host, { bestPractice: true })).toEqual([]);
-    });
+    for (const viewport of VIEWPORTS) {
+      test(`update + wake-lock banners pass WCAG 2.1 A/AA + best-practice (${theme} theme, ${viewport.name})`, async () => {
+        await setViewport(viewport);
+        await renderNode(createElement(Banners), theme);
+        expect(await scanViolations(host, { bestPractice: true })).toEqual([]);
+      });
+    }
   }
 });
 
@@ -731,10 +927,13 @@ const ModalHost = (node) =>
 describe("webapp modal accessibility", () => {
   for (const [name, factory] of Object.entries(DIALOGS)) {
     for (const theme of THEMES) {
-      test(`${name} dialog passes WCAG 2.1 A/AA + best-practice (${theme} theme)`, async () => {
-        await renderNode(ModalHost(factory()), theme);
-        expect(await scanViolations(host, { bestPractice: true })).toEqual([]);
-      });
+      for (const viewport of VIEWPORTS) {
+        test(`${name} dialog passes WCAG 2.1 A/AA + best-practice (${theme} theme, ${viewport.name})`, async () => {
+          await setViewport(viewport);
+          await renderNode(ModalHost(factory()), theme);
+          expect(await scanViolations(host, { bestPractice: true })).toEqual([]);
+        });
+      }
     }
   }
 });
