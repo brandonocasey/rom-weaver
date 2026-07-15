@@ -11,7 +11,7 @@ import type { BundleRomExpectation } from "../../lib/bundle/bundle-session-model
 import { formatByteSize, type ProgressViewModel } from "../../presentation/workflow-presentation.ts";
 import { createTiming, formatTiming } from "../../storage/shared/timing.ts";
 import { ApplyPatchListStep } from "./apply-patch-list-step.tsx";
-import { ChecksumRow } from "./components/ds/checksum-list.tsx";
+import { ChecksumList, ChecksumRow } from "./components/ds/checksum-list.tsx";
 import {
   buildOutputCompressionPanel,
   FieldInfoToggle,
@@ -204,34 +204,42 @@ const formatRomTypeTag = (romType: { platform?: string; discFormat?: string } | 
 const EXPECTED_ROM_CHECK_LABELS: Record<string, string> = { crc32: "CRC32", md5: "MD5", sha1: "SHA-1" };
 
 /**
- * "Provide this ROM" card for a bundle that ships patches only: the expected
- * file name plus copyable checksum/size rows in the standard checks language,
- * shown in the ROM step until an input lands.
+ * "Provide this ROM" card for a bundle that ships patches only: a regular file
+ * card (name, size meta, open Checks drawer) so it reads exactly like the ROM
+ * card it becomes once the input lands - only the meta note marks it expected.
  */
 const BundleRomExpectationCard = ({ expectation }: { expectation: BundleRomExpectation }) => (
-  <div className="patch-check-group bundle-rom-expectation" id="rom-weaver-bundle-rom-expectation">
-    <div className="ck-group-head">
-      <span>ROM not included - provide it yourself</span>
-    </div>
-    {expectation.name ? <div className="mre-name mono">{expectation.name}</div> : null}
-    <div className="verification-list">
-      {Object.entries(expectation.checks?.checksums || {}).map(([algorithm, value]) =>
-        value ? (
+  <div className="cards bundle-rom-expectation" id="rom-weaver-bundle-rom-expectation">
+    <FileCard
+      meta={
+        <>
+          {typeof expectation.checks?.size === "number" ? (
+            <span className="fsize mono">{formatByteSize(expectation.checks.size)}</span>
+          ) : null}
+          <span>ROM not included - provide it yourself</span>
+        </>
+      }
+      name={<ExtractName fileName={expectation.name || "Expected ROM"} />}
+    >
+      <ChecksumList defaultOpen label="Checks" sublabel="expected">
+        {Object.entries(expectation.checks?.checksums || {}).map(([algorithm, value]) =>
+          value ? (
+            <ChecksumRow
+              key={algorithm}
+              label={EXPECTED_ROM_CHECK_LABELS[algorithm] || algorithm.toUpperCase()}
+              value={value}
+            />
+          ) : null,
+        )}
+        {typeof expectation.checks?.size === "number" ? (
           <ChecksumRow
-            key={algorithm}
-            label={EXPECTED_ROM_CHECK_LABELS[algorithm] || algorithm.toUpperCase()}
-            value={value}
+            copyValue={String(expectation.checks.size)}
+            label="BYTES"
+            value={String(expectation.checks.size)}
           />
-        ) : null,
-      )}
-      {typeof expectation.checks?.size === "number" ? (
-        <ChecksumRow
-          copyValue={String(expectation.checks.size)}
-          label="Size"
-          value={formatByteSize(expectation.checks.size)}
-        />
-      ) : null}
-    </div>
+        ) : null}
+      </ChecksumList>
+    </FileCard>
   </div>
 );
 

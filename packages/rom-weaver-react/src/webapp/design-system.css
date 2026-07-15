@@ -97,7 +97,7 @@
      the chrome around it (masthead + banner slack + step head + the ghost-next
      line + margins) and minus the phone dock (0 outside the dock layout) */
   --dock-total: 0px;
-  --hero-chrome: 210px;
+  --hero-chrome: 242px;
   /* the empty-section family recipe (hero drop, add-row, needs-input, ghost
      slots): solid seam + thread-tinted fill strung with warp, lighting up on
      hover. Composed from theme-switched vars, so no per-theme overrides are
@@ -406,20 +406,20 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 /* step = a loom stage */
 .rw-app .step { position: relative; border-block-start: 1px solid var(--seam-soft); }
 .rw-app .step:first-child { border-block-start: 0; }
-/* a woven step's top seam takes the weft: a thread laid along the hairline,
-   dipping under it briefly every 9px (the grey seam shows through the short
-   gaps - that's the "under"). Thrown left to right when the step completes. */
-/* full-bleed like the between-step weave line it rides (headers and cards sit
+/* a woven step's top seam takes the weft: the same twisted-rope strokes as
+   the waiting grey line, re-dyed in thread color and thrown left to right
+   when the step completes. */
+/* full-bleed like the between-step rope line it rides (headers and cards sit
    flush with the step edges since the gutter moved into the step itself) */
 .rw-app .step.is-woven::before, .rw-app .step.is-fault::before {
-  content: ""; position: absolute; top: 0; inset-inline: 0; height: 1px; pointer-events: none;
-  background: repeating-linear-gradient(90deg, var(--thread) 0 9px, transparent 9px 12px);
+  content: ""; position: absolute; top: 0; inset-inline: 0; height: 3px; pointer-events: none;
+  background: repeating-linear-gradient(-55deg, transparent 0 2px, var(--thread) 2px 5px, transparent 5px 7px);
   animation: weft-throw .8s var(--ease) both;
 }
 /* a faulted step's weft snapped mid-throw: fault-colored, ending in a frayed
    stub short of the far edge - the seam stays bare where the pass never landed */
 .rw-app .step.is-fault::before {
-  background: repeating-linear-gradient(90deg, var(--fault) 0 9px, transparent 9px 12px);
+  background: repeating-linear-gradient(-55deg, transparent 0 2px, var(--fault) 2px 5px, transparent 5px 7px);
   mask-image: linear-gradient(90deg, #000 0 34%, transparent 34% 39%, #000 39% 42%, transparent 42%);
 }
 @keyframes weft-throw { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
@@ -700,7 +700,9 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
    "+", the arrow marks the final step they flow into. Purely decorative;
    shared by every viewport. */
 /* air between the live drop hero above and the upcoming-steps line */
-.rw-app .ghost-steps { margin-block-start: 8px; pointer-events: none; user-select: none; }
+/* the hero keeps the same fluid air above the ghost rope line as the real
+   steps keep above theirs (--step-pb of step-body bottom padding) */
+.rw-app .ghost-steps { margin-block-start: var(--step-pb); pointer-events: none; user-select: none; }
 .rw-app .panel.workflow .ghost-next {
   display: flex;
   flex-wrap: wrap;
@@ -1514,18 +1516,9 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .patch-check-group { min-width: 0; padding: 9px 10px 10px; border: 1px solid var(--seam-soft); border-radius: var(--r-s); background: color-mix(in oklab, var(--well) 72%, transparent); }
 .rw-app .patch-check-group .ck-group-head { margin-block-end: 7px; }
 .rw-app .verification-list { display: flex; flex-direction: column; gap: 6px; }
-/* "provide this ROM" card in the ROM step: same boxed checks language as the
-   patch verification groups, plus the expected file name under the head */
-.rw-app .bundle-rom-expectation { margin-block: 13px 10px; container-type: inline-size; }
-/* a 40-hex SHA-1 must hold ONE line at any card width (down to phone sizes):
-   scale the value with the card via cqw and pin it against wrapping. The
-   divisor ≈ hash length × char advance; the subtrahend covers label/copy/gaps. */
-.rw-app .bundle-rom-expectation .verification-list .ck .ck-v {
-  font-size: clamp(.55rem, calc((100cqw - 118px) / 24), .97rem);
-  white-space: nowrap; word-break: normal;
-}
-.rw-app .bundle-rom-expectation .mre-name { font-size: .92rem; color: var(--weft); word-break: break-all; margin-block: -2px 8px; }
-:root[data-theme="dark"] .bundle-rom-expectation .mre-name { color: var(--thread-text); }
+/* "provide this ROM" card in the ROM step: a plain file card (its Checks
+   drawer supplies the hash rows), so only the placement margin lives here */
+.rw-app .bundle-rom-expectation { margin-block: 13px 10px; }
 /* ck rows inside a boxed verification group (expected-ROM card, patch aux
    requirement rows) sit in the box, not a bleeding drawer - keep them inset */
 .rw-app .verification-list .ck { margin-inline: 0; width: 100%; }
@@ -2450,21 +2443,23 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
 
 /* the cloth-scrap 0x0N anchors each header, and the cards below carry their
    own edges - so the header itself wears no lines below it, ever. ABOVE each
-   header (every step past the first) runs a grey weave line - the weft dash
-   pattern in seam color, the loom's warp waiting for thread. Completing or
-   faulting the stage re-dyes that same line via the .is-woven/.is-fault weft.
-   The scrap's left edge sits flush with the card edges at every width: the
-   step chrome carries no inline padding of its own - the app container's
-   fluid --gutter is the single horizontal inset. */
-.rw-app .panel.workflow .step ~ .step:not(.is-woven):not(.is-fault)::before,
+   header (0x01 included) runs a grey rope line - short diagonal strokes that
+   read as a twisted cord in seam color, the loom's warp waiting for thread.
+   Completing or faulting the stage re-dyes that same line via the
+   .is-woven/.is-fault weft. The scrap's left edge sits flush with the card
+   edges at every width: the step chrome carries no inline padding of its own -
+   the app container's fluid --gutter is the single horizontal inset. */
+.rw-app .panel.workflow .step:not(.is-woven):not(.is-fault)::before,
 .rw-app .panel.workflow .step ~ .ghost-steps::before {
-  content: ""; position: absolute; top: 0; inset-inline: 0; height: 1px; pointer-events: none;
-  background: repeating-linear-gradient(90deg, var(--seam-strong) 0 9px, transparent 9px 12px);
+  content: ""; position: absolute; top: 0; inset-inline: 0; height: 3px; pointer-events: none;
+  background: repeating-linear-gradient(-55deg, transparent 0 2px, var(--seam-strong) 2px 5px, transparent 5px 7px);
 }
 .rw-app .panel.workflow .ghost-steps { position: relative; }
 .rw-app .panel.workflow .step > .step-head {
   min-height: 38px;
-  padding: 0;
+  /* --step-pt of air between the rope line above and the 0x0N header; phones
+     zero this back out (their tighter rail margins carry the rhythm) */
+  padding: var(--step-pt) 0 2px;
   align-items: center;
   gap: 8px;
   border: 0;
@@ -2663,6 +2658,12 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
     margin: 8px 0;
     padding-block-end: 0;
     overflow: visible;
+  }
+
+  /* phones keep the header tight under the rope line - the 8px step margins
+     above already carry the rhythm */
+  .rw-app .panel.workflow .step > .step-head {
+    padding-block-start: 0;
   }
 
   .rw-app .panel.workflow .step > .step-body {
