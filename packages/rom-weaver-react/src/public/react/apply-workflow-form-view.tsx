@@ -3,7 +3,6 @@ import Disc3 from "lucide-react/dist/esm/icons/disc-3.js";
 import Download from "lucide-react/dist/esm/icons/download.js";
 import ListChecks from "lucide-react/dist/esm/icons/list-checks.js";
 import Package from "lucide-react/dist/esm/icons/package.js";
-import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.js";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
@@ -126,15 +125,6 @@ const PendingDropCard = ({ drop }: { drop: PendingDrop }) => (
             </DrawerReadout>
           )
         }
-      >
-        <span />
-      </Drawer>
-    ) : null}
-    {drop.kind === "patch" ? (
-      <Drawer
-        bodyClassName="optsbody"
-        label="Options"
-        labelIcon={<SlidersHorizontal aria-hidden="true" className="tune" />}
       >
         <span />
       </Drawer>

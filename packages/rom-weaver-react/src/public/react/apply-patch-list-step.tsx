@@ -300,6 +300,10 @@ const PatchOptions = ({
   const bad = !!showVerdict && !disabled && item.validationState === "invalid";
   const ok = !!showVerdict && !disabled && item.validationState === "valid";
   const timing = showVerdict && !disabled ? CHECKSUM_TIMING_LABEL(item.checksumTiming, "Checks") : undefined;
+  // Outside the bundle editor a patch without a header choice has no options at
+  // all - skip the drawer instead of rendering an empty body (the card state /
+  // verify bar / fault well already carry the dry-run verdict).
+  if (!(editMode || item.showHeaderOption)) return null;
   return (
     <Drawer
       action={ok ? <DryApplySuccess /> : undefined}
