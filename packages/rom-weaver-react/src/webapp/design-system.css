@@ -1500,7 +1500,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .verification-list { display: flex; flex-direction: column; gap: 6px; }
 /* "provide this ROM" card in the ROM step: same boxed checks language as the
    patch verification groups, plus the expected file name under the head */
-.rw-app .bundle-rom-expectation { margin-block-end: 10px; container-type: inline-size; }
+.rw-app .bundle-rom-expectation { margin-block: 13px 10px; container-type: inline-size; }
 /* a 40-hex SHA-1 must hold ONE line at any card width (down to phone sizes):
    scale the value with the card via cqw and pin it against wrapping. The
    divisor ≈ hash length × char advance; the subtrahend covers label/copy/gaps. */
@@ -2159,6 +2159,7 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
   .rw-app .workflow-step-after-items:not(:empty),
   .rw-app .cards:not(:empty) + .drop,
   .rw-app .workflow-file-list:not(:empty) + .drop { margin-top: 9px; }
+  .rw-app .bundle-rom-expectation { margin-block-start: 9px; }
   /* the notice shares the same 6px inset as the cards/headers */
   .rw-app .notice { margin-inline: 6px; }
   .rw-app .sv-inner { padding-inline: 8px; }
