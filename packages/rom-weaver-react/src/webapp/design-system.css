@@ -417,12 +417,14 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
    swap hinge) have room to breathe */
 .rw-app .step-head { display: flex; align-items: baseline; gap: 10px; padding: var(--step-pt) var(--pad) 2px; position: relative; }
 .rw-app .step-head-action { display: none; }
-.rw-app .step-num { font-size: .9rem; font-weight: 650; color: var(--thread-text); letter-spacing: .06em; transition: color .3s; }
+/* header type rides the same fluid scale as the card names (.nm) so the 0x0N
+   headings match their content's size on desktop; .9rem floor keeps phones as-is */
+.rw-app .step-num { font-size: clamp(.9rem, 1.1vw + .55rem, 1.06rem); font-weight: 650; color: var(--thread-text); letter-spacing: .06em; transition: color .3s; }
 .rw-app .step.is-woven .step-num { color: var(--thread-text); }
 .rw-app .step.is-fault .step-num { color: var(--fault); }
 /* section titles speak in the same voice as the card names and drawer headers
    (sentence case, 650) - one type family across the page, size = hierarchy */
-.rw-app .step-title { margin: 0; font-size: .9rem; font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--ink); }
+.rw-app .step-title { margin: 0; font-size: clamp(.9rem, 1.1vw + .55rem, 1.06rem); font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--ink); }
 .rw-app .step-meta { margin-inline-start: auto; font-size: .74rem; color: var(--ink-3); display: inline-flex; flex-wrap: wrap; gap: 3px 8px; align-items: baseline; justify-content: flex-end; }
 .rw-app .step-meta .t { color: var(--thread-text); }
 /* step-header meta rendered as readout chips (matches the drawer-header badges) */
@@ -671,8 +673,8 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 /* head + body borrow the real .step-head / .step-body rhythm so the ghost
    rows line up with the live steps they precede */
 .rw-app .ghost-step-head { display: flex; align-items: baseline; gap: 10px; padding: var(--step-pt) var(--pad) 2px; }
-.rw-app .ghost-step-num { font-size: .9rem; font-weight: 650; color: var(--thread-text); letter-spacing: .06em; }
-.rw-app .ghost-step-title { font-size: .9rem; font-weight: 650; color: var(--ink); }
+.rw-app .ghost-step-num { font-size: clamp(.9rem, 1.1vw + .55rem, 1.06rem); font-weight: 650; color: var(--thread-text); letter-spacing: .06em; }
+.rw-app .ghost-step-title { font-size: clamp(.9rem, 1.1vw + .55rem, 1.06rem); font-weight: 650; color: var(--ink); }
 .rw-app .ghost-step-body { padding: clamp(4px, 1vw, 6px) var(--pad) var(--step-pb); }
 /* the slot is a .card silhouette - same padding/border/radius, one step
    fainter in fill so it reads as decorative rather than droppable */
