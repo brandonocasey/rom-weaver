@@ -400,12 +400,13 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 /* a woven step's top seam takes the weft: a thread laid along the hairline,
    dipping under it briefly every 9px (the grey seam shows through the short
    gaps - that's the "under"). Thrown left to right when the step completes. */
+/* full-bleed like the between-step weave line it rides (headers and cards sit
+   flush with the step edges since the gutter moved into the step itself) */
 .rw-app .step.is-woven::before, .rw-app .step.is-fault::before {
-  content: ""; position: absolute; top: -1px; inset-inline: var(--pad); height: 1px; pointer-events: none;
+  content: ""; position: absolute; top: 0; inset-inline: 0; height: 1px; pointer-events: none;
   background: repeating-linear-gradient(90deg, var(--thread) 0 9px, transparent 9px 12px);
   animation: weft-throw .8s var(--ease) both;
 }
-.rw-app .step:first-child.is-woven::before, .rw-app .step:first-child.is-fault::before { top: 0; }
 /* a faulted step's weft snapped mid-throw: fault-colored, ending in a frayed
    stub short of the far edge - the seam stays bare where the pass never landed */
 .rw-app .step.is-fault::before {
@@ -420,8 +421,27 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 /* header type rides the same fluid scale as the card names (.nm) so the 0x0N
    headings match their content's size on desktop; .9rem floor keeps phones as-is */
 .rw-app .step-num { font-size: clamp(.9rem, 1.1vw + .55rem, 1.06rem); font-weight: 650; color: var(--thread-text); letter-spacing: .06em; transition: color .3s; }
+/* the 0x0N sits on a scrap of actual cloth: thread paint pushed through the
+   plain-weave tile, no box around it - the scrap's selvage edge sits flush
+   left and its weft frays out to the right. Completing the step saturates
+   the weave; a fault re-dyes the scrap. Ghost steps wear the same scrap and
+   recede with their step's opacity fade. */
+.rw-app .step-num, .rw-app .ghost-step-num {
+  position: relative; isolation: isolate;
+  padding: 2px 18px 2px 9px;
+}
+.rw-app .step-num::before, .rw-app .ghost-step-num::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: 3px 0 0 3px;
+  background: linear-gradient(90deg, var(--thread) 52%, transparent 96%);
+  opacity: .2;
+  mask-image: var(--weave-mask); mask-size: 9px 9px;
+  transition: opacity .3s, background-color .3s;
+}
 .rw-app .step.is-woven .step-num { color: var(--thread-text); }
+.rw-app .step.is-woven .step-num::before { opacity: .42; }
 .rw-app .step.is-fault .step-num { color: var(--fault); }
+.rw-app .step.is-fault .step-num::before { background: linear-gradient(90deg, var(--fault) 52%, transparent 96%); opacity: .28; }
 /* section titles speak in the same voice as the card names and drawer headers
    (sentence case, 650) - one type family across the page, size = hierarchy */
 .rw-app .step-title { margin: 0; font-size: clamp(.9rem, 1.1vw + .55rem, 1.06rem); font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--ink); }
@@ -694,9 +714,12 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
   flex: none; width: var(--ctrl-h); height: var(--ctrl-h);
   border: 1px solid var(--seam); border-radius: 6px; background: var(--well);
 }
-.rw-app .ghost-step:nth-child(1) { opacity: .6; }
-.rw-app .ghost-step:nth-child(2) { opacity: .42; }
-.rw-app .ghost-step:nth-child(3) { opacity: .28; }
+/* nth-of-type, not nth-child: the (desktop-hidden) .ghost-next <p> is the
+   container's first child, which shifted the fade off by one and left the
+   last ghost at full strength - reading as a real step on the empty page */
+.rw-app .ghost-step:nth-of-type(1) { opacity: .6; }
+.rw-app .ghost-step:nth-of-type(2) { opacity: .42; }
+.rw-app .ghost-step:nth-of-type(3) { opacity: .28; }
 
 /* ═══ file cards ═══ */
 .rw-app .cards { display: flex; flex-direction: column; gap: 13px; }
@@ -2408,7 +2431,9 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
 /* the workflow form owns no plate: filled or empty, the page IS the form
    (the side borders of the old mounted plate framed it like a box). Steps
    keep their hairlines, cards their wells - depth lives one level down. */
-.rw-app .panel.workflow { margin-block-start: 6px; }
+/* same air above 0x01 as every later header gets (content → weave line → head
+   is --step-pb + head slack); phones keep their own tighter rail margins */
+.rw-app .panel.workflow { margin-block-start: var(--step-pb); }
 .rw-app .panel.workflow .step:last-child { padding-block-end: 4px; }
 /* Section rails belong to the workflow rather than to a breakpoint. Keep the
    numbered stages and compact add-files row visually consistent on desktop
@@ -2419,17 +2444,28 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
   background: transparent;
 }
 
+/* the cloth-scrap 0x0N anchors each header, and the cards below carry their
+   own edges - so the header itself wears no lines below it, ever. ABOVE each
+   header (every step past the first) runs a grey weave line - the weft dash
+   pattern in seam color, the loom's warp waiting for thread. Completing or
+   faulting the stage re-dyes that same line via the .is-woven/.is-fault weft.
+   The scrap's left edge tracks the card edges: the body gutter (--pad) on
+   phones, flush 0 on desktop. */
+.rw-app .panel.workflow .step ~ .step:not(.is-woven):not(.is-fault)::before,
+.rw-app .panel.workflow .step ~ .ghost-steps::before,
+.rw-app .panel.workflow .ghost-step ~ .ghost-step::before {
+  content: ""; position: absolute; top: 0; inset-inline: 0; height: 1px; pointer-events: none;
+  background: repeating-linear-gradient(90deg, var(--seam-strong) 0 9px, transparent 9px 12px);
+}
+.rw-app .panel.workflow .ghost-steps { position: relative; }
 .rw-app .panel.workflow .step > .step-head,
 .rw-app .panel.workflow .ghost-step > .ghost-step-head {
   min-height: 38px;
-  padding: 0 9px;
+  padding: 0 var(--pad);
   align-items: center;
   gap: 8px;
   border: 0;
-  border-inline-start: 3px solid var(--thread);
-  border-block-end: 1px solid var(--seam-strong);
   border-radius: 0;
-  background: linear-gradient(90deg, color-mix(in oklab, var(--thread) 6%, transparent), transparent 58%);
 }
 
 /* on desktop the step content sheds the --pad inset so headers, cards, and
@@ -2437,7 +2473,9 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
    step instead) */
 @media (min-width: 721px) {
   .rw-app .panel.workflow .step > .step-body,
-  .rw-app .panel.workflow .ghost-step > .ghost-step-body {
+  .rw-app .panel.workflow .ghost-step > .ghost-step-body,
+  .rw-app .panel.workflow .step > .step-head,
+  .rw-app .panel.workflow .ghost-step > .ghost-step-head {
     padding-inline: 0;
   }
 }
@@ -2700,6 +2738,13 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
   .rw-app .panel.workflow .step > .step-body,
   .rw-app .panel.workflow .ghost-step > .ghost-step-body {
     padding: 7px 0 0;
+  }
+
+  /* the head sheds its inline gutter with the body, so the 0x0N scrap's left
+     edge lines up with the cards below it on phones too */
+  .rw-app .panel.workflow .step > .step-head,
+  .rw-app .panel.workflow .ghost-step > .ghost-step-head {
+    padding-inline: 0;
   }
 
   .rw-app .panel.workflow .step .card,
