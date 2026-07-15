@@ -1363,6 +1363,87 @@ fn bundle_apply_partial_chain_skips_full_chain_output_checks() {
 }
 
 #[test]
+fn bundle_apply_non_prefix_selection_skips_entry_output_checks() {
+    // A patch entry's outputChecks describe the state after applying the chain
+    // UP TO it. A selection that skips an earlier optional but still ends on
+    // that entry produces a different, legitimate result - the recorded hash
+    // must not gate it. The same hash MUST gate the true prefix selection.
+    let temp = setup_temp_dir();
+    write_bundle_rom(&temp, "game.bin");
+    write_offset_ips(&temp, "main.ips", 0, 0xAA);
+    write_offset_ips(&temp, "extra.ips", 1, 0xBB);
+    write_offset_ips(&temp, "final.ips", 2, 0xCC);
+    fs::write(
+        temp.child("rom-weaver-bundle.json").path(),
+        r#"{
+            "version": 1,
+            "rom": { "path": "game.bin" },
+            "patches": [
+                { "name": "main", "path": "main.ips" },
+                { "name": "extra", "optional": true, "path": "extra.ips" },
+                {
+                    "name": "final",
+                    "path": "final.ips",
+                    "outputChecks": { "checksums": { "crc32": "00000000" } }
+                }
+            ]
+        }"#,
+    )
+    .expect("bundle fixture");
+
+    // Skipping the middle optional: {main, final} is not the chain prefix
+    // ending at `final`, so its (deliberately wrong) outputChecks stand down.
+    let output = temp.child("skip-middle.bin");
+    let events = run_json_events(
+        &[
+            "patch-apply",
+            "--input",
+            temp.child("rom-weaver-bundle.json")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--output",
+            output.path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    assert_eq!(events.last().expect("terminal")["status"], "succeeded");
+    assert_eq!(
+        fs::read(output.path()).expect("output exists"),
+        patched_rom_bytes(&[(0, 0xAA), (2, 0xCC)])
+    );
+
+    // The full chain IS the prefix ending at `final`: the recorded (wrong)
+    // outputChecks now gate the run and fail it.
+    let events = run_json_events(
+        &[
+            "patch-apply",
+            "--input",
+            temp.child("rom-weaver-bundle.json")
+                .path()
+                .to_str()
+                .expect("path"),
+            "--with",
+            "extra",
+            "--output",
+            temp.child("full-chain.bin").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        1,
+    );
+    let terminal = events.last().expect("terminal");
+    assert_eq!(terminal["status"], "failed");
+    let label = terminal["label"].as_str().expect("label");
+    assert!(
+        label.contains("00000000"),
+        "expected output checksum mismatch in label: {label}"
+    );
+}
+
+#[test]
 fn bundle_create_source_url_emits_url_entry() {
     let temp = setup_temp_dir();
     let main = write_offset_ips(&temp, "main.ips", 0, 0xAA);

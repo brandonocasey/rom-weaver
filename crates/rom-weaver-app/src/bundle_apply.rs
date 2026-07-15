@@ -272,11 +272,26 @@ impl CliApp {
             // bundle's output.checks.
             if let Some(last) = selected.last() {
                 let last_entry = &bundle.patches[*last];
+                // An entry's outputChecks describe the state after applying the
+                // chain UP TO it - every earlier patch included. `selected` is
+                // ascending, so the selection is that prefix exactly when its
+                // length reaches the entry's position.
+                let is_chain_prefix = selected.len() == *last + 1;
                 let (label, entry_checks) = match &last_entry.output_checks {
-                    Some(entry_checks) => (
+                    Some(entry_checks) if is_chain_prefix => (
                         format!("bundle patches[{last}].outputChecks"),
                         Some(entry_checks),
                     ),
+                    // Skipping an earlier optional produces a different,
+                    // legitimate result the recorded hash does not describe.
+                    Some(_) => {
+                        debug!(
+                            entry = *last,
+                            selected = selected.len(),
+                            "bundle outputChecks skipped: selection is not the chain prefix ending at this patch"
+                        );
+                        (String::new(), None)
+                    }
                     // output.checks describes the FULL chain: it only gates
                     // when every bundle patch is selected - a partial
                     // selection that happens to end on the final entry (some
