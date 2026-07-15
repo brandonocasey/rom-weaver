@@ -50,6 +50,11 @@ msgstr "and produce a sharable patch —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.hero.thesis2"
+msgstr "and share the result as a bundle —"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.hero.trimThesis2"
 msgstr "and shrink them for storage —"
 
@@ -117,11 +122,6 @@ msgstr "Create {format} ROM Bundle"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.viewCurrent"
 msgstr "Current"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis"
-msgstr "Decompress, patch, and recompress ROM hacks,"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -237,11 +237,6 @@ msgstr "No lines match “{q}”"
 #: src/presentation/localization/messages.ts
 msgid "error.NO_SELECTABLE_CANDIDATE"
 msgstr "No selectable file was found."
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis2"
-msgstr "or export sharable ROM hack bundles —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -467,6 +462,11 @@ msgstr "Update ready"
 #: src/presentation/localization/messages.ts
 msgid "ui.hero.toolsThesis2"
 msgstr "using the patch's own undo data —"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.thesis"
+msgstr "Weave patch chains into your ROMs,"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

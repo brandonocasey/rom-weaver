@@ -50,6 +50,11 @@ msgstr "y genera un parche para compartir —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.hero.thesis2"
+msgstr "y comparte el resultado como un bundle —"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.hero.trimThesis2"
 msgstr "y redúcelos para almacenarlos —"
 
@@ -117,11 +122,6 @@ msgstr "Crear bundle {format} con ROM"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.viewCurrent"
 msgstr "Actual"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis"
-msgstr "Descomprime, parchea y recomprime ROM hacks,"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -237,11 +237,6 @@ msgstr "Ninguna línea coincide con «{q}»"
 #: src/presentation/localization/messages.ts
 msgid "error.NO_SELECTABLE_CANDIDATE"
 msgstr "No se encontró ningún archivo seleccionable."
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis2"
-msgstr "o exporta paquetes de ROM hacks para compartir —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -467,6 +462,11 @@ msgstr "Actualización lista"
 #: src/presentation/localization/messages.ts
 msgid "ui.hero.toolsThesis2"
 msgstr "usando los datos de deshacer del propio parche —"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.thesis"
+msgstr "Teje cadenas de parches en tus ROMs,"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

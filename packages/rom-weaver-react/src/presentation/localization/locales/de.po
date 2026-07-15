@@ -50,6 +50,11 @@ msgstr "und einen teilbaren Patch erzeugen —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.hero.thesis2"
+msgstr "und das Ergebnis als Bundle teilen —"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.hero.trimThesis2"
 msgstr "und die Dateien fürs Archiv verkleinern —"
 
@@ -117,11 +122,6 @@ msgstr "{format}-ROM-Bundle erstellen"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.viewCurrent"
 msgstr "Aktuell"
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis"
-msgstr "ROM-Hacks entpacken, patchen und neu komprimieren,"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -237,11 +237,6 @@ msgstr "Keine Zeile passt zu „{q}“"
 #: src/presentation/localization/messages.ts
 msgid "error.NO_SELECTABLE_CANDIDATE"
 msgstr "Keine wählbare Datei gefunden."
-
-#. js-lingui-explicit-id
-#: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis2"
-msgstr "oder teilbare ROM-Hack-Pakete exportieren —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -467,6 +462,11 @@ msgstr "Update bereit"
 #: src/presentation/localization/messages.ts
 msgid "ui.hero.toolsThesis2"
 msgstr "mit den Undo-Daten des Patches —"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.hero.thesis"
+msgstr "Patch-Ketten in deine ROMs weben,"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
