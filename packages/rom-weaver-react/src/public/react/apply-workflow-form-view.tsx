@@ -211,14 +211,7 @@ const EXPECTED_ROM_CHECK_LABELS: Record<string, string> = { crc32: "CRC32", md5:
 const BundleRomExpectationCard = ({ expectation }: { expectation: BundleRomExpectation }) => (
   <div className="cards bundle-rom-expectation" id="rom-weaver-bundle-rom-expectation">
     <FileCard
-      meta={
-        <>
-          {typeof expectation.checks?.size === "number" ? (
-            <span className="fsize mono">{formatByteSize(expectation.checks.size)}</span>
-          ) : null}
-          <span>ROM not included - provide it yourself</span>
-        </>
-      }
+      meta={<span>ROM not included - provide it yourself</span>}
       name={<ExtractName fileName={expectation.name || "Expected ROM"} />}
     >
       <ChecksumList defaultOpen label="Checks" sublabel="expected">
