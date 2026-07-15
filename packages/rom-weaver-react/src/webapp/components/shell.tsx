@@ -292,6 +292,21 @@ const Masthead = ({
             {logLabel}
           </span>
         </button>
+        <button
+          aria-expanded={settingsOpen}
+          aria-haspopup="dialog"
+          aria-label={settingsLabel}
+          className="tool"
+          onClick={onOpenSettings}
+          title={settingsLabel}
+          type="button"
+        >
+          <Settings aria-hidden="true" />
+          <span aria-hidden="true" className="tool-text">
+            {settingsLabel}
+          </span>
+        </button>
+        {githubHref || donateHref ? <span aria-hidden="true" className="tools-sep" /> : null}
         {githubHref ? (
           <a
             aria-label="GitHub"
@@ -324,20 +339,6 @@ const Masthead = ({
             </span>
           </a>
         ) : null}
-        <button
-          aria-expanded={settingsOpen}
-          aria-haspopup="dialog"
-          aria-label={settingsLabel}
-          className="tool"
-          onClick={onOpenSettings}
-          title={settingsLabel}
-          type="button"
-        >
-          <Settings aria-hidden="true" />
-          <span aria-hidden="true" className="tool-text">
-            {settingsLabel}
-          </span>
-        </button>
       </div>
     </header>
   );

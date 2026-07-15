@@ -266,12 +266,21 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .build-version-details > div { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 10px; }
 .rw-app .build-version-details dt { color: var(--ink-3); }
 .rw-app .build-version-details dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
-/* visible tool labels only where the masthead has room to spare - below that
-   the buttons stay icon-only squares and the title/aria-label carries the name */
-.rw-app .tool-text { display: none; font-size: .72rem; font-weight: 650; letter-spacing: .04em; }
-@media (min-width: 1100px) {
-  .rw-app .tool:has(.tool-text) { width: auto; padding-inline: 11px; gap: 6px; grid-auto-flow: column; }
-  .rw-app .tool-text { display: inline; }
+/* the tools are icon-only everywhere; the title/aria-label carries the name
+   (the spans stay in the DOM so the localized names remain available) */
+.rw-app .tool-text { display: none; }
+/* hairline between the app tools and the external links (GitHub/Donate) -
+   only drawn where the ghost treatment runs; the phone dock grid hides it */
+.rw-app .tools-sep { display: none; flex: none; width: 1px; height: 20px; margin-inline: 5px; align-self: center; background: var(--seam); }
+/* ghost tools: outside the phone dock the masthead buttons drop their box
+   chrome at rest - border/fill only appear on hover - so six controls stop
+   reading as a second nav beside the mode rail. The media query is the exact
+   complement of the phone-dock block, which keeps its bordered squares. */
+@media (min-width: 861px), (min-width: 721px) and (min-height: 521px) {
+  .rw-app .masthead-tools { gap: 2px; }
+  .rw-app .masthead-tools .tool { border-color: transparent; background: transparent; }
+  .rw-app .masthead-tools .tool:hover { background: var(--well); border-color: var(--seam); transform: none; }
+  .rw-app .masthead-tools .tools-sep { display: block; }
 }
 /* sun/moon cross-morph */
 .rw-app .tool .ico-sun, .rw-app .tool .ico-moon { grid-area: 1 / 1; transition: transform .4s var(--ease), opacity .3s; }

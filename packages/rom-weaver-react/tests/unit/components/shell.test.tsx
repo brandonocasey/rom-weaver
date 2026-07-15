@@ -51,7 +51,8 @@ describe("Masthead", () => {
     expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
     fireEvent.click(tabs[1] as HTMLButtonElement);
     expect(onSelectTab).toHaveBeenCalledWith("creator");
-    // reset is the leftmost utility; settings remains the rightmost
+    // reset leads the app tools; a separator fences off the external links,
+    // which trail the row (GitHub then Donate)
     expect(container.querySelectorAll(".masthead-tools .tool").length).toBe(6);
     expect(container.querySelector(".language-tool")).toBeNull();
     expect(getByRole("button", { name: "Log" })).toBeTruthy();
@@ -59,7 +60,9 @@ describe("Masthead", () => {
     const reset = getByRole("button", { name: "Reset" });
     expect(container.querySelector(".masthead-tools > .tool")).toBe(reset);
     const settings = getByRole("button", { name: "Settings" });
-    expect(container.querySelector(".masthead-tools > .tool:last-child")).toBe(settings);
+    expect(container.querySelector(".masthead-tools > .tools-sep")?.previousElementSibling).toBe(settings);
+    const donate = getByRole("link", { name: "Donate" });
+    expect(container.querySelector(".masthead-tools > .tool:last-child")).toBe(donate);
     expect(container.querySelector(".masthead-version")?.textContent).toBe("v1.2.3· 8 threads");
     fireEvent.click(getByRole("button", { name: "Build information for v1.2.3" }));
     expect(document.body.querySelector(".build-version-pop")?.textContent).toContain("prototype/mobile-forward-ui");
