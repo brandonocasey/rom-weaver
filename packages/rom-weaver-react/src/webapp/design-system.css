@@ -1516,15 +1516,25 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .patch-check-group { min-width: 0; padding: 9px 10px 10px; border: 1px solid var(--seam-soft); border-radius: var(--r-s); background: color-mix(in oklab, var(--well) 72%, transparent); }
 .rw-app .patch-check-group .ck-group-head { margin-block-end: 7px; }
 .rw-app .verification-list { display: flex; flex-direction: column; gap: 6px; }
-/* "provide this ROM" card in the ROM step: a plain file card (its Checks
-   drawer supplies the hash rows), so only the placement margin lives here */
+/* "provide this ROM" card in the ROM step: the standard file-card anatomy,
+   but visibly a slot rather than a loaded ROM - dashed seam + recessed fill
+   (the same "off" language as a disabled patch) with the file name ghosted */
 .rw-app .bundle-rom-expectation { margin-block: 13px 10px; }
+.rw-app .bundle-rom-expectation .card {
+  border-style: dashed;
+  border-color: var(--seam-strong);
+  background: color-mix(in oklab, var(--plate-2) 55%, var(--chassis));
+}
+.rw-app .bundle-rom-expectation .card .card-name { color: var(--ink-2); }
+.rw-app .bundle-rom-expectation .card .card-meta { color: var(--thread-text); }
 /* ck rows inside a boxed verification group (expected-ROM card, patch aux
    requirement rows) sit in the box, not a bleeding drawer - keep them inset */
 .rw-app .verification-list .ck { margin-inline: 0; width: 100%; }
 .rw-app .verification-list .ck + .ck { margin-block-start: 0; }
 .rw-app .verification-row { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 5px; min-width: 0; }
-.rw-app .verification-row .ofld-l { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; line-height: 1.05; }
+/* field labels speak the same lowercase language as the checks rows (.ck-k);
+   the Built-in chip keeps its own uppercase */
+.rw-app .verification-row .ofld-l { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; line-height: 1.05; text-transform: lowercase; }
 /* hashes get a TRUE monospace (the design-system "mono" is condensed Archivo)
    so a 40-hex SHA-1 has a predictable width and always fits the input */
 .rw-app .verification-row .popt-input {

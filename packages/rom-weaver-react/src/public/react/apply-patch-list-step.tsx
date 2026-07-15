@@ -183,7 +183,9 @@ const PatchInfo = ({ item }: { item: PatchStackItemState }) => {
 };
 
 const CHECK_ALGORITHMS = ["crc32", "md5", "sha1"] as const;
-const CHECK_LABELS = { crc32: "CRC32", md5: "MD5", sha1: "SHA-1" } as const;
+/* the editable verification fields: the three hashes plus the exact byte size */
+const CHECK_FIELDS = ["crc32", "md5", "sha1", "bytes"] as const;
+const CHECK_LABELS = { bytes: "BYTES", crc32: "CRC32", md5: "MD5", sha1: "SHA-1" } as const;
 const CHECK_HEX_LENGTHS = { crc32: 8, md5: 32, sha1: 40 } as const;
 
 const normalizeCheckInput = (raw: string) => raw.trim().toLowerCase().replace(/^0x/, "");
@@ -201,13 +203,18 @@ const autosizeTextarea = (element: HTMLTextAreaElement | null) => {
 
 const getEmbeddedChecks = (item: PatchStackItemState, side: "input" | "output") => {
   const prefix = side === "input" ? "in " : "out ";
-  const checks: Partial<Record<(typeof CHECK_ALGORITHMS)[number], string>> = {};
+  const checks: Partial<Record<(typeof CHECK_FIELDS)[number], string>> = {};
   for (const entry of item.validationValues) {
     const [rawLabel, rawValue] = entry.split("=", 2);
     const label = rawLabel?.trim().toLowerCase();
     const value = rawValue?.trim();
     if (!(label?.startsWith(prefix) && value)) continue;
     const algorithm = label.slice(prefix.length).replace("sha-1", "sha1");
+    // exact byte size only - "min size" is a lower bound, not a bytes value
+    if (algorithm === "size") {
+      checks.bytes = value;
+      continue;
+    }
     if (CHECK_ALGORITHMS.includes(algorithm as (typeof CHECK_ALGORITHMS)[number])) {
       checks[algorithm as (typeof CHECK_ALGORITHMS)[number]] = value;
     }
@@ -267,6 +274,17 @@ const PatchOptions = ({
     const preferred = checksums.sha1 || checksums.md5 || checksums.crc32 || "";
     if (side === "input" && isChainInput) void setOption?.(index, { validateInputChecksum: preferred });
     if (side === "output" && isChainOutput) void setOption?.(index, { validateOutputChecksum: preferred });
+  };
+  // The bytes field carries the endpoint's exact size into the bundle metadata
+  // (inputChecks/outputChecks.size); it is descriptive, not a live run gate.
+  const commitSize = (side: "input" | "output", raw: string) => {
+    const value = raw.trim();
+    const fieldKey = `${side}:bytes`;
+    const invalid = !!value && !/^\d+$/.test(value);
+    setInvalidChecks((previous) => (previous[fieldKey] === invalid ? previous : { ...previous, [fieldKey]: invalid }));
+    if (invalid) return;
+    const field = side === "input" ? "inputChecks" : "outputChecks";
+    onMetaChange?.({ [field]: { ...(meta?.[field] || {}), size: value ? Number(value) : undefined } });
   };
   // The dry-run verdict rides this drawer's header (pass/fail mark + timing, or a
   // "Verifying…" readout while the deferred dry-run runs) ONLY when the patch has no
@@ -343,28 +361,45 @@ const PatchOptions = ({
                 <span>{side === "input" ? "Input verification" : "Output verification"}</span>
               </div>
               <div className="verification-list">
-                {CHECK_ALGORITHMS.map((algorithm) => {
-                  const builtIn = embedded[algorithm];
-                  const value = builtIn || meta?.[field]?.checksums?.[algorithm] || "";
-                  const invalid = !builtIn && !!invalidChecks[`${side}:${algorithm}`];
+                {CHECK_FIELDS.map((checkField) => {
+                  const isBytes = checkField === "bytes";
+                  const builtIn = embedded[checkField];
+                  const metaValue = isBytes
+                    ? typeof meta?.[field]?.size === "number"
+                      ? String(meta?.[field]?.size)
+                      : ""
+                    : meta?.[field]?.checksums?.[checkField] || "";
+                  const value = builtIn || metaValue;
+                  const invalid = !builtIn && !!invalidChecks[`${side}:${checkField}`];
                   return (
-                    <div className="verification-row" key={`${side}:${algorithm}`}>
-                      <label className="ofld-l" htmlFor={`rom-weaver-patch-${side}-${algorithm}-${index}`}>
-                        {CHECK_LABELS[algorithm]}
+                    <div className="verification-row" key={`${side}:${checkField}`}>
+                      <label className="ofld-l" htmlFor={`rom-weaver-patch-${side}-${checkField}-${index}`}>
+                        {CHECK_LABELS[checkField]}
                         {builtIn ? <span className="built-in">Built in</span> : null}
                       </label>
                       <input
                         aria-invalid={invalid || undefined}
                         className="input mono popt-input"
                         defaultValue={value}
-                        id={`rom-weaver-patch-${side}-${algorithm}-${index}`}
-                        key={`${side}:${algorithm}:${item.key ?? index}:${value}`}
+                        id={`rom-weaver-patch-${side}-${checkField}-${index}`}
+                        key={`${side}:${checkField}:${item.key ?? index}:${value}`}
                         onBlur={
-                          builtIn ? undefined : (event) => commitCheck(side, algorithm, event.currentTarget.value)
+                          builtIn
+                            ? undefined
+                            : (event) =>
+                                isBytes
+                                  ? commitSize(side, event.currentTarget.value)
+                                  : commitCheck(side, checkField, event.currentTarget.value)
                         }
                         readOnly={!!builtIn}
                         spellCheck={false}
-                        title={invalid ? `Expected ${CHECK_HEX_LENGTHS[algorithm]} hex characters` : value || undefined}
+                        title={
+                          invalid
+                            ? isBytes
+                              ? "Expected a whole number of bytes"
+                              : `Expected ${CHECK_HEX_LENGTHS[checkField]} hex characters`
+                            : value || undefined
+                        }
                         type="text"
                       />
                     </div>
