@@ -2363,6 +2363,7 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
   .rw-app #rom-weaver-list-patch-stack.patch-cards {
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start;
   }
+  .rw-app #rom-weaver-list-patch-stack > .card.patch:only-child { grid-column: 1 / -1; }
   .rw-app #rom-weaver-list-patch-stack > .card.patch .card-top {
     display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto auto;
     align-items: start; column-gap: 9px; row-gap: 5px;
