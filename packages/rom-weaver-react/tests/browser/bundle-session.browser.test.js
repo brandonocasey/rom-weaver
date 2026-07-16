@@ -59,7 +59,8 @@ const withBundleFetchStub = async (bundle, run) => {
   }
 };
 
-const getPatchToggles = () => Array.from(document.querySelectorAll("#rom-weaver-list-patch-stack .patch-enable input"));
+const getPatchToggles = () => Array.from(document.querySelectorAll("#rom-weaver-list-patch-stack .pinc"));
+const toggleOn = (toggle) => toggle?.getAttribute("aria-checked") === "true";
 
 // Pack files into a zip through the real compression runtime (what a patch
 // distributor would publish as a without-ROM bundle).
@@ -118,7 +119,7 @@ test("local without-rom bundle drop seeds optional patches off", async () => {
   await expect.poll(() => getPatchStackFileNames(), { timeout: 30000 }).toEqual(["change.ips", "alternate.ips"]);
   await expect.poll(() => getPatchToggles().length, { timeout: 30000 }).toBe(2);
   // The optional patch must seed OFF; the core patch stays on.
-  await expect.poll(() => getPatchToggles().map((toggle) => toggle.checked), { timeout: 30000 }).toEqual([true, false]);
+  await expect.poll(() => getPatchToggles().map(toggleOn), { timeout: 30000 }).toEqual([true, false]);
 });
 
 test("archive whose index is named rw.json (not canonical) is content-probed and seeds enablement", async () => {
@@ -155,7 +156,7 @@ test("archive whose index is named rw.json (not canonical) is content-probed and
 
   await expect.poll(() => getPatchStackFileNames(), { timeout: 30000 }).toEqual(["change.ips", "alternate.ips"]);
   await expect.poll(() => getPatchToggles().length, { timeout: 30000 }).toBe(2);
-  await expect.poll(() => getPatchToggles().map((toggle) => toggle.checked), { timeout: 30000 }).toEqual([true, false]);
+  await expect.poll(() => getPatchToggles().map(toggleOn), { timeout: 30000 }).toEqual([true, false]);
 });
 
 test("local bundle remote sources remain live until the workflow owner is disposed", async () => {
@@ -329,14 +330,14 @@ test("bundle url session seeds enablement + output defaults and applies to a dow
   await expect.poll(() => getPatchToggles().length, { timeout: 30000 }).toBe(2);
   // Default-on patch stays toggleable.
   await expect.poll(() => getPatchToggles()[0]?.disabled, { timeout: 30000 }).toBe(false);
-  expect(getPatchToggles()[0]?.checked).toBe(true);
+  expect(toggleOn(getPatchToggles()[0])).toBe(true);
   // Default-off patch starts Off and stays toggleable.
-  await expect.poll(() => getPatchToggles()[1]?.checked, { timeout: 30000 }).toBe(false);
+  await expect.poll(() => toggleOn(getPatchToggles()[1]), { timeout: 30000 }).toBe(false);
   expect(getPatchToggles()[1]?.disabled).toBe(false);
   getPatchToggles()[1]?.click();
-  await expect.poll(() => getPatchToggles()[1]?.checked).toBe(true);
+  await expect.poll(() => toggleOn(getPatchToggles()[1])).toBe(true);
   getPatchToggles()[1]?.click();
-  await expect.poll(() => getPatchToggles()[1]?.checked).toBe(false);
+  await expect.poll(() => toggleOn(getPatchToggles()[1])).toBe(false);
   // Bundle metadata reaches the patch cards; the plain view shows the bundle
   // description as static card text.
   const patchStackText = () => document.getElementById("rom-weaver-list-patch-stack")?.textContent || "";

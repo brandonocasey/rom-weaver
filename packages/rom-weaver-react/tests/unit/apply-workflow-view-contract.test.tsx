@@ -214,7 +214,7 @@ describe("apply workflow view - patch enable toggles", () => {
     });
     const patchCard = container.querySelector("#rom-weaver-list-patch-stack .card");
     expect(patchCard?.classList.contains("is-disabled")).toBe(true);
-    expect(patchCard?.querySelector(".patch-enable input")).toBeTruthy();
+    expect(patchCard?.querySelector(".pinc")).toBeTruthy();
     expect(patchCard?.querySelector(".patch-body .patch-body-inner")).toBeTruthy();
     expect(container.querySelector(".patch-off-note")?.textContent).toContain("1 patch is off");
     const run = container.querySelector("#rom-weaver-button-apply") as HTMLButtonElement;

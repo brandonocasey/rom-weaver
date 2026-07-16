@@ -45,6 +45,7 @@ const FileCard = ({
   removeLabel = "Remove",
   patch = false,
   handle,
+  actionsExtra,
   rootRef,
   className,
   style,
@@ -66,6 +67,8 @@ const FileCard = ({
   patch?: boolean;
   /** Drag handle button for reorderable rows, rendered in the action column. */
   handle?: ReactNode;
+  /** Extra control below the handle/remove row (e.g. the patch include check). */
+  actionsExtra?: ReactNode;
   rootRef?: Ref<HTMLDivElement>;
   className?: string;
   style?: CSSProperties;
@@ -134,6 +137,7 @@ const FileCard = ({
             {handle}
             {onRemove ? <RemoveButton label={removeLabel} onClick={onRemove} /> : null}
           </div>
+          {actionsExtra}
         </div>
       </div>
     )}
