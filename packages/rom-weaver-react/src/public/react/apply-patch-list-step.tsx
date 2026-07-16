@@ -1,6 +1,7 @@
 import Check from "lucide-react/dist/esm/icons/check.js";
 import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.js";
+import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { InfoToggle } from "../../presentation/react/info-toggle.tsx";
@@ -394,7 +395,7 @@ const PatchOptions = ({
               return (
                 <div className="patch-check-group" key={side}>
                   <div className="ck-group-head">
-                    <span>{side === "input" ? "Input verification" : "Output verification"}</span>
+                    <span>{side === "input" ? "Input checks" : "Output checks"}</span>
                   </div>
                   <div className="verification-list ck-fields-paired">
                     {CHECK_FIELDS_PAIRED.map((checkField) => {
@@ -447,8 +448,9 @@ const PatchOptions = ({
             })}
           </div>
           {outputCheckHint ? (
-            <p className="hintline" id={`rom-weaver-patch-output-check-hint-${index}`}>
-              The expected output is verified only when every patch in the bundle is applied.
+            <p className="patch-off-note" id={`rom-weaver-patch-output-check-hint-${index}`}>
+              <TriangleAlert aria-hidden="true" />
+              <span>The expected output is verified only when every patch in the bundle is applied.</span>
             </p>
           ) : null}
         </>
@@ -642,8 +644,8 @@ const PatchEnableToggle = ({
       type="checkbox"
     />
     <span aria-hidden="true" className="switch-state">
-      <b className="on">On</b>
-      <b className="off">Off</b>
+      <b className="on">Included</b>
+      <b className="off">Skipped</b>
     </span>
   </label>
 );

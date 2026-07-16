@@ -134,13 +134,14 @@ const FileCard = ({
           <div className="card-name">
             {typeof index === "number" ? <span className="sr-only">{index}</span> : null}
             {name}
-            {description}
             {meta || target ? (
               <span className="card-meta">
                 {target}
                 {meta}
               </span>
             ) : null}
+            {/* description reads (and is edited) below the meta line */}
+            {description}
           </div>
           {patch ? null : actions}
         </div>

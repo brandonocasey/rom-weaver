@@ -993,6 +993,12 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .drawer-action .info-btn:hover::before,
 .rw-app .drawer-action .info-btn[aria-expanded="true"]::before { opacity: 1; }
 .rw-app .drawer-action .info-btn:active { transform: scale(.92); }
+/* failed-expectation ✗ rides the Checks header in fault red */
+.rw-app .drawer-action .expected-mismatch-info .info-btn { color: var(--fault); }
+.rw-app .drawer-action .expected-mismatch-info .info-btn:hover,
+.rw-app .drawer-action .expected-mismatch-info .info-btn[aria-expanded="true"] {
+  color: color-mix(in oklab, var(--fault) 82%, var(--ink));
+}
 .rw-app .drawer-action .info-btn svg { width: 14px; height: 14px; }
 .rw-app .dry-apply-pop p { margin: 6px 0 0; }
 .rw-app .cks.is-open { background: color-mix(in oklab, var(--well) 45%, transparent); }
@@ -1571,20 +1577,21 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .ck-group-head .ck-mark { margin-inline-start: var(--sp-s); vertical-align: -2px; }
 .rw-app .ck-group-head .ck-head-note { margin-inline-start: var(--sp-s); color: var(--ink-4); font-weight: 500; text-transform: none; letter-spacing: .02em; }
 /* the Expected group is the bundle's voice, not a computed readout - it sits
-   in its own darker recessed well so it reads apart from the plain rows */
+   on its own darker recessed band. Full bleed with block seams only (no inline
+   inset), so its label/value columns line up with the groups above and below. */
 .rw-app .ckrows #rom-weaver-rom-expected-checks {
   background: color-mix(in oklab, var(--chassis) 55%, var(--well));
-  border: 1px solid var(--seam-soft); border-radius: var(--r-s);
-  padding: 6px 10px 2px; margin-block-start: 3px;
+  border-block: 1px solid var(--seam-soft);
+  padding: 6px 0 2px; margin-block: 3px;
 }
 /* post-match disclosure: the folded-away computed variants */
 .rw-app .ck-more {
   display: flex; align-items: center; gap: 6px; width: 100%; margin-block-start: var(--sp-xs);
   padding: 4px 2px; border: 0; background: none; cursor: pointer;
-  color: var(--ink-4); font-family: var(--font); font-size: .66rem; font-weight: 700;
+  color: var(--ink-3); font-family: var(--font); font-size: .66rem; font-weight: 700;
   letter-spacing: .07em; text-transform: uppercase;
 }
-.rw-app .ck-more:hover { color: var(--ink-2); }
+.rw-app .ck-more:hover { color: var(--ink); }
 .rw-app .ck-more .chev-i { width: 12px; height: 12px; flex: none; transition: rotate .16s var(--ease); }
 .rw-app .ck-more[aria-expanded="true"] .chev-i { rotate: 90deg; }
 @media (prefers-reduced-motion: reduce) { .rw-app .ck-more .chev-i { transition: none; } }
