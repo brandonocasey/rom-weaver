@@ -2004,9 +2004,9 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .tracelog-empty { color: var(--ink-4); font-size: .78rem; padding: 4px 2px; }
 
 /* archive candidate picker */
-.rw-app .picklist { display: flex; flex-direction: column; gap: var(--sp-s); margin-block-start: 12px; }
+.rw-app .picklist { display: flex; flex-direction: column; gap: var(--sp-xs); margin-block-start: var(--sp-s); }
 .rw-app .pick-row {
-  display: flex; align-items: center; gap: var(--sp-m); padding: var(--sp-m); cursor: pointer;
+  display: flex; align-items: center; gap: var(--sp-m); padding: var(--sp-xs) var(--sp-m); cursor: pointer;
   border: 1px solid var(--seam); border-radius: var(--r-m); background: var(--plate-2);
   transition: border-color .15s, background .15s;
 }
@@ -2037,9 +2037,12 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
    only way to tell two same-named candidates apart */
 .rw-app .pick-row .pick-crumb { font-size: .68rem; color: var(--ink-3); overflow-wrap: anywhere; }
 .rw-app .pick-row .pick-name { min-width: 0; font-size: .84rem; font-weight: 600; overflow-wrap: anywhere; }
-.rw-app .pick-row .pick-archive { min-width: 0; font-size: .68rem; color: var(--ink-3); overflow-wrap: anywhere; }
-.rw-app .pick-row .pick-meta { display: inline-flex; align-items: center; gap: var(--sp-s); margin-block-start: 3px; }
-.rw-app .pick-row .pick-size { flex: none; font-size: .76rem; color: var(--ink-3); }
+.rw-app .pick-row .pick-archive { flex: 1 1 auto; min-width: 0; font-size: .68rem; color: var(--ink-3); overflow-wrap: anywhere; }
+/* archive sub-heading + size (+ tag/note) share one meta line so each card is
+   two rows, not three; the size rides to the trailing edge and the line wraps
+   only when the archive path can't fit alongside it */
+.rw-app .pick-row .pick-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2xs) var(--sp-s); margin-block-start: 2px; }
+.rw-app .pick-row .pick-size { flex: none; margin-inline-start: auto; font-size: .76rem; color: var(--ink-3); }
 
 /* settings groups */
 /* each group is a 2-col grid (label column sized to its WIDEST label) and the
@@ -2421,10 +2424,13 @@ html.vt-mode .drop:has(#tools-input-picker) { view-transition-name: none !import
 .rw-app .selnode { appearance: none; width: 100%; text-align: start; font: inherit; color: inherit; min-width: 0; }
 .rw-app .pick-row.off:hover { border-color: var(--seam); }
 .rw-app .pick-row .pick-note { min-width: 0; font-size: .74rem; color: var(--ink-4); overflow-wrap: anywhere; }
-.rw-app .seltoolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-m); margin-bottom: 9px; }
+.rw-app .seltoolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-m); margin-bottom: var(--sp-xs); }
 .rw-app .seltoolbar .selall { height: 28px; padding-inline: 12px; font-size: .76rem; }
 .rw-app .selcount { font-size: .76rem; color: var(--ink-3); }
-.rw-app .selfoot { display: flex; justify-content: flex-end; gap: var(--sp-m); margin-top: 12px; }
+.rw-app .selfoot { display: flex; justify-content: flex-end; gap: var(--sp-m); margin-top: var(--sp-s); }
+/* the selection modal's own actions stay compact - they don't need the fat
+   48px mobile --ctl thumb target the way the main form inputs do */
+.rw-app .selfoot .btn { height: 34px; padding-inline: 14px; font-size: .8rem; }
 /* the "matches patch" tag also carries .fmt (orange) - match .tag.fmt's
    specificity so the verified-green actually wins the cascade */
 .rw-app .tag.matches { color: var(--verified); }

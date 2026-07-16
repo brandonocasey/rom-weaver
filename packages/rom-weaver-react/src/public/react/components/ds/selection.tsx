@@ -27,9 +27,9 @@ const SelectionRowBody = ({ item }: { item: SelectionItem }) => (
   <span className="pick-main">
     {item.breadcrumb ? <span className="pick-crumb mono">{item.breadcrumb} ›</span> : null}
     <span className="pick-name mono">{item.name}</span>
-    {item.subheading ? <span className="pick-archive mono">{item.subheading}</span> : null}
-    {item.matches || item.note || item.sizeLabel ? (
+    {item.subheading || item.matches || item.note || item.sizeLabel ? (
       <span className="pick-meta">
+        {item.subheading ? <span className="pick-archive mono">{item.subheading}</span> : null}
         {item.matches ? <span className="tag fmt matches">matches patch</span> : null}
         {item.note ? <span className="pick-note">{item.note}</span> : null}
         {item.sizeLabel ? <span className="pick-size mono">{item.sizeLabel}</span> : null}
