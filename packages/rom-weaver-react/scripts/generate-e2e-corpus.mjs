@@ -65,8 +65,11 @@ const fileSha256 = (filePath) => {
   const fd = fs.openSync(filePath, "r");
   const buffer = Buffer.allocUnsafe(4 * MIB);
   try {
-    let count = 0;
-    while ((count = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) hash.update(buffer.subarray(0, count));
+    while (true) {
+      const count = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (count === 0) break;
+      hash.update(buffer.subarray(0, count));
+    }
   } finally {
     fs.closeSync(fd);
   }

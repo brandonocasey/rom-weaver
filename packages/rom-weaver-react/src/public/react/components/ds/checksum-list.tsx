@@ -184,6 +184,7 @@ const PendingChecks = ({
   <ChecksumList defaultOpen={defaultOpen} label={label} onToggle={onToggle} open={open}>
     {groups.map((group) => {
       const rows = group.rows.map((row, rowIndex) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: Pending rows are intentionally positional before checksums resolve.
         <PendingChecksumRow key={`${group.id}:${rowIndex}`} label={row.label} length={row.length} />
       ));
       return group.label ? (

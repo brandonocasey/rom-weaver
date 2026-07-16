@@ -64,7 +64,7 @@ export default defineConfig({
       // Persistent context (and its `--unlimited-storage` launch arg) is ignored when files run
       // in parallel, so the 1 GiB stress workload must run single-file too or it exhausts the
       // default OPFS quota.
-      fileParallelism: !BENCH_MODE && !STRESS_1GB,
+      fileParallelism: !(BENCH_MODE || STRESS_1GB),
       headless: true,
       instances: [
         {

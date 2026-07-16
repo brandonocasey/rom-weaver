@@ -579,6 +579,7 @@ function CreatePatchForm(props: CreatePatchFormProps) {
     resolvedAssetBaseUrl,
     setWorkflowMessage,
     stagingSettingsKey,
+    setProgress,
   ]);
 
   useEffect(

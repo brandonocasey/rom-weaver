@@ -161,7 +161,7 @@ const CodecCombobox = ({
 
   useEffect(() => {
     setActiveIndex(selectedSuggestionIndex === -1 ? 0 : selectedSuggestionIndex);
-  }, [activeToken.query, filteredSuggestions, selectedSuggestionIndex]);
+  }, [selectedSuggestionIndex]);
 
   const updateDropdownFrame = (measuredHeight?: number) => {
     const rect = inputRef.current?.getBoundingClientRect();
@@ -249,12 +249,14 @@ const CodecCombobox = ({
     }
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The local layout helper intentionally runs on open and visible-count changes.
   useEffect(() => {
     if (!open) return undefined;
     const frame = requestAnimationFrame(updateDropdownFrame);
     return () => cancelAnimationFrame(frame);
   }, [open, filteredSuggestions.length]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The viewport listener intentionally owns the open lifecycle.
   useEffect(() => {
     if (!open) return undefined;
     const viewport = globalThis.visualViewport;
@@ -321,6 +323,7 @@ const CodecCombobox = ({
   const visible = open && !disabled && filteredSuggestions.length > 0;
   const clampedActiveIndex = Math.max(0, Math.min(activeIndex, filteredSuggestions.length - 1));
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The local layout helper intentionally runs after visibility changes.
   useEffect(() => {
     if (!visible) return undefined;
     const frame = requestAnimationFrame(() => {

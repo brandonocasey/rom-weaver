@@ -158,7 +158,7 @@ try {
     throw new Error(`Offline reload had failed requests: ${JSON.stringify(requestFailures, null, 2)}`);
   }
   if (offlineResponse?.status() !== 200) throw new Error(`Offline reload returned ${offlineResponse?.status()}`);
-  if (!offlineState.controller || !offlineState.crossOriginIsolated) {
+  if (!(offlineState.controller && offlineState.crossOriginIsolated)) {
     throw new Error(`Offline reload was not controlled and isolated: ${JSON.stringify(offlineState)}`);
   }
 

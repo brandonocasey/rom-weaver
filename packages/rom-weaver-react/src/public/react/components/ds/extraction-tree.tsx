@@ -143,6 +143,7 @@ const ExtractionTree = ({ levels, timing }: { levels: ExtractionLevel[]; timing?
       >
         <div className="tree mono">
           {levels.map((level, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: Tree depth is intentionally positional and names are not unique.
             <TreeRow depth={index} key={`${index}:${level.name}`} level={level} />
           ))}
         </div>
@@ -272,6 +273,7 @@ const ExtractDrawer = ({
     >
       <div className="tree mono">
         {levels.map((level, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: Tree depth is intentionally positional and names are not unique.
           <TreeRow depth={index} key={`${index}:${level.name}`} level={level} />
         ))}
       </div>

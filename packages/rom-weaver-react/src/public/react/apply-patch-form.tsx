@@ -202,6 +202,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   // Controllers are created further down, so the hook reads them through a ref.
   const [localBundleSession, setLocalBundleSession] = useState<BundleApplySession | null>(null);
   const [bundleDismissed, setBundleDismissed] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The bundle key intentionally resets dismissal state.
   useEffect(() => setBundleDismissed(false), [props.bundleSession?.key]);
   const activeBundleSession = bundleDismissed ? null : localBundleSession || props.bundleSession || null;
   const bundleControllersRef = useRef<BundleSessionControllers>({ output: null, patchStack: null });

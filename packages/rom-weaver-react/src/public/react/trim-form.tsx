@@ -528,7 +528,6 @@ function TrimPatchForm(props: TrimPatchFormProps) {
     clearProgressForStage,
     createProgressHandler,
     emitTrimFormTrace,
-    props.workerThreads,
     resolvedAssetBaseUrl,
     selectFile,
     source,

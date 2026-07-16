@@ -158,6 +158,7 @@ const usePageDropForwarder = (
   handledPageDropIdRef: { current: number | null },
 ) => {
   const handlerRef = useLatestRef(handler);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: These refs are stable; only a new page drop should forward files.
   useEffect(() => {
     if (!pageDrop || handledPageDropIdRef.current === pageDrop.id) return;
     handledPageDropIdRef.current = pageDrop.id;

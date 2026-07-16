@@ -282,7 +282,13 @@ const useLocalApplyPatchFormSession = ({
     setCompletedSizeSummary(createOutputSizeSummary());
     setProgress(null);
     clearPendingDownload();
-  }, [clearPendingDownload]);
+  }, [
+    clearPendingDownload,
+    setCompletedApplyTimeMs,
+    setCompletedCompressionTimeMs,
+    setCompletedSizeSummary,
+    setProgress,
+  ]);
   const { getKey: getInputKey } = useStableSourceKeys(effectiveInputs, "input");
   const { getKey: getPatchKey } = useStableSourceKeys(activePatches, "patch");
   const generatedOutputName = getGeneratedOutputName(effectiveInputs[0], outputPatches, activeSettings.output || {});
@@ -483,6 +489,8 @@ const useLocalApplyPatchFormSession = ({
     automaticResolvedOutputName,
     hasPendingDownload,
     setPendingDownloadReadyFileName,
+    setOutputName,
+    setOutputNameEdited,
   ]);
 
   useEffect(() => {
@@ -502,7 +510,7 @@ const useLocalApplyPatchFormSession = ({
       }
       return hasSameRecordValues(current, nextProgressByKey) ? current : nextProgressByKey;
     });
-  }, [activePatches, getPatchKey]);
+  }, [activePatches, getPatchKey, setPatchInfoByKey, setPatchProgressByKey]);
 
   useEffect(() => {
     if (hasStrictInputChecksumMismatch) return;
@@ -532,8 +540,8 @@ const useLocalApplyPatchFormSession = ({
         sectionTimings: localPatcherSectionTimings,
       }),
     [
-      activePatches.length,
-      activeSettings.compatibility?.fixChecksum,
+      activePatches,
+      activeSettings,
       busy,
       checksumOverrideChecked,
       disabled,
@@ -590,23 +598,18 @@ const useLocalApplyPatchFormSession = ({
         z3dsLabelSource,
       }),
     [
-      activePatches.length,
       applyQueued,
       activeSettings,
       applyTimingText,
       busy,
       canQueueApply,
-      canStartApply,
       completedSizeSummary,
       compressTimingText,
       disabled,
       displayedCompression,
       effectiveResolvedOutputName,
-      effectiveInputs.length,
       hasPendingDownload,
-      inputStaging,
       pendingDownloadFileName,
-      patchStaging,
       outputOptions,
       outputName,
       outputNameEdited,
@@ -638,7 +641,7 @@ const useLocalApplyPatchFormSession = ({
       if (settings === undefined) setInternalSettings(nextSettings);
       onSettingsChange?.(nextSettings);
     },
-    [clearDismissibleErrors, invalidateCompletedOutputState, onSettingsChange, setChecksumOverrideChecked, settings],
+    [clearDismissibleErrors, invalidateCompletedOutputState, onSettingsChange, settings],
   );
   const commitSettings = useCallback(
     (nextSettings: ApplyPatchFormSettings) => {
@@ -648,7 +651,7 @@ const useLocalApplyPatchFormSession = ({
       if (settings === undefined) setInternalSettings(nextSettings);
       onSettingsChange?.(nextSettings);
     },
-    [clearDismissibleErrors, onSettingsChange, setChecksumOverrideChecked, settings],
+    [clearDismissibleErrors, onSettingsChange, settings],
   );
   useEffect(() => {
     if (!outputCompressionEdited || activeCompression === effectiveActiveCompression) return;
@@ -682,7 +685,7 @@ const useLocalApplyPatchFormSession = ({
       invalidateCompletedOutputState,
       onPatchesChange,
       patches,
-      setChecksumOverrideChecked,
+      setPatchInfoByKey,
     ],
   );
   const getStableInputInfo = useCallback(
@@ -757,7 +760,7 @@ const useLocalApplyPatchFormSession = ({
         return sortRomInputs([...remaining, nextRow]);
       });
     },
-    [],
+    [setRomInputs],
   );
   const updateInputs = useCallback(
     (nextInputs: BinarySource[]) => {
@@ -823,15 +826,18 @@ const useLocalApplyPatchFormSession = ({
       return generation;
     },
     [
-      effectiveInputs.length,
       clearDismissibleErrors,
       emitSessionTrace,
+      effectiveInputs.length,
       getInputKey,
       inputStageMachine,
       invalidateCompletedOutputState,
       inputs,
       onInputsChange,
-      setChecksumOverrideChecked,
+      setInputStaging,
+      setPatchInfoByKey,
+      setProgress,
+      setRomInputs,
     ],
   );
   // Move a dropped archive that Rust identified as a patch-only container out of the ROM bucket and into
@@ -1023,6 +1029,10 @@ const useLocalApplyPatchFormSession = ({
     stageSettingsKey,
     syncPatchFiles,
     syncRomInput,
+    setInputStaging,
+    setPatchProgress,
+    setPatchStaging,
+    setRomInputs,
   ]);
 
   const localUiStoreController = useLiveStoreController(localUiState);
@@ -1181,6 +1191,8 @@ const useLocalApplyPatchFormSession = ({
       hasPendingDownload,
       localOutputStoreController,
       setPendingDownloadReadyFileName,
+      setOutputName,
+      setOutputNameEdited,
       updateSettings,
     ],
   );

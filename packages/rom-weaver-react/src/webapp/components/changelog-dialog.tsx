@@ -48,6 +48,7 @@ const ChangelogDialog = ({ open, onClose, onReload }: { open: boolean; onClose: 
   const [state, setState] = useState<FetchState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reload attempts intentionally trigger a fresh changelog request.
   useEffect(() => {
     if (!open) return undefined;
     let active = true;

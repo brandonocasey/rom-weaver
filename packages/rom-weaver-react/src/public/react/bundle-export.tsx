@@ -373,7 +373,6 @@ const useBundleExport = ({
     getOutputHeader,
     bundleMetaById,
     onComplete,
-    ready,
     downloadExport,
   ]);
 

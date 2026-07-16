@@ -55,6 +55,7 @@ const usePendingCardMorph = (pendingCount: number, resolvedCount: number) => {
   const knownCards = useRef(new WeakSet<Element>());
   const sourceRects = useRef<DOMRect[]>([]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The count controls the intentional DOM animation lifecycle.
   useLayoutEffect(() => {
     const panel = document.getElementById("rom-weaver-container");
     if (!panel) return;
