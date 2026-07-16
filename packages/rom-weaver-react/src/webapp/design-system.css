@@ -2345,10 +2345,12 @@ html.vt-mode .drop:has(#tools-input-picker) { view-transition-name: none !import
   transition: transform .26s var(--ease), opacity .22s ease;
 }
 @starting-style { .rw-modal-card { transform: translateY(10px) scale(.97); opacity: 0; } }
-.rw-modal .modal-head { display: flex; align-items: center; gap: var(--sp-m); padding: var(--sp-l); border-block-end: 1px solid var(--seam-soft); flex: none; }
+.rw-modal .modal-head { display: flex; align-items: flex-start; gap: var(--sp-m); padding: var(--sp-l); border-block-end: 1px solid var(--seam-soft); flex: none; }
+.rw-modal .modal-head > div:first-child { flex: 1 1 auto; min-width: 0; }
 .rw-modal .modal-title { margin: 0; font-size: .95rem; font-weight: 700; letter-spacing: .01em; min-width: 0; overflow-wrap: anywhere; }
 .rw-modal .modal-sub { font-size: .78rem; color: var(--ink-3); margin-top: 2px; }
 .rw-app .mh-sp { flex: 1 1 auto; }
+.rw-modal .modal-head .dlg-x { align-self: flex-start; margin-inline-end: calc(-1 * var(--sp-2xs)); }
 .rw-modal .modal-head .btn { height: 30px; padding-inline: 12px; font-size: .76rem; }
 .rw-modal .modal-body { padding: var(--sp-l); overflow-y: auto; overscroll-behavior: contain; }
 .rw-modal.changelog-modal .rw-modal-card { width: min(520px, 100%); }
