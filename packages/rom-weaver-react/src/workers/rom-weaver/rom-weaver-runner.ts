@@ -92,8 +92,14 @@ type RunnerCreateOptions = { workerThreads?: RuntimeValue };
 // unbounded number of idle wasm heaps. How many operations actually run at once is bounded separately
 // by the thread budget (the scheduler's maxConcurrency below).
 const MAX_WARM_IDLE_RUNNERS = 8;
-const resolveWarmIdleRunners = (): number =>
-  Math.max(2, Math.min(MAX_WARM_IDLE_RUNNERS, Math.ceil(getDefaultBrowserThreadCount() / 2)));
+const resolveWarmIdleRunners = (): number => {
+  // Apple mobile WebKit reserves each worker's full shared-memory `maximum` (~1 GiB on mobile) up front
+  // and does not promptly reclaim it, so every extra idle worker keeps ~1 GiB reserved and courts an
+  // out-of-memory tab reload. Keep at most one warm runner there - enough for a burst of back-to-back
+  // light ops to reuse a warm worker, evicted quickly once idle (see scheduleMobileIdleRunnerEviction).
+  if (resolveAppleMobileSharedMemoryMaximumPages()) return 1;
+  return Math.max(2, Math.min(MAX_WARM_IDLE_RUNNERS, Math.ceil(getDefaultBrowserThreadCount() / 2)));
+};
 
 // Seed forwarded to freshly created runners so their initial worker-shell pool matches the resolved
 // "auto" thread count; set by warmup and reused for on-demand runner creation.
@@ -500,6 +506,27 @@ const scheduleIdleRecycle = (operationBytes: number) => {
   }, IDLE_RECYCLE_DEBOUNCE_MS);
 };
 
+// Apple mobile keeps a warm runner across back-to-back light ops (so a readiness pass reuses one worker
+// instead of booting a fresh one each time), but must not hold that worker's ~1 GiB shared-memory
+// reservation into a genuine idle gap - a paused tab sitting on the reservation is what triggers the
+// WebKit out-of-memory reload. Once the burst goes quiet, evict the lone warm runner so the reservation
+// is released; the next op boots a fresh worker. Short debounce so an in-flight burst never evicts
+// mid-pass. No-op while any runner is busy or none is idle.
+const MOBILE_IDLE_EVICTION_DEBOUNCE_MS = 250;
+let mobileIdleEvictionTimer: ReturnType<typeof setTimeout> | null = null;
+const scheduleMobileIdleRunnerEviction = () => {
+  if (mobileIdleEvictionTimer) clearTimeout(mobileIdleEvictionTimer);
+  mobileIdleEvictionTimer = setTimeout(() => {
+    mobileIdleEvictionTimer = null;
+    const pool = runnerPool;
+    if (!pool || pool.busyCount !== 0 || pool.idleCount === 0) return;
+    logger.trace("mobile idle runner eviction: releasing warm shared-memory reservation", {
+      idle: pool.idleCount,
+    });
+    void pool.disposeAll().catch(() => undefined);
+  }, MOBILE_IDLE_EVICTION_DEBOUNCE_MS);
+};
+
 // The wasm runner's linear memory only ever grows, so the browser surfaces an exhausted heap as an
 // out-of-memory error. V8 reports it as `RangeError: Out of memory`, but the wasi/Emscripten layer
 // can also surface "cannot enlarge memory", "ENOMEM", etc. - reuse the canonical matcher so every
@@ -668,18 +695,35 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
     } finally {
       removeAbortListener?.();
       if (resolveAppleMobileSharedMemoryMaximumPages()) {
-        // WebKit does not promptly reclaim per-command shared-memory reservations in a long-lived
-        // worker. End the worker with the command so sequential mobile operations cannot accumulate
-        // reservations until the next WebAssembly.Memory allocation fails.
-        lease.terminate();
+        // A heavy or threaded op leaves this worker's heap grown toward its cap and its thread-pool
+        // shared memory reserved; WebKit does not promptly reclaim that, so end the worker with the
+        // command to free the large reservation before the next op needs its own. A light single-
+        // threaded op (patch parse/validate, small checksum) grew almost nothing, so keep the worker
+        // warm and reuse it across a back-to-back readiness pass instead of paying a fresh worker boot
+        // each time - then evict it once the burst goes quiet so the reservation is not held into idle.
+        const mobileHeavyOp = operationBytes >= IDLE_RECYCLE_MIN_OP_BYTES || operationThreads > 1;
+        if (mobileHeavyOp) {
+          emitRunnerTraceLine(
+            options,
+            `runJson mobile heavy op; terminating runner bytes=${operationBytes} threads=${operationThreads}`,
+          );
+          lease.terminate();
+        } else {
+          emitRunnerTraceLine(
+            options,
+            `runJson mobile light op; reusing warm runner bytes=${operationBytes} threads=${operationThreads}`,
+          );
+          lease.release();
+          scheduleMobileIdleRunnerEviction();
+        }
       } else {
         // No-op if the runner was terminated above; otherwise returns the warm runner to the pool (or
         // disposes it when marked stale).
         lease.release();
+        // After a heavy op, restore the clean-heap baseline during the next idle gap (debounced) so a
+        // following op starts as fast as the first instead of on a heap left near its cap.
+        scheduleIdleRecycle(operationBytes);
       }
-      // After a heavy op, restore the clean-heap baseline during the next idle gap (debounced) so a
-      // following op starts as fast as the first instead of on a heap left near its cap.
-      scheduleIdleRecycle(operationBytes);
     }
   };
 
