@@ -215,7 +215,13 @@ const ExtractName = ({
           the visible face drops the extension - the format badge carries it */}
       <span className="sr-only">{fileName}</span>
       {nameEditor ?? (
-        <span aria-hidden="true" className="nm" title={folderPath ? `${folderPath} › ${fileName}` : fileName}>
+        <span
+          aria-hidden="true"
+          className="nm"
+          title={[displayName?.trim(), folderPath ? `${folderPath} › ${fileName}` : fileName]
+            .filter(Boolean)
+            .join(" — ")}
+        >
           {folderPath ? <span className="nm-folder">{folderPath} › </span> : null}
           {displayName?.trim() || getDisplayName(fileName)}
         </span>

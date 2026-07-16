@@ -1,6 +1,5 @@
 import Check from "lucide-react/dist/esm/icons/check.js";
 import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
-import Pencil from "lucide-react/dist/esm/icons/pencil.js";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -229,22 +228,28 @@ type PatchMetaFieldProps = {
 };
 
 /** Bundle-edit mode: the card title IS the patch's display name, edited in
- * place (placeholder = the file name it falls back to). */
+ * place (placeholder = the file name it falls back to). A textarea only so a
+ * long name can wrap and grow - names never contain newlines, Enter commits. */
 const PatchNameInline = ({ index, item, meta, onMetaChange }: PatchMetaFieldProps) => (
-  <span className="nm-edit">
-    <input
-      aria-label="Patch name"
-      className="nm-input"
-      defaultValue={meta?.name || ""}
-      id={`rom-weaver-patch-name-${index}`}
-      key={`patch-name:${item.key ?? index}:${meta?.name || ""}`}
-      onBlur={(event) => onMetaChange({ name: event.currentTarget.value.trim() || undefined })}
-      placeholder={item.fileName.replace(/\.[^.]+$/, "")}
-      spellCheck={false}
-      type="text"
-    />
-    <Pencil aria-hidden="true" className="nm-edit-glyph" />
-  </span>
+  <textarea
+    aria-label="Patch name"
+    className="nm-input"
+    defaultValue={meta?.name || ""}
+    id={`rom-weaver-patch-name-${index}`}
+    key={`patch-name:${item.key ?? index}:${meta?.name || ""}`}
+    onBlur={(event) => onMetaChange({ name: event.currentTarget.value.trim() || undefined })}
+    onInput={(event) => autosizeTextarea(event.currentTarget)}
+    onKeyDown={(event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.currentTarget.blur();
+      }
+    }}
+    placeholder={item.fileName.replace(/\.[^.]+$/, "")}
+    ref={autosizeTextarea}
+    rows={1}
+    spellCheck={false}
+  />
 );
 
 /** Bundle-edit mode: the description sits inline on the card (in place of the
