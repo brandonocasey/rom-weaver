@@ -22,8 +22,6 @@ const TABS = [
 ];
 
 const mastheadProps = {
-  branch: "prototype/mobile-forward-ui",
-  commit: "71f6a6c6",
   donateHref: "https://example.com/donate",
   githubHref: "https://example.com/repo",
   currentTab: "patcher",
@@ -33,7 +31,8 @@ const mastheadProps = {
   onSelectTab: () => undefined,
   tabs: TABS,
   threads: 8,
-  version: "1.2.3",
+  version: "v1.2.3 · main* · a1b2c3d",
+  versionTitle: "v1.2.3+main.dirty.a1b2c3d",
 };
 
 describe("Masthead", () => {
@@ -64,10 +63,12 @@ describe("Masthead", () => {
     const settings = getByRole("button", { name: "Settings" });
     expect(container.querySelector(".masthead-tools > .tool:last-child")).toBe(settings);
     const reset = getByRole("button", { name: "Reset" });
-    expect(container.querySelector(".masthead-version")?.textContent).toBe("v1.2.3· 8 threads");
-    fireEvent.click(getByRole("button", { name: "Build information for v1.2.3" }));
-    expect(document.body.querySelector(".build-version-pop")?.textContent).toContain("prototype/mobile-forward-ui");
-    expect(document.body.querySelector(".build-version-pop")?.textContent).toContain("71f6a6c6");
+    expect(container.querySelector(".masthead-version")?.textContent).toBe("v1.2.3 · main* · a1b2c3d· 8 threads");
+    expect(container.querySelector(".build-version-label")?.textContent).toBe("v1.2.3 · main* · a1b2c3d");
+    expect(container.querySelector(".build-version-label")?.getAttribute("title")).toBe(
+      "v1.2.3+main.dirty.a1b2c3d",
+    );
+    expect(container.querySelector(".build-version-label")?.closest("button")).toBeNull();
     expect(getByRole("link", { name: "Donate" }).getAttribute("href")).toBe("https://example.com/donate");
     fireEvent.click(reset);
     expect(onReset).toHaveBeenCalledTimes(1);

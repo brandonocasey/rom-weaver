@@ -9,7 +9,6 @@ import X from "lucide-react/dist/esm/icons/x.js";
 import type { ReactNode } from "react";
 import { useLayoutEffect, useRef } from "react";
 import type { Localizer } from "../../presentation/localization/index.ts";
-import { InfoToggle } from "../../presentation/react/info-toggle.tsx";
 import { useUiLocalizer } from "../../public/react/settings-context.tsx";
 import { useTheme } from "../theme.ts";
 
@@ -170,40 +169,8 @@ const ThemeToggle = ({ localizer }: { localizer: Localizer }) => {
   );
 };
 
-const BuildVersionInfo = ({ branch, commit, version }: { branch?: string; commit?: string; version: string }) => (
-  <InfoToggle
-    ariaLabel={`Build information for v${version}`}
-    className="build-version-info"
-    icon={<span className="build-version-label">v{version}</span>}
-    panelClassName="build-version-pop"
-    portalPanel
-    title="Build information"
-  >
-    <dl className="build-version-details mono">
-      <div>
-        <dt>Version</dt>
-        <dd>v{version}</dd>
-      </div>
-      {branch ? (
-        <div>
-          <dt>Branch</dt>
-          <dd>{branch}</dd>
-        </div>
-      ) : null}
-      {commit ? (
-        <div>
-          <dt>Commit</dt>
-          <dd>{commit}</dd>
-        </div>
-      ) : null}
-    </dl>
-  </InfoToggle>
-);
-
 const Masthead = ({
   logoSrc,
-  branch,
-  commit,
   tabs,
   currentTab,
   onSelectTab,
@@ -216,10 +183,9 @@ const Masthead = ({
   settingsOpen,
   threads,
   version,
+  versionTitle,
 }: {
   logoSrc?: string;
-  branch?: string;
-  commit?: string;
   tabs: WorkflowTab[];
   currentTab: string;
   onSelectTab: (id: string) => void;
@@ -232,6 +198,7 @@ const Masthead = ({
   settingsOpen?: boolean;
   threads?: number;
   version?: string;
+  versionTitle?: string;
 }) => {
   const localizer = useUiLocalizer();
   const logLabel = localizer.message("ui.tools.log");
@@ -254,7 +221,9 @@ const Masthead = ({
           </h1>
           {version ? (
             <span className="masthead-version mono">
-              <BuildVersionInfo branch={branch} commit={commit} version={version} />
+              <span className="build-version-label" title={versionTitle}>
+                {version}
+              </span>
               {threads ? (
                 <span className="masthead-threads">
                   · {threads} {localizer.message("ui.env.threads")}

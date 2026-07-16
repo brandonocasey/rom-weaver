@@ -276,18 +276,7 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 .rw-app .tool:hover { color: var(--ink); background: var(--well); border-color: var(--seam); }
 .rw-app .tool:active { background: var(--plate-2); }
 .rw-app .tool svg { width: 17px; height: 17px; }
-.rw-app .build-version-info { min-width: 0; font-size: inherit; }
-.rw-app .build-version-info .info-btn {
-  width: auto; height: auto; min-width: 0; font: inherit; color: inherit;
-  text-decoration: underline dotted; text-underline-offset: 3px;
-}
-.rw-app .build-version-info .info-btn:hover { color: var(--thread-text); }
 .rw-app .build-version-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rw-app .build-version-pop { width: min(360px, calc(100vw - 24px)); }
-.rw-app .build-version-details { display: grid; gap: var(--sp-s); margin: 0; }
-.rw-app .build-version-details > div { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: var(--sp-m); }
-.rw-app .build-version-details dt { color: var(--ink-3); }
-.rw-app .build-version-details dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 /* the tools are icon-only everywhere; the title/aria-label carries the name
    (the spans stay in the DOM so the localized names remain available) */
 .rw-app .tool-text { display: none; }

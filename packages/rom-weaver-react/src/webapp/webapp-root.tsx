@@ -17,7 +17,7 @@ import type { PageFileDrop } from "../public/react/index.tsx";
 import { ApplyPatchForm, CreatePatchForm, RomWeaverSettingsProvider, TrimPatchForm } from "../public/react/index.tsx";
 import { setActiveSelectionForm } from "../public/react/input-selection-handler.ts";
 import { useUiLocalizer } from "../public/react/settings-context.tsx";
-import { APP_BUILD_VERSION, APP_VERSION, COMMIT_HASH, GIT_BRANCH } from "./build-version.ts";
+import { APP_BUILD_VERSION, APP_DISPLAY_VERSION } from "./build-version.ts";
 import { ChangelogDialog } from "./components/changelog-dialog.tsx";
 import { LogDialog } from "./components/log-dialog.tsx";
 import { Masthead, UpdateBanner } from "./components/shell.tsx";
@@ -296,8 +296,6 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions, urlSession
       <div className={pageDragging ? "rw-app rw-page-dragging" : "rw-app"} id="column">
         <div className="app">
           <Masthead
-            branch={GIT_BRANCH}
-            commit={COMMIT_HASH}
             confirmExternalNavigation={actions.onConfirmExternalNavigation}
             currentTab={state.currentView}
             donateHref={DONATE_URL}
@@ -316,7 +314,8 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions, urlSession
                 : WORKFLOW_TABS.filter((tab) => tab.id === "patcher" || tab.id === "creator")
             }
             threads={resolveWorkerThreads(workerThreads)}
-            version={APP_VERSION}
+            version={APP_DISPLAY_VERSION}
+            versionTitle={`v${APP_BUILD_VERSION}`}
           />
           <UpdateBanner
             onDismiss={() => {
