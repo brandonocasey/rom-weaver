@@ -107,6 +107,7 @@ jobs:
 
       - name: rom-weaver-react checks
         run: |
+          npm test
           npm --prefix packages/rom-weaver-react run lint
           npm --prefix packages/rom-weaver-react run test:unit
           npm --prefix packages/rom-weaver-react run test:browser:wasm

@@ -3,3 +3,4 @@ dist/
 .vitest-attachments/
 src/wasm/*.wasm
 src/wasm/*.wasm.br
+src/wasm/*.wasm.prod.sha256

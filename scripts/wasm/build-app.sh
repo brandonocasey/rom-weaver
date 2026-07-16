@@ -25,6 +25,8 @@ target="wasm32-wasip1-threads"
 out_dir="${ROM_WEAVER_WASM_OUT_DIR:-$MISE_PROJECT_ROOT/packages/rom-weaver-react/src/wasm}"
 pkg_dir="$MISE_PROJECT_ROOT/packages/rom-weaver-react/src/wasm"
 artifact="$out_dir/rom-weaver-app.wasm"
+built_artifact="$MISE_PROJECT_ROOT/target/$target/wasm-release/rom-weaver-app.wasm"
+prod_fingerprint_file="$artifact.prod.sha256"
 
 command -v cargo >/dev/null || { echo "missing command: cargo" >&2; exit 1; }
 if [[ "$mode" == "prod" ]]; then
@@ -37,22 +39,41 @@ mkdir -p "$out_dir"
 
 echo "building $target -> $artifact"
 cargo build -p rom-weaver-app --bin rom-weaver-app --profile wasm-release --target "$target"
-cp "$MISE_PROJECT_ROOT/target/$target/wasm-release/rom-weaver-app.wasm" "$artifact"
 
 if [[ "$mode" == "prod" ]]; then
   command -v wasm-opt >/dev/null || { echo "missing command: wasm-opt (install via mise or brew install binaryen)" >&2; exit 1; }
-  wasm-opt -O4 --strip-debug --strip-dwarf \
-    --enable-bulk-memory --enable-bulk-memory-opt --enable-mutable-globals \
-    --enable-nontrapping-float-to-int --enable-sign-ext --enable-reference-types \
-    --enable-simd --enable-threads \
-    -o "$artifact.opt" "$artifact"
-  mv "$artifact.opt" "$artifact"
-fi
-
-"$WASI_STRIP" "$artifact"
-
-if [[ "$mode" == "prod" ]]; then
-  brotli --force --quality="${BROTLI_QUALITY:-11}" --output="$artifact.br" "$artifact"
+  prod_fingerprint="$(
+    node "$MISE_PROJECT_ROOT/scripts/wasm/wasm-prod-fingerprint.mjs" \
+      "$built_artifact" \
+      "$MISE_PROJECT_ROOT/scripts/wasm/build-app.sh" \
+      "${BROTLI_QUALITY:-11}" \
+      "$(wasm-opt --version 2>&1)" \
+      "$("$WASI_STRIP" --version 2>&1)" \
+      "$(brotli --version 2>&1)"
+  )"
+  if [[ "${ROM_WEAVER_WASM_FORCE:-0}" != "1" \
+    && -f "$artifact" \
+    && -f "$artifact.br" \
+    && -f "$prod_fingerprint_file" \
+    && "$(<"$prod_fingerprint_file")" == "$prod_fingerprint" ]]; then
+    echo "production WASM inputs unchanged; skipping wasm-opt and brotli"
+  else
+    rm -f "$prod_fingerprint_file"
+    cp "$built_artifact" "$artifact"
+    wasm-opt -O4 --strip-debug --strip-dwarf \
+      --enable-bulk-memory --enable-bulk-memory-opt --enable-mutable-globals \
+      --enable-nontrapping-float-to-int --enable-sign-ext --enable-reference-types \
+      --enable-simd --enable-threads \
+      -o "$artifact.opt" "$artifact"
+    mv "$artifact.opt" "$artifact"
+    "$WASI_STRIP" "$artifact"
+    brotli --force --quality="${BROTLI_QUALITY:-11}" --output="$artifact.br" "$artifact"
+    printf '%s\n' "$prod_fingerprint" > "$prod_fingerprint_file"
+  fi
+else
+  rm -f "$artifact.br" "$prod_fingerprint_file"
+  cp "$built_artifact" "$artifact"
+  "$WASI_STRIP" "$artifact"
 fi
 
 # Sync into the npm package only when built to a separate output directory.

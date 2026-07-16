@@ -1,17 +1,13 @@
 #!/usr/bin/env node
 
 // Prebuild gate for `npm run preview`. Keeps the previewed bundle honest by
-// rebuilding the prod WASM module and the vite bundle when their inputs have
-// changed, then hands off to the preview server.
+// asking Cargo to validate the prod WASM module before checking the vite
+// bundle, then hands off to the preview server. The WASM build itself skips
+// expensive wasm-opt/brotli work when its content fingerprint is unchanged.
 //
-// Staleness is decided by filesystem mtimes, which reflect uncommitted (dirty)
-// edits as well as committed ones:
-//   - WASM rebuild  : any Rust source / Cargo manifest newer than the built
-//                     artifact, or a missing artifact / missing brotli sibling
-//                     (the brotli file marks a *prod* build; a dev build lacks
-//                     it and must be promoted to prod for preview).
-//   - vite rebuild  : missing dist, or any web source / config / WASM artifact
-//                     newer than the built dist/index.html.
+// Vite staleness is decided by filesystem mtimes:
+//   - missing dist, or any web source / config / WASM artifact newer than the
+//     built dist/index.html.
 //
 // Override with ROM_WEAVER_PREVIEW_FORCE=wasm|vite|all to force a rebuild, or
 // ROM_WEAVER_PREVIEW_SKIP_BUILD=1 to skip the gate entirely.
@@ -25,8 +21,7 @@ import {
   REPO_ROOT,
   run,
   WASM_ARTIFACT,
-  wasmRebuildReason,
-} from "./wasm-build-gate.mjs";
+} from "./build-utils.mjs";
 
 const DIST_INDEX = path.join(PACKAGE_DIR, "dist", "index.html");
 
@@ -47,14 +42,13 @@ const forceVite = force === "vite" || force === "all";
 if (String(process.env.ROM_WEAVER_PREVIEW_SKIP_BUILD || "") === "1") {
   log("warn", "ROM_WEAVER_PREVIEW_SKIP_BUILD=1 set; skipping build gate");
 } else {
-  // --- WASM gate ----------------------------------------------------------
-  const wasmReason = wasmRebuildReason({ force: forceWasm, requireBrotli: true });
-  if (wasmReason) {
-    log("info", `WASM rebuild needed: ${wasmReason}`);
-    run("mise", ["run", "build-wasm-prod"], { label: "build-wasm-prod", log });
-  } else {
-    log("debug", "WASM artifact up to date; skipping prod build");
-  }
+  // Cargo performs the authoritative source/dependency freshness check. The
+  // production build caches only its deterministic post-processing tail.
+  run("mise", ["run", "build-wasm-prod"], {
+    env: forceWasm ? { ...process.env, ROM_WEAVER_WASM_FORCE: "1" } : process.env,
+    label: "build-wasm-prod",
+    log,
+  });
 
   // --- vite gate ----------------------------------------------------------
   const distMtime = mtimeMs(DIST_INDEX);

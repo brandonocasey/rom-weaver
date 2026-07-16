@@ -10,6 +10,7 @@
     "hooks:install": "lefthook install",
     "hooks:run": "lefthook run pre-commit --force",
     "hooks:validate": "lefthook validate",
+    "test": "node --test scripts/wasm/*.test.mjs",
     "typegen": "mise run typegen",
     "typegen:check": "mise run typegen-check",
     "version": "node scripts/sync-version.mjs"
