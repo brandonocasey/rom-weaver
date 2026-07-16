@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { createLogger } from "../../lib/logging.ts";
+import { stripOperationScopeChain } from "../../lib/runtime/run-output-paths.ts";
 import { getCandidateDisplayItems } from "../../presentation/formatting/candidates.ts";
 import { createBrowserLocalizer } from "../../presentation/localization/index.ts";
 import { Modal } from "./components/ds/modal.tsx";
@@ -49,7 +50,10 @@ function CandidateSelectionDialog({
     // breadcrumbs are [archive, …folders/nested-archives, ] - the first segment is the
     // source archive (shown as a sub-heading), the rest is the folder path within it
     // (folded into the name so the entry reads "folder › patch").
-    const breadcrumbs = (candidate.breadcrumbs || []).map((segment) => segment.trim()).filter(Boolean);
+    const breadcrumbs = stripOperationScopeChain(
+      (candidate.breadcrumbs || []).map((segment) => segment.trim()).filter(Boolean),
+      (segment) => segment,
+    );
     const [archiveLabel, ...folderSegments] = breadcrumbs;
     const nameWithFolder = folderSegments.length ? `${folderSegments.join(" › ")} › ${primaryLabel}` : primaryLabel;
     return {
