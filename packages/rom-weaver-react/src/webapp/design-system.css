@@ -858,19 +858,6 @@ html.vt-theme .mode-rail .mode { view-transition-name: none !important; }
 /* the on/off switch leads the sub-heading line - the shared switch primitive scaled
    down to the meta text (via the --sw-* vars), with a state word beside it. the two
    words share one grid cell so the row never shifts width when toggled */
-/* Include/skip square check in the card's action corner - the ✕ button's
-   sibling: same face, thread-filled when in the run, dashed hollow when
-   skipped. Hover states color-code the corner's two verbs (thread = include,
-   fault = remove) so a mis-aim reads before the click lands. */
-.rw-app .pinc {
-  flex: none; width: var(--ctrl-h); height: var(--ctrl-h); display: grid; place-items: center; padding: 0;
-  border: 1px dashed var(--seam-strong); border-radius: 6px; background: transparent; color: var(--ink-4);
-  cursor: pointer; transition: color .15s, border-color .15s, background .15s;
-}
-.rw-app .pinc svg { width: calc(var(--ctrl-h) * .5); height: calc(var(--ctrl-h) * .5); }
-.rw-app .pinc:hover { border-color: var(--thread); color: var(--thread-text); }
-.rw-app .pinc.is-on { border: 1px solid var(--thread); background: var(--thread); color: var(--thread-ink); }
-.rw-app .pinc.is-on:hover { background: color-mix(in oklab, var(--thread) 82%, black); border-color: color-mix(in oklab, var(--thread) 82%, black); }
 .rw-app .patch-enable {
   flex: none; display: inline-flex; align-items: center; gap: var(--sp-s); cursor: pointer;
   padding: 5px; margin-block: -5px; margin-inline: -5px 4px;
@@ -2484,14 +2471,6 @@ html.vt-theme .unified-drop-step .step-head { view-transition-name: none !import
 }
 .rw-app #rom-weaver-list-patch-stack > .card.patch .rm {
   grid-column: 3; grid-row: 1; align-self: start;
-}
-/* The include check sits directly below remove in the action corner. The
-   extra top margin keeps the two verbs from becoming one mis-click zone. */
-.rw-app #rom-weaver-list-patch-stack > .card.patch .pinc {
-  grid-column: 3; grid-row: 2; justify-self: end; align-self: start; margin-block-start: var(--sp-s);
-}
-.rw-app #rom-weaver-list-patch-stack > .card.patch .card-top:has(> .card-actions .pinc) .card-name > :is(.patch-desc, .card-meta) {
-  grid-column: 1 / 3;
 }
 
 /* ── wide-bench layout ──

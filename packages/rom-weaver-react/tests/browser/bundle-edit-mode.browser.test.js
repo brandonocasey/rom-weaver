@@ -73,8 +73,7 @@ const buildWithoutRomBundle = async ({ romCrc32, outputCrc32 }) => {
   );
 };
 
-const getPatchToggles = () => Array.from(document.querySelectorAll("#rom-weaver-list-patch-stack .pinc"));
-const toggleOn = (toggle) => toggle?.getAttribute("aria-checked") === "true";
+const getPatchToggles = () => Array.from(document.querySelectorAll("#rom-weaver-list-patch-stack .patch-enable input"));
 
 test("authoring fields stay hidden until bundle-edit mode; enter/exit round-trips the hash", async () => {
   const [romFile, patchFile] = await Promise.all([loadFixtureFile(RAW_ROM), loadFixtureFile(RAW_PATCH)]);

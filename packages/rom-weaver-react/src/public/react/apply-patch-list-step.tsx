@@ -619,10 +619,8 @@ const PatchTarget = ({
   );
 };
 
-/** Include/skip control in the card's action corner, right under remove: a
- * square check that speaks the same geometry as the ✕ and position chips -
- * thread-filled when the patch is in the run, dashed hollow when skipped. */
-const PatchIncludeToggle = ({
+/** The loom On/Off switch leading a patch card's meta line. */
+const PatchEnableToggle = ({
   disabled,
   fileName,
   onToggle,
@@ -631,17 +629,18 @@ const PatchIncludeToggle = ({
   fileName: string;
   onToggle: () => void;
 }) => (
-  <button
-    aria-checked={!disabled}
-    aria-label={`Include ${fileName.replace(/\.[^.]+$/, "")}`}
-    className={disabled ? "pinc" : "pinc is-on"}
-    onClick={onToggle}
-    role="switch"
-    title={disabled ? "Skipped — click to include" : "Included — click to skip"}
-    type="button"
-  >
-    <Check aria-hidden="true" />
-  </button>
+  <label className="patch-enable">
+    <input
+      aria-label={`Include ${fileName.replace(/\.[^.]+$/, "")}`}
+      checked={!disabled}
+      onChange={onToggle}
+      type="checkbox"
+    />
+    <span aria-hidden="true" className="switch-state">
+      <b className="on">On</b>
+      <b className="off">Off</b>
+    </span>
+  </label>
 );
 
 const ApplyPatchListStep = ({
@@ -784,15 +783,6 @@ const ApplyPatchListStep = ({
             <FileCard
               key={item.key ?? `${index}:${item.fileName}`}
               {...rowProps}
-              actionsExtra={
-                onTogglePatch ? (
-                  <PatchIncludeToggle
-                    disabled={!!disabledFlags?.[index]}
-                    fileName={item.fileName}
-                    onToggle={() => onTogglePatch(index)}
-                  />
-                ) : undefined
-              }
               className={[rowProps.className, disabledClass].filter(Boolean).join(" ") || undefined}
               description={
                 description && !bundleEditMode ? (
@@ -813,6 +803,13 @@ const ApplyPatchListStep = ({
               }
               meta={
                 <>
+                  {onTogglePatch ? (
+                    <PatchEnableToggle
+                      disabled={!!disabledFlags?.[index]}
+                      fileName={item.fileName}
+                      onToggle={() => onTogglePatch(index)}
+                    />
+                  ) : null}
                   {item.fileSize ? <span className="fsize mono">{formatByteSize(item.fileSize)}</span> : null}
                   {item.format ? <span className="meta-fmt mono">{item.format.toLowerCase()}</span> : null}
                   {bundleMeta?.[index]?.label ? (
