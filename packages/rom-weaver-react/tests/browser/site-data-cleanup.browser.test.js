@@ -1,63 +1,26 @@
 import { expect, test } from "vitest";
-import { clearOpfsOnPageLoad } from "../../src/webapp/site-data-cleanup.ts";
 
-const createOpfsStorage = (names, options = {}) => {
-  const removed = [];
-  const failingNames = new Set(options.failingNames || []);
-  const root = {
-    async *keys() {
-      for (const name of names) yield name;
-    },
-    async removeEntry(name, removeOptions) {
-      removed.push({ name, options: removeOptions });
-      if (failingNames.has(name)) throw new Error(`remove failed for ${name}`);
-    },
-  };
-  return {
-    removed,
-    storage: {
-      getDirectory: async () => root,
-    },
-  };
-};
+test("webapp boot leaves existing OPFS entries untouched", async () => {
+  const root = await navigator.storage.getDirectory();
+  const siblingName = `live-sibling-${crypto.randomUUID()}`;
+  const sibling = await root.getDirectoryHandle(siblingName, { create: true });
+  const file = await sibling.getFileHandle("owned-by-another-tab.bin", { create: true });
+  const writable = await file.createWritable();
+  await writable.write(new Uint8Array([1, 2, 3]));
+  await writable.close();
 
-test("clearOpfsOnPageLoad removes every OPFS root entry recursively", async () => {
-  const { removed, storage } = createOpfsStorage(["input", "output", ".rom-weaver-opfs-scratch"]);
+  const appRoot = document.createElement("div");
+  appRoot.id = "webapp-root";
+  document.body.append(appRoot);
 
-  await expect(clearOpfsOnPageLoad({ storage })).resolves.toEqual({
-    deletedEntries: 3,
-    failedEntries: 0,
-  });
+  try {
+    await import("../../src/webapp/webapp.ts");
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
 
-  expect(removed).toEqual([
-    { name: "input", options: { recursive: true } },
-    { name: "output", options: { recursive: true } },
-    { name: ".rom-weaver-opfs-scratch", options: { recursive: true } },
-  ]);
-});
-
-test("clearOpfsOnPageLoad reports skipped and failed cleanup states", async () => {
-  await expect(clearOpfsOnPageLoad({ enabled: false })).resolves.toEqual({
-    deletedEntries: 0,
-    failedEntries: 0,
-    skippedReason: "cleanup-disabled",
-  });
-
-  const { storage } = createOpfsStorage(["input", "output"], { failingNames: ["output"] });
-
-  await expect(clearOpfsOnPageLoad({ storage })).resolves.toEqual({
-    deletedEntries: 1,
-    failedEntries: 1,
-  });
-});
-
-test("clearOpfsOnPageLoad preserves host-owned import entries", async () => {
-  const { removed, storage } = createOpfsStorage(["rom-weaver-imports", "stale-output.bin"]);
-
-  await expect(clearOpfsOnPageLoad({ preserveEntries: new Set(["rom-weaver-imports"]), storage })).resolves.toEqual({
-    deletedEntries: 1,
-    failedEntries: 0,
-  });
-
-  expect(removed).toEqual([{ name: "stale-output.bin", options: { recursive: true } }]);
+    const survivingDirectory = await root.getDirectoryHandle(siblingName);
+    const survivingFile = await survivingDirectory.getFileHandle("owned-by-another-tab.bin");
+    await expect(survivingFile.getFile()).resolves.toMatchObject({ size: 3 });
+  } finally {
+    await root.removeEntry(siblingName, { recursive: true }).catch(() => undefined);
+  }
 });

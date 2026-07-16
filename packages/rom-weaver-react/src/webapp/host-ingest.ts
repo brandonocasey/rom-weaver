@@ -2,7 +2,6 @@ import { getManagedOpfsFileHandle } from "../workers/protocol/opfs-path.ts";
 
 const HOST_INGEST_EVENT = "rom-weaver:ingest";
 const HOST_INGEST_PATH_PREFIX = "/work/rom-weaver-imports/";
-const HOST_INGEST_ROOT_ENTRY = "rom-weaver-imports";
 
 type HostIngestListener = (paths: readonly string[]) => void;
 
@@ -52,4 +51,4 @@ if (typeof document !== "undefined") {
   });
 }
 
-export { HOST_INGEST_EVENT, HOST_INGEST_ROOT_ENTRY, ingest, resolveHostIngestFiles, subscribeHostIngest };
+export { HOST_INGEST_EVENT, ingest, resolveHostIngestFiles, subscribeHostIngest };

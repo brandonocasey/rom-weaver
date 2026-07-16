@@ -1,4 +1,3 @@
-import { whenOpfsCleanupSettled } from "../../storage/browser/opfs-cleanup-gate.ts";
 import { createWorkerRequestId } from "../shared/worker-request-id.ts";
 
 type WorkerAssetRoot = typeof globalThis & {
@@ -55,10 +54,7 @@ const getOpfsWorker = () => {
   return opfsWorker;
 };
 
-const requestBrowserOpfsStorage = async (request: BrowserOpfsStorageRequest): Promise<BrowserOpfsStorageResponse> => {
-  // Hold staging/writes until the page-load OPFS wipe has settled, so a write can't race the boot
-  // recursive delete. Resolves immediately once the wipe is done (or if no wipe was ever started).
-  await whenOpfsCleanupSettled();
+const requestBrowserOpfsStorage = (request: BrowserOpfsStorageRequest): Promise<BrowserOpfsStorageResponse> => {
   const requestId = request.requestId || createWorkerRequestId(`opfs-${request.action}`);
   const message = { ...request, requestId };
   return new Promise((resolve, reject) => {

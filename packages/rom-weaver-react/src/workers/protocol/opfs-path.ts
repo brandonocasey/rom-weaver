@@ -174,4 +174,4 @@ const removeManagedOpfsPath = async (
   }
 };
 
-export { getManagedOpfsDirectory, getManagedOpfsFileHandle, removeManagedOpfsPath };
+export { getManagedOpfsFileHandle, removeManagedOpfsPath };

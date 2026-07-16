@@ -1,19 +1,12 @@
 import { createLogger } from "../../lib/logging.ts";
 import { markWarmupDone, markWarmupEnd, markWarmupStart } from "../../lib/perf/op-perf-marks.ts";
-import { getManagedOpfsDirectory } from "../../workers/protocol/opfs-path.ts";
 import { recycleWarmRomWeaverRunner } from "../../workers/rom-weaver/rom-weaver-runner.ts";
 import { browserRuntime } from "./workflow-runtime.ts";
-
-const WARMUP_ARTIFACT_MARKER = "rom-weaver-warmup";
 
 // Checksums the real first ROM-load op computes inline during ingest. The warmup requests them too so
 // the inline StreamingChecksum decode path is warm; measured on a prod build, that path is ~25ms of the
 // first op and is NOT warmed by an extract without checksums.
 const WARMUP_CHECKSUM_ALGORITHMS = ["crc32", "md5", "sha1"];
-
-type OpfsDirectoryEntriesHandle = FileSystemDirectoryHandle & {
-  entries: () => AsyncIterableIterator<[string, FileSystemHandle]>;
-};
 
 // A tiny deflate-compressed zip (one entry, 426 bytes) embedded as base64. It is used to run one silent
 // end-to-end ingest (classify + extract + inline checksum) on page load so every per-op code path is
@@ -57,35 +50,11 @@ const cleanupWarmupOutputs = async (outputs: ReadonlyArray<{ cleanup?: () => Pro
   }
 };
 
-// Removes warmup artifacts (staged input + extracted outputs, all named with the warmup marker) left in
-// OPFS by a previous page load. The current session's staged input stays locked by the live worker pool
-// and cannot be removed until the next load - this runs at
-// the start of warmup so each session cleans the prior session's now-unlocked leftovers, bounding
-// accumulation to a single generation.
-const sweepWarmupArtifacts = async (): Promise<void> => {
-  const root = await getManagedOpfsDirectory().catch(() => null);
-  if (!root) return;
-  const sweep = async (directory: FileSystemDirectoryHandle): Promise<void> => {
-    const childDirectories: FileSystemDirectoryHandle[] = [];
-    const staleFileNames: string[] = [];
-    for await (const [name, handle] of (directory as OpfsDirectoryEntriesHandle).entries()) {
-      if (handle.kind === "directory") {
-        childDirectories.push(handle as FileSystemDirectoryHandle);
-        continue;
-      }
-      if (name.includes(WARMUP_ARTIFACT_MARKER)) staleFileNames.push(name);
-    }
-    for (const name of staleFileNames) await directory.removeEntry(name).catch(() => undefined);
-    for (const childDirectory of childDirectories) await sweep(childDirectory);
-  };
-  await sweep(root).catch(() => undefined);
-};
-
 // Runs one tiny zip end-to-end through `ingest` (the real first-op path: classify + extract + inline
 // checksum in one pass), so every per-op code path (decode JIT, inline checksum, OPFS input/output
 // handles through the proxy, and the shared worker pool) is warm before the user's first real op.
-// Best-effort only: it is single-flight, swallows all errors, and sweeps prior-load warmup artifacts so
-// warmup can never surface to the user or grow OPFS storage without bound.
+// Best-effort only: it is single-flight, swallows all errors, and explicitly cleans the outputs returned
+// by this warmup without inspecting or deleting any other tab's OPFS entries.
 const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
   if (warmupExtractionStarted) return;
   warmupExtractionStarted = true;
@@ -93,7 +62,6 @@ const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
   if (!ingest?.run) return;
   const file = createWarmupZipFile();
   if (!file) return;
-  await sweepWarmupArtifacts();
   logger.trace("warmup extraction start");
   markWarmupStart();
   try {

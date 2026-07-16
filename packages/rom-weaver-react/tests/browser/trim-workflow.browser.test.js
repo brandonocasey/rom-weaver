@@ -71,6 +71,27 @@ const createZipFile = async (entryName, bytes, outputName) => {
   }
 };
 
+test("browser runtime warmup leaves sibling OPFS entries untouched", async () => {
+  const root = await navigator.storage.getDirectory();
+  const siblingName = `warmup-sibling-${crypto.randomUUID()}`;
+  const sibling = await root.getDirectoryHandle(siblingName, { create: true });
+  const fileName = "live-rom-weaver-warmup.bin";
+  const file = await sibling.getFileHandle(fileName, { create: true });
+  const writable = await file.createWritable();
+  await writable.write(new Uint8Array([4, 5, 6]));
+  await writable.close();
+
+  try {
+    await warmupBrowserRuntimeExtraction();
+
+    const survivingDirectory = await root.getDirectoryHandle(siblingName);
+    const survivingFile = await survivingDirectory.getFileHandle(fileName);
+    await expect(survivingFile.getFile()).resolves.toMatchObject({ size: 3 });
+  } finally {
+    await root.removeEntry(siblingName, { recursive: true }).catch(() => undefined);
+  }
+});
+
 test("trim workflow sends extracted archive payload to the trim worker", async () => {
   await warmupBrowserRuntimeExtraction();
   const logs = [];

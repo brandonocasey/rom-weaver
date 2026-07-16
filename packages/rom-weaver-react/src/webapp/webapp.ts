@@ -6,16 +6,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { collectBrowserInfo } from "../lib/browser-info.ts";
 import { configureLogger, createLogger } from "../lib/logging.ts";
 import { getBrowserStorageEstimateState } from "../storage/browser/browser-storage-estimate.ts";
-import { beginOpfsCleanupGate, markOpfsCleanupSettled } from "../storage/browser/opfs-cleanup-gate.ts";
 import { markRomWeaverRunnerStale } from "../workers/rom-weaver/rom-weaver-runner.ts";
 import { APP_BUILD_VERSION, APP_VERSION, COMMIT_HASH, DIRTY_HASH, GIT_BRANCH } from "./build-version.ts";
-import { HOST_INGEST_ROOT_ENTRY } from "./host-ingest.ts";
 import { installLogStore } from "./log-store.ts";
 import { createEmptyVitePageUpdateState, createVitePageUpdateState, getPageUpdateState } from "./page-update-state.ts";
 import { createPwaServiceWorkerClient } from "./pwa/pwa-service-worker-client.ts";
 import { createServiceWorkerBootGate } from "./pwa/service-worker-boot-gate.ts";
 import { LOCAL_STORAGE_SETTINGS_ID } from "./settings/settings-state.ts";
-import { clearOpfsOnPageLoad } from "./site-data-cleanup.ts";
 import {
   getDiscardSettingsConfirmationMessage,
   getUnloadConfirmationMessage,
@@ -439,21 +436,8 @@ const initializeWebapp = () => {
   if (typeof configuredOnInitialize === "function") configuredOnInitialize();
 };
 
-const bootWebappWithBackgroundCleanup = () => {
-  // Render the interactive shell immediately, then wipe leftover OPFS and read the storage estimate
-  // in the background. The cleanup gate (opened here, closed when the wipe settles) holds wasm runs
-  // and input staging until the wipe finishes, so a write can't land in a directory the recursive
-  // delete is still walking - the same guarantee the old wipe-then-render order gave, without the
-  // first paint waiting on it.
-  beginOpfsCleanupGate();
+const bootWebapp = () => {
   initializeWebapp();
-  void clearOpfsOnPageLoad({ preserveEntries: new Set([HOST_INGEST_ROOT_ENTRY]) })
-    .then((result) => {
-      logger.debug("OPFS cleanup on page load complete", { result });
-    })
-    .finally(() => {
-      markOpfsCleanupSettled();
-    });
   void getBrowserStorageEstimateState().then(
     (storage) => {
       logger.debug("Browser storage initialized", { storage });
@@ -466,7 +450,7 @@ const bootWebappWithBackgroundCleanup = () => {
   );
 };
 
-const startWebappBoot = () => serviceWorkerBootGate.start(bootWebappWithBackgroundCleanup);
+const startWebappBoot = () => serviceWorkerBootGate.start(bootWebapp);
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", startWebappBoot, { once: true });

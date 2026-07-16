@@ -1,13 +1,4 @@
-import { whenOpfsCleanupSettled } from "../../storage/browser/opfs-cleanup-gate.ts";
-import type {
-  RomWeaverBrowserOpfsOptions,
-  RomWeaverBrowserOpfsRunOptions,
-  RomWeaverDefaultThreads,
-  RomWeaverRunInput,
-  RomWeaverRunJsonEvent,
-  RomWeaverRunJsonOptions,
-  RomWeaverRunJsonResult,
-} from "../rom-weaver-types.d.ts";
+import type { RomWeaverBrowserOpfsOptions, RomWeaverDefaultThreads } from "../rom-weaver-types.d.ts";
 import { normalizeDefaultThreads, resolveBrowserDefaultThreads } from "./browser-thread-budget.ts";
 import { createBrowserWorkerTransport, RomWeaverWorkerClientCore } from "./worker-client-core.ts";
 
@@ -53,14 +44,6 @@ export class BrowserRomWeaverWorkerClient extends RomWeaverWorkerClientCore {
     options = options ?? {};
     const initOptions = this._createInitOptions(options);
     return this._sendInit(initOptions);
-  }
-
-  override async runJson<TEvent = RomWeaverRunJsonEvent, TTraceEvent = unknown>(
-    commandOrRequest: RomWeaverRunInput,
-    options: RomWeaverRunJsonOptions<TEvent, TTraceEvent> & RomWeaverBrowserOpfsRunOptions = {},
-  ): Promise<RomWeaverRunJsonResult<TEvent, TTraceEvent>> {
-    await whenOpfsCleanupSettled();
-    return super.runJson(commandOrRequest, options);
   }
 
   _createInitOptions(options: RomWeaverBrowserOpfsOptions) {
