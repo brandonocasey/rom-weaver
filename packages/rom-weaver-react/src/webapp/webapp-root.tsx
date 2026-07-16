@@ -38,8 +38,8 @@ const WORKFLOW_TABS = [
   { icon: <Wrench aria-hidden="true" />, id: "tools", label: "Tools" },
 ];
 const ROOT_LOGO_URL = "./logo.svg";
-const DONATE_URL = "https://www.paypal.me/marcrobledo/5";
-const GITHUB_URL = "https://github.com/marcrobledo/rom-weaver/";
+const DONATE_URL = "https://ko-fi.com/brandonocasey";
+const GITHUB_URL = "https://github.com/brandonocasey/rom-weaver/";
 
 const logger = createLogger("webapp-root");
 
