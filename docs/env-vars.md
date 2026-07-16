@@ -41,12 +41,6 @@ Not for production use.
 | `ROM_WEAVER_TEST_TMPDIR` | container test harness | Overrides the temp dir used by container tests. |
 | `ROM_WEAVER_WASI_THREADS` | crate `build.rs` scripts | Forces the `rom_weaver_wasi_threads` cfg on (otherwise gated on the `wasm32-wasip1-threads` target). |
 
-> **Retired knobs.** `ROM_WEAVER_CONTAINER_MAIN_THREAD_READER` and
-> `ROM_WEAVER_PATCH_MAIN_THREAD_READER` are gone - the OPFS proxy worker made
-> per-worker OPFS reads work, so the read-on-main gates were removed (see
-> "Browser I/O paths" in `docs/ARCHITECTURE.md`). The names survive only in
-> cli_smoke tests (`rvz_z3ds.rs`, `compress.rs`) that assert they are no-ops.
-
 ## wasm CLI harness (`scripts/wasm/run-wasi-cli.mjs`)
 
 Process env vars read **only** by the Node-hosted WASI CLI harness that runs the
