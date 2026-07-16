@@ -2085,6 +2085,13 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
 .rw-app .unified-drop-step:has(#tools-input-picker) > .step-head { view-transition-name: vt-input-head-tools; }
 html.vt-theme .unified-drop-step .drop,
 html.vt-theme .unified-drop-step .step-head { view-transition-name: none !important; }
+/* mode (tab) switch: the two tabs' drop/head names differ, so keeping them
+   would fade each independently and out of step with the root crossfade. Null
+   them so the whole hero rides the single flat crossfade as one surface. The
+   empty→filled morph WITHIN a form keeps its names (no vt-mode class there). */
+html.vt-mode .unified-drop-step .drop,
+html.vt-mode .unified-drop-step .step-head,
+html.vt-mode .drop:has(#tools-input-picker) { view-transition-name: none !important; }
 /* the drop morph must read as a deliberate snap, not lag: quicker box travel
    than the ambient crossfade, and the old face cuts fast so the shrinking
    snapshot text never smears through the ride */

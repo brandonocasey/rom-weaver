@@ -113,7 +113,7 @@ const useEntryAnimationLock = () => {
 
 /* Mode switches crossfade flat - shared with the forms' empty-bench
    transition so all layout swaps use one mechanism. */
-const selectViewWithTransition = (select: () => void) => runFlatViewTransition(select);
+const selectViewWithTransition = (select: () => void) => runFlatViewTransition(select, "vt-mode");
 
 const DropVeil = () => {
   const localizer = useUiLocalizer();

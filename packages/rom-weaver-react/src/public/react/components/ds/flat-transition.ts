@@ -23,21 +23,29 @@ const prefersReducedMotion = () =>
   typeof window.matchMedia === "function" &&
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** Run a synchronous DOM update inside a flat crossfade (no-op fallback). */
-const runFlatViewTransition = (update: () => void) => {
+/**
+ * Run a synchronous DOM update inside a flat crossfade (no-op fallback).
+ * `extraClass` tags the transition on `<html>` for the run's duration - mode
+ * (tab) switches pass `vt-mode` so the CSS can flatten the per-form drop/head
+ * names: those names give the empty→filled morph its continuity WITHIN a form,
+ * but across tabs the two forms' names differ, so they'd fade independently and
+ * out of sync with the root crossfade instead of riding it as one surface.
+ */
+const runFlatViewTransition = (update: () => void, extraClass?: string) => {
   const root = document.documentElement;
+  const classes = extraClass ? ["vt-flat", "vt-quiet", extraClass] : ["vt-flat", "vt-quiet"];
   if (typeof document.startViewTransition !== "function" || prefersReducedMotion()) {
     update();
     lockEntryAnimations();
     return;
   }
-  root.classList.add("vt-flat", "vt-quiet");
+  root.classList.add(...classes);
   const transition = document.startViewTransition(update);
   transition.ready.catch(() => undefined);
   const clear = () => {
     // lock first - removing vt-quiet would otherwise start the held animations
     lockEntryAnimations();
-    root.classList.remove("vt-flat", "vt-quiet");
+    root.classList.remove(...classes);
   };
   transition.finished.then(clear, clear);
 };
