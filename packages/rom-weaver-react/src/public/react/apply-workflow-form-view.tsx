@@ -248,15 +248,13 @@ type BundleEditState = {
 };
 
 /**
- * The "Bundle edit" strip: a persistent switch at the top of the form - the
- * mode's one stable home (the output card's "Create bundle…" action and the
- * URL hash are shortcuts to the same switch). Hidden on the pristine empty
- * bench unless the mode is already on (deep link), so the hero stays clean.
+ * The "Bundle edit" strip: a persistent switch above 0x01 - the mode's one
+ * stable home on every bench state, hero included (the output card's
+ * "Create bundle…" action and the URL hash are shortcuts to the same switch).
  */
-const BundleEditBar = ({ bundleEdit, workflowEmpty }: { bundleEdit?: BundleEditState; workflowEmpty?: boolean }) => {
+const BundleEditBar = ({ bundleEdit }: { bundleEdit?: BundleEditState }) => {
   if (!bundleEdit) return null;
   const { active, enter, exit, sessionName } = bundleEdit;
-  if (workflowEmpty && !active) return null;
   return (
     <div className={active ? "bundle-edit-bar is-active" : "bundle-edit-bar"} id="rom-weaver-bundle-edit-bar">
       <Package aria-hidden="true" />
@@ -953,6 +951,7 @@ function ApplyWorkflowFormView({
 
   return (
     <section className={formReady ? "panel form-ready" : "panel"} id="rom-weaver-container">
+      <BundleEditBar bundleEdit={bundleEdit} />
       <UnifiedDropZone
         accept={fileInputAccept.unifiedApply}
         addLabel="Replace the ROM or add patches"
@@ -987,7 +986,6 @@ function ApplyWorkflowFormView({
         onFiles={handleUnifiedDrop}
         supported={APPLY_SUPPORTED_FILES}
       />
-      <BundleEditBar bundleEdit={bundleEdit} workflowEmpty={workflowEmpty} />
       {workflowEmpty ? (
         <GhostSteps
           steps={[
@@ -1144,10 +1142,13 @@ function ApplyWorkflowFormView({
                 />
                 {bundleVerificationError ? <Notice level="error">{bundleVerificationError}</Notice> : null}
                 {bundleEdit?.outputStandDown ? (
-                  <p className="hintline" id="rom-weaver-bundle-output-unverified">
-                    {bundleEdit.outputStandDown === "partial"
-                      ? "Output won't be verified - the bundle's expected result only covers its full patch chain."
-                      : "Output won't be verified - the patch chain differs from the bundle."}
+                  <p aria-live="polite" className="patch-off-note" id="rom-weaver-bundle-output-unverified">
+                    <TriangleAlert aria-hidden="true" />
+                    <span>
+                      {bundleEdit.outputStandDown === "partial"
+                        ? "Output won't be verified - the bundle's expected result only covers its full patch chain."
+                        : "Output won't be verified - the patch chain differs from the bundle."}
+                    </span>
                   </p>
                 ) : null}
                 {bundleEdit && !bundleEdit.active ? (
