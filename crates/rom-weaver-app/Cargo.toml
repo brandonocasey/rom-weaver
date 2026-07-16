@@ -19,6 +19,7 @@ rom-weaver-dcp = { path = "../rom-weaver-dcp" }
 rom-weaver-gdrom = { path = "../rom-weaver-gdrom" }
 rom-weaver-libarchive = { workspace = true, default-features = false }
 rom-weaver-patches = { path = "../rom-weaver-patches" }
+rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

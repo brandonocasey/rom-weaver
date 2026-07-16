@@ -7,6 +7,7 @@ import type { BundleHeaderMode, ParsedBundleCreateResult, ParsedBundleParseResul
 import type { ParsedIngestResult } from "../../types/ingest.ts";
 import type { LogLevel } from "../../types/logging.ts";
 import type {
+  PatchValidatePerPatchVerdict,
   RuntimePatchApplyWorkerInput,
   RuntimePatchCreateCandidatesWorkerInput,
   RuntimePatchCreateFormatCandidates,
@@ -276,11 +277,37 @@ const normalizeN64ByteOrder = (value: unknown): "big-endian" | "little-endian" |
     : undefined;
 };
 
+// Read the independent-mode per-patch verdicts from a patch-validate terminal event's
+// `details.patch_validation.per_patch`. The chained (default) path emits no such array, so the
+// result is empty and the caller falls back to its single whole-call verdict.
+const parsePatchValidatePerPatch = (terminal: ReturnType<typeof getTerminalEvent>): PatchValidatePerPatchVerdict[] => {
+  const details = asRecord(terminal ? getRomWeaverRunEventDetails(terminal) : null);
+  const validation = asRecord(details?.patch_validation);
+  const rawPerPatch = validation?.per_patch;
+  if (!Array.isArray(rawPerPatch)) return [];
+  const verdicts: PatchValidatePerPatchVerdict[] = [];
+  for (const raw of rawPerPatch) {
+    const record = asRecord(raw);
+    if (!record) continue;
+    const index = Number(record.index);
+    if (!Number.isInteger(index) || index < 0) continue;
+    verdicts.push({
+      index,
+      ...(typeof record.format === "string" ? { format: record.format } : {}),
+      ...(typeof record.message === "string" ? { message: record.message } : {}),
+      ...(typeof record.patch === "string" ? { patch: record.patch } : {}),
+      status: record.status === "failed" ? "failed" : "passed",
+    });
+  }
+  return verdicts;
+};
+
 const invokeRomWeaverPatchValidateWorker = async (
   input: RuntimePatchValidateWorkerInput,
   onProgress?: (progress: RuntimePatchWorkerProgress) => void,
   onLog?: (log: WorkflowRuntimeLog) => void,
-): Promise<{ message?: string; status: "passed" }> => {
+): Promise<{ message?: string; perPatch?: PatchValidatePerPatchVerdict[]; status: "passed" | "mixed" }> => {
+  const independent = Boolean((input.options as { independent?: unknown } | undefined)?.independent);
   const requirements = getPatchValidationRequirements(input.options);
   const optionRecord = asRecord(input.options);
   const sourceCrc32 = toOptionalUint32Hex(requirements?.sourceCrc32 ?? requirements?.source_crc32);
@@ -320,6 +347,7 @@ const invokeRomWeaverPatchValidateWorker = async (
   const syncAccessMode = hasBpsPatch ? "readwrite-unsafe" : undefined;
   const command = createRomWeaverCommand("patch-validate", {
     ...(checksumCache.length ? { checksum_cache: checksumCache } : {}),
+    ...(independent ? { independent: true } : {}),
     ignore_checksum_validation: ignoreChecksumValidation,
     input: input.romFilePath,
     ...(n64ByteOrder ? { n64_byte_order: n64ByteOrder } : {}),
@@ -378,9 +406,12 @@ const invokeRomWeaverPatchValidateWorker = async (
   }
 
   const terminal = getTerminalEvent(result);
+  const perPatch = parsePatchValidatePerPatch(terminal);
+  const status = perPatch.some((verdict) => verdict.status === "failed") ? "mixed" : "passed";
   return {
     message: terminal ? getRomWeaverRunEventLabel(terminal) : "Patch validation passed",
-    status: "passed",
+    ...(perPatch.length ? { perPatch } : {}),
+    status,
   };
 };
 

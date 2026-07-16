@@ -4,6 +4,7 @@ import {
 } from "../../platform/shared/workflow-runtime-progress.ts";
 import type { PatchApplySummary } from "../../types/workflow-internal.ts";
 import type {
+  PatchValidateResult,
   RuntimePatchApplyWorkerInput,
   RuntimePatchCreateCandidatesWorkerInput,
   RuntimePatchCreateFormatCandidates,
@@ -110,7 +111,7 @@ type PatchRuntimeAdapter = {
     input: RuntimePatchValidateWorkerInput,
     onProgress: ((progress: RuntimePatchWorkerProgress) => void) | undefined,
     onLog: Parameters<NonNullable<WorkflowRuntime["patch"]["validatePatch"]>>[0]["onLog"],
-  ) => Promise<{ message?: string; status: "passed" }>;
+  ) => Promise<PatchValidateResult>;
   workerIo: RuntimeWorkerIo;
   workerOutputFailureMessage?: string;
 };

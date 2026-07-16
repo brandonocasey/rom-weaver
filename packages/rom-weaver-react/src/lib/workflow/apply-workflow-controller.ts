@@ -42,7 +42,7 @@ import {
   clearApplyPatchTarget,
   evaluateApplyPatchReadiness,
 } from "./apply-patch-readiness-state-machine.ts";
-import { validateApplyPatchTarget } from "./apply-patch-target-validation.ts";
+import { type PatchTargetValidationAdapters, validateApplyPatchTargets } from "./apply-patch-target-validation.ts";
 import {
   applyPreparedInputMetadata,
   applyPreparedPatchMetadata,
@@ -63,6 +63,7 @@ import {
 import type {
   InputSession,
   InternalCandidate,
+  InternalPatchChecksumPreflight,
   InternalSourceState,
   SourceRole,
   SourceValidator,
@@ -1285,6 +1286,11 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
   async validatePatches(): Promise<void> {
     return this.mutate("validatePatches", async () => {
       const assets = this.getPatchableInputAssets();
+      const pending: Array<{
+        preflight: InternalPatchChecksumPreflight;
+        stage: StagedSource<TSource>;
+        target: InputAsset;
+      }> = [];
       for (const stage of this.patches) {
         const preflight = stage.state.checksumPreflight;
         if (!(stage.state.status === "ready" && stage.state.targetInputId && preflight)) continue;
@@ -1293,14 +1299,23 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
           (asset) => asset.id === stage.state.targetInputId || asset.fileName === stage.state.targetInputId,
         );
         if (!target) continue;
-        await validateApplyPatchTarget(stage, target, preflight, {
-          emitProgress: (event) => this.emitProgress(event),
-          runtime: this.runtime,
-          settings: this.settings,
-          signal: this.abortController.signal,
-          workflowId: this.id,
-        });
+        pending.push({ preflight, stage, target });
       }
+      const adapters: PatchTargetValidationAdapters = {
+        emitProgress: (event) => this.emitProgress(event),
+        runtime: this.runtime,
+        settings: this.settings,
+        signal: this.abortController.signal,
+        workflowId: this.id,
+      };
+      // Validate every staged patch in ONE independent-mode call per input group. The Rust
+      // `patch-validate` command now validates each --patch independently against the original input
+      // (no chaining) and reports an index-aligned per-patch verdict, so all patches targeting the
+      // same input + header decision share a single runner boot + input mount instead of paying N
+      // cold boots (a real risk of the ~1GiB-per-worker OOM tab reload on iOS when several fire at
+      // once). Distinct groups still run concurrently; the batched call never throws (transient
+      // failures/aborts become retryable "unknown").
+      await validateApplyPatchTargets(pending, adapters);
       this.recomputeOutputState();
     });
   }

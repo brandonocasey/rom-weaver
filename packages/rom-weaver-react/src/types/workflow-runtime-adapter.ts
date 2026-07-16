@@ -239,11 +239,30 @@ type RuntimePatchApplyOptions = Partial<Omit<PatchApplyCommand, "input" | "outpu
 type RuntimePatchValidateOptions = Partial<Omit<PatchValidateCommand, "input" | "patches">> & {
   checksumCache?: RuntimeChecksumCacheInput;
   ignoreChecksumValidation?: PatchValidateCommand["ignore_checksum_validation"];
+  /** Validate every patch independently against the original input (no chaining) and return a
+   * per-patch verdict; a single failing patch never fails the whole call. */
+  independent?: boolean;
   n64ByteOrder?: PatchValidateCommand["n64_byte_order"];
   removeHeader?: PatchValidateCommand["strip_header"];
   validateWithChecksums?: PatchValidateCommand["validate_with_checksums"];
   validationRequirements?: RuntimePatchValidationRequirement | RuntimePatchValidationRequirement[];
   workerThreads?: RuntimeThreadBudgetInput;
+};
+
+/** One patch's verdict from an independent-mode `patch-validate` call, index-aligned to the patches
+ * passed in. `status: "failed"` carries the reason in `message`; other patches are unaffected. */
+type PatchValidatePerPatchVerdict = {
+  format?: string;
+  index: number;
+  message?: string;
+  patch?: string;
+  status: "passed" | "failed";
+};
+
+type PatchValidateResult = {
+  message?: string;
+  perPatch?: PatchValidatePerPatchVerdict[];
+  status: "passed" | "mixed";
 };
 
 type RuntimePatchApplyWorkerInput = {
@@ -357,10 +376,7 @@ type WorkflowRuntimePatch = {
     onLog?: (log: WorkflowRuntimeLog) => void;
     onProgress?: (progress: WorkflowCreatePatchProgress) => void;
     signal?: AbortSignal;
-  }) => Promise<{
-    message?: string;
-    status: "passed";
-  }>;
+  }) => Promise<PatchValidateResult>;
   createPatch?: (input: {
     original: SourceRef;
     modified: SourceRef;
@@ -556,6 +572,8 @@ type WorkflowRuntime = {
 };
 
 export type {
+  PatchValidatePerPatchVerdict,
+  PatchValidateResult,
   RuntimeArchiveCreateInput,
   RuntimePatchApplyWorkerInput,
   RuntimePatchCreateCandidatesWorkerInput,

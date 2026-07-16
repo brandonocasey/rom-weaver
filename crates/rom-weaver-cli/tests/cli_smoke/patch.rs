@@ -5388,6 +5388,117 @@ fn patch_validate_rejects_apsgba_checksum_mismatch() {
 }
 
 #[test]
+fn patch_validate_independent_reports_all_passed() {
+    let temp = setup_temp_dir();
+    let input = temp.child("input.bin");
+    fs::write(input.path(), b"hello old world").expect("fixture");
+
+    // Two BPS patches built from the SAME source both validate against that source.
+    fs::write(temp.child("mod-a.bin").path(), b"hello new world").expect("fixture");
+    fs::write(temp.child("mod-b.bin").path(), b"hello cool world").expect("fixture");
+    let patch_a = temp.child("update-a.bps");
+    let patch_b = temp.child("update-b.bps");
+    create_bps_patch(input.path(), temp.child("mod-a.bin").path(), patch_a.path());
+    create_bps_patch(input.path(), temp.child("mod-b.bin").path(), patch_b.path());
+
+    let output = command_stdout(
+        &[
+            "patch",
+            "validate",
+            "--input",
+            input.path().to_str().expect("path"),
+            "--patch",
+            patch_a.path().to_str().expect("path"),
+            "--patch",
+            patch_b.path().to_str().expect("path"),
+            "--independent",
+            "--json",
+        ],
+        0,
+    );
+
+    let json = parse_single_json_line(&output);
+    assert_patch_envelope(&json, "patch-validate", "BPS", "succeeded");
+    let validation = &json["details"]["patch_validation"];
+    assert_eq!(validation["independent"], true);
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["patch_count"], 2);
+    assert_eq!(validation["passed_count"], 2);
+    assert_eq!(validation["failed_count"], 0);
+    let per_patch = validation["per_patch"].as_array().expect("per_patch array");
+    assert_eq!(per_patch.len(), 2);
+    for (index, entry) in per_patch.iter().enumerate() {
+        assert_eq!(entry["index"], index);
+        assert_eq!(entry["status"], "passed");
+        assert_eq!(entry["format"], "BPS");
+    }
+}
+
+#[test]
+fn patch_validate_independent_reports_mixed_without_aborting() {
+    let temp = setup_temp_dir();
+    let input = temp.child("input.bin");
+    fs::write(input.path(), b"hello old world").expect("fixture");
+
+    // A good BPS built from `input` passes; a BPS built from a DIFFERENT source embeds a source
+    // checksum that fails against `input` - but it must NOT abort the good patch's verdict.
+    fs::write(temp.child("mod-good.bin").path(), b"hello new world").expect("fixture");
+    fs::write(temp.child("other.bin").path(), b"totally other src").expect("fixture");
+    fs::write(temp.child("mod-other.bin").path(), b"totally other dst").expect("fixture");
+    let patch_good = temp.child("good.bps");
+    let patch_bad = temp.child("bad.bps");
+    create_bps_patch(
+        input.path(),
+        temp.child("mod-good.bin").path(),
+        patch_good.path(),
+    );
+    create_bps_patch(
+        temp.child("other.bin").path(),
+        temp.child("mod-other.bin").path(),
+        patch_bad.path(),
+    );
+
+    // Independent mode exits 0 even though one patch fails, so the caller can read both verdicts.
+    let output = command_stdout(
+        &[
+            "patch",
+            "validate",
+            "--input",
+            input.path().to_str().expect("path"),
+            "--patch",
+            patch_good.path().to_str().expect("path"),
+            "--patch",
+            patch_bad.path().to_str().expect("path"),
+            "--independent",
+            "--json",
+        ],
+        0,
+    );
+
+    let json = parse_single_json_line(&output);
+    assert_eq!(json["command"], "patch-validate");
+    assert_eq!(json["status"], "succeeded");
+    let validation = &json["details"]["patch_validation"];
+    assert_eq!(validation["independent"], true);
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["patch_count"], 2);
+    assert_eq!(validation["passed_count"], 1);
+    assert_eq!(validation["failed_count"], 1);
+    let per_patch = validation["per_patch"].as_array().expect("per_patch array");
+    assert_eq!(per_patch.len(), 2);
+    assert_eq!(per_patch[0]["index"], 0);
+    assert_eq!(per_patch[0]["status"], "passed");
+    assert_eq!(per_patch[1]["index"], 1);
+    assert_eq!(per_patch[1]["status"], "failed");
+    assert!(
+        !per_patch[1]["message"]
+            .as_str()
+            .expect("failure message")
+            .is_empty()
+    );
+}
+
+#[test]
 fn patch_apply_uses_parallel_threads_for_large_ips_patch() {
     let temp = setup_temp_dir();
     fs::write(temp.child("input.bin").path(), []).expect("fixture");

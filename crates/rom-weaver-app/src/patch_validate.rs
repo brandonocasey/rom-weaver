@@ -1,5 +1,7 @@
 use super::*;
 
+use rayon::prelude::*;
+
 use super::patch_commands::{
     PatchApplyProgressSink, PatchApplyProgressTracker, patch_progress_segment_start,
 };
@@ -21,6 +23,7 @@ impl CliApp {
             strip_header = args.strip_header,
             n64_byte_order = ?args.n64_byte_order,
             ignore_checksum_validation = args.ignore_checksum_validation,
+            independent = args.independent,
             threads = %args.threads,
             "starting patch-validate command"
         );
@@ -39,6 +42,7 @@ impl CliApp {
             strip_header,
             n64_byte_order,
             ignore_checksum_validation,
+            independent,
             threads,
         } = args;
         let input_kind_filter = Self::archive_entry_kind_filter(rom_filter, false);
@@ -304,6 +308,24 @@ impl CliApp {
                 }
             }
 
+            if independent {
+                return self.run_patch_validate_independent(
+                    &resolved_patches,
+                    &validate_input,
+                    &context,
+                    probe_threads.clone(),
+                    IndependentValidationSummary {
+                        extracted_archives,
+                        n64_byte_order,
+                        extracted_patch_notes,
+                        validation_labels,
+                        min_size: validate_with_min_size,
+                        expected_size: effective_expected_size,
+                        expected_input_checksums: expected_input_checksums.clone(),
+                    },
+                );
+            }
+
             let patch_count = resolved_patches.len();
             let mut current_input = validate_input;
             let mut formats = Vec::with_capacity(patch_count);
@@ -533,4 +555,323 @@ impl CliApp {
         Self::cleanup_temp_paths(&temp_paths);
         self.finish("patch-validate", report)
     }
+
+    /// Validate each patch independently against the ORIGINAL prepared input (no
+    /// sequential chaining). A single failing patch never aborts the others - the
+    /// command collects a per-patch verdict for every patch and exits 0 so the
+    /// webapp can read individual results (a hard failure would lose them). A
+    /// genuine cancellation is the sole exception: it returns a `Cancelled`
+    /// failure so the whole call maps to a retryable "unknown".
+    fn run_patch_validate_independent(
+        &self,
+        resolved_patches: &[(PathBuf, PathBuf)],
+        validate_input: &Path,
+        context: &OperationContext,
+        probe_threads: Option<ThreadExecution>,
+        summary: IndependentValidationSummary,
+    ) -> OperationReport {
+        let patch_count = resolved_patches.len();
+        debug!(
+            patch_count,
+            "patch-validate running independent (non-chained) per-patch validation"
+        );
+
+        // Probe each patch's handler sequentially (cheap header sniffing). Patches whose handler
+        // cannot be resolved - or that cannot dry-run apply - become already-decided "failed"
+        // verdicts rather than aborting the batch.
+        let mut ready_jobs: Vec<IndependentReadyJob> = Vec::new();
+        let mut decided: Vec<PerPatchVerdict> = Vec::new();
+        for (index, (patch_path, resolved_patch_path)) in resolved_patches.iter().enumerate() {
+            let patch_label = patch_path.to_string_lossy().to_string();
+            match self.probe_patch_handler(
+                patch_path,
+                resolved_patch_path,
+                index,
+                patch_count,
+                probe_threads.clone(),
+            ) {
+                Ok(handler) => {
+                    let format = handler.descriptor().name.to_string();
+                    if handler.capabilities().apply {
+                        ready_jobs.push(IndependentReadyJob {
+                            index,
+                            patch: patch_label,
+                            resolved: resolved_patch_path.clone(),
+                            format,
+                            handler,
+                        });
+                    } else {
+                        let message = format!("{format} does not support dry-run validation");
+                        trace!(
+                            index,
+                            patch_count, format, "independent patch verdict: failed (unsupported)"
+                        );
+                        decided.push(PerPatchVerdict {
+                            index,
+                            patch: patch_label,
+                            format: Some(format),
+                            passed: false,
+                            message,
+                        });
+                    }
+                }
+                Err(report) => {
+                    trace!(
+                        index,
+                        patch_count, "independent patch verdict: failed (probe)"
+                    );
+                    decided.push(PerPatchVerdict {
+                        index,
+                        patch: patch_label,
+                        format: report.format.clone(),
+                        passed: false,
+                        message: report.label.clone(),
+                    });
+                }
+            }
+        }
+
+        // Fan the dry-runs out across the op's thread budget (capped at the number of runnable
+        // patches). On the non-threaded wasm build this negotiates to a single thread, so the batch
+        // still runs - just serially. A per-patch `Cancelled` is the only error that aborts the whole
+        // batch; every other handler error is captured as that patch's "failed" verdict.
+        let run_one =
+            |job: &IndependentReadyJob| -> std::result::Result<PerPatchVerdict, RomWeaverError> {
+                let request = PatchValidateRequest {
+                    input: validate_input.to_path_buf(),
+                    patches: vec![job.resolved.clone()],
+                };
+                let verdict = match job.handler.validate(&request, context) {
+                    Ok(report) if report.status == OperationStatus::Succeeded => PerPatchVerdict {
+                        index: job.index,
+                        patch: job.patch.clone(),
+                        format: Some(job.format.clone()),
+                        passed: true,
+                        message: report.label,
+                    },
+                    Ok(report) => PerPatchVerdict {
+                        index: job.index,
+                        patch: job.patch.clone(),
+                        format: Some(job.format.clone()),
+                        passed: false,
+                        message: report.label,
+                    },
+                    Err(RomWeaverError::Cancelled) => return Err(RomWeaverError::Cancelled),
+                    Err(RomWeaverError::Unsupported(op)) => PerPatchVerdict {
+                        index: job.index,
+                        patch: job.patch.clone(),
+                        format: Some(job.format.clone()),
+                        passed: false,
+                        message: op.to_string(),
+                    },
+                    Err(error) => PerPatchVerdict {
+                        index: job.index,
+                        patch: job.patch.clone(),
+                        format: Some(job.format.clone()),
+                        passed: false,
+                        message: error.to_string(),
+                    },
+                };
+                trace!(
+                    index = verdict.index,
+                    patch_count,
+                    format = job.format,
+                    passed = verdict.passed,
+                    "independent patch verdict"
+                );
+                Ok(verdict)
+            };
+
+        let capability = ThreadCapability::parallel(Some(ready_jobs.len().max(1)));
+        let planned = context.plan_threads(capability.clone());
+        let computed = if !ready_jobs.is_empty() {
+            self.emit_running(
+                OperationLabel {
+                    command: "patch-validate",
+                    family: OperationFamily::Patch,
+                    format: None,
+                },
+                "validate",
+                format!("validating {patch_count} patch(es) independently"),
+                None,
+                None,
+            );
+            if planned.used_parallelism {
+                let (execution, pool) = match context.build_pool(capability) {
+                    Ok(built) => built,
+                    Err(error) => {
+                        return OperationReport::failed(
+                            OperationFamily::Patch,
+                            None,
+                            "validate",
+                            error.to_string(),
+                            context.single_thread_execution(),
+                        );
+                    }
+                };
+                trace!(
+                    used_parallelism = execution.used_parallelism,
+                    threads = execution.effective_threads,
+                    jobs = ready_jobs.len(),
+                    "independent patch validation fan-out (parallel)"
+                );
+                pool.install(|| {
+                    ready_jobs
+                        .par_iter()
+                        .map(run_one)
+                        .collect::<std::result::Result<Vec<_>, _>>()
+                })
+            } else {
+                trace!(
+                    used_parallelism = false,
+                    jobs = ready_jobs.len(),
+                    "independent patch validation fan-out (serial)"
+                );
+                ready_jobs
+                    .iter()
+                    .map(run_one)
+                    .collect::<std::result::Result<Vec<_>, _>>()
+            }
+        } else {
+            Ok(Vec::new())
+        };
+
+        let computed = match computed {
+            Ok(verdicts) => verdicts,
+            // A genuine cancellation aborts the whole batch as a hard failure so the webapp maps the
+            // call to a retryable "unknown" rather than reading partial per-patch verdicts.
+            Err(error) => {
+                debug!("independent patch validation cancelled");
+                return OperationReport::failed(
+                    OperationFamily::Patch,
+                    None,
+                    "validate",
+                    error.to_string(),
+                    Some(planned),
+                );
+            }
+        };
+
+        let mut verdicts = decided;
+        verdicts.extend(computed);
+        verdicts.sort_by_key(|verdict| verdict.index);
+
+        let passed_count = verdicts.iter().filter(|verdict| verdict.passed).count();
+        let failed_count = patch_count.saturating_sub(passed_count);
+        let status = if failed_count == 0 { "passed" } else { "mixed" };
+
+        let mut formats: Vec<String> = Vec::new();
+        for verdict in &verdicts {
+            if let Some(format) = &verdict.format
+                && !formats.iter().any(|existing| existing == format)
+            {
+                formats.push(format.clone());
+            }
+        }
+
+        let IndependentValidationSummary {
+            extracted_archives,
+            n64_byte_order,
+            extracted_patch_notes,
+            mut validation_labels,
+            min_size,
+            expected_size,
+            expected_input_checksums,
+        } = summary;
+        if extracted_archives > 0 {
+            validation_labels.push(format!(
+                "input resolved via {extracted_archives} container extract step(s)"
+            ));
+        }
+        if let Some(target_order) = n64_byte_order {
+            validation_labels.push(format!("n64_byte_order={}", target_order.id()));
+        }
+        validation_labels.extend(extracted_patch_notes);
+
+        let format_label = if formats.is_empty() {
+            "patch".to_string()
+        } else {
+            formats.join(", ")
+        };
+        let suffix = if validation_labels.is_empty() {
+            String::new()
+        } else {
+            format!("; {}", validation_labels.join("; "))
+        };
+        let per_patch = verdicts
+            .iter()
+            .map(|verdict| {
+                json!({
+                    "index": verdict.index,
+                    "patch": verdict.patch,
+                    "format": verdict.format,
+                    "status": if verdict.passed { "passed" } else { "failed" },
+                    "message": verdict.message,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut report = OperationReport::succeeded(
+            OperationFamily::Patch,
+            formats.first().cloned(),
+            "validate",
+            format!(
+                "independent patch validation {status}: {passed_count}/{patch_count} passed ({format_label}){suffix}"
+            ),
+            Some(100.0),
+            Some(planned),
+        );
+        report.details = Some(json!({
+            "patch_validation": {
+                "dry_run": true,
+                "independent": true,
+                "status": status,
+                "patch_count": patch_count,
+                "passed_count": passed_count,
+                "failed_count": failed_count,
+                "format": formats.first().cloned(),
+                "formats": formats,
+                "per_patch": per_patch,
+                "source_values": {
+                    "minimum_size": min_size,
+                    "size": expected_size,
+                    "checksums": expected_input_checksums,
+                },
+            }
+        }));
+        report
+    }
+}
+
+/// Shared input-level context threaded into independent-mode validation: the
+/// notes/labels already accumulated by the shared input preparation plus the
+/// expected source values, so the independent report carries the same suffix and
+/// `source_values` block the chained report does.
+struct IndependentValidationSummary {
+    extracted_archives: usize,
+    n64_byte_order: Option<N64ByteOrder>,
+    extracted_patch_notes: Vec<String>,
+    validation_labels: Vec<String>,
+    min_size: Option<u64>,
+    expected_size: Option<u64>,
+    expected_input_checksums: BTreeMap<String, String>,
+}
+
+/// A patch whose handler resolved and supports dry-run apply, queued for the
+/// parallel independent validation fan-out.
+struct IndependentReadyJob {
+    index: usize,
+    patch: String,
+    resolved: PathBuf,
+    format: String,
+    handler: Arc<dyn rom_weaver_core::PatchHandler>,
+}
+
+/// One patch's independent-mode verdict, collected regardless of pass/fail.
+struct PerPatchVerdict {
+    index: usize,
+    patch: String,
+    format: Option<String>,
+    passed: bool,
+    message: String,
 }
