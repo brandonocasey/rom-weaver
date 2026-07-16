@@ -2594,9 +2594,9 @@ html.vt-mode .drop:has(#tools-input-picker) { view-transition-name: none !import
 /* the workflow form owns no plate: filled or empty, the page IS the form
    (the side borders of the old mounted plate framed it like a box). Steps
    keep their hairlines, cards their wells - depth lives one level down. */
-/* same air above 0x01 as every later header gets (content → weave line → head
-   is --step-pb + head slack); phones keep their own tighter rail margins */
-.rw-app .panel.workflow { margin-block-start: var(--step-pb); }
+/* 0x01 sits directly under the masthead rope line with only the shared head
+   slack (--step-pt) above it - no leading --step-pb, since there's no preceding
+   step body to space away from (unlike every later header) */
 .rw-app .panel.workflow .step:last-child { padding-block-end: 4px; }
 /* Section rails belong to the workflow rather than to a breakpoint. Keep the
    numbered stages and compact add-files row visually consistent on desktop
