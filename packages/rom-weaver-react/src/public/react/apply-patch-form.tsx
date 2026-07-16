@@ -82,17 +82,26 @@ const buildEagerPatchStageInfo = (
   return toPatchStageInfo(patch, fileName, order, `Target: ${targetName}`);
 };
 
-/** The URL hash that deep-links into bundle-edit mode (`…#bundle-edit`). */
+/** The URL hash segment that deep-links into bundle-edit mode. The webapp's
+ * tab router owns the hash's first segment (`#/apply`), so the mode rides as
+ * an extra segment (`#/apply/bundle-edit`); a bare `#bundle-edit` also counts
+ * (embedding without the router, and the router resolves it to the Weave tab). */
 const BUNDLE_EDIT_HASH = "bundle-edit";
 
+const readHashSegments = (): string[] =>
+  typeof window === "undefined" ? [] : window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+
 const readBundleEditHash = (): boolean =>
-  typeof window !== "undefined" && window.location.hash.replace(/^#/, "") === BUNDLE_EDIT_HASH;
+  readHashSegments().some((segment) => segment.toLowerCase() === BUNDLE_EDIT_HASH);
 
 const writeBundleEditHash = (active: boolean) => {
   if (typeof window === "undefined") return;
   if (readBundleEditHash() === active) return;
+  const kept = readHashSegments().filter((segment) => segment.toLowerCase() !== BUNDLE_EDIT_HASH);
+  const segments = active ? [...kept, BUNDLE_EDIT_HASH] : kept;
   const url = new URL(window.location.href);
-  url.hash = active ? BUNDLE_EDIT_HASH : "";
+  // Preserve the router's `#/<slug>` shape when a route segment is present.
+  url.hash = segments.length ? (kept.length ? `/${segments.join("/")}` : segments.join("/")) : "";
   // replaceState: toggling the editor is a mode, not a navigation - no history entries.
   window.history.replaceState(window.history.state, "", url);
 };

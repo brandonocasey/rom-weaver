@@ -60,6 +60,28 @@ describe("createWebappRootController over the vanilla store", () => {
     expect(window.location.hash).toBe("#/apply");
   });
 
+  it("carries the bundle-edit hash segment through routing", () => {
+    // A bare deep link resolves to the Weave tab and normalizes to the
+    // router's shape with the mode segment preserved.
+    window.location.hash = "#bundle-edit";
+    const controller = createController();
+    expect(controller.getState().currentView).toBe("patcher");
+    expect(window.location.hash).toBe("#/apply/bundle-edit");
+    // The mode segment belongs to the apply form: navigating away drops it,
+    // returning does not resurrect it.
+    controller.selectView("creator");
+    expect(window.location.hash).toBe("#/create");
+    controller.selectView("patcher");
+    expect(window.location.hash).toBe("#/apply");
+  });
+
+  it("keeps the routed bundle-edit deep link on the weave tab", () => {
+    window.location.hash = "#/apply/bundle-edit";
+    const controller = createController();
+    expect(controller.getState().currentView).toBe("patcher");
+    expect(window.location.hash).toBe("#/apply/bundle-edit");
+  });
+
   it("routes and tracks the tools workflow", () => {
     const controller = createController();
     controller.updateDraftSetting("betaToolsEnabled", true);
