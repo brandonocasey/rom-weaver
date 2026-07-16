@@ -17,8 +17,5 @@
   },
   "devDependencies": {
     "lefthook": "2.1.8"
-  },
-  "dependencies": {
-    "headroom-ai": "0.22.4"
   }
 }
