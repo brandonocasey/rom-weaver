@@ -375,6 +375,92 @@ fn patch_apply_succeeds_for_valid_ips_patch() {
 }
 
 #[test]
+fn patch_apply_rejects_output_aliases_without_modifying_sources() {
+    let temp = setup_temp_dir();
+    let input = temp.child("input.bin");
+    let patch = temp.child("update.ips");
+    let original = b"abcdefgh";
+    fs::write(input.path(), original).expect("input fixture");
+    let patch_bytes = build_ips_patch(
+        vec![TestIpsRecord::Literal {
+            offset: 0,
+            data: b"Z".to_vec(),
+        }],
+        None,
+    );
+    fs::write(patch.path(), &patch_bytes).expect("patch fixture");
+
+    let apply = |output: &Path| {
+        run_single_json_event(
+            &[
+                "patch",
+                "apply",
+                "--input",
+                input.path().to_str().expect("input path"),
+                "--patch",
+                patch.path().to_str().expect("patch path"),
+                "--output",
+                output.to_str().expect("output path"),
+                "--no-compress",
+                "--json",
+            ],
+            1,
+        )
+    };
+
+    let nested = temp.child("nested");
+    fs::create_dir_all(nested.path()).expect("nested directory");
+    let canonical_alias = nested.path().join("..").join("input.bin");
+    let hardlink_alias = temp.child("input-hardlink.bin");
+    fs::hard_link(input.path(), hardlink_alias.path()).expect("hard link");
+
+    for output in [
+        input.path(),
+        canonical_alias.as_path(),
+        hardlink_alias.path(),
+    ] {
+        let json = apply(output);
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["stage"], "validate");
+        assert!(
+            json["label"]
+                .as_str()
+                .expect("label")
+                .contains("input and output resolve to the same file")
+        );
+        assert_eq!(fs::read(input.path()).expect("input remains"), original);
+    }
+
+    let canonical_patch_alias = nested.path().join("..").join("update.ips");
+    let patch_hardlink = temp.child("patch-hardlink.ips");
+    fs::hard_link(patch.path(), patch_hardlink.path()).expect("patch hard link");
+    let mut patch_aliases = vec![
+        patch.path().to_path_buf(),
+        canonical_patch_alias,
+        patch_hardlink.path().to_path_buf(),
+    ];
+    #[cfg(unix)]
+    {
+        let patch_symlink = temp.child("patch-symlink.ips");
+        std::os::unix::fs::symlink(patch.path(), patch_symlink.path()).expect("patch symlink");
+        patch_aliases.push(patch_symlink.path().to_path_buf());
+    }
+
+    for output in patch_aliases {
+        let json = apply(&output);
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["stage"], "validate");
+        assert!(
+            json["label"]
+                .as_str()
+                .expect("label")
+                .contains("output and patch file")
+        );
+        assert_eq!(fs::read(patch.path()).expect("patch remains"), patch_bytes);
+    }
+}
+
+#[test]
 fn patch_apply_succeeds_for_valid_ebp_patch() {
     run_patch_apply(
         b"abcdefgh",

@@ -7,6 +7,44 @@ use super::patch_commands::{
     patch_progress_segment_start,
 };
 
+fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
+    left == right
+        || matches!(
+            (fs::canonicalize(left), fs::canonicalize(right)),
+            (Ok(left), Ok(right)) if left == right
+        )
+        || native_file_identity_matches(left, right)
+}
+
+#[cfg(unix)]
+fn native_file_identity_matches(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    matches!(
+        (fs::metadata(left), fs::metadata(right)),
+        (Ok(left), Ok(right)) if left.dev() == right.dev() && left.ino() == right.ino()
+    )
+}
+
+#[cfg(windows)]
+fn native_file_identity_matches(left: &Path, right: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    matches!(
+        (fs::metadata(left), fs::metadata(right)),
+        (Ok(left), Ok(right))
+            if left.volume_serial_number().is_some()
+                && left.volume_serial_number() == right.volume_serial_number()
+                && left.file_index().is_some()
+                && left.file_index() == right.file_index()
+    )
+}
+
+#[cfg(not(any(unix, windows)))]
+fn native_file_identity_matches(_left: &Path, _right: &Path) -> bool {
+    false
+}
+
 impl CliApp {
     pub(super) fn run_patch_apply(&self, args: PatchApplyCommand) -> AppRunOutcome {
         trace!(
@@ -45,6 +83,8 @@ impl CliApp {
         // archive members live in, so it must outlive the whole apply - it is
         // dropped (and its files cleaned) only after the run completes.
         let mut args = args;
+        let original_input = args.input.clone();
+        let local_bundle = args.bundle.as_ref().filter(|path| path.exists()).cloned();
         let bundle_context = self.context(args.threads);
         let bundle_resolution = match self.resolve_bundle_apply(&mut args, &bundle_context) {
             Ok(resolution) => resolution,
@@ -62,7 +102,7 @@ impl CliApp {
                 );
             }
         };
-        self.run_patch_apply_resolved(args, bundle_resolution)
+        self.run_patch_apply_resolved(args, bundle_resolution, original_input, local_bundle)
     }
 
     /// The body of `patch apply` after bundle resolution: `args` is a plain,
@@ -71,12 +111,14 @@ impl CliApp {
         &self,
         args: PatchApplyCommand,
         bundle_resolution: Option<BundleApplyResolution>,
+        original_input: PathBuf,
+        local_bundle: Option<PathBuf>,
     ) -> AppRunOutcome {
         // Everything downstream (staging, finalize, compression naming) needs a
         // concrete output path. A bundle-driven run fills this from
         // output.name before we get here, so only the flag-less, bundle-less
         // case can still be empty.
-        if args.output.is_none() {
+        let Some(output) = args.output.as_deref() else {
             let thread_execution = self.context(args.threads).single_thread_execution();
             return self.finish(
                 "patch-apply",
@@ -89,6 +131,46 @@ impl CliApp {
                         "patch apply requires --output or a bundle output.name",
                     )
                     .to_string(),
+                    thread_execution,
+                ),
+            );
+        };
+        let alias_message = if paths_refer_to_same_file(&original_input, output)
+            || paths_refer_to_same_file(&args.input, output)
+        {
+            Some(
+                "patch apply input and output resolve to the same file; choose a different --output path"
+                    .to_string(),
+            )
+        } else if let Some(patch) = args
+            .patches
+            .iter()
+            .find(|patch| paths_refer_to_same_file(patch, output))
+        {
+            Some(format!(
+                "patch apply output and patch file `{}` resolve to the same file; choose a different --output path",
+                patch.display()
+            ))
+        } else {
+            local_bundle
+                .as_deref()
+                .filter(|bundle| paths_refer_to_same_file(bundle, output))
+                .map(|bundle| {
+                    format!(
+                        "patch apply output and bundle source `{}` resolve to the same file; choose a different --output path",
+                        bundle.display()
+                    )
+                })
+        };
+        if let Some(message) = alias_message {
+            let thread_execution = self.context(args.threads).single_thread_execution();
+            return self.finish(
+                "patch-apply",
+                OperationReport::failed(
+                    OperationFamily::Patch,
+                    None,
+                    "validate",
+                    message,
                     thread_execution,
                 ),
             );
