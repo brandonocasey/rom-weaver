@@ -10,6 +10,7 @@ import type {
 } from "../../types/apply-workflow.ts";
 import type { CompressionFormat } from "../../types/settings.ts";
 import type { ApplyWorkflowResult, ProgressEvent } from "../../types/workflow-runtime-types.ts";
+import type { PatchValidationPlan } from "../../wasm/index.ts";
 import type { StagedInputInfo } from "./apply-session-types.ts";
 import { ApplyWorkflowFormView } from "./apply-workflow-form-view.tsx";
 import {
@@ -253,12 +254,16 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   // Ordered patch file names as state (the refs above don't re-render): drives
   // the bundle chain-intact check for output verification + its notice.
   const [currentPatchNames, setCurrentPatchNames] = useState<readonly string[]>([]);
+  // Per-target chain verification plans, snapshotted from the workflow after each deep
+  // validation pass: drives the output-verification line in the action column.
+  const [chainPlans, setChainPlans] = useState<ReadonlyMap<string, PatchValidationPlan>>(new Map());
 
   const handleLocalPatchesChange = useCallback(
     (nextPatches: BinarySource[]) => {
       if (!nextPatches.length) {
         setLocalBundleSession(null);
         setBundleDismissed(true);
+        setChainPlans(new Map());
       }
       syncPatchTracking(nextPatches);
       currentPatchesRef.current = nextPatches;
@@ -326,12 +331,50 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     };
   }, [activeBundleSession, bundleChainStatus, bundleOutputChecksum]);
 
-  // The stand-down notice: the bundle records an expected output, but the
-  // current selection/chain is not the one it describes.
-  const bundleOutputStandDown =
-    bundleOutputChecksum && (bundleChainStatus === "partial" || bundleChainStatus === "diverged")
-      ? bundleChainStatus
-      : null;
+  // The output-verification line: whether the woven FINAL result will be checked against an
+  // expected output, and why not when it won't. Plan-driven when the chain plans carry a
+  // final-step output expectation (declared per-patch checks or the last patch's embedded
+  // target); the bundle-level expected output (seeded onto the last patch only while the full
+  // authored chain is enabled in order) is the fallback source.
+  const enabledPatchCount = currentPatchNames.length - disabledPatchIds.size;
+  const outputVerification = useMemo((): { level: "ok" | "warn"; message: string } | null => {
+    if (enabledPatchCount <= 0) return null;
+    const finalEntries: Array<{ enforceable: boolean }> = [];
+    let orderIssue = false;
+    let inputIssue = false;
+    for (const plan of chainPlans.values()) {
+      for (const entry of plan.output_verification) {
+        if (entry.patch_index === plan.patch_count - 1) finalEntries.push(entry);
+      }
+      for (const verdict of plan.per_patch) {
+        if (verdict.expected_predecessor !== undefined) orderIssue = true;
+        if (verdict.input_verdict === "failed") inputIssue = true;
+      }
+    }
+    if (finalEntries.length) {
+      if (finalEntries.every((entry) => entry.enforceable))
+        return { level: "ok", message: "The woven result will be verified against the expected output." };
+      if (orderIssue) return { level: "warn", message: "Output won't be verified - the patches are out of order." };
+      if (inputIssue)
+        return { level: "warn", message: "Output won't be verified - an earlier patch doesn't match its input." };
+      return {
+        level: "warn",
+        message: "Output won't be verified - the expected output describes a different patch chain.",
+      };
+    }
+    if (bundleOutputChecksum && bundleChainStatus) {
+      if (bundleChainStatus === "full")
+        return { level: "ok", message: "The woven result will be verified against the expected output." };
+      return {
+        level: "warn",
+        message:
+          bundleChainStatus === "partial"
+            ? "Output won't be verified - the bundle's expected result only covers its full patch chain."
+            : "Output won't be verified - the patch chain differs from the bundle.",
+      };
+    }
+    return null;
+  }, [bundleChainStatus, bundleOutputChecksum, chainPlans, enabledPatchCount]);
 
   const queueMutation = useCallback(<TValue,>(callback: () => Promise<TValue>) => {
     const run = mutationQueueRef.current.catch(() => undefined).then(callback);
@@ -1053,6 +1096,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
             chainMeta: buildChainMeta(input.patches),
             disabledIndexes: getDisabledPatchIndexes(input.patches),
           });
+          setChainPlans(new Map(workflow.latestChainPlans));
           return buildInfos();
         },
       );
@@ -1138,6 +1182,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
               chainMeta: buildChainMeta(input.patches),
               disabledIndexes: getDisabledPatchIndexes(input.patches),
             });
+            setChainPlans(new Map(workflow.latestChainPlans));
           }
           const refreshedInput = workflow.getInput();
           const refreshedPatches = workflow.getPatches();
@@ -1310,7 +1355,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           exportVisible: bundleExportVisible,
           hasOptionalEntries:
             !!activeBundleSession?.entries.some((entry) => entry.optional) || disabledPatchIds.size > 0,
-          outputStandDown: bundleOutputStandDown,
+          outputVerification,
           setBundlePackage: changeBundlePackage,
         }}
         onBundleMetaChange={updateBundleMeta}

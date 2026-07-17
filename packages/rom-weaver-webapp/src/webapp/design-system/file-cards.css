@@ -188,6 +188,8 @@
 /* light mode: the golden --care is ~2.9:1 on the pale card face - too light for
    small text. Use the same deep amber as the notice emphasis (clears 4.5:1). */
 :root[data-theme="light"] .patch-off-note, :root[data-theme="light"] .checkrow.warn { color: #7a5300; }
+/* the reassurance variant of the same line: output verification is engaged */
+.rw-app .patch-off-note.is-ok, :root[data-theme="light"] .patch-off-note.is-ok { color: var(--verified); }
 
 .rw-app .verdict { display: inline-flex; align-items: center; gap: var(--sp-xs); font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
 .rw-app .verdict.ok { color: var(--verified); } .rw-app .verdict.bad { color: var(--fault); }

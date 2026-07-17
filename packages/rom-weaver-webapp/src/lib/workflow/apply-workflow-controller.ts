@@ -1350,6 +1350,11 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
         });
         for (const entry of chain) entry.chainFingerprint = fingerprint;
       }
+      // Plans for targets with no live chain are stale (target removed / patches retargeted);
+      // targets whose chain is fully cached keep their still-valid plan (the group call skips).
+      for (const targetId of this.latestChainPlans.keys()) {
+        if (!chainsByTarget.has(targetId)) this.latestChainPlans.delete(targetId);
+      }
       if (skippedDisabled > 0) {
         this.trace("patch.validate.skip-disabled", {
           pendingCount: pending.length,

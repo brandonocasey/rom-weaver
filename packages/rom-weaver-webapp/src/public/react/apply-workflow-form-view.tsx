@@ -3,6 +3,7 @@ import Disc3 from "lucide-react/dist/esm/icons/disc-3.js";
 import Download from "lucide-react/dist/esm/icons/download.js";
 import ListChecks from "lucide-react/dist/esm/icons/list-checks.js";
 import Package from "lucide-react/dist/esm/icons/package.js";
+import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.js";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
@@ -242,8 +243,9 @@ type BundleToolsState = {
   /** The run has optional entries (or patches toggled off): output checks only
    * describe the full chain. */
   hasOptionalEntries: boolean;
-  /** The bundle records an expected output the current bench can't verify. */
-  outputStandDown: "diverged" | "partial" | null;
+  /** Whether the woven final result will be verified against an expected output
+   * (`ok`), or why it won't (`warn`); null when nothing declares an output. */
+  outputVerification: { level: "ok" | "warn"; message: string } | null;
 };
 
 const SectionNotice = ({ id, onDismiss, state }: { id?: string; onDismiss?: () => void; state: NoticeState }) => {
@@ -1109,15 +1111,18 @@ function ApplyWorkflowFormView({
                   totalTime={applyTotalTime || undefined}
                 />
                 {bundleVerificationError ? <Notice level="error">{bundleVerificationError}</Notice> : null}
-                {bundleTools?.outputStandDown ? (
-                  <p aria-live="polite" className="patch-off-note" id="rom-weaver-bundle-output-unverified">
-                    <TriangleAlert aria-hidden="true" />
-                    <span>
-                      {bundleTools.outputStandDown === "partial"
-                        ? "Output won't be verified - the bundle's expected result only covers its full patch chain."
-                        : "Output won't be verified - the patch chain differs from the bundle."}
-                    </span>
-                  </p>
+                {bundleTools?.outputVerification ? (
+                  bundleTools.outputVerification.level === "warn" ? (
+                    <p aria-live="polite" className="patch-off-note" id="rom-weaver-bundle-output-unverified">
+                      <TriangleAlert aria-hidden="true" />
+                      <span>{bundleTools.outputVerification.message}</span>
+                    </p>
+                  ) : (
+                    <p aria-live="polite" className="patch-off-note is-ok" id="rom-weaver-output-verified">
+                      <ShieldCheck aria-hidden="true" />
+                      <span>{bundleTools.outputVerification.message}</span>
+                    </p>
+                  )
                 ) : null}
                 {bundleExport && bundleTools?.exportVisible ? (
                   bundleExport.busy ? (

@@ -32,6 +32,11 @@ test("a true BPS chain defers the dependent patch instead of failing it", async 
   await expect.poll(() => chipText(1), { timeout: 60000 }).toBe("applies after patch 1");
   expect(document.querySelector("#rom-weaver-list-patch-stack .file.bad")).toBeNull();
   expect(document.getElementById("rom-weaver-patch-order-note")).toBeNull();
+
+  // An exact statically-proven chain makes the last patch's embedded target
+  // enforceable: the output line reassures instead of warning.
+  await expect.poll(() => document.getElementById("rom-weaver-output-verified"), { timeout: 60000 }).not.toBeNull();
+  expect(document.getElementById("rom-weaver-bundle-output-unverified")).toBeNull();
 });
 
 test("an out-of-order chain names its predecessor and Fix order repairs it", async () => {
@@ -43,6 +48,10 @@ test("an out-of-order chain names its predecessor and Fix order repairs it", asy
   await expect
     .poll(() => document.getElementById("rom-weaver-patch-order-note")?.textContent ?? "", { timeout: 60000 })
     .toContain("woven first");
+  // The broken chain also stands down output verification, naming the order problem.
+  await expect
+    .poll(() => document.getElementById("rom-weaver-bundle-output-unverified")?.textContent ?? "", { timeout: 60000 })
+    .toContain("out of order");
 
   const fixButton = document.getElementById("rom-weaver-button-fix-patch-order");
   expect(fixButton).toBeInstanceOf(HTMLButtonElement);
@@ -52,4 +61,7 @@ test("an out-of-order chain names its predecessor and Fix order repairs it", asy
   await expect.poll(() => chipText(1), { timeout: 90000 }).toBe("applies after patch 1");
   await expect.poll(() => chipText(2), { timeout: 90000 }).toBe("applies after patch 2");
   await expect.poll(() => document.getElementById("rom-weaver-patch-order-note"), { timeout: 60000 }).toBeNull();
+  // ...and the output line flips to the verified reassurance.
+  await expect.poll(() => document.getElementById("rom-weaver-output-verified"), { timeout: 60000 }).not.toBeNull();
+  expect(document.getElementById("rom-weaver-bundle-output-unverified")).toBeNull();
 }, 180000);

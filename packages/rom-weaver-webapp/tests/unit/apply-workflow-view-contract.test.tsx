@@ -246,7 +246,7 @@ describe("apply workflow view - bundle controls", () => {
   const bundleTools = (setBundlePackage: (value: string) => void, exportVisible = true) => ({
     exportVisible,
     hasOptionalEntries: false,
-    outputStandDown: null,
+    outputVerification: null,
     setBundlePackage,
   });
 
