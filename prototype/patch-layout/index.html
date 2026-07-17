@@ -86,15 +86,6 @@ svg { display: block; }
   opacity: .25; mask-image: var(--weave-mask); mask-size: 7px 7px; -webkit-mask-image: var(--weave-mask); -webkit-mask-size: 7px 7px;
 }
 .masthead .tools { margin-inline-start: auto; display: flex; gap: var(--sp-s); }
-/* layout-variant switcher */
-.variants { display: inline-flex; border: 1px solid var(--seam-strong); border-radius: var(--r-s); overflow: hidden; }
-.vbtn {
-  appearance: none; border: 0; background: var(--well); color: var(--ink-3); cursor: pointer;
-  font-size: .74rem; font-weight: 700; padding: 6px 11px; transition: color .15s, background .15s;
-}
-.vbtn + .vbtn { border-inline-start: 1px solid var(--seam-soft); }
-.vbtn:hover { color: var(--thread-text); }
-.vbtn[aria-pressed="true"] { background: color-mix(in oklab, var(--thread) 16%, var(--well)); color: var(--thread-text); }
 .tool {
   appearance: none; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
   border: 1px solid var(--seam-strong); border-radius: var(--r-s); background: var(--well);
@@ -115,7 +106,7 @@ svg { display: block; }
 }
 
 /* ═══ page column ═══ */
-.page { max-width: 1280px; margin: 0 auto; padding: var(--sp-xl) var(--gutter) 80px; }
+.page { max-width: 1000px; margin: 0 auto; padding: var(--sp-xl) var(--gutter) 80px; }
 .page-intro { max-width: 62ch; color: var(--ink-3); font-size: .84rem; margin: 4px 0 var(--sp-xl); }
 .page-intro b { color: var(--ink-2); }
 
@@ -160,62 +151,26 @@ svg { display: block; }
 .cardlist { display: flex; flex-direction: column; gap: var(--sp-l); }
 .cardlist, .gallery { container: cards / inline-size; }
 
-/* ═══ layout variants (masthead switcher) ═══
-   stack — compact single column: filename joins the name line, the plan line
-           docks onto the ledger as its header bar, page narrows to 1000px.
-   hug   — same compact identity, but the ledger only takes the width its
-           values need; leftover space is card background, not empty cells.
-   split — identity column left, ledger right (kept for comparison).
-   table — the whole patch list as ONE ledger, two rows per patch. */
+/* compact identity - the filename rides the name line */
+.pid { display: block; }
+.pname { display: inline; margin-inline-end: 9px; }
+.pfile { display: inline; margin: 0; }
+.pby { margin-block-start: 3px; }
+.pdesc, .psrc { margin-block-start: 3px; }
 
-body[data-variant="stack"] .page, body[data-variant="hug"] .page { max-width: 1000px; }
-
-/* stack/hug/table: compact identity - the filename rides the name line */
-body:not([data-variant="split"]) .pid { display: block; }
-body:not([data-variant="split"]) .pname { display: inline; margin-inline-end: 9px; }
-body:not([data-variant="split"]) .pfile { display: inline; margin: 0; }
-body:not([data-variant="split"]) .pby { margin-block-start: 3px; }
-body:not([data-variant="split"]) .pdesc,
-body:not([data-variant="split"]) .psrc { margin-block-start: 3px; }
-body:not([data-variant="split"]) .card.is-editing .pform { display: block; }
-
-/* stack: the plan line docks onto the ledger as its header bar - one shared
-   plate instead of a floating row + a table (the negative end margin cancels
-   the card's grid gap so the two plates touch; the ledger's own top border
-   draws the seam between them) */
-[data-variant="stack"] .pplan:has(+ .ledger) {
+/* the plan line docks onto the ledger as its header bar - one shared plate
+   instead of a floating row + a table (the negative end margin cancels the
+   card's grid gap so the two plates touch; the ledger's own top border draws
+   the seam between them) */
+.pplan:has(+ .ledger) {
   background: var(--well); border: 1px solid var(--seam-soft); border-block-end: 0;
   border-radius: var(--r-s) var(--r-s) 0 0; padding: 6px 10px;
   margin-block-end: calc(-1 * var(--sp-s));
 }
-:root[data-theme="dark"] [data-variant="stack"] .pplan:has(+ .ledger) {
+:root[data-theme="dark"] .pplan:has(+ .ledger) {
   border-color: var(--seam-strong); background: color-mix(in oklab, var(--plate-2) 45%, var(--well));
 }
-[data-variant="stack"] .pplan:has(+ .ledger) + .ledger { border-start-start-radius: 0; border-start-end-radius: 0; }
-
-/* hug (wide only): the ledger shrinks to its content - a sparse patch's
-   checks take a sliver, not a full-width table of dashes. The ledger stops
-   being its own size container (fit-content + inline-size containment would
-   collapse it), so the hash clamp keys off the card list instead. */
-@container cards (min-width: 880px) {
-  [data-variant="hug"] .ledger { container-type: normal; width: fit-content; min-width: min(100%, 540px); max-width: 100%; }
-  [data-variant="hug"] .lgrid { grid-template-columns: max-content minmax(110px, max-content) minmax(110px, max-content); }
-}
-
-/* split: identity column left, ledger right */
-@container cards (min-width: 880px) {
-  [data-variant="split"] .card:has(> .ledger) {
-    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-    grid-template-rows: auto auto auto 1fr;
-    column-gap: var(--sp-xl);
-    align-items: start;
-  }
-  [data-variant="split"] .card:has(> .ledger) > .card-top { grid-column: 1; grid-row: 1; }
-  [data-variant="split"] .card:has(> .ledger) > .verified-band,
-  [data-variant="split"] .card:has(> .ledger) > .pfault { grid-column: 1; grid-row: 2; align-self: stretch; }
-  [data-variant="split"] .card:has(> .ledger) > .pplan { grid-column: 1; grid-row: 3; }
-  [data-variant="split"] .card:has(> .ledger) > .ledger { grid-column: 2; grid-row: 1 / -1; align-self: start; }
-}
+.pplan:has(+ .ledger) + .ledger { border-start-start-radius: 0; border-start-end-radius: 0; }
 
 /* ═══ cards ═══ */
 .card {
