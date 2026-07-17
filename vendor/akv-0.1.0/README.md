@@ -5,8 +5,9 @@
 # Example
 
 ```rust
-use akv::reader::ArchiveReader;
+use rom_weaver_akv::reader::ArchiveReader;
 
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 let io_reader = std::fs::File::open("tests/simple.zip")?;
 let mut archive_reader = ArchiveReader::open_io(io_reader)?;
 
@@ -18,5 +19,6 @@ while let Some(entry) = archive_reader.next_entry()? {
         std::io::read_to_string(entry_reader)?
     );
 }
-std::io::Result::Ok(())
+# Ok(())
+# }
 ```

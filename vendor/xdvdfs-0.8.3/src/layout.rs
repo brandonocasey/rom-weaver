@@ -370,7 +370,11 @@ impl DirectoryEntryDiskNode {
     }
 }
 
-#[cfg(test)]
+// These tests drive the async read API through futures::executor; under the
+// workspace's `sync` feature maybe-async compiles the same functions as plain
+// sync fns, so the bodies no longer typecheck. Skip them there - they still
+// run with the crate's default (async) features.
+#[cfg(all(test, not(feature = "sync")))]
 mod test {
     use super::{DirectoryEntryDiskData, DirentAttributes, DiskRegion};
     use futures::executor;
