@@ -1,0 +1,29 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rom-weaver-tools 1  "rom-weaver-tools "
+.SH NAME
+rom\-weaver\-tools \- Run specialized recovery and conversion tools
+.SH SYNOPSIS
+\fBrom\-weaver tools\fR [\fB\-\-json\fR] [\fB\-\-progress\fR] [\fB\-\-no\-progress\fR] [\fB\-\-trace\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Run specialized recovery and conversion tools
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Emit progress and terminal status as JSON lines
+.TP
+\fB\-\-progress\fR
+Force running progress events on
+.TP
+\fB\-\-no\-progress\fR
+Disable running progress events
+.TP
+\fB\-\-trace\fR
+Enable trace logs (also enabled by ROM_WEAVER_LOG or RUST_LOG)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+rom\-weaver\-tools\-ppf\-undo(1)
+Restore a ROM using undo data embedded in a PPF3 patch

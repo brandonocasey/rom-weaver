@@ -123,10 +123,10 @@ Run the complete local quality gate before submitting a change:
 mise run ci
 ```
 
-That task covers Rust formatting, Clippy, generated types, threaded-WASM
-guards, license inventory, Rust tests, the production WASM build, frontend
-linting, unit tests, browser/WASM tests, full-browser tests, webapp E2E, and the
-production frontend build.
+That task covers Rust formatting, Clippy, generated types and man pages,
+threaded-WASM guards, license inventory, Rust tests, the production WASM build,
+frontend linting, unit tests, browser/WASM tests, full-browser tests, webapp E2E,
+and the production frontend build.
 
 Useful narrower checks:
 
@@ -135,6 +135,7 @@ mise run fmt
 mise run clippy
 mise run test-rust
 mise run typegen-check
+mise run manpages-check
 
 npm --prefix packages/rom-weaver-react run lint
 npm --prefix packages/rom-weaver-react run test:unit
@@ -171,8 +172,16 @@ mise run licenses
 mise run licenses-check
 ```
 
+When Clap commands or argument help changes, regenerate the checked-in man
+pages from those definitions:
+
+```bash
+mise run manpages
+mise run manpages-check
+```
+
 Do not edit files under
-`packages/rom-weaver-react/src/wasm/generated/` manually.
+`packages/rom-weaver-react/src/wasm/generated/` or `docs/man/` manually.
 
 ## Linked worktrees
 

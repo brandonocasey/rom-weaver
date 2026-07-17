@@ -6,6 +6,8 @@ Choose the guide that matches what you are trying to do.
 
 - [CLI guide](cli.md): installation, common commands, patching behavior,
   supported formats, compression, checksums, trimming, and JSON output.
+- [Generated man pages](man/): `rom-weaver(1)` and one page per visible CLI
+  command, generated directly from Clap.
 - [Self-hosting](self-hosting.md): Docker, static deployment, reverse proxies,
   subpaths, HTTPS, COOP/COEP, and host-provided OPFS inputs.
 - [`rom-weaver-bundle.json` schema](rom-weaver-bundle.schema.json): machine-readable

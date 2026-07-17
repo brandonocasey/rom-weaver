@@ -1,0 +1,43 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rom-weaver-probe 1  "rom-weaver-probe "
+.SH NAME
+rom\-weaver\-probe \- Identify containers, patches, and known ROM headers
+.SH SYNOPSIS
+\fBrom\-weaver probe\fR [\fB\-\-json\fR] [\fB\-\-select\fR] [\fB\-\-progress\fR] [\fB\-\-rom\-filter\fR] [\fB\-\-no\-progress\fR] [\fB\-\-patch\-filter\fR] [\fB\-\-no\-extract\fR] [\fB\-\-trace\fR] [\fB\-\-no\-ignore\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISOURCE\fR>
+.SH DESCRIPTION
+Identify containers, patches, and known ROM headers
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Emit progress and terminal status as JSON lines
+.TP
+\fB\-\-select\fR \fI<SELECT>\fR
+Select an extracted probe payload by exact name, prefix, or glob (repeatable)
+.TP
+\fB\-\-progress\fR
+Force running progress events on
+.TP
+\fB\-\-rom\-filter\fR
+Keep ROM\-like payload candidates during automatic extraction
+.TP
+\fB\-\-no\-progress\fR
+Disable running progress events
+.TP
+\fB\-\-patch\-filter\fR
+Keep patch\-like payload candidates during automatic extraction
+.TP
+\fB\-\-no\-extract\fR
+Disable container auto\-extract and probe the source bytes directly
+.TP
+\fB\-\-trace\fR
+Enable trace logs (also enabled by ROM_WEAVER_LOG or RUST_LOG)
+.TP
+\fB\-\-no\-ignore\fR
+Disable default ignore filtering during probe container payload resolution
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISOURCE\fR>
+File or container to inspect

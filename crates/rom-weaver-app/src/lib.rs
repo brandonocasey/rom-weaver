@@ -71,28 +71,61 @@ use xdvdfs::{
     ts(rename_all = "kebab-case", tag = "type", content = "args")
 )]
 pub enum Commands {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(about = "Identify containers, patches, and known ROM headers")
+    )]
     Probe(ProbeCommand),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(about = "Extract files and disc payloads from supported containers")
+    )]
     Extract(ExtractCommand),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(about = "Compute checksums for files or selected container payloads")
+    )]
     Checksum(ChecksumCommand),
     #[cfg_attr(
         not(target_arch = "wasm32"),
         command(
-            about = "Classify a dropped source as ROM or patch, nested-extract + checksum ROMs (in place for bare ROMs), and describe patches"
+            about = "Classify a source as ROM or patch, extracting nested containers and checksumming ROMs"
         )
     )]
     Ingest(IngestCommand),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(about = "Create a supported archive or disc-image container")
+    )]
     Compress(CompressCommand),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(about = "Trim or restore supported ROM and disc-image formats")
+    )]
     Trim(TrimCommand),
-    #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(subcommand, about = "Apply, create, or validate ROM patches")
+    )]
     Patch(PatchCommands),
-    #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(
+            subcommand,
+            about = "Create and parse rom-weaver-bundle.json workflows"
+        )
+    )]
     Bundle(BundleCommands),
-    #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(subcommand, about = "Run specialized recovery and conversion tools")
+    )]
     Tools(ToolsCommands),
     #[cfg_attr(
         not(target_arch = "wasm32"),
         command(
             name = "plan-extract-batch",
+            hide = true,
             about = "Plan a memory-/thread-aware concurrent extraction schedule from per-job source sizes (no I/O)"
         )
     )]
@@ -124,6 +157,10 @@ pub enum PatchCommands {
         )
     )]
     Validate(PatchValidateCommand),
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(about = "Create a patch from original and modified ROM data")
+    )]
     Create(Box<PatchCreateCommand>),
 }
 
@@ -140,7 +177,7 @@ pub enum BundleCommands {
         not(target_arch = "wasm32"),
         command(
             about = "Build, validate, and write a rom-weaver-bundle.json bundle from local ROM/patch files",
-            long_about = "Build, validate, and write a rom-weaver-bundle.json bundle from local ROM/patch files.\n\nROM checks are computed from the actual file (crc32/md5/sha1 by default). Per-patch metadata flags (--patch-name/-description/-label/-default/-source-url/-header) bind to the most recent preceding --patch. --output accepts rom-weaver-bundle.json, rom-weaver-bundle.json.gz, or rom-weaver-bundle.json.zst; --bundle additionally packs the bundle plus the local sources into one archive whose path entries reference the archived names."
+            long_about = "Build, validate, and write a rom-weaver-bundle.json bundle from local ROM/patch files.\n\nROM checks are computed from the actual file (crc32/md5/sha1 by default). Per-patch metadata flags (--patch-name, --patch-description, --patch-label, --patch-optional, --patch-source-url, and --patch-header) bind to the most recent preceding --patch. --output accepts rom-weaver-bundle.json, rom-weaver-bundle.json.gz, or rom-weaver-bundle.json.zst; --bundle additionally packs the bundle plus the local sources into one archive whose path entries reference the archived names."
         )
     )]
     Create(Box<BundleCreateCommand>),
@@ -163,6 +200,10 @@ pub enum BundleCommands {
     ts(rename_all = "kebab-case", tag = "type", content = "args")
 )]
 pub enum ToolsCommands {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        command(about = "Restore a ROM using undo data embedded in a PPF3 patch")
+    )]
     PpfUndo(PpfUndoCommand),
 }
 

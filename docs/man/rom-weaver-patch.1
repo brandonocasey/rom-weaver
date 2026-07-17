@@ -1,0 +1,35 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rom-weaver-patch 1  "rom-weaver-patch "
+.SH NAME
+rom\-weaver\-patch \- Apply, create, or validate ROM patches
+.SH SYNOPSIS
+\fBrom\-weaver patch\fR [\fB\-\-json\fR] [\fB\-\-progress\fR] [\fB\-\-no\-progress\fR] [\fB\-\-trace\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Apply, create, or validate ROM patches
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Emit progress and terminal status as JSON lines
+.TP
+\fB\-\-progress\fR
+Force running progress events on
+.TP
+\fB\-\-no\-progress\fR
+Disable running progress events
+.TP
+\fB\-\-trace\fR
+Enable trace logs (also enabled by ROM_WEAVER_LOG or RUST_LOG)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+rom\-weaver\-patch\-apply(1)
+Apply one or more ROM patch files to an input in sequence
+.TP
+rom\-weaver\-patch\-validate(1)
+Validate one or more ROM patch files against an input without writing output
+.TP
+rom\-weaver\-patch\-create(1)
+Create a patch from original and modified ROM data

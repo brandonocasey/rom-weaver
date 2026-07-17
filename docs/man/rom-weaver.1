@@ -1,0 +1,58 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rom-weaver 1  "rom-weaver 0.5.0"
+.SH NAME
+rom\-weaver \- Inspect, extract, checksum, compress, trim, and patch ROMs and disc images
+.SH SYNOPSIS
+\fBrom\-weaver\fR [\fB\-\-json\fR] [\fB\-\-progress\fR] [\fB\-\-no\-progress\fR] [\fB\-\-trace\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Inspect, extract, checksum, compress, trim, and patch ROMs and disc images
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Emit progress and terminal status as JSON lines
+.TP
+\fB\-\-progress\fR
+Force running progress events on
+.TP
+\fB\-\-no\-progress\fR
+Disable running progress events
+.TP
+\fB\-\-trace\fR
+Enable trace logs (also enabled by ROM_WEAVER_LOG or RUST_LOG)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+rom\-weaver\-probe(1)
+Identify containers, patches, and known ROM headers
+.TP
+rom\-weaver\-extract(1)
+Extract files and disc payloads from supported containers
+.TP
+rom\-weaver\-checksum(1)
+Compute checksums for files or selected container payloads
+.TP
+rom\-weaver\-ingest(1)
+Classify a source as ROM or patch, extracting nested containers and checksumming ROMs
+.TP
+rom\-weaver\-compress(1)
+Create a supported archive or disc\-image container
+.TP
+rom\-weaver\-trim(1)
+Trim or restore supported ROM and disc\-image formats
+.TP
+rom\-weaver\-patch(1)
+Apply, create, or validate ROM patches
+.TP
+rom\-weaver\-bundle(1)
+Create and parse rom\-weaver\-bundle.json workflows
+.TP
+rom\-weaver\-tools(1)
+Run specialized recovery and conversion tools
+.SH VERSION
+v0.5.0

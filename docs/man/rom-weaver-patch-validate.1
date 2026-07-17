@@ -1,0 +1,87 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH rom-weaver-patch-validate 1  "rom-weaver-patch-validate "
+.SH NAME
+rom\-weaver\-patch\-validate \- Validate one or more ROM patch files against an input without writing output
+.SH SYNOPSIS
+\fBrom\-weaver patch validate\fR <\fB\-\-input\fR> [\fB\-\-json\fR] [\fB\-\-progress\fR] [\fB\-\-select\fR] [\fB\-\-no\-progress\fR] [\fB\-\-rom\-filter\fR] [\fB\-\-patch\-filter\fR] [\fB\-\-trace\fR] [\fB\-\-no\-extract\fR] [\fB\-\-no\-ignore\fR] <\fB\-\-patch\fR> [\fB\-\-checksum\-cache\fR] [\fB\-\-validate\-with\-checksum\fR] [\fB\-\-validate\-with\-size\fR] [\fB\-\-validate\-with\-min\-size\fR] [\fB\-\-strip\-header\fR] [\fB\-\-n64\-byte\-order\fR] [\fB\-\-ignore\-checksum\-validation\fR] [\fB\-\-independent\fR] [\fB\-\-threads\fR] [\fB\-h\fR|\fB\-\-help\fR]
+.SH DESCRIPTION
+Validate one or more ROM patch files against an input without writing output.
+.PP
+Validation performs the same patch\-format checksum checks as patch apply when the handler supports them, including VCDIFF/xdelta target\-window checksums. It also accepts optional input checksum and size values for source preflight.
+.SH OPTIONS
+.TP
+\fB\-\-input\fR \fI<PATH>\fR
+ROM or container input against which patches are validated
+.TP
+\fB\-\-json\fR
+Emit progress and terminal status as JSON lines
+.TP
+\fB\-\-progress\fR
+Force running progress events on
+.TP
+\fB\-\-select\fR \fI<SELECT>\fR
+Container payload selection pattern(s) used while auto\-extracting patch validate input and patch files
+.TP
+\fB\-\-no\-progress\fR
+Disable running progress events
+.TP
+\fB\-\-rom\-filter\fR
+Keep ROM\-like payload candidates while resolving the patch validation input archive
+.TP
+\fB\-\-patch\-filter\fR
+Keep patch\-like payload candidates while resolving patch archives
+.TP
+\fB\-\-trace\fR
+Enable trace logs (also enabled by ROM_WEAVER_LOG or RUST_LOG)
+.TP
+\fB\-\-no\-extract\fR
+Disable container auto\-extract and validate the raw input and patch bytes directly
+.TP
+\fB\-\-no\-ignore\fR
+Disable default ignore filtering during patch validate container payload resolution
+.TP
+\fB\-\-patch\fR \fI<PATCHES>\fR
+Patch file(s) to validate in order; repeat \-\-patch for each step
+.TP
+\fB\-\-checksum\-cache\fR \fI<ALGO=HEX>\fR
+Provide trusted effective patch input checksum values for validation without recomputing; repeat for multiple algorithms (for example: \-\-checksum\-cache crc32=1234abcd)
+.TP
+\fB\-\-validate\-with\-checksum\fR \fI<ALGO=HEX>\fR
+Validate effective patch input checksum before dry\-run apply; repeat for multiple algorithms (for example: \-\-validate\-with\-checksum crc32=1234abcd)
+.TP
+\fB\-\-validate\-with\-size\fR \fI<BYTES>\fR
+Validate exact effective patch input size before dry\-run apply
+.TP
+\fB\-\-validate\-with\-min\-size\fR \fI<BYTES>\fR
+Validate minimum effective patch input size before dry\-run apply
+.TP
+\fB\-\-strip\-header\fR
+Remove a detected ROM header before patch validation (A78/LNX/NES/FDS/SMC signatures; SNES/PCE copier\-size rules)
+.TP
+\fB\-\-n64\-byte\-order\fR \fI<N64_BYTE_ORDER>\fR
+Transform an N64 input to the requested byte order before patch validation
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+big\-endian
+.IP \(bu 2
+little\-endian
+.IP \(bu 2
+byte\-swapped
+.RE
+.TP
+\fB\-\-ignore\-checksum\-validation\fR
+Skip patch\-provided checksum validation during patch validation and permit recoverable patch\-format validation issues
+.TP
+\fB\-\-independent\fR
+Validate each \-\-patch independently against the original input (no sequential chaining); report a per\-patch verdict and never abort the batch on a single failing patch
+.TP
+\fB\-\-threads\fR \fI<auto|N>\fR [default: auto]
+Thread budget: auto or a positive integer
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)

@@ -28,6 +28,8 @@ rom-weaver --version
 ```
 
 Native npm packages target macOS arm64/x64, Linux x64 glibc, and Windows x64.
+On Unix, the npm package also installs the generated `rom-weaver(1)` command
+manuals when npm's global man directory is on `MANPATH`.
 
 For a development checkout, follow the [development guide](development.md)
 and use `cargo run -p rom-weaver-cli --` in place of `rom-weaver`.
@@ -102,14 +104,19 @@ Run `rom-weaver <command> --help` for every option and caveat on a command.
 | `patch apply` | Apply one or more patches in order. |
 | `patch create` | Create a patch from original and modified data. |
 | `patch validate` | Validate a patch and its embedded metadata. |
-| `bundle` | Work with `rom-weaver-bundle.json` workflows. |
-| `tools` | Run specialized repair and conversion tools. |
+| `bundle create` | Build a `rom-weaver-bundle.json` workflow from local files. |
+| `bundle parse` | Validate and resolve a bundle and its referenced entries. |
+| `tools ppf-undo` | Restore a ROM using undo data embedded in a PPF3 patch. |
 
 Global flags:
 
 - `--json` emits structured progress and terminal status as JSON lines.
 - `--progress` and `--no-progress` override automatic progress display.
 - `--trace` enables trace logs.
+
+Most data-processing commands also accept `--threads auto|N`. `auto` uses the
+available platform parallelism; a positive integer supplies an upper thread
+budget, which each format may reduce when its implementation has a lower cap.
 
 Interactive selection is available only in non-JSON sessions where stdin and
 stderr are terminals.
@@ -206,7 +213,7 @@ but not applied, and PDS is unsupported.
 | Zstandard | `zstd`, `zstandard` | `.zst` | yes | yes | no |
 | CSO | `ciso` | `.cso`, `.ciso` | yes | yes | no |
 | PBP | none | `.pbp` | yes | yes | no |
-| CHD | `chd-cd`, `chd-dvd`, `chd-raw`, `chd-hd` | `.chd` | yes | yes | yes |
+| CHD | `chd-cd`, `chd-gd`, `chd-dvd`, `chd-raw`, `chd-hd`, `chd-av`, `chd-ld` | `.chd` | yes | yes | yes |
 | GCZ | none | `.gcz` | yes | yes | no |
 | WIA | none | `.wia` | yes | yes | no |
 | TGC | none | `.tgc` | yes | yes | no |
@@ -214,11 +221,12 @@ but not applied, and PDS is unsupported.
 | WBFS | none | `.wbfs` | yes | yes | no |
 | RVZ | none | `.rvz` | yes | yes | yes |
 | Z3DS | `3ds` | `.z3ds`, `.zcci`, `.zcxi`, `.zcia`, `.z3dsx` | yes | yes | yes |
-| XISO | none | `.xiso`, `.xiso.iso` | no | no | no |
+| XISO | none | `.xiso`, `.xiso.iso` | no | yes | no |
 
-XISO is intentionally trim-only. CHD parent/differential workflows are
-supported when the caller supplies a parent CHD. `extract --split-bin` affects
-CHD CD extraction only.
+XISO extraction rebuilds the detected XDVDFS filesystem as a normalized ISO;
+detailed `probe` reports and XISO creation are not supported. CHD
+parent/differential support exists in the Rust container API but is not exposed
+as a native CLI flag. `extract --split-bin` affects CHD CD extraction only.
 
 ### Create-time codecs
 
@@ -287,3 +295,16 @@ rom-weaver --json probe game.sfc | jq
 
 For format specifications and upstream implementations, see
 [`REFERENCES.md`](../REFERENCES.md).
+
+## Man pages
+
+The checked-in pages under [`docs/man`](man/) are generated directly from the
+same Clap command definitions as `--help`:
+
+```bash
+mise run manpages
+mise run manpages-check
+```
+
+Use `man ./docs/man/rom-weaver.1` from a source checkout when they are not
+installed system-wide. Do not edit the generated `.1` files manually.

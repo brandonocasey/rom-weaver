@@ -26,6 +26,10 @@ fn default_code_kind() -> String {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct ProbeCommand {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(value_name = "SOURCE", help = "File or container to inspect")
+    )]
     pub source: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -83,6 +87,10 @@ pub struct ProbeCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct ExtractCommand {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(value_name = "SOURCE", help = "Container or disc image to extract")
+    )]
     pub source: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -114,7 +122,10 @@ pub struct ExtractCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub patch_filter: bool,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(long, value_name = "DIR", help = "Directory for extracted files")
+    )]
     pub out_dir: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -188,7 +199,15 @@ pub struct ExtractCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub probe: bool,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -198,10 +217,28 @@ pub struct ExtractCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct ChecksumCommand {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(value_name = "SOURCE", help = "File or container payload to checksum")
+    )]
     pub source: PathBuf,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "algo", required = true))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "algo",
+            required = true,
+            value_name = "ALGO",
+            help = "Checksum algorithm; repeat for multiple algorithms"
+        )
+    )]
     pub algo: Vec<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "select"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "select",
+            help = "Select a container payload by exact name, prefix, or glob (repeatable)"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub select: Vec<String>,
@@ -255,10 +292,24 @@ pub struct ChecksumCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub no_trim_fix: bool,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            value_name = "BYTE",
+            help = "Zero-based byte offset at which hashing begins"
+        )
+    )]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub start: Option<u64>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            value_name = "BYTES",
+            help = "Number of bytes to hash from --start (defaults to the remaining input)"
+        )
+    )]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub length: Option<u64>,
     #[cfg_attr(
@@ -271,7 +322,15 @@ pub struct ChecksumCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub probe: bool,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -281,8 +340,19 @@ pub struct ChecksumCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct IngestCommand {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(value_name = "SOURCE", help = "Dropped file or container to classify")
+    )]
     pub source: PathBuf,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            value_name = "DIR",
+            help = "Directory for extracted ingest outputs"
+        )
+    )]
     pub out_dir: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -350,7 +420,15 @@ pub struct IngestCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub checksum: Vec<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -360,7 +438,14 @@ pub struct IngestCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct CompressCommand {
-    #[cfg_attr(not(target_arch = "wasm32"), arg(required = true))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            required = true,
+            value_name = "INPUT",
+            help = "Input file(s) to place in the output container"
+        )
+    )]
     pub input: Vec<PathBuf>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -371,7 +456,10 @@ pub struct CompressCommand {
     )]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub format: Option<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(long, value_name = "PATH", help = "Output container path")
+    )]
     pub output: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -393,7 +481,15 @@ pub struct CompressCommand {
     #[serde(default = "default_max_compression_level")]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub level: CompressionLevelProfile,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -403,7 +499,14 @@ pub struct CompressCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct TrimCommand {
-    #[cfg_attr(not(target_arch = "wasm32"), arg(required = true))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            required = true,
+            value_name = "SOURCE",
+            help = "File, container, or directory to trim (repeatable)"
+        )
+    )]
     pub source: Vec<PathBuf>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -455,7 +558,7 @@ pub struct TrimCommand {
             long,
             alias = "untrim",
             alias = "restore",
-            help = "Revert trimmed files by padding back to the nearest power-of-two size (not supported for xiso or rvz-scrub)"
+            help = "Restore trimmed files using an embedded revert marker when present; otherwise use the format's header-derived size (NDS/3DS) or next power of two (GBA). Not supported for xiso or rvz-scrub"
         )
     )]
     #[serde(default)]
@@ -500,7 +603,15 @@ pub struct TrimCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub revert_marker: bool,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -510,7 +621,14 @@ pub struct TrimCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct PatchApplyCommand {
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            value_name = "PATH",
+            help = "ROM, disc sheet, bundle, or container to patch"
+        )
+    )]
     pub input: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -784,7 +902,15 @@ pub struct PatchApplyCommand {
     #[serde(default = "default_code_kind")]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub code_kind: String,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -845,7 +971,14 @@ impl PatchApplyCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct PatchValidateCommand {
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            value_name = "PATH",
+            help = "ROM or container input against which patches are validated"
+        )
+    )]
     pub input: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -988,7 +1121,15 @@ pub struct PatchValidateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub independent: bool,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -998,7 +1139,14 @@ pub struct PatchValidateCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct PatchCreateCommand {
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            value_name = "PATH",
+            help = "Original ROM from which to create the patch"
+        )
+    )]
     pub original: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -1020,7 +1168,14 @@ pub struct PatchCreateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub format: Option<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            value_name = "PATH",
+            help = "Output patch path; optional only with --plan"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub output: Option<PathBuf>,
@@ -1093,7 +1248,15 @@ pub struct PatchCreateCommand {
     #[serde(default = "default_code_kind")]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub code_kind: String,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -1131,7 +1294,15 @@ pub struct PlanExtractBatchCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub job_sizes: Vec<u64>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -1171,6 +1342,13 @@ pub struct PlanExtractBatchCommand {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Args))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 pub struct BundleParseCommand {
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            value_name = "SOURCE",
+            help = "Bundle file or archive containing a root bundle"
+        )
+    )]
     pub source: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
@@ -1182,7 +1360,15 @@ pub struct BundleParseCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub extract_dir: Option<PathBuf>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,
@@ -1259,21 +1445,36 @@ pub struct BundleCreateCommand {
         not(target_arch = "wasm32"),
         arg(
             long = "patch",
-            help = "Patch file to include, in apply order; repeat --patch for each entry. Per-patch metadata flags (--patch-name/-description/-label/-default/-source-url/-header) bind to the most recent preceding --patch"
+            help = "Patch file to include, in apply order; repeat --patch for each entry. --patch-name, --patch-description, --patch-label, --patch-optional, --patch-source-url, and --patch-header bind to the preceding --patch"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub patch: Vec<PathBuf>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-name"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(long = "patch-name", help = "Display name for the preceding --patch")
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub patch_name: Vec<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-description"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-description",
+            help = "Description for the preceding --patch"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub patch_description: Vec<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-label"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-label",
+            help = "Free-form maturity or status label for the preceding --patch"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub patch_label: Vec<String>,
@@ -1281,7 +1482,7 @@ pub struct BundleCreateCommand {
         not(target_arch = "wasm32"),
         arg(
             long = "patch-optional",
-            help = "Mark the preceding --patch as optional (deselected by default)"
+            help = "Set whether the preceding --patch is optional; optional patches are deselected by default"
         )
     )]
     #[serde(default)]
@@ -1297,7 +1498,14 @@ pub struct BundleCreateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub patch_source_url: Vec<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "patch-header", value_enum))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "patch-header",
+            value_enum,
+            help = "Header handling mode for the preceding --patch"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub patch_header: Vec<PatchApplyHeaderMode>,
@@ -1341,7 +1549,14 @@ pub struct BundleCreateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub output_name: Option<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "output-header", value_enum))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "output-header",
+            value_enum,
+            help = "Default header handling mode for the final bundle output"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub output_header: Option<PatchApplyOutputHeaderMode>,
@@ -1364,7 +1579,13 @@ pub struct BundleCreateCommand {
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub bundle: Option<PathBuf>,
     /// Optional packaged ROM payload. Checks are still calculated from `rom`.
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "bundle-rom"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "bundle-rom",
+            help = "ROM payload to package in --bundle while --rom supplies its checks and metadata"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub bundle_rom: Option<PathBuf>,
@@ -1388,7 +1609,15 @@ pub struct BundleCreateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub checksum: Vec<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long, default_value = "auto"))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            default_value = "auto",
+            value_name = "auto|N",
+            help = "Thread budget: auto or a positive integer"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub threads: ThreadBudget,

@@ -326,9 +326,9 @@ entry checks-only. Create re-parses before writing, so it can never emit
   files through the standard page-drop pipeline. Bundle metadata seeds the
   patch enablement switches (`optional: true` = off, everything else = on;
   every patch remains toggleable) and output defaults; each entry's effective
-  chain checks are reconstructed from the rom/output endpoints
-  (the effective chain checks reconstructed from the endpoints). The session display name derives from the
-  output/rom naming (bundles carry no name field). Patch name, description,
+  chain checks are reconstructed from the rom/output endpoints. The session
+  display name derives from the output/rom naming (bundles carry no name
+  field). Patch name, description,
   and six input/output checksum fields live in each patch's Options drawer.
   Default output name, bundle format, original-ROM inclusion, export
   progress, and the direct Export action live in Output. Local drops may include `rom-weaver-bundle.json`

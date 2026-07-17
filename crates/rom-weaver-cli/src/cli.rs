@@ -26,7 +26,7 @@ use crate::render::{HumanReporter, HumanStyle, StdinPrompter};
     command(
         name = "rom-weaver",
         version,
-        about = "Native CLI groundwork for ROM probing, extraction, checksums, compression, trimming, and patching."
+        about = "Inspect, extract, checksum, compress, trim, and patch ROMs and disc images"
     )
 )]
 struct Cli {
@@ -73,6 +73,11 @@ struct Cli {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub fn cli_command() -> clap::Command {
+    Cli::command()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl Cli {
     fn output_options(&self, interactive: bool) -> RomWeaverRunOutputOptions {
         RomWeaverRunOutputOptions {
@@ -100,7 +105,7 @@ pub fn main_entry() -> ExitCode {
     // Two-step parse (matches + derive) instead of `Cli::parse()`: positional
     // `--patch-header` occurrences bind to the preceding `--patch`, and only the
     // raw `ArgMatches` argv indices preserve that interleave order.
-    let matches = Cli::command().get_matches();
+    let matches = cli_command().get_matches();
     let mut cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(error) => error.exit(),

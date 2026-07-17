@@ -13,8 +13,27 @@
   "bin": {
     "rom-weaver": "bin/rom-weaver.mjs"
   },
+  "man": [
+    "docs/man/rom-weaver.1",
+    "docs/man/rom-weaver-probe.1",
+    "docs/man/rom-weaver-extract.1",
+    "docs/man/rom-weaver-checksum.1",
+    "docs/man/rom-weaver-ingest.1",
+    "docs/man/rom-weaver-compress.1",
+    "docs/man/rom-weaver-trim.1",
+    "docs/man/rom-weaver-patch.1",
+    "docs/man/rom-weaver-patch-apply.1",
+    "docs/man/rom-weaver-patch-create.1",
+    "docs/man/rom-weaver-patch-validate.1",
+    "docs/man/rom-weaver-bundle.1",
+    "docs/man/rom-weaver-bundle-create.1",
+    "docs/man/rom-weaver-bundle-parse.1",
+    "docs/man/rom-weaver-tools.1",
+    "docs/man/rom-weaver-tools-ppf-undo.1"
+  ],
   "files": [
     "bin/rom-weaver.mjs",
+    "docs/man/*.1",
     "LICENSE.md"
   ],
   "publishConfig": {

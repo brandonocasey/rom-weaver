@@ -132,6 +132,14 @@ run = "cargo run -p rom-weaver-typegen -- --write"
 description = "Verify TypeScript bindings are up to date"
 run = "cargo run -p rom-weaver-typegen -- --check"
 
+[tasks.manpages]
+description = "Regenerate CLI man pages from Clap definitions"
+run = "cargo run -p rom-weaver-cli --example generate_manpages -- --write"
+
+[tasks.manpages-check]
+description = "Verify generated CLI man pages are up to date"
+run = "cargo run -p rom-weaver-cli --example generate_manpages -- --check"
+
 [tasks.licenses]
 description = "Regenerate third-party license inventory and texts"
 run = "node {{ config_root }}/scripts/gen-third-party-licenses.mjs"
@@ -191,7 +199,7 @@ run = "npm --prefix packages/rom-weaver-react run test:e2e:ios --"
 
 [tasks.ci]
 description = "Run the full local quality gate (mirrors CI)"
-depends = ["fmt", "clippy", "typegen-check", "wasm-check", "thread-guards", "licenses-check", "test-rust", "build-wasm-prod"]
+depends = ["fmt", "clippy", "typegen-check", "manpages-check", "wasm-check", "thread-guards", "licenses-check", "test-rust", "build-wasm-prod"]
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
