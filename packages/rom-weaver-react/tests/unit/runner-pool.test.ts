@@ -112,6 +112,47 @@ describe("createRunnerPool", () => {
     expect(tracked.disposed).toEqual([2, 1]);
   });
 
+  it("disposeIdle disposes idle runners but leaves busy ones reusable", async () => {
+    const tracked = createTrackedPool(2);
+    const lease1 = await tracked.pool.acquire(); // entry 1 -> busy
+    const lease2 = await tracked.pool.acquire(); // entry 2 -> busy
+    lease2.release(); // entry 2 -> idle
+    await tracked.pool.disposeIdle();
+    expect(tracked.disposed).toEqual([2]);
+    expect(tracked.pool.idleCount).toBe(0);
+    lease1.release(); // busy runner was NOT marked stale: it returns to the warm pool
+    expect(tracked.pool.idleCount).toBe(1);
+    const lease3 = await tracked.pool.acquire();
+    expect(lease3.runner.id).toBe(1);
+    expect(tracked.countCreated()).toBe(2);
+  });
+
+  it("disposeIdle does not discard a runner whose creation is in flight", async () => {
+    const finishCreates: Array<(runner: MockRunner) => void> = [];
+    const disposed: number[] = [];
+    const pool = createRunnerPool<MockRunner>({
+      create: () =>
+        new Promise((resolve) => {
+          finishCreates.push(resolve);
+        }),
+      dispose: async (runner) => {
+        disposed.push(runner.id);
+      },
+      maxIdle: 1,
+      terminate: () => undefined,
+    });
+
+    const pendingAcquire = pool.acquire();
+    await pool.disposeIdle();
+    finishCreates[0]?.({ id: 1 });
+
+    const lease = await pendingAcquire;
+    expect(lease.runner.id).toBe(1);
+    expect(finishCreates.length).toBe(1);
+    expect(disposed).toEqual([]);
+    expect(pool.busyCount).toBe(1);
+  });
+
   it("terminates a runner whose creation finishes after a hard reset", async () => {
     let finishCreate: ((runner: MockRunner) => void) | undefined;
     const terminated: number[] = [];

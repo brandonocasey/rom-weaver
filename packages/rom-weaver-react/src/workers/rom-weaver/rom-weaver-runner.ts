@@ -511,7 +511,7 @@ const scheduleIdleRecycle = (operationBytes: number) => {
 // reservation into a genuine idle gap - a paused tab sitting on the reservation is what triggers the
 // WebKit out-of-memory reload. Once the burst goes quiet, evict the lone warm runner so the reservation
 // is released; the next op boots a fresh worker. Short debounce so an in-flight burst never evicts
-// mid-pass. No-op while any runner is busy or none is idle.
+// mid-pass; while runners are busy or the scheduler still has queued work the timer re-arms instead.
 const MOBILE_IDLE_EVICTION_DEBOUNCE_MS = 250;
 let mobileIdleEvictionTimer: ReturnType<typeof setTimeout> | null = null;
 const scheduleMobileIdleRunnerEviction = () => {
@@ -519,11 +519,28 @@ const scheduleMobileIdleRunnerEviction = () => {
   mobileIdleEvictionTimer = setTimeout(() => {
     mobileIdleEvictionTimer = null;
     const pool = runnerPool;
-    if (!pool || pool.busyCount !== 0 || pool.idleCount === 0) return;
+    if (!pool || pool.idleCount === 0) return;
+    // A staging pass queues ops faster than they drain: between two ops the pool is momentarily idle
+    // while the scheduler still holds admitted or waiting work (a multi-patch drop stages each patch
+    // through its own light op). Evicting then destroys the warm runner the very next op needs, and a
+    // pool reset would also discard that op's in-flight replacement boot - so keep re-arming until the
+    // scheduler is drained, and only then release the reservation. disposeIdle (not disposeAll) so a
+    // creation racing the final eviction is never thrown away.
+    const scheduler = operationScheduler;
+    const schedulerDrained = !scheduler || (scheduler.inFlightCount === 0 && scheduler.waitingCount === 0);
+    if (pool.busyCount !== 0 || !schedulerDrained) {
+      logger.trace("mobile idle runner eviction deferred: work still queued", {
+        busy: pool.busyCount,
+        inFlight: scheduler ? scheduler.inFlightCount : 0,
+        waiting: scheduler ? scheduler.waitingCount : 0,
+      });
+      scheduleMobileIdleRunnerEviction();
+      return;
+    }
     logger.trace("mobile idle runner eviction: releasing warm shared-memory reservation", {
       idle: pool.idleCount,
     });
-    void pool.disposeAll().catch(() => undefined);
+    void pool.disposeIdle().catch(() => undefined);
   }, MOBILE_IDLE_EVICTION_DEBOUNCE_MS);
 };
 

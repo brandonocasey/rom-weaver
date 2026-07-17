@@ -28,6 +28,12 @@ export type RunnerPool<TRunner, TCreateOptions = void> = {
    * busy ones stale so their in-flight operation finishes before the runner is torn down.
    */
   disposeAll(options?: { terminate?: boolean }): Promise<void>;
+  /**
+   * Dispose idle runners only, without resetting the pool: busy runners keep running and stay
+   * reusable, and an acquire whose runner creation is in flight keeps that runner (no soft-reset
+   * retry). For releasing warm reservations, not for reset/teardown.
+   */
+  disposeIdle(): Promise<void>;
   readonly idleCount: number;
   readonly busyCount: number;
 };
@@ -155,6 +161,10 @@ export function createRunnerPool<TRunner, TCreateOptions = void>(
       }
       // Graceful: dispose idle runners now, leave busy ones running but flagged for disposal on release.
       for (const entry of busy) entry.stale = true;
+      const idleEntries = idle.splice(0, idle.length);
+      await Promise.all(idleEntries.map((entry) => disposeEntry(entry, false)));
+    },
+    async disposeIdle(): Promise<void> {
       const idleEntries = idle.splice(0, idle.length);
       await Promise.all(idleEntries.map((entry) => disposeEntry(entry, false)));
     },
