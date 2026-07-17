@@ -24,6 +24,7 @@ import { Masthead, UpdateBanner } from "./components/shell.tsx";
 import { ToolsForm } from "./components/tools-form.tsx";
 import { ProcessingWakeLockNotice } from "./components/wake-lock-notice.tsx";
 import { resolveHostIngestFiles, subscribeHostIngest } from "./host-ingest.ts";
+import { DONATE_URL, GITHUB_URL } from "./project-links.ts";
 import { getSettingsUiState } from "./settings/settings-state.ts";
 import { UrlSessionBanner } from "./url-session/url-session-banner.tsx";
 import { useUrlSessionBoot } from "./url-session/use-url-session-boot.ts";
@@ -38,8 +39,6 @@ const WORKFLOW_TABS = [
   { icon: <Wrench aria-hidden="true" />, id: "tools", label: "Tools" },
 ];
 const ROOT_LOGO_URL = "./logo.svg";
-const DONATE_URL = "https://ko-fi.com/brandonocasey";
-const GITHUB_URL = "https://github.com/brandonocasey/rom-weaver/";
 
 const logger = createLogger("webapp-root");
 

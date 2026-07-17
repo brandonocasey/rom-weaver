@@ -134,6 +134,10 @@
 .rw-app .setrow .select, .rw-app .setrow .input { height: 34px; font-size: .85rem; }
 .rw-app .setchecks { display: flex; flex-direction: column; gap: var(--sp-s); padding-block-start: 4px; }
 .rw-app .setchecks .popt { font-size: .82rem; }
+/* settings About footer - version, license, third-party attribution */
+.rw-app .set-about .about-line { font-size: .78rem; color: var(--ink-3); }
+.rw-app .set-about .about-line + .about-line { margin-block-start: 5px; }
+.rw-app .set-about .about-line a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; }
 /* min(300px, 100%) so a sub-320px viewport doesn't force a 300px track and
    overflow the dialog (the Codecs / RVZ groups clipped at 300px wide) */
 .rw-app .setcols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: var(--sp-m); }

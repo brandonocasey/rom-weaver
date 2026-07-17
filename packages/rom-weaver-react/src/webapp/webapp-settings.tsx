@@ -3,7 +3,9 @@ import { isCompressionCodecFieldKey } from "../lib/compression/codec-fields.ts";
 import { CodecCombobox } from "../public/react/components/ds/codec-combobox.tsx";
 import { CompressInfoContent } from "../public/react/components/ds/compress-panel.tsx";
 import { COMPRESSION_PROFILE_FIELD_INFO } from "../public/react/compress-options.ts";
+import { RESOLVED_APP_BUILD_VERSION } from "./build-version.ts";
 import { InfoToggle } from "./components/info-toggle.tsx";
+import { LICENSE_URL, THIRD_PARTY_LICENSES_URL } from "./project-links.ts";
 import type { SettingsDraftState, SettingsFieldKey, SettingsUiState } from "./settings/settings-state.ts";
 import {
   getDefaultWorkerThreads,
@@ -332,6 +334,29 @@ const SettingsGroup = ({
   );
 };
 
+const AboutSection = () => (
+  <div className="setgroup set-about">
+    <div className="gtitle">About</div>
+    <div className="about-line mono">
+      rom-weaver{RESOLVED_APP_BUILD_VERSION ? ` ${RESOLVED_APP_BUILD_VERSION}` : ""}
+    </div>
+    <div className="about-line">
+      © Brandon O'Casey. Free and open-source software under the{" "}
+      <a href={LICENSE_URL} rel="noreferrer" target="_blank">
+        GNU AGPL v3 (or later) license
+      </a>
+      .
+    </div>
+    <div className="about-line">
+      Built with open-source components (nod, libarchive, chd-rs, and others) used under{" "}
+      <a href={THIRD_PARTY_LICENSES_URL} rel="noreferrer" target="_blank">
+        their own licenses
+      </a>
+      .
+    </div>
+  </div>
+);
+
 function SettingsPanel({ draftSettings, uiState, validation, onDraftChange }: SettingsPanelProps): ReactNode {
   const shared = { draftSettings, onDraftChange, uiState, validation };
   const fullWidthSections = settingsPanelSections.filter((section) => !FORMAT_GROUP_TITLES.has(section.title));
@@ -351,6 +376,7 @@ function SettingsPanel({ draftSettings, uiState, validation, onDraftChange }: Se
           {validation.messages.join(" ")}
         </div>
       ) : null}
+      <AboutSection />
     </div>
   );
 }
