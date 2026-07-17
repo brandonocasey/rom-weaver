@@ -152,9 +152,9 @@ const getPatchValidationDetails = (patch: ApplyWorkflowPatchState) => {
     formatPatchValidationValue("out crc32", patch.requirements?.targetCrc32),
   ].filter(Boolean);
   const actualValue = "";
-  // The deep dry-run validation is deferred and runs silently after staging. Until its verdict
+  // The deep preflight validation is deferred and runs silently after staging. Until its verdict
   // lands, a targeted patch (its cheap preflight computed) reads as "verifying"; a preflight checksum
-  // mismatch fails immediately without waiting for the dry-run. Once the verdict lands it wins.
+  // mismatch fails immediately without waiting for preflight. Once the verdict lands it wins.
   const deep = patch.patchValidation;
   let status: string;
   if (deep) status = deep.status;
@@ -164,7 +164,7 @@ const getPatchValidationDetails = (patch: ApplyWorkflowPatchState) => {
   const validationValues = requirementValues.length
     ? requirementValues
     : deep || patch.checksumPreflight
-      ? ["dry-run apply"]
+      ? ["preflight validation"]
       : [];
   const message =
     status === "verifying"

@@ -362,7 +362,7 @@ test("requirement-less patch passes without requirement rows", async () => {
         validationLabel: "Validation",
         validationMessage: "Patch validation passed",
         validationState: "valid",
-        validationValues: ["dry-run apply"],
+        validationValues: ["preflight validation"],
       },
     ),
   );

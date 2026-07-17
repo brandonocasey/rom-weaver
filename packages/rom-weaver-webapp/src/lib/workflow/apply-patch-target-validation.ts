@@ -218,10 +218,9 @@ const validatePreparedGroup = async <TSource>(
     },
     id: `${adapters.workflowId}:${entry.stage.state.id}:patch-validate`,
   }));
-  // Most patch formats validate via a dry-run apply that reports no incremental percent (only 100%
-  // at completion), so start indeterminate and only switch to a determinate bar once real forward
-  // progress (> 0%) arrives (e.g. BPS). One shared worker call feeds every patch in the group, so
-  // its progress is broadcast to each stage's row.
+  // Preflight usually reports no incremental percent, so start indeterminate and only switch to a
+  // determinate bar once real forward progress (> 0%) arrives. One shared worker call feeds every
+  // patch in the group, so its progress is broadcast to each stage's row.
   const emitToAll = (label: string, percent: number | null) => {
     for (const progressTarget of progressTargets) {
       adapters.emitProgress({
@@ -251,7 +250,7 @@ const validatePreparedGroup = async <TSource>(
         ),
       options: {
         // The effective header decision (drawer choice, else checksum-proven auto) must reach the
-        // dry-run too: a headerless-targeting patch validates against the stripped bytes - strip in
+        // preflight too: a headerless-targeting patch validates against the stripped bytes - strip in
         // the engine and cache the headerless checksums, not the raw file's. All grouped patches
         // share the same target + header decision, so one cache/mode applies to the whole batch.
         checksumCache: getStageChecksumCache(

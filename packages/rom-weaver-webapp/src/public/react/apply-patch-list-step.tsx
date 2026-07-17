@@ -79,9 +79,9 @@ const getPatchVerificationRows = (item: PatchStackItemState) => {
   for (const entry of item.validationValues) {
     const separatorIndex = entry.indexOf("=");
     if (separatorIndex === -1) {
-      // "dry-run apply" marks scratch-copy validation - every patch gets it, so it never
-      // renders as a per-type row; the drawer-header verdict already covers it.
-      if (/dry-?run/i.test(entry)) continue;
+      // The generic preflight marker never renders as a per-type row; the drawer-header verdict
+      // already covers it.
+      if (/preflight|dry-?run/i.test(entry)) continue;
       inputRows.push({ label: "VALIDATION", value: entry });
       continue;
     }
@@ -133,17 +133,17 @@ const PatchFaultWell = ({ message, overrideAvailable }: { message: string; overr
   </div>
 );
 
-const DryApplySuccess = () => (
+const PreflightSuccess = () => (
   <InfoToggle
-    ariaLabel="Test weave passed"
+    ariaLabel="Preflight passed"
     className="dry-apply-info"
     icon={<Check aria-hidden="true" />}
     panelClassName="dry-apply-pop"
     portalPanel
-    title="Test weave passed"
+    title="Preflight passed"
   >
-    <strong>Test weave passed</strong>
-    <p>rom-weaver successfully wove this patch into a temporary copy of the current input.</p>
+    <strong>Preflight passed</strong>
+    <p>rom-weaver verified this patch against the current input.</p>
     <p>The real output has not been created yet.</p>
   </InfoToggle>
 );
@@ -612,7 +612,7 @@ const PatchChecksDrawer = ({
     [...inputRows, ...outputRows].every((row) => String(row.value).length < 16);
   return (
     <ChecksumList
-      action={ok ? <DryApplySuccess /> : undefined}
+      action={ok ? <PreflightSuccess /> : undefined}
       bodyClassName={compact ? "ckrows patch-check-columns" : "ckrows patch-checks-body"}
       defaultOpen={hasBuiltIn || hasUserChecks}
       label="Checks"
