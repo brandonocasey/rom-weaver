@@ -1,35 +1,56 @@
 # CLI guide
 
-The RomWeaver CLI exposes the same Rust command core used by the browser app.
+The rom-weaver CLI exposes the same Rust command core used by the browser app.
 Use it for repeatable patching, container work, checksums, trimming, and JSON
 automation.
 
 ## Install
 
-Install the current tagged source release with Cargo:
-
-```bash
-cargo install \
-  --git https://github.com/brandonocasey/rom-weaver.git \
-  --tag v0.5.0 \
-  rom-weaver-cli
-```
-
-This path requires Rust 1.95, CMake, Clang, and a native build toolchain.
-
-### npm launcher
+### npm
 
 The npm launcher requires Node.js 22 or newer and installs the native package
-for the current platform when the release is available from npm:
+for the current platform:
 
 ```bash
 npm install --global rom-weaver
 rom-weaver --version
 ```
 
+For one-off use without installing, run `npx --yes rom-weaver --help`.
+
 Native npm packages target macOS arm64/x64, Linux x64 glibc, and Windows x64.
 On Unix, the npm package also installs the generated `rom-weaver(1)` command
 manuals when npm's global man directory is on `MANPATH`.
+
+### Cargo
+
+Cargo builds from source, so it covers Rust targets beyond the prebuilt npm
+platforms. Both paths require Rust 1.95, CMake, Clang, and a native build
+toolchain.
+
+```bash
+# Published crate
+cargo install rom-weaver-cli
+
+# Tagged source release
+cargo install \
+  --git https://github.com/brandonocasey/rom-weaver.git \
+  --tag v0.5.0 \
+  rom-weaver-cli
+```
+
+### Docker
+
+The published CLI image needs only Docker. Mount a working directory to
+process local files:
+
+```bash
+docker run --rm --volume "$PWD:/data" \
+  ghcr.io/brandonocasey/rom-weaver-cli:latest \
+  probe /data/game.sfc
+```
+
+### Development checkout
 
 For a development checkout, follow the [development guide](development.md)
 and use `cargo run -p rom-weaver-cli --` in place of `rom-weaver`.
@@ -133,7 +154,10 @@ containers automatically.
 - `--no-extract` operates on the source bytes directly.
 
 `extract` recursively handles nested containers up to depth 8 by default. Use
-`--no-nested-extract` to stop after the first layer.
+`--no-nested-extract` to stop after the first layer. While extracting, it can
+also hash outputs (`--checksum ALGO`, or `--checksum-rom ALGO` to hash only
+ROM-like outputs), refuse to overwrite existing files (`--no-overwrite`), and
+fold container/platform probe metadata into the result (`--probe`).
 
 ## Patch apply behavior
 
@@ -160,6 +184,47 @@ DCP patches require a Dreamcast `.cue` or `.gdi` input. They rebuild the
 GD-ROM data track and cannot be chained with another patch or combined with
 header/checksum transforms.
 
+## Patch validation
+
+`patch validate` runs the same checks as `patch apply` without writing
+output: format parsing, embedded patch checksums, and optional input
+preflight (`--validate-with-checksum`, `--validate-with-size`,
+`--validate-with-min-size`). `--strip-header` and `--n64-byte-order` apply
+the matching input transform before validation. Patches validate as a
+sequential chain by default; `--independent` validates each `--patch`
+directly against the input instead, reporting a per-patch verdict without
+aborting the batch on a single failure.
+
+## Bundles
+
+A `rom-weaver-bundle.json` bundle describes a distributable patching
+workflow: ordered patches, expected input and output checksums, and output
+naming. The machine-readable schema is
+[`rom-weaver-bundle.schema.json`](rom-weaver-bundle.schema.json).
+
+Create a bundle from local files; the checks are computed from the real
+bytes:
+
+```bash
+rom-weaver bundle create \
+  --rom original.sfc \
+  --patch translation.bps \
+  --patch fixes.ips \
+  --output rom-weaver-bundle.json
+```
+
+Per-patch metadata flags (`--patch-name`, `--patch-description`,
+`--patch-optional`, `--patch-label`, `--patch-header`, and the chain-state
+checks) bind to the preceding `--patch`. `--bundle <archive>` packages the
+bundle together with its sources into one shareable archive;
+`--no-bundle-rom` keeps the ROM out and records its checks only, which is
+the usual shape for distributing patches.
+
+`bundle parse <bundle>` validates a bundle and resolves its referenced
+entries (`--extract-dir` extracts archive members). To apply one, run
+`rom-weaver patch apply --bundle <path-or-url>`; `--with` and `--without`
+override which optional patches run.
+
 ## Supported formats
 
 ### Patch formats
@@ -177,7 +242,7 @@ Dreamcast apply workflow rather than a general single-file patch parser.
 | VCDIFF | `vcdiff` | `.vcdiff` | yes | yes |
 | xdelta | `xdelta3` | `.xdelta`, `.delta`, `.dat` | yes | yes |
 | GDIFF | `gdiff` | `.gdiff`, `.gdf` | yes | yes |
-| HDiffPatch/HPatchZ | `hdiff`, `hpatch`, `hpatchz` | `.hdiff`, `.hpatchz` | yes | no |
+| HDiffPatch/HPatchZ | `hdiffpatch`, `hdiff`, `hpatch`, `hpatchz` | `.hdiff`, `.hpatchz` | yes | no |
 | APS (N64) | none | `.aps` | yes | yes |
 | APSGBA | `aps-gba` | `.apsgba` | yes | yes |
 | RUP | none | `.rup` | yes | yes |
@@ -258,7 +323,8 @@ An explicit `codec:level` value overrides the global profile.
 Supported algorithms are `crc32`, `md5`, `sha1`, `sha256`, `blake3`,
 `crc32c`, `crc16`, and `adler32`.
 
-Checksums can target source bytes, selected container payloads, or byte ranges.
+Checksums can target source bytes, selected container payloads, or byte
+ranges (`--start`/`--length`).
 Known header and byte-order compatibility transforms appear as
 `checksum_variants`, including raw, headerless, repaired-header, and N64 byte
 orders. `--no-trim-fix` disables automatic trim-boundary variants.
@@ -272,6 +338,10 @@ orders. `--no-trim-fix` disables automatic trim-boundary variants.
 - 3DS images (`.3ds`)
 - XISO images (`.xiso`, `.xiso.iso`, and probed XDVDFS `.iso` files)
 - RVZ scrub candidates detected by the format recommendation
+
+`--in-place` rewrites the source file; `--output` or `--extension` write the
+trimmed copy elsewhere instead, and `--simulate` reports what would change
+without writing anything.
 
 `--revert` supports NDS, GBA, and 3DS. It does not support XISO or RVZ scrub
 paths. `--revert-marker` embeds a small footer so a later revert can reproduce
