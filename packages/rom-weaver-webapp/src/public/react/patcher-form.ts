@@ -49,6 +49,7 @@ type PatcherStackController = StoreController<PatchStackState> & {
       validateInputChecksum?: string;
       validateOutputChecksum?: string;
       header?: "keep" | "strip";
+      n64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
       /** A user edit: rerun the deep validation so the card verdict reflects the change. */
       revalidate?: boolean;
     },

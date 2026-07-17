@@ -268,11 +268,17 @@ const runRomWeaverIngestSidecarsWorker = async (
   return getSidecarMatchesFromResult(result);
 };
 
-const normalizeN64ByteOrder = (value: unknown): "big-endian" | "little-endian" | "byte-swapped" | undefined => {
+const normalizeN64ByteOrder = (
+  value: unknown,
+): "auto" | "keep" | "big-endian" | "little-endian" | "byte-swapped" | undefined => {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
-  return normalized === "big-endian" || normalized === "little-endian" || normalized === "byte-swapped"
+  return normalized === "auto" ||
+    normalized === "keep" ||
+    normalized === "big-endian" ||
+    normalized === "little-endian" ||
+    normalized === "byte-swapped"
     ? normalized
     : undefined;
 };
@@ -430,7 +436,14 @@ const invokeRomWeaverPatchApplyWorker = async (
       const removeHeader = Boolean((input.options as { removeHeader?: unknown } | undefined)?.removeHeader);
       const addHeader = Boolean((input.options as { addHeader?: unknown } | undefined)?.addHeader);
       const repairChecksum = Boolean((input.options as { fixChecksum?: unknown } | undefined)?.fixChecksum);
-      const n64ByteOrder = normalizeN64ByteOrder(applyOptionRecord?.n64ByteOrder ?? applyOptionRecord?.n64_byte_order);
+      const rawN64ByteOrders = Array.isArray(applyOptionRecord?.n64ByteOrders)
+        ? applyOptionRecord.n64ByteOrders
+        : Array.isArray(applyOptionRecord?.n64_byte_order)
+          ? applyOptionRecord.n64_byte_order
+          : applyOptionRecord?.n64ByteOrder
+            ? [applyOptionRecord.n64ByteOrder]
+            : [];
+      const n64ByteOrders = rawN64ByteOrders.map((mode) => normalizeN64ByteOrder(mode) || "auto");
       const ignoreChecksumValidation =
         (input.options as { requireInputChecksumMatch?: unknown } | undefined)?.requireInputChecksumMatch !== true;
       const validateWithChecksums = normalizePatchValidationChecksumEntries(
@@ -483,7 +496,7 @@ const invokeRomWeaverPatchApplyWorker = async (
         ignore_checksum_validation: ignoreChecksumValidation,
         input: input.romFilePath,
         output_header: outputHeader,
-        ...(n64ByteOrder ? { n64_byte_order: n64ByteOrder } : {}),
+        ...(n64ByteOrders.length ? { n64_byte_order: n64ByteOrders } : {}),
         no_compress: true,
         output: outputPath,
         patch_filter: true,
@@ -501,7 +514,7 @@ const invokeRomWeaverPatchApplyWorker = async (
         forceSingleThreadReason,
         hasBpsPatch,
         hasXdeltaPatch,
-        n64ByteOrder,
+        n64ByteOrders,
         outputPath,
         patchCount: input.patchFiles.length,
         requestedThreadArg,

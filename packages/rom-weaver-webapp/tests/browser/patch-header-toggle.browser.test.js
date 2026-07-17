@@ -25,6 +25,12 @@ const buildInesRom = () => {
   return new File([bytes], "game.nes", { type: "application/octet-stream" });
 };
 
+const buildN64Rom = () => {
+  const bytes = new Uint8Array(4096);
+  bytes.set([0x80, 0x37, 0x12, 0x40]);
+  return new File([bytes], "game.z64", { type: "application/octet-stream" });
+};
+
 test("strip-header toggle settles inside an everything archive bundle session", async () => {
   const patchFile = await loadFixtureFile(RAW_PATCH);
   const romFile = buildInesRom();
@@ -115,6 +121,36 @@ test("toggling the strip-header option settles instead of loading forever", asyn
       {
         timeout: 30000,
       },
+    )
+    .toBe(0);
+  await waitForApplyButtonEnabled();
+});
+
+test("N64 byte-order override offers auto and settles after a manual choice", async () => {
+  const patchFile = await loadFixtureFile(RAW_PATCH);
+  mount(createElement(ApplyPatchForm, { pageDrop: { files: [buildN64Rom(), patchFile], id: 1 } }));
+  await waitForApplyButtonEnabled();
+
+  const byteOrderSelect = await waitForState(() => document.getElementById("rom-weaver-patch-n64-byte-order-0"));
+  expect(byteOrderSelect).not.toBeNull();
+  expect(Array.from(byteOrderSelect.options, (option) => [option.value, option.textContent])).toEqual([
+    ["auto", "byte order auto (keep current)"],
+    ["keep", "keep current (big endian (.z64))"],
+    ["big-endian", "big endian (.z64)"],
+    ["byte-swapped", "byte-swapped (.v64)"],
+    ["little-endian", "little endian (.n64)"],
+  ]);
+
+  byteOrderSelect.value = "byte-swapped";
+  byteOrderSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+  await expect
+    .poll(
+      () =>
+        document.querySelectorAll(
+          "#rom-weaver-list-patch-stack progress, #rom-weaver-list-patch-stack .fileprog, #rom-weaver-list-patch-stack [role=progressbar]",
+        ).length,
+      { timeout: 30000 },
     )
     .toBe(0);
   await waitForApplyButtonEnabled();

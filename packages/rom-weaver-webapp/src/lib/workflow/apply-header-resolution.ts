@@ -1,4 +1,5 @@
 import type { ChecksumVariant } from "../../types/checksum.ts";
+import type { ApplyN64ByteOrderMode } from "../../types/apply-workflow.ts";
 import type { InputAsset } from "../input/input-assets.ts";
 
 /** How the ROM's copier header should be handled for a patch apply. `strip` patches the
@@ -31,6 +32,13 @@ type ApplyHeaderResolution = {
 type HeaderRequirements = {
   sourceCrc32?: string;
   filenameCrc32?: string;
+};
+
+type ApplyN64Resolution = {
+  mode: ApplyN64ByteOrderMode;
+  decided: boolean;
+  sourceOrder: Exclude<ApplyN64ByteOrderMode, "keep">;
+  checksums?: Record<string, string>;
 };
 
 const toNormalizedCrc32 = (value: unknown): string | undefined => {
@@ -109,4 +117,41 @@ const resolveApplyHeaderMode = (
   return { ...base, decided: false, mode: "keep" };
 };
 
-export { resolveApplyHeaderMode, toNormalizedCrc32 };
+const resolveApplyN64ByteOrder = (
+  requirements: HeaderRequirements | undefined,
+  target: Pick<InputAsset, "checksums" | "checksumVariants">,
+): ApplyN64Resolution | undefined => {
+  const variants = (target.checksumVariants || []).filter((variant) =>
+    String(variant.applyCompatibility?.n64ByteOrder || variant.applyCompatibility?.n64_byte_order || "").trim(),
+  );
+  const firstTransform = variants[0]?.transforms?.n64ByteOrder;
+  if (!(firstTransform && typeof firstTransform === "object")) return undefined;
+  const sourceOrder = (firstTransform as { sourceOrder?: unknown }).sourceOrder;
+  if (sourceOrder !== "big-endian" && sourceOrder !== "little-endian" && sourceOrder !== "byte-swapped")
+    return undefined;
+  const requiredCrc32 = toNormalizedCrc32(requirements?.sourceCrc32) ?? toNormalizedCrc32(requirements?.filenameCrc32);
+  const rawCrc32 = toNormalizedCrc32(target.checksums?.crc32);
+  if (!(requiredCrc32 && rawCrc32) || rawCrc32 === requiredCrc32) {
+    return {
+      checksums: target.checksums ? { ...target.checksums } : undefined,
+      decided: !!requiredCrc32 && rawCrc32 === requiredCrc32,
+      mode: "keep",
+      sourceOrder,
+    };
+  }
+  const matches = variants.filter((variant) => toNormalizedCrc32(variant.checksums?.crc32) === requiredCrc32);
+  if (matches.length !== 1) return { decided: false, mode: "keep", sourceOrder };
+  const mode = String(
+    matches[0]?.applyCompatibility?.n64ByteOrder || matches[0]?.applyCompatibility?.n64_byte_order || "",
+  );
+  if (mode !== "big-endian" && mode !== "little-endian" && mode !== "byte-swapped")
+    return { decided: false, mode: "keep", sourceOrder };
+  return {
+    checksums: matches[0]?.checksums ? { ...matches[0].checksums } : undefined,
+    decided: true,
+    mode,
+    sourceOrder,
+  };
+};
+
+export { resolveApplyHeaderMode, resolveApplyN64ByteOrder, toNormalizedCrc32 };

@@ -1,6 +1,6 @@
 import { RomWeaverError, toRomWeaverError } from "../errors.ts";
 import type { InputAsset } from "../input/input-assets.ts";
-import { resolveApplyHeaderMode, toNormalizedCrc32 } from "./apply-header-resolution.ts";
+import { resolveApplyHeaderMode, resolveApplyN64ByteOrder, toNormalizedCrc32 } from "./apply-header-resolution.ts";
 import type { InternalPatchChecksumPreflight, StagedSource } from "./apply-workflow-state.ts";
 import { getInputAssetChecksums } from "./staged-source-checksums.ts";
 
@@ -27,6 +27,7 @@ const clearApplyPatchTarget = <TSource>(stage: StagedSource<TSource>) => {
   stage.state.checksumPreflight = undefined;
   stage.state.patchValidation = undefined;
   stage.state.headerResolution = undefined;
+  stage.state.n64Resolution = undefined;
 };
 
 const assignApplyPatchTarget = <TSource>(stage: StagedSource<TSource>, target: InputAsset) => {
@@ -60,15 +61,35 @@ const createApplyPatchChecksumPreflight = <TSource>(
     },
   );
   stage.state.headerResolution = headerResolution;
+  const n64Resolution = resolveApplyN64ByteOrder(
+    {
+      ...(requirements?.sourceCrc32 === undefined ? {} : { sourceCrc32: requirements.sourceCrc32 }),
+      filenameCrc32: requirements?.filenameCrc32 ?? userInputCrc32,
+    },
+    {
+      checksums: getInputAssetChecksums(target),
+      checksumVariants: target.checksumVariants,
+    },
+  );
+  stage.state.n64Resolution = n64Resolution;
   const effectiveHeaderMode = stage.state.headerChoice ?? headerResolution?.mode ?? "keep";
   const headerRemoved = effectiveHeaderMode === "strip" && !!headerResolution;
+  const effectiveN64Mode = stage.state.n64ByteOrderChoice ?? n64Resolution?.mode ?? "keep";
+  const n64Checksums =
+    effectiveN64Mode === "keep"
+      ? getInputAssetChecksums(target)
+      : target.checksumVariants?.find(
+          (variant) =>
+            (variant.applyCompatibility?.n64ByteOrder || variant.applyCompatibility?.n64_byte_order) ===
+            effectiveN64Mode,
+        )?.checksums;
   const strippedBytes = headerResolution?.strippedBytes;
   const rawSize = typeof target.size === "number" && Number.isFinite(target.size) ? target.size : undefined;
   const actualSize =
     headerRemoved && rawSize !== undefined && strippedBytes !== undefined ? rawSize - strippedBytes : rawSize;
   const actualCrc32 = headerRemoved
     ? headerResolution?.headerlessCrc32
-    : toNormalizedCrc32(getInputAssetChecksums(target)?.crc32);
+    : toNormalizedCrc32(n64Checksums?.crc32 ?? getInputAssetChecksums(target)?.crc32);
   const requiredSize =
     typeof requirements?.sourceSize === "number" && Number.isFinite(requirements.sourceSize)
       ? requirements.sourceSize
@@ -137,6 +158,10 @@ const createApplyPatchValidationKey = <TSource>(
     patch: {
       fileName: stage.preparedPatchFile?.fileName || stage.state.fileName,
       size: stage.preparedPatchFile?.fileSize ?? stage.state.size,
+    },
+    compatibility: {
+      header: stage.state.headerChoice ?? stage.state.headerResolution?.mode ?? "keep",
+      n64ByteOrder: stage.state.n64ByteOrderChoice ?? stage.state.n64Resolution?.mode ?? "keep",
     },
     preflight: {
       actualCrc32: preflight.actualCrc32,

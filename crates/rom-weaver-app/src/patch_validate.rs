@@ -71,6 +71,7 @@ impl CliApp {
                     return self.finish("patch-validate", fail("validate", error.to_string()));
                 }
             };
+        let n64_byte_order = n64_byte_order.unwrap_or_default();
         let mut expected_input_checksums = match Self::parse_patch_apply_checksum_values(
             &validate_with_checksums,
             "--validate-with-checksum",
@@ -214,46 +215,73 @@ impl CliApp {
             } else {
                 resolved_input.clone()
             };
-            let validate_input = if let Some(target_order) = n64_byte_order {
-                self.emit_running(
-                    OperationLabel {
-                        command: "patch-validate",
-                        family: OperationFamily::Patch,
-                        format: None,
-                    },
-                    "compat",
-                    format!(
-                        "transforming N64 input byte order to {}",
-                        target_order.label()
-                    ),
-                    None,
-                    context.single_thread_execution(),
-                );
-                let transformed_path = context
-                    .temp_paths()
-                    .next_path("patch-validate-input-n64-byte-order", Some("bin"));
-                match Self::rewrite_n64_byte_order_to_temp(
-                    &validate_input,
-                    &transformed_path,
-                    target_order,
-                ) {
-                    Ok(Some(_transform)) => {
+            let mut n64_order = None;
+            let validate_input = match self.resolve_patch_n64_target(
+                &validate_input,
+                resolved_patches.first().map(|(_, patch)| patch.as_path()),
+                expected_input_checksums.get("crc32").map(String::as_str),
+                n64_byte_order,
+                &context,
+            ) {
+                Ok(Some((source_order, target_order))) => {
+                    n64_order = Some(N64ByteOrderTransform {
+                        from: target_order,
+                        to: source_order,
+                    });
+                    if source_order == target_order {
+                        validate_input
+                    } else {
+                        self.emit_running(
+                            OperationLabel {
+                                command: "patch-validate",
+                                family: OperationFamily::Patch,
+                                format: None,
+                            },
+                            "compat",
+                            format!(
+                                "transforming N64 input byte order to {}",
+                                target_order.label()
+                            ),
+                            None,
+                            context.single_thread_execution(),
+                        );
+                        let transformed_path = context
+                            .temp_paths()
+                            .next_path("patch-validate-input-n64-byte-order", Some("bin"));
+                        if let Err(error) = Self::rewrite_n64_byte_order(
+                            &validate_input,
+                            &transformed_path,
+                            source_order,
+                            target_order,
+                        ) {
+                            return OperationReport::failed(
+                                OperationFamily::Patch,
+                                None,
+                                "compat",
+                                error.to_string(),
+                                context.single_thread_execution(),
+                            );
+                        }
                         temp_paths.push(transformed_path.clone());
                         transformed_path
                     }
-                    Ok(None) => validate_input,
-                    Err(error) => {
-                        return OperationReport::failed(
-                            OperationFamily::Patch,
-                            None,
-                            "compat",
-                            error.to_string(),
-                            context.single_thread_execution(),
-                        );
-                    }
                 }
+                Ok(None) => validate_input,
+                Err(error) => {
+                    return OperationReport::failed(
+                        OperationFamily::Patch,
+                        None,
+                        "compat",
+                        error.to_string(),
+                        context.single_thread_execution(),
+                    );
+                }
+            };
+            let transformed_checksum_hints = BTreeMap::new();
+            let effective_checksum_hints = if validate_input == resolved_input {
+                &cached_input_checksums
             } else {
-                validate_input
+                &transformed_checksum_hints
             };
             if effective_expected_size.is_some() || validate_with_min_size.is_some() {
                 match Self::validate_patch_input_size(
@@ -291,7 +319,7 @@ impl CliApp {
                 match Self::validate_patch_apply_expected_checksums(
                     &validate_input,
                     &expected_input_checksums,
-                    &cached_input_checksums,
+                    effective_checksum_hints,
                     "input",
                     &context,
                 ) {
@@ -316,7 +344,9 @@ impl CliApp {
                     probe_threads.clone(),
                     IndependentValidationSummary {
                         extracted_archives,
-                        n64_byte_order,
+                        n64_byte_order: (n64_order.is_some()
+                            || n64_byte_order != PatchN64ByteOrderMode::Auto)
+                            .then_some(n64_byte_order),
                         extracted_patch_notes,
                         validation_labels,
                         min_size: validate_with_min_size,
@@ -353,6 +383,30 @@ impl CliApp {
                     );
                 }
                 formats.push(handler.descriptor().name.to_string());
+
+                if index > 0
+                    && let Err(error) = self.transition_n64_byte_order(
+                        n64_byte_order,
+                        resolved_patch_path,
+                        &mut current_input,
+                        &mut n64_order,
+                        &context,
+                        &mut temp_paths,
+                    )
+                {
+                    return OperationReport::failed(
+                        OperationFamily::Patch,
+                        Some(handler.descriptor().name.to_string()),
+                        "prepare",
+                        format!(
+                            "patch {}/{} (`{}`): N64 byte-order transition failed: {error}",
+                            index + 1,
+                            patch_count,
+                            patch_path.display()
+                        ),
+                        context.single_thread_execution(),
+                    );
+                }
 
                 self.emit_running(
                     OperationLabel {
@@ -509,8 +563,8 @@ impl CliApp {
                     "input resolved via {extracted_archives} container extract step(s)"
                 ));
             }
-            if let Some(target_order) = n64_byte_order {
-                validation_labels.push(format!("n64_byte_order={}", target_order.id()));
+            if n64_order.is_some() || n64_byte_order != PatchN64ByteOrderMode::Auto {
+                validation_labels.push(format!("n64_byte_order={}", n64_byte_order.id()));
             }
             validation_labels.extend(extracted_patch_notes);
             let format_label = if formats.is_empty() {
@@ -783,8 +837,8 @@ impl CliApp {
                 "input resolved via {extracted_archives} container extract step(s)"
             ));
         }
-        if let Some(target_order) = n64_byte_order {
-            validation_labels.push(format!("n64_byte_order={}", target_order.id()));
+        if let Some(mode) = n64_byte_order {
+            validation_labels.push(format!("n64_byte_order={}", mode.id()));
         }
         validation_labels.extend(extracted_patch_notes);
 
@@ -849,7 +903,7 @@ impl CliApp {
 /// `source_values` block the chained report does.
 struct IndependentValidationSummary {
     extracted_archives: usize,
-    n64_byte_order: Option<N64ByteOrder>,
+    n64_byte_order: Option<PatchN64ByteOrderMode>,
     extracted_patch_notes: Vec<String>,
     validation_labels: Vec<String>,
     min_size: Option<u64>,

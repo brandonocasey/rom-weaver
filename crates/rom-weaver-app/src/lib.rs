@@ -955,6 +955,43 @@ impl N64ByteOrder {
     }
 }
 
+/// Which N64 byte order a patch should see. `Auto` matches the patch's required
+/// source CRC32 against the three byte-order checksum variants; `Keep` leaves
+/// the current chain bytes untouched. Concrete modes are explicit overrides.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(ValueEnum))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+#[serde(rename_all = "kebab-case")]
+pub enum PatchN64ByteOrderMode {
+    #[default]
+    Auto,
+    Keep,
+    BigEndian,
+    LittleEndian,
+    ByteSwapped,
+}
+
+impl PatchN64ByteOrderMode {
+    const fn id(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Keep => "keep",
+            Self::BigEndian => "big-endian",
+            Self::LittleEndian => "little-endian",
+            Self::ByteSwapped => "byte-swapped",
+        }
+    }
+
+    const fn target(self) -> Option<N64ByteOrder> {
+        match self {
+            Self::Auto | Self::Keep => None,
+            Self::BigEndian => Some(N64ByteOrder::BigEndian),
+            Self::LittleEndian => Some(N64ByteOrder::LittleEndian),
+            Self::ByteSwapped => Some(N64ByteOrder::ByteSwapped),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct N64ByteOrderTransform {
     from: N64ByteOrder,

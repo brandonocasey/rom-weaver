@@ -79,6 +79,10 @@ type PatchApplyUserOptions = {
   /** ROM copier-header handling: `remove` strips the detected header before apply and
    * re-adds it after. `undefined`/`keep` patches the input bytes as-is. */
   header?: "keep" | "strip";
+  /** N64 byte-order override; undefined means checksum-driven Auto. */
+  n64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
+  /** Staged Auto result used for the first patch, whose input variants are already known. */
+  resolvedN64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
 };
 
 type PatchInput = {

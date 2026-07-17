@@ -95,6 +95,13 @@ type PatchStackItemState = {
   headerAutoMode?: "keep" | "strip";
   /** Whether the checksum preflight proved the Auto mode (vs the ambiguous keep default). */
   headerAutoDecided?: boolean;
+  /** Whether the target is an N64 ROM with detectable byte order. */
+  showN64ByteOrderOption?: boolean;
+  /** Current N64 byte-order pin; `undefined` means Auto. */
+  n64ByteOrderChoice?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
+  n64AutoMode?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
+  n64AutoDecided?: boolean;
+  n64SourceOrder?: "big-endian" | "little-endian" | "byte-swapped";
   /** User-pasted checksum (raw hex) used to validate the target input before apply. */
   validateInputChecksum?: string;
   /** User-pasted checksum (raw hex) used to validate the patched output after apply. */

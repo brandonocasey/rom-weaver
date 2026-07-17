@@ -60,12 +60,16 @@ Validate minimum effective patch input size before dry\-run apply
 Remove a detected ROM header before patch validation (A78/LNX/NES/FDS/SMC signatures; SNES/PCE copier\-size rules)
 .TP
 \fB\-\-n64\-byte\-order\fR \fI<N64_BYTE_ORDER>\fR
-Transform an N64 input to the requested byte order before patch validation
+N64 byte order before patch validation: auto (default; match the patch source CRC32), keep, big\-endian, little\-endian, or byte\-swapped
 .br
 
 .br
 \fIPossible values:\fR
 .RS 14
+.IP \(bu 2
+auto
+.IP \(bu 2
+keep
 .IP \(bu 2
 big\-endian
 .IP \(bu 2

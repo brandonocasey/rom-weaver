@@ -1078,6 +1078,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         validateInputChecksum?: string;
         validateOutputChecksum?: string;
         header?: "keep" | "strip";
+        n64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
         revalidate?: boolean;
       },
     ) => {

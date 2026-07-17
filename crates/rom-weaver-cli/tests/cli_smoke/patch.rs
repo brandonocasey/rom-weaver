@@ -2595,6 +2595,99 @@ fn patch_apply_auto_header_strips_when_patch_targets_headerless_bytes() {
 }
 
 #[test]
+fn patch_apply_auto_n64_byte_order_matches_patch_and_restores_input_order() {
+    fn byte_swap(words: &[u8]) -> Vec<u8> {
+        let mut swapped = words.to_vec();
+        for pair in swapped.chunks_exact_mut(2) {
+            pair.swap(0, 1);
+        }
+        swapped
+    }
+
+    let temp = setup_temp_dir();
+    let z64 = [
+        0x80, 0x37, 0x12, 0x40, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+        0x0b,
+    ];
+    let mut modified_z64 = z64;
+    modified_z64[12..].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    fs::write(temp.child("original.z64").path(), z64).expect("fixture");
+    fs::write(temp.child("modified.z64").path(), modified_z64).expect("fixture");
+    fs::write(temp.child("input.v64").path(), byte_swap(&z64)).expect("fixture");
+    command_stdout(
+        &[
+            "patch",
+            "create",
+            "--original",
+            temp.child("original.z64").path().to_str().expect("path"),
+            "--modified",
+            temp.child("modified.z64").path().to_str().expect("path"),
+            "--format",
+            "bps",
+            "--output",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    let validate = command_stdout(
+        &[
+            "patch",
+            "validate",
+            "--input",
+            temp.child("input.v64").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+    assert_eq!(parse_single_json_line(&validate)["status"], "succeeded");
+
+    let auto = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.v64").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--output",
+            temp.child("output.v64").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        0,
+    );
+    let auto_json = parse_single_json_line(&auto);
+    assert_eq!(auto_json["status"], "succeeded");
+    assert_eq!(
+        fs::read(temp.child("output.v64").path()).expect("output"),
+        byte_swap(&modified_z64)
+    );
+
+    let keep = command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("input.v64").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.bps").path().to_str().expect("path"),
+            "--n64-byte-order",
+            "keep",
+            "--output",
+            temp.child("keep.v64").path().to_str().expect("path"),
+            "--no-compress",
+            "--json",
+        ],
+        1,
+    );
+    assert_eq!(parse_single_json_line(&keep)["status"], "failed");
+}
+
+#[test]
 fn patch_apply_auto_output_header_drops_snes_copier_header() {
     let temp = setup_temp_dir();
     // 512-byte copier header + 32 KiB payload: SNES copier size rule (len % 1024 == 512).

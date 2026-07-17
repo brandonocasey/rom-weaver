@@ -225,8 +225,11 @@ type RuntimePatchApplyOptions = Partial<Omit<PatchApplyCommand, "input" | "outpu
   fixChecksum?: PatchApplyCommand["repair_checksum"];
   /** One mode per patch in chain order; a shorter list carries the last mode forward. */
   headerModes?: PatchApplyCommand["patch_header"];
+  /** One N64 byte-order mode per patch in chain order. */
+  n64ByteOrders?: PatchApplyCommand["n64_byte_order"];
+  /** @deprecated Use n64ByteOrders for per-patch control. */
+  n64ByteOrder?: NonNullable<PatchApplyCommand["n64_byte_order"]>[number];
   outputHeader?: PatchApplyCommand["output_header"];
-  n64ByteOrder?: PatchApplyCommand["n64_byte_order"];
   outputExtension?: string | null | undefined;
   outputName?: string | null | undefined;
   removeHeader?: boolean;

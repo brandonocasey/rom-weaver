@@ -48,6 +48,10 @@ type InternalSourceState = {
   headerResolution?: NonNullable<ApplyWorkflowPatchState["headerResolution"]>;
   /** User override from the patch Options drawer; `undefined` means the resolved default. */
   headerChoice?: "keep" | "strip";
+  /** Computed N64 byte-order decision for this patch against its target ROM. */
+  n64Resolution?: NonNullable<ApplyWorkflowPatchState["n64Resolution"]>;
+  /** User override from the patch Options drawer; `undefined` means Auto. */
+  n64ByteOrderChoice?: ApplyWorkflowPatchState["n64ByteOrderChoice"];
   role: SourceRole;
 };
 type InternalCandidate<TSource> = SharedInternalCandidate<TSource, InternalSourceState>;

@@ -28,6 +28,7 @@ import { formatChecksumTiming } from "./workflow-form-utils.ts";
  * stages from scratch, so the run replays these onto the fresh stages. */
 type ApplyPatchRunOptions = {
   header?: "keep" | "strip";
+  n64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
   ppfUndo?: boolean;
   validateInputChecksum?: string;
   validateOutputChecksum?: string;
@@ -228,12 +229,17 @@ const toPatchStageInfo = (
     headerAutoMode: patch.headerResolution?.mode,
     headerChoice: patch.headerChoice,
     headerStrippedBytes: patch.headerResolution?.strippedBytes,
+    n64AutoDecided: patch.n64Resolution?.decided === true,
+    n64AutoMode: patch.n64Resolution?.mode,
+    n64ByteOrderChoice: patch.n64ByteOrderChoice,
+    n64SourceOrder: patch.n64Resolution?.sourceOrder,
     id: patch.id,
     order,
     parentCompressions: patch.parentCompressions,
     // Surface the header choice whenever the target ROM has a strippable header -
     // Auto reflects the checksum-driven decision; Keep/Strip pin an override.
     showHeaderOption: !!patch.headerResolution,
+    showN64ByteOrderOption: !!patch.n64Resolution,
     size: patch.size,
     sourceChecksumState: patch.checksumPreflight?.status || "",
     sourceSize: patch.sourceSize,

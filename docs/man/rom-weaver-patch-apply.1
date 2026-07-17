@@ -144,12 +144,16 @@ auto
 Repair supported ROM headers/checksums after patch apply (SNES/NES/GB/GBA/MD/SMS/N64/NDS and related profiles; auto\-detect)
 .TP
 \fB\-\-n64\-byte\-order\fR \fI<N64_BYTE_ORDER>\fR
-Transform an N64 input to the requested byte order before patch apply, then restore the original order after output
+N64 byte order for each patch: auto (default; match the patch source CRC32), keep, big\-endian, little\-endian, or byte\-swapped. Repeatable per patch; a shorter list carries the last mode forward. The original input order is restored on output.
 .br
 
 .br
 \fIPossible values:\fR
 .RS 14
+.IP \(bu 2
+auto
+.IP \(bu 2
+keep
 .IP \(bu 2
 big\-endian
 .IP \(bu 2

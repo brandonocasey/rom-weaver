@@ -116,24 +116,55 @@ impl CliApp {
         Ok(Some(order))
     }
 
-    pub(super) fn rewrite_n64_byte_order_to_temp(
+    /// Match a required source CRC32 against the three N64 byte-order variants.
+    /// The shared checksum engine hashes them in one read of the input.
+    pub(super) fn resolve_n64_byte_order_for_crc32(
         input: &Path,
-        output: &Path,
-        target: N64ByteOrder,
-    ) -> Result<Option<N64ByteOrderTransform>> {
-        let Some(source) = Self::detect_n64_byte_order_path(input)? else {
-            return Err(RomWeaverError::Validation(format!(
-                "could not detect N64 byte order for `{}`",
-                input.display()
-            )));
-        };
-        if source == target {
+        required_crc32: &str,
+        context: &OperationContext,
+    ) -> Result<Option<N64ByteOrder>> {
+        if Self::detect_n64_byte_order_path(input)?.is_none() {
             return Ok(None);
         }
-        Self::rewrite_n64_byte_order(input, output, source, target)?;
-        Ok(Some(N64ByteOrderTransform {
-            from: target,
-            to: source,
-        }))
+        let file_len = fs::metadata(input)?.len();
+        let algorithms = vec!["crc32".to_string()];
+        let name_hint = input.file_name().and_then(|name| name.to_str());
+        let mut engine = StreamingVariantChecksums::new(
+            &algorithms,
+            file_len,
+            name_hint,
+            context.variant_hash_execution().effective_threads,
+        )?;
+        let mut file = File::open(input)?;
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        loop {
+            context.cancel().check()?;
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            engine.update(&buffer[..read])?;
+        }
+
+        let required_crc32 = required_crc32.trim().to_ascii_lowercase();
+        let matches = engine
+            .finalize()?
+            .rows
+            .into_iter()
+            .filter(|row| {
+                row.id.starts_with("n64-byte-order:")
+                    && row
+                        .checksums
+                        .get("crc32")
+                        .is_some_and(|crc32| crc32.eq_ignore_ascii_case(&required_crc32))
+            })
+            .filter_map(|row| match row.id.as_str() {
+                "n64-byte-order:big-endian" => Some(N64ByteOrder::BigEndian),
+                "n64-byte-order:little-endian" => Some(N64ByteOrder::LittleEndian),
+                "n64-byte-order:byte-swapped" => Some(N64ByteOrder::ByteSwapped),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        Ok((matches.len() == 1).then(|| matches[0]))
     }
 }

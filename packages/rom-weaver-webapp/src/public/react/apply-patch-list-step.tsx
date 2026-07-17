@@ -1,3 +1,4 @@
+import ArrowLeftRight from "lucide-react/dist/esm/icons/arrow-left-right.js";
 import Check from "lucide-react/dist/esm/icons/check.js";
 import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
 import Pencil from "lucide-react/dist/esm/icons/pencil.js";
@@ -269,6 +270,59 @@ const PatchHeaderModeSelect = ({
         <option value="auto">{autoLabel}</option>
         <option value="keep">keep {headerNoun}</option>
         <option value="strip">strip {headerNoun}</option>
+      </select>
+    </span>
+  );
+};
+
+const N64_ORDER_LABELS = {
+  "big-endian": "big endian (.z64)",
+  "byte-swapped": "byte-swapped (.v64)",
+  "little-endian": "little endian (.n64)",
+  keep: "keep current",
+} as const;
+
+const PatchN64ByteOrderSelect = ({
+  index,
+  item,
+  patchStack,
+}: {
+  index: number;
+  item: PatchStackItemState;
+  patchStack: PatcherStackController;
+}) => {
+  if (!item.showN64ByteOrderOption) return null;
+  const autoMode = item.n64AutoMode || "keep";
+  const autoLabel = `byte order auto (${N64_ORDER_LABELS[autoMode]})`;
+  const sourceLabel = item.n64SourceOrder ? N64_ORDER_LABELS[item.n64SourceOrder] : "current order";
+  return (
+    <span className="target-grp header-grp">
+      <ArrowLeftRight aria-hidden="true" />
+      <label className="sr-only" htmlFor={`rom-weaver-patch-n64-byte-order-${index}`}>
+        N64 byte order before patching
+      </label>
+      <select
+        className="meta-target-select mono ptgt-sel"
+        disabled={item.optionsDisabled}
+        id={`rom-weaver-patch-n64-byte-order-${index}`}
+        onChange={(event) => {
+          const next = event.currentTarget.value;
+          void patchStack.setPatchOption?.(index, {
+            n64ByteOrder:
+              next === "keep" || next === "big-endian" || next === "little-endian" || next === "byte-swapped"
+                ? next
+                : undefined,
+            revalidate: true,
+          });
+        }}
+        title="Auto matches the patch's required source checksum against all three N64 byte orders. The original ROM order is restored on output."
+        value={item.n64ByteOrderChoice ?? "auto"}
+      >
+        <option value="auto">{autoLabel}</option>
+        <option value="keep">keep current ({sourceLabel})</option>
+        <option value="big-endian">{N64_ORDER_LABELS["big-endian"]}</option>
+        <option value="byte-swapped">{N64_ORDER_LABELS["byte-swapped"]}</option>
+        <option value="little-endian">{N64_ORDER_LABELS["little-endian"]}</option>
       </select>
     </span>
   );
@@ -893,6 +947,7 @@ const PatchCard = ({
             <PatchEnableToggle disabled={isDisabled} fileName={item.fileName} onToggle={() => onTogglePatch(index)} />
           ) : null}
           {staging || isDisabled ? null : <PatchHeaderModeSelect index={index} item={item} patchStack={patchStack} />}
+          {staging || isDisabled ? null : <PatchN64ByteOrderSelect index={index} item={item} patchStack={patchStack} />}
           {item.fileSize ? <span className="fsize mono">{formatByteSize(item.fileSize)}</span> : null}
           {item.format ? <span className="meta-fmt mono">{item.format.toLowerCase()}</span> : null}
           {meta?.label ? <span className="meta-fmt mono">{meta.label}</span> : null}

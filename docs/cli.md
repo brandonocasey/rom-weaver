@@ -173,6 +173,9 @@ fold container/platform probe metadata into the result (`--probe`).
 - `--patch-header auto|keep|strip` controls copier-header handling per patch.
 - `--output-header auto|keep|strip` controls the final ROM header.
 - `--repair-checksum` repairs supported ROM headers and checksums after apply.
+- `--n64-byte-order auto|keep|big-endian|little-endian|byte-swapped` controls
+  N64 input order per patch. Auto is the default and matches checksum variants;
+  the original input order is restored on output.
 - `--code` can bake supported Game Genie or Pro Action Replay/GameShark codes
   into a ROM as a synthetic patch.
 
@@ -190,7 +193,8 @@ header/checksum transforms.
 output: format parsing, embedded patch checksums, and optional input
 preflight (`--validate-with-checksum`, `--validate-with-size`,
 `--validate-with-min-size`). `--strip-header` and `--n64-byte-order` apply
-the matching input transform before validation. Patches validate as a
+the matching input transform before validation; N64 byte order defaults to
+checksum-driven auto detection. Patches validate as a
 sequential chain by default; `--independent` validates each `--patch`
 directly against the input instead, reporting a per-patch verdict without
 aborting the batch on a single failure.

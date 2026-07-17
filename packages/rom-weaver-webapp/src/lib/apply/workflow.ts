@@ -457,6 +457,11 @@ const runApplyWorkflow = async (
               if (header === "strip" || header === "keep") return header;
               return position === 0 ? ("keep" as const) : ("auto" as const);
             });
+            const n64ByteOrdersForChain = patchIndices.map((patchIndex, position) => {
+              const patchOption = patchOptions[patchIndex];
+              if (patchOption?.n64ByteOrder) return patchOption.n64ByteOrder;
+              return position === 0 ? patchOption?.resolvedN64ByteOrder || ("keep" as const) : ("auto" as const);
+            });
             const outputHeaderForChain = options?.output?.header || ("auto" as const);
             // Descriptive "Weaving <patch> into <rom>" label (vs the worker's generic one).
             const targetName = asset.fileName || "ROM";
@@ -478,6 +483,7 @@ const runApplyWorkflow = async (
               options: {
                 ...createWorkerApplyOptions(options, workerOutputName),
                 headerModes: headerModesForChain,
+                n64ByteOrders: n64ByteOrdersForChain,
                 outputHeader: outputHeaderForChain,
               },
               patches: selectedPatches,

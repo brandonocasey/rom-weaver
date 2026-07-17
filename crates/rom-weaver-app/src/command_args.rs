@@ -844,11 +844,13 @@ pub struct PatchApplyCommand {
         arg(
             long = "n64-byte-order",
             value_enum,
-            help = "Transform an N64 input to the requested byte order before patch apply, then restore the original order after output"
+            action = ArgAction::Append,
+            help = "N64 byte order for each patch: auto (default; match the patch source CRC32), keep, big-endian, little-endian, or byte-swapped. Repeatable per patch; a shorter list carries the last mode forward. The original input order is restored on output."
         )
     )]
-    #[cfg_attr(feature = "typescript-types", ts(optional))]
-    pub n64_byte_order: Option<N64ByteOrder>,
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub n64_byte_order: Vec<PatchN64ByteOrderMode>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -1096,11 +1098,11 @@ pub struct PatchValidateCommand {
         arg(
             long = "n64-byte-order",
             value_enum,
-            help = "Transform an N64 input to the requested byte order before patch validation"
+            help = "N64 byte order before patch validation: auto (default; match the patch source CRC32), keep, big-endian, little-endian, or byte-swapped"
         )
     )]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
-    pub n64_byte_order: Option<N64ByteOrder>,
+    pub n64_byte_order: Option<PatchN64ByteOrderMode>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(

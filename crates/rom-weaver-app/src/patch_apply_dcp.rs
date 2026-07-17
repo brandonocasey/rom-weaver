@@ -39,7 +39,10 @@ impl CliApp {
         if args.patch_header.contains(&PatchApplyHeaderMode::Strip)
             || args.output_header.is_some()
             || args.repair_checksum
-            || args.n64_byte_order.is_some()
+            || args
+                .n64_byte_order
+                .iter()
+                .any(|mode| mode.target().is_some())
         {
             return self.finish(
                 "patch-apply",

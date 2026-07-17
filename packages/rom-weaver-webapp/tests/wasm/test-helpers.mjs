@@ -248,8 +248,8 @@ function commandArgsToRunRequest(args) {
           ? { output_header: readOptionalValue(parsed, "output-header") }
           : {}),
         ...(parsed.flags.has("repair-checksum") ? { repair_checksum: true } : {}),
-        ...(readOptionalValue(parsed, "n64-byte-order")
-          ? { n64_byte_order: readOptionalValue(parsed, "n64-byte-order") }
+        ...(readOptionValues(parsed, "n64-byte-order").length
+          ? { n64_byte_order: readOptionValues(parsed, "n64-byte-order") }
           : {}),
         ...(parsed.flags.has("ignore-checksum-validation") ? { ignore_checksum_validation: true } : {}),
       });

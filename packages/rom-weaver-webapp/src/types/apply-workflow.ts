@@ -6,6 +6,7 @@ import type { WorkflowWarning } from "./workflow-controller.ts";
 type ApplyWorkflowSourceStatus = "empty" | "failed" | "loading" | "needsSelection" | "ready";
 
 type ApplyWorkflowChecksums = Record<string, string>;
+type ApplyN64ByteOrderMode = "keep" | "big-endian" | "little-endian" | "byte-swapped";
 
 type ApplyWorkflowParentCompression = {
   depth: number;
@@ -141,11 +142,21 @@ type ApplyWorkflowPatchState = {
   };
   /** User override from the patch Options drawer; `undefined` means the resolved default. */
   headerChoice?: "keep" | "strip";
+  /** Computed N64 byte-order decision for this patch against its target ROM. */
+  n64Resolution?: {
+    mode: ApplyN64ByteOrderMode;
+    decided: boolean;
+    sourceOrder: Exclude<ApplyN64ByteOrderMode, "keep">;
+    checksums?: Record<string, string>;
+  };
+  /** User override from the patch Options drawer; `undefined` means Auto. */
+  n64ByteOrderChoice?: ApplyN64ByteOrderMode;
 };
 
 export type {
   ApplyWorkflowBundleSources,
   ApplyWorkflowChecksums,
+  ApplyN64ByteOrderMode,
   ApplyWorkflowInputState,
   ApplyWorkflowParentCompression,
   ApplyWorkflowPatchState,

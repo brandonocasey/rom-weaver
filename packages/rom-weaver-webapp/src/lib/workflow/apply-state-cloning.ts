@@ -98,6 +98,13 @@ const clonePatchState = (
   fileName: state.fileName,
   headerChoice: state.headerChoice,
   headerResolution: state.headerResolution ? { ...state.headerResolution } : undefined,
+  n64ByteOrderChoice: state.n64ByteOrderChoice,
+  n64Resolution: state.n64Resolution
+    ? {
+        ...state.n64Resolution,
+        checksums: state.n64Resolution.checksums ? { ...state.n64Resolution.checksums } : undefined,
+      }
+    : undefined,
   id: state.id,
   parentCompressions: parentCompressions.map((entry) => ({ ...entry })),
   patchValidation: clonePatchValidation(state.patchValidation),

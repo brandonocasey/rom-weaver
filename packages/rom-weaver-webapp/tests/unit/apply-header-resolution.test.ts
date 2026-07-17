@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveApplyHeaderMode } from "../../src/lib/workflow/apply-header-resolution.ts";
+import { resolveApplyHeaderMode, resolveApplyN64ByteOrder } from "../../src/lib/workflow/apply-header-resolution.ts";
 import type { ChecksumVariant } from "../../src/types/checksum.ts";
 
 /**
@@ -107,5 +107,52 @@ describe("resolveApplyHeaderMode", () => {
       target([removeHeaderVariant()]),
     );
     expect(resolution?.mode).toBe("strip");
+  });
+});
+
+describe("resolveApplyN64ByteOrder", () => {
+  const n64Target = {
+    checksums: { crc32: "aaaaaaaa" },
+    checksumVariants: [
+      {
+        applyCompatibility: { n64ByteOrder: "big-endian" },
+        checksums: { crc32: "bbbbbbbb" },
+        id: "n64-byte-order:big-endian",
+        label: "N64 byte order: big-endian",
+        transforms: { n64ByteOrder: { sourceOrder: "byte-swapped", targetOrder: "big-endian" } },
+      },
+      {
+        applyCompatibility: { n64ByteOrder: "little-endian" },
+        checksums: { crc32: "cccccccc" },
+        id: "n64-byte-order:little-endian",
+        label: "N64 byte order: little-endian",
+        transforms: { n64ByteOrder: { sourceOrder: "byte-swapped", targetOrder: "little-endian" } },
+      },
+      {
+        applyCompatibility: { n64ByteOrder: "byte-swapped" },
+        checksums: { crc32: "aaaaaaaa" },
+        id: "n64-byte-order:byte-swapped",
+        label: "N64 byte order: byte-swapped",
+        transforms: { n64ByteOrder: { sourceOrder: "byte-swapped", targetOrder: "byte-swapped" } },
+      },
+    ] satisfies ChecksumVariant[],
+  };
+
+  it("selects the checksum-matching byte order", () => {
+    expect(resolveApplyN64ByteOrder({ sourceCrc32: "bbbbbbbb" }, n64Target)).toEqual({
+      checksums: { crc32: "bbbbbbbb" },
+      decided: true,
+      mode: "big-endian",
+      sourceOrder: "byte-swapped",
+    });
+  });
+
+  it("keeps the current order when raw matches or evidence is absent", () => {
+    expect(resolveApplyN64ByteOrder({ sourceCrc32: "aaaaaaaa" }, n64Target)?.mode).toBe("keep");
+    expect(resolveApplyN64ByteOrder(undefined, n64Target)).toMatchObject({ decided: false, mode: "keep" });
+  });
+
+  it("returns undefined for non-N64 checksum variants", () => {
+    expect(resolveApplyN64ByteOrder({ sourceCrc32: "bbbbbbbb" }, target([removeHeaderVariant()]))).toBeUndefined();
   });
 });

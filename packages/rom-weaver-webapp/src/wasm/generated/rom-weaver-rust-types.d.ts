@@ -260,6 +260,8 @@ export type CompressionLevelProfile = "min" | "very-low" | "low" | "medium" | "h
 
 export type N64ByteOrder = "big-endian" | "little-endian" | "byte-swapped";
 
+export type PatchN64ByteOrderMode = "auto" | "keep" | "big-endian" | "little-endian" | "byte-swapped";
+
 export type PatchApplyHeaderMode = "keep" | "strip" | "auto";
 
 export type PatchApplyOutputHeaderMode = "keep" | "strip" | "auto";
@@ -281,9 +283,9 @@ export type CompressCommand = { input: Array<string>, format?: string, output: s
 
 export type TrimCommand = { source: Array<string>, output?: string, extension?: string, in_place?: boolean, dry_run?: boolean, revert?: boolean, recursive?: boolean, rom_filter?: boolean, no_extract?: boolean, revert_marker?: boolean, threads?: ThreadBudget, };
 
-export type PatchApplyCommand = { input: string, select?: Array<string>, target?: string, rom_filter?: boolean, patch_filter?: boolean, no_extract?: boolean, no_ignore?: boolean, patches?: Array<string>, output?: string, bundle?: string, with_patches?: Array<string>, without_patches?: Array<string>, no_compress?: boolean, compress_format?: string, compress_codec?: Array<string>, compress_level?: CompressionLevelProfile, checksum_cache?: Array<string>, validate_with_checksums?: Array<string>, patch_header?: Array<PatchApplyHeaderMode>, output_header?: PatchApplyOutputHeaderMode, repair_checksum?: boolean, n64_byte_order?: N64ByteOrder, ignore_checksum_validation?: boolean, validate_with_output_checksums?: Array<string>, codes?: Array<string>, code_system?: string, code_kind?: string, threads?: ThreadBudget, };
+export type PatchApplyCommand = { input: string, select?: Array<string>, target?: string, rom_filter?: boolean, patch_filter?: boolean, no_extract?: boolean, no_ignore?: boolean, patches?: Array<string>, output?: string, bundle?: string, with_patches?: Array<string>, without_patches?: Array<string>, no_compress?: boolean, compress_format?: string, compress_codec?: Array<string>, compress_level?: CompressionLevelProfile, checksum_cache?: Array<string>, validate_with_checksums?: Array<string>, patch_header?: Array<PatchApplyHeaderMode>, output_header?: PatchApplyOutputHeaderMode, repair_checksum?: boolean, n64_byte_order?: Array<PatchN64ByteOrderMode>, ignore_checksum_validation?: boolean, validate_with_output_checksums?: Array<string>, codes?: Array<string>, code_system?: string, code_kind?: string, threads?: ThreadBudget, };
 
-export type PatchValidateCommand = { input: string, select?: Array<string>, rom_filter?: boolean, patch_filter?: boolean, no_extract?: boolean, no_ignore?: boolean, patches: Array<string>, checksum_cache?: Array<string>, validate_with_checksums?: Array<string>, validate_with_size?: bigint, validate_with_min_size?: bigint, strip_header?: boolean, n64_byte_order?: N64ByteOrder, ignore_checksum_validation?: boolean, independent?: boolean, threads?: ThreadBudget, };
+export type PatchValidateCommand = { input: string, select?: Array<string>, rom_filter?: boolean, patch_filter?: boolean, no_extract?: boolean, no_ignore?: boolean, patches: Array<string>, checksum_cache?: Array<string>, validate_with_checksums?: Array<string>, validate_with_size?: bigint, validate_with_min_size?: bigint, strip_header?: boolean, n64_byte_order?: PatchN64ByteOrderMode, ignore_checksum_validation?: boolean, independent?: boolean, threads?: ThreadBudget, };
 
 export type PatchCreateCommand = { original: string, modified?: string, format?: string, output?: string, plan?: boolean, ignore_checksum_validation?: boolean, checksum_name?: boolean, source_crc32?: string, codes?: Array<string>, code_system?: string, code_kind?: string, threads?: ThreadBudget, xdelta_secondary?: string, };
 

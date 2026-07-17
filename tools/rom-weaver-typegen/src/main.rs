@@ -7,9 +7,9 @@ use rom_weaver_app::{
     CompressionLevelProfile, ExtractCommand, ExtractStepDetails, ExtractedFileEntry, IngestCommand,
     IngestKind, IngestResult, IngestRomAsset, N64ByteOrder, PatchApplyCommand,
     PatchApplyHeaderMode, PatchApplyOutputHeaderMode, PatchCommands, PatchCreateCommand,
-    PatchDescriptor, PatchValidateCommand, PlanExtractBatchCommand, PpfUndoCommand, ProbeCommand,
-    RomWeaverBundle, RomWeaverRunOutputOptions, RomWeaverRunRequest, ToolsCommands, TrimCommand,
-    compression_metadata, patch_create_format_policy_metadata,
+    PatchDescriptor, PatchN64ByteOrderMode, PatchValidateCommand, PlanExtractBatchCommand,
+    PpfUndoCommand, ProbeCommand, RomWeaverBundle, RomWeaverRunOutputOptions, RomWeaverRunRequest,
+    ToolsCommands, TrimCommand, compression_metadata, patch_create_format_policy_metadata,
 };
 use rom_weaver_containers::{
     ArchiveExtensionAlias, ArchiveFormatMetadata, ContainerDefaultOutputMetadata,
@@ -177,6 +177,7 @@ fn render_types() -> String {
         export_decl::<IngestResult>(&config),
         export_decl::<CompressionLevelProfile>(&config),
         export_decl::<N64ByteOrder>(&config),
+        export_decl::<PatchN64ByteOrderMode>(&config),
         export_decl::<PatchApplyHeaderMode>(&config),
         export_decl::<PatchApplyOutputHeaderMode>(&config),
         export_decl::<ProbeCommand>(&config),

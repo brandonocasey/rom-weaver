@@ -244,8 +244,9 @@ impl CliApp {
         // N64 byte-order rewrites and cheat codes pin offsets to the original bytes,
         // and --ignore-checksum-validation removes the evidence itself, so those runs
         // degrade auto to keep.
+        let any_explicit_n64_transform = n64_byte_order.iter().any(|mode| mode.target().is_some());
         let auto_evidence_available =
-            n64_byte_order.is_none() && codes.is_empty() && !ignore_checksum_validation;
+            !any_explicit_n64_transform && codes.is_empty() && !ignore_checksum_validation;
         let patch_header_mode = |index: usize| -> PatchApplyHeaderMode {
             let mode = patch_header
                 .get(index)
@@ -259,8 +260,15 @@ impl CliApp {
             }
         };
         let any_explicit_strip = patch_header.contains(&PatchApplyHeaderMode::Strip);
+        let n64_byte_order_mode = |index: usize| -> PatchN64ByteOrderMode {
+            n64_byte_order
+                .get(index)
+                .or_else(|| n64_byte_order.last())
+                .copied()
+                .unwrap_or_default()
+        };
         let output_header_mode = output_header.unwrap_or_default();
-        if !codes.is_empty() && (any_explicit_strip || n64_byte_order.is_some()) {
+        if !codes.is_empty() && (any_explicit_strip || any_explicit_n64_transform) {
             return self.finish(
                 "patch-apply",
                 fail(
@@ -331,7 +339,7 @@ impl CliApp {
             && (any_explicit_strip
                 || output_header.is_some()
                 || repair_checksum
-                || n64_byte_order.is_some())
+                || any_explicit_n64_transform)
         {
             return self.finish(
                 "patch-apply",
@@ -582,6 +590,9 @@ impl CliApp {
             } else {
                 (0..resolved_patches.len()).map(patch_header_mode).collect()
             };
+            let chain_n64_modes = (0..resolved_patches.len())
+                .map(n64_byte_order_mode)
+                .collect::<Vec<_>>();
             // Patch 0 sets the initial header state (the strip happens on the
             // resolved input, before checksum validation). Later patches transition
             // the state inside the apply loop on their own evidence.
@@ -604,11 +615,15 @@ impl CliApp {
                 apply_input,
                 stripped_header,
                 stripped_header_match,
-                restore_n64_order,
+                mut n64_order,
             } = match self.prepare_patch_apply_input(
                 &resolved_input,
                 strip_header,
-                n64_byte_order,
+                chain_n64_modes.first().copied().unwrap_or_default(),
+                resolved_patches
+                    .first()
+                    .map(|(_, resolved)| resolved.as_path()),
+                expected_input_checksums.get("crc32").map(String::as_str),
                 repair_checksum,
                 &context,
                 &mut temp_paths,
@@ -623,6 +638,12 @@ impl CliApp {
                         context.single_thread_execution(),
                     );
                 }
+            };
+            let transformed_checksum_hints = BTreeMap::new();
+            let effective_checksum_hints = if apply_input == resolved_input {
+                &cached_input_checksums
+            } else {
+                &transformed_checksum_hints
             };
             if let Some(expected_size) = expected_input_size {
                 match Self::validate_patch_input_size(&apply_input, Some(expected_size), None) {
@@ -656,7 +677,7 @@ impl CliApp {
                 match Self::validate_patch_apply_expected_checksums(
                     &apply_input,
                     &expected_input_checksums,
-                    &cached_input_checksums,
+                    effective_checksum_hints,
                     "input",
                     &context,
                 ) {
@@ -748,7 +769,7 @@ impl CliApp {
                 && (add_header
                     || strip_output_header
                     || repair_checksum
-                    || restore_n64_order.is_some()
+                    || n64_order.is_some_and(|order| order.from != order.to)
                     || patch_count > 1);
             let needs_staged_output =
                 is_disc || requires_compat_finalize || compression_options.enabled;
@@ -792,6 +813,8 @@ impl CliApp {
                 &staged_output,
                 &chain_header_modes,
                 &mut header_state,
+                &chain_n64_modes,
+                &mut n64_order,
                 &probe_threads,
                 &context,
                 &mut temp_paths,
@@ -870,7 +893,7 @@ impl CliApp {
                     strip_output_header,
                     repair_checksum,
                     Some(&resolved_input),
-                    restore_n64_order,
+                    n64_order.filter(|order| order.from != order.to),
                 ) {
                     Ok(finalized) => {
                         raw_ready_output = finalized_output_path;
@@ -981,8 +1004,13 @@ impl CliApp {
             if let Some(note) = extension_swap_note.as_deref() {
                 report.label = format!("{}; {note}", report.label);
             }
-            if let Some(target_order) = n64_byte_order {
-                report.label = format!("{}; n64_byte_order={}", report.label, target_order.id());
+            if n64_order.is_some() {
+                let modes = chain_n64_modes
+                    .iter()
+                    .map(|mode| mode.id())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                report.label = format!("{}; n64_byte_order={modes}", report.label);
             }
             if extracted_archives > 0 {
                 report.label = format!(
@@ -1242,6 +1270,86 @@ impl CliApp {
                 false
             }
         }
+    }
+
+    /// Resolve the N64 order a patch should see. Auto acts only on checksum
+    /// proof; without a source CRC32 (or when no variant matches), it keeps the
+    /// current bytes so checksumless patches are never silently guessed.
+    pub(super) fn resolve_patch_n64_target(
+        &self,
+        input: &Path,
+        patch: Option<&Path>,
+        expected_crc32: Option<&str>,
+        mode: PatchN64ByteOrderMode,
+        context: &OperationContext,
+    ) -> Result<Option<(N64ByteOrder, N64ByteOrder)>> {
+        let source = Self::detect_n64_byte_order_path(input)?;
+        let Some(source) = source else {
+            if mode.target().is_some() {
+                return Err(RomWeaverError::Validation(format!(
+                    "could not detect N64 byte order for `{}`",
+                    input.display()
+                )));
+            }
+            return Ok(None);
+        };
+        let target = match mode {
+            PatchN64ByteOrderMode::Keep => source,
+            PatchN64ByteOrderMode::Auto => {
+                let required_crc32 = expected_crc32.map(str::to_owned).or_else(|| {
+                    patch.and_then(|path| self.embedded_patch_source_crc32(path, context))
+                });
+                match required_crc32 {
+                    Some(required) => {
+                        Self::resolve_n64_byte_order_for_crc32(input, &required, context)?
+                            .unwrap_or(source)
+                    }
+                    None => source,
+                }
+            }
+            concrete => concrete.target().unwrap_or(source),
+        };
+        Ok(Some((source, target)))
+    }
+
+    pub(super) fn transition_n64_byte_order(
+        &self,
+        mode: PatchN64ByteOrderMode,
+        resolved_patch: &Path,
+        current_input: &mut PathBuf,
+        state: &mut Option<N64ByteOrderTransform>,
+        context: &OperationContext,
+        temp_paths: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        let Some((source, target)) = self.resolve_patch_n64_target(
+            current_input,
+            Some(resolved_patch),
+            None,
+            mode,
+            context,
+        )?
+        else {
+            return Ok(());
+        };
+        let original = state.map(|order| order.to).unwrap_or(source);
+        if source != target {
+            let transformed_path = context
+                .temp_paths()
+                .next_path("patch-apply-chain-n64-byte-order", Some("bin"));
+            Self::rewrite_n64_byte_order(current_input, &transformed_path, source, target)?;
+            temp_paths.push(transformed_path.clone());
+            *current_input = transformed_path;
+            debug!(
+                from = source.id(),
+                to = target.id(),
+                "chain N64 byte order transformed for patch"
+            );
+        }
+        *state = Some(N64ByteOrderTransform {
+            from: target,
+            to: original,
+        });
+        Ok(())
     }
 
     /// Adjust the requested output path when the final header state changes the
@@ -1624,7 +1732,7 @@ struct PreparedApplyInput {
     apply_input: PathBuf,
     stripped_header: Option<Vec<u8>>,
     stripped_header_match: Option<KnownRomHeaderMatch>,
-    restore_n64_order: Option<N64ByteOrderTransform>,
+    n64_order: Option<N64ByteOrderTransform>,
 }
 
 /// The state carried out of [`CliApp::run_patch_apply_loop`] when every patch
@@ -1662,6 +1770,8 @@ impl CliApp {
         staged_output: &Path,
         chain_header_modes: &[PatchApplyHeaderMode],
         header_state: &mut ChainHeaderState,
+        chain_n64_modes: &[PatchN64ByteOrderMode],
+        n64_order: &mut Option<N64ByteOrderTransform>,
         probe_threads: &Option<ThreadExecution>,
         context: &OperationContext,
         temp_paths: &mut Vec<PathBuf>,
@@ -1707,6 +1817,29 @@ impl CliApp {
                     "prepare",
                     format!(
                         "patch {}/{} (`{}`): header transition failed: {error}",
+                        index + 1,
+                        patch_count,
+                        patch_path.display()
+                    ),
+                    context.single_thread_execution(),
+                )));
+            }
+            if index > 0
+                && let Err(error) = self.transition_n64_byte_order(
+                    chain_n64_modes.get(index).copied().unwrap_or_default(),
+                    resolved_patch_path,
+                    &mut current_input,
+                    n64_order,
+                    context,
+                    temp_paths,
+                )
+            {
+                return Err(Box::new(OperationReport::failed(
+                    OperationFamily::Patch,
+                    Some(handler.descriptor().name.to_string()),
+                    "prepare",
+                    format!(
+                        "patch {}/{} (`{}`): N64 byte-order transition failed: {error}",
                         index + 1,
                         patch_count,
                         patch_path.display()
@@ -1947,18 +2080,21 @@ impl CliApp {
     /// the prepared input plus the state needed to finalize the output; failures
     /// surface as [`RomWeaverError`] for the caller to wrap into a `compat`
     /// report.
+    #[expect(clippy::too_many_arguments)]
     fn prepare_patch_apply_input(
         &self,
         resolved_input: &Path,
         strip_header: bool,
-        n64_byte_order: Option<N64ByteOrder>,
+        n64_byte_order: PatchN64ByteOrderMode,
+        first_patch: Option<&Path>,
+        expected_crc32: Option<&str>,
         repair_checksum: bool,
         context: &OperationContext,
         temp_paths: &mut Vec<PathBuf>,
     ) -> Result<PreparedApplyInput> {
         let mut stripped_header = None;
         let mut stripped_header_match = None;
-        let mut restore_n64_order = None;
+        let mut n64_order = None;
         let apply_input = if strip_header {
             self.emit_running(
                 OperationLabel {
@@ -1986,16 +2122,21 @@ impl CliApp {
         } else {
             resolved_input.to_path_buf()
         };
-        let apply_input = if let Some(target_order) = n64_byte_order {
-            let transformed_path = context
-                .temp_paths()
-                .next_path("patch-apply-input-n64-byte-order", Some("bin"));
-            match Self::rewrite_n64_byte_order_to_temp(
-                &apply_input,
-                &transformed_path,
-                target_order,
-            ) {
-                Ok(Some(transform)) => {
+        let apply_input = match self.resolve_patch_n64_target(
+            &apply_input,
+            first_patch,
+            expected_crc32,
+            n64_byte_order,
+            context,
+        )? {
+            Some((source_order, target_order)) => {
+                n64_order = Some(N64ByteOrderTransform {
+                    from: target_order,
+                    to: source_order,
+                });
+                if source_order == target_order {
+                    apply_input
+                } else {
                     self.emit_running(
                         OperationLabel {
                             command: "patch-apply",
@@ -2010,15 +2151,20 @@ impl CliApp {
                         None,
                         context.single_thread_execution(),
                     );
-                    restore_n64_order = Some(transform);
+                    let transformed_path = context
+                        .temp_paths()
+                        .next_path("patch-apply-input-n64-byte-order", Some("bin"));
+                    Self::rewrite_n64_byte_order(
+                        &apply_input,
+                        &transformed_path,
+                        source_order,
+                        target_order,
+                    )?;
                     temp_paths.push(transformed_path.clone());
                     transformed_path
                 }
-                Ok(None) => apply_input,
-                Err(error) => return Err(error),
             }
-        } else {
-            apply_input
+            None => apply_input,
         };
         let apply_input = if repair_checksum {
             let normalized_path = context
@@ -2037,12 +2183,12 @@ impl CliApp {
                         None,
                         context.single_thread_execution(),
                     );
-                    if restore_n64_order.is_none() {
-                        restore_n64_order = Some(N64ByteOrderTransform {
+                    if n64_order.is_none() {
+                        n64_order = Some(N64ByteOrderTransform {
                             from: N64ByteOrder::BigEndian,
                             to: order,
                         });
-                    } else if let Some(transform) = restore_n64_order.as_mut() {
+                    } else if let Some(transform) = n64_order.as_mut() {
                         transform.from = N64ByteOrder::BigEndian;
                     }
                     temp_paths.push(normalized_path.clone());
@@ -2058,7 +2204,7 @@ impl CliApp {
             apply_input,
             stripped_header,
             stripped_header_match,
-            restore_n64_order,
+            n64_order,
         })
     }
 }

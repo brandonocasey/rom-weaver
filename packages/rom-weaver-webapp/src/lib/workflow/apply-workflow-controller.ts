@@ -666,6 +666,7 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       validateInputChecksum?: string;
       validateOutputChecksum?: string;
       header?: "keep" | "strip";
+      n64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
     },
   ): Promise<void> {
     return this.mutate("setPatchOption", async () => {
@@ -685,6 +686,10 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       if ("header" in option) {
         verificationChanged ||= stage.state.headerChoice !== option.header;
         stage.state.headerChoice = option.header;
+      }
+      if ("n64ByteOrder" in option) {
+        verificationChanged ||= stage.state.n64ByteOrderChoice !== option.n64ByteOrder;
+        stage.state.n64ByteOrderChoice = option.n64ByteOrder;
       }
       // Any of these change what the run verifies (the header changes which bytes
       // the apply runs against; a user input check joins the preflight
@@ -1413,6 +1418,8 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
         header:
           patch.state.headerChoice ??
           (patch.state.headerResolution?.decided ? patch.state.headerResolution.mode : undefined),
+        n64ByteOrder: patch.state.n64ByteOrderChoice,
+        resolvedN64ByteOrder: patch.state.n64Resolution?.mode,
         validateInputChecksum: patch.state.validateInputChecksum,
         validateOutputChecksum: patch.state.validateOutputChecksum,
       })),

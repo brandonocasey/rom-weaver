@@ -41,8 +41,22 @@ const isHeaderRemoved = <TSource>(stage: StagedSource<TSource>, settings: Partia
   (stage.state.headerChoice ?? (stage.state.headerResolution?.decided ? stage.state.headerResolution.mode : "keep")) ===
     "strip";
 
-const getStageChecksumCache = <TSource>(stage: StagedSource<TSource>, target: InputAsset, headerRemoved: boolean) =>
-  headerRemoved ? stage.state.headerResolution?.headerlessChecksums : getInputAssetChecksums(target);
+const getEffectiveN64ByteOrder = <TSource>(stage: StagedSource<TSource>) =>
+  stage.state.n64ByteOrderChoice ?? stage.state.n64Resolution?.mode;
+
+const getStageChecksumCache = <TSource>(
+  stage: StagedSource<TSource>,
+  target: InputAsset,
+  headerRemoved: boolean,
+  n64ByteOrder: ReturnType<typeof getEffectiveN64ByteOrder>,
+) => {
+  if (headerRemoved) return stage.state.headerResolution?.headerlessChecksums;
+  if (!(n64ByteOrder && n64ByteOrder !== "keep")) return getInputAssetChecksums(target);
+  return target.checksumVariants?.find(
+    (variant) =>
+      (variant.applyCompatibility?.n64ByteOrder || variant.applyCompatibility?.n64_byte_order) === n64ByteOrder,
+  )?.checksums;
+};
 
 // Write a resolved verdict onto a stage. A cancelled/transient failure is not a "patch does not
 // apply" verdict; storing it as terminal "invalid" against the stable validationKey would make the
@@ -70,6 +84,7 @@ type PreparedValidation<TSource> = {
   entry: PatchTargetValidationEntry<TSource>;
   headerRemoved: boolean;
   inputSource: unknown;
+  n64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
   patchFile: NonNullable<StagedSource<TSource>["preparedPatchFile"]>;
   patchSource: unknown;
   startedAt: number;
@@ -130,6 +145,7 @@ const prepareValidation = <TSource>(
     entry,
     headerRemoved: isHeaderRemoved(stage, adapters.settings),
     inputSource,
+    n64ByteOrder: getEffectiveN64ByteOrder(stage),
     patchFile,
     patchSource,
     startedAt,
@@ -143,6 +159,7 @@ const prepareValidation = <TSource>(
 const groupKeyFor = <TSource>(prepared: PreparedValidation<TSource>, settings: Partial<ApplySettings>): string =>
   JSON.stringify({
     headerRemoved: prepared.headerRemoved,
+    n64ByteOrder: prepared.n64ByteOrder,
     sourcePath: (prepared.entry.target.file as { filePath?: string } | undefined)?.filePath,
     targetId: prepared.entry.target.id,
     workerThreads: settings.workers?.threads ?? null,
@@ -203,8 +220,14 @@ const validatePreparedGroup = async <TSource>(
         // dry-run too: a headerless-targeting patch validates against the stripped bytes - strip in
         // the engine and cache the headerless checksums, not the raw file's. All grouped patches
         // share the same target + header decision, so one cache/mode applies to the whole batch.
-        checksumCache: getStageChecksumCache(first.entry.stage, first.entry.target, first.headerRemoved),
+        checksumCache: getStageChecksumCache(
+          first.entry.stage,
+          first.entry.target,
+          first.headerRemoved,
+          first.n64ByteOrder,
+        ),
         independent: true,
+        n64ByteOrder: first.n64ByteOrder,
         removeHeader: first.headerRemoved,
         workerThreads: adapters.settings.workers?.threads,
       },

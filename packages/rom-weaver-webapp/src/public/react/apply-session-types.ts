@@ -62,6 +62,12 @@ type StagedInputInfo = {
   headerAutoDecided?: boolean;
   /** Show the header choice: the target ROM has a strippable header. */
   showHeaderOption?: boolean;
+  /** User N64 byte-order pin (`undefined` = Auto). */
+  n64ByteOrderChoice?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
+  n64AutoMode?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
+  n64AutoDecided?: boolean;
+  n64SourceOrder?: "big-endian" | "little-endian" | "byte-swapped";
+  showN64ByteOrderOption?: boolean;
 };
 
 type ApplyWorkflowStageSnapshot = {
@@ -129,6 +135,7 @@ type LocalApplyPatchFormSessionOptions = Pick<
     /** Index-aligned per-patch run options (header/PPF-undo/checks) replayed onto re-staged runs. */
     patchOptions?: Array<{
       header?: "keep" | "strip";
+      n64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
       ppfUndo?: boolean;
       validateInputChecksum?: string;
       validateOutputChecksum?: string;
@@ -191,6 +198,7 @@ type LocalApplyPatchFormSessionOptions = Pick<
       validateInputChecksum?: string;
       validateOutputChecksum?: string;
       header?: "keep" | "strip";
+      n64ByteOrder?: "keep" | "big-endian" | "little-endian" | "byte-swapped";
       /** A user edit: rerun the deep validation so the card verdict reflects the change. */
       revalidate?: boolean;
     },
