@@ -477,16 +477,16 @@ const startDevServer = async (options) => {
       root: ROOT_DIR,
       server: {
         headers: getSecurityHeaders(securityOptions),
-        hmr: {
-          protocol: "wss",
-          server: httpsServer,
-        },
         host: BIND_HOST,
         https: false,
         middlewareMode: { server: httpsServer },
         open: false,
         port: options.port,
         strictPort: true,
+        ws: {
+          protocol: "wss",
+          server: httpsServer,
+        },
       },
     });
   } catch (err) {
