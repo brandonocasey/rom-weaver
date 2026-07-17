@@ -1,0 +1,82 @@
+name: Bug report
+description: Report a reproducible problem in the webapp, CLI, or self-hosted app
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not upload copyrighted ROMs or disc images, firmware, encryption keys, or personal files. Use a small redistributable test file or provide sizes and checksums.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and its impact.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options:
+        - Hosted webapp
+        - Self-hosted webapp
+        - Native CLI
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: RomWeaver version
+      description: Use the About section in the webapp or `rom-weaver --version` in the CLI.
+      placeholder: v0.5.0
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include browser and OS versions, or the CLI platform and installation method.
+      placeholder: Firefox 140 on Linux; or CLI on macOS arm64
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the smallest exact sequence that reproduces the problem.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics or logs
+      description: Paste relevant webapp diagnostics, console output, or CLI output. Remove private paths and secrets.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing open and closed issues for this problem.
+          required: true
+        - label: I have not attached copyrighted, secret, or personal files.
+          required: true

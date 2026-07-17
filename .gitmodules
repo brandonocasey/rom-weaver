@@ -1,7 +1,7 @@
 [submodule "vendor/libarchive"]
 	path = vendor/libarchive
-	url = https://forgejo.koof.win/bcasey/libarchive
+	url = https://github.com/brandonocasey/libarchive.git
 [submodule "vendor/nod"]
 	path = vendor/nod
-	url = https://forgejo.koof.win/bcasey/nod
+	url = https://github.com/brandonocasey/nod.git
 	branch = local-changes

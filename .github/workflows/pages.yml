@@ -1,0 +1,105 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      WASI_SDK_VERSION: "33"
+      WASI_SDK_SHA256: 0ba8b5bfaeb2adf3f29bab5841d76cf5318ab8e1642ea195f88baba1abd47bce
+      MISE_DISABLE_TOOLS: "aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,rust"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - uses: actions/configure-pages@v5
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes brotli cmake ninja-build pkg-config sccache clang libclang-dev
+          lc="$(find /usr/lib /usr/lib64 -name 'libclang.so*' 2>/dev/null | head -n1)"
+          [ -n "$lc" ] && echo "LIBCLANG_PATH=$(dirname "$lc")" >> "$GITHUB_ENV" || true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1-threads
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-v1-
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+
+      - name: Install WASI SDK
+        run: |
+          SDK="$RUNNER_TEMP/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux"
+          curl --fail --location --show-error \
+            --output "$RUNNER_TEMP/wasi-sdk.tar.gz" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
+          echo "${WASI_SDK_SHA256}  $RUNNER_TEMP/wasi-sdk.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$RUNNER_TEMP/wasi-sdk.tar.gz" --directory "$RUNNER_TEMP"
+          echo "WASI_SDK_PATH=$SDK" >> "$GITHUB_ENV"
+          SYSROOT="$SDK/share/wasi-sysroot"
+          INCDIR="$SYSROOT/include/wasm32-wasip1-threads"
+          [ -f "$INCDIR/sys/stat.h" ] || INCDIR="$(dirname "$(dirname "$(find "$SYSROOT" -path '*/sys/stat.h' 2>/dev/null | head -n1)")")"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-isystem $INCDIR -isystem $SYSROOT/include" >> "$GITHUB_ENV"
+
+      - name: Install binaryen
+        run: |
+          BIN="$RUNNER_TEMP/binaryen-129"
+          curl --fail --location --show-error \
+            --output "$RUNNER_TEMP/binaryen.tar.gz" \
+            "https://github.com/WebAssembly/binaryen/releases/download/version_129/binaryen-version_129-x86_64-linux.tar.gz"
+          mkdir -p "$BIN"
+          tar --extract --gzip --strip-components=1 --file "$RUNNER_TEMP/binaryen.tar.gz" --directory "$BIN"
+          echo "$BIN/bin" >> "$GITHUB_PATH"
+
+      - name: Install package dependencies
+        run: npm ci --prefix packages/rom-weaver-react
+
+      - name: Build WASM
+        run: mise run build-wasm-prod
+
+      - name: Build webapp
+        run: npm --prefix packages/rom-weaver-react run build
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: packages/rom-weaver-react/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

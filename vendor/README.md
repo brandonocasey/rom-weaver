@@ -12,7 +12,7 @@
     ```
 
 - `vendor/nod`:
-  - Git submodule currently tracks branch `local-changes` at `https://forgejo.koof.win/bcasey/nod`.
+  - Git submodule currently tracks branch `local-changes` at `https://github.com/brandonocasey/nod`.
   - Current pinned commit in this repo: `5159244` (based on `v2.0.0-alpha.10`).
   - Workspace dependency is wired via root `Cargo.toml` (`[workspace.dependencies].nod` path).
   - Initialize or refresh with:
