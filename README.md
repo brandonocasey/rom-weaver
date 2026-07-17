@@ -1,12 +1,12 @@
 <p align="center">
   <img
     src="packages/rom-weaver-react/design/github-social-preview.svg"
-    alt="RomWeaver: inspect, patch, transform, and preserve video game ROMs and disc images"
+    alt="rom-weaver: inspect, patch, transform, and preserve video game ROMs and disc images"
     width="960"
   >
 </p>
 
-<h1 align="center">RomWeaver</h1>
+<h1 align="center">rom-weaver</h1>
 
 <p align="center">
   A local-first toolkit for working with video game ROMs and disc images in your browser or terminal.
@@ -20,13 +20,13 @@
 </p>
 
 <p align="center">
-  <a href="https://brandonocasey.github.io/rom-weaver/">Open the webapp</a>
+  <a href="https://rom-weaver.com/">Open the webapp</a>
   · <a href="docs/README.md">Documentation</a>
   · <a href="https://github.com/brandonocasey/rom-weaver/issues">Issues</a>
   · <a href="https://ko-fi.com/brandonocasey">Support on Ko-fi</a>
 </p>
 
-RomWeaver can inspect, extract, checksum, compress, trim, patch, and create
+rom-weaver can inspect, extract, checksum, compress, trim, patch, and create
 patches for many cartridge and disc formats. The browser app processes files
 locally with WebAssembly; the native CLI exposes the same command core for
 scripts and terminal workflows.
@@ -35,7 +35,7 @@ scripts and terminal workflows.
 
 ### Use the webapp
 
-Open the [hosted webapp](https://brandonocasey.github.io/rom-weaver/).
+Open the [hosted webapp](https://rom-weaver.com/).
 No installation or account is required.
 
 1. Choose **Weave** to add a ROM or disc image and one or more patch files.
@@ -102,7 +102,7 @@ The complete compatibility tables are maintained in the
 
 ## Self-host the webapp
 
-RomWeaver is a static webapp and can run on a dedicated HTTPS subdomain or
+rom-weaver is a static webapp and can run on a dedicated HTTPS subdomain or
 under a path such as `/rom-weaver/`.
 
 ### Docker
@@ -131,7 +131,7 @@ npm --prefix packages/rom-weaver-react run build
 Upload `packages/rom-weaver-react/dist/` to an HTTPS host that can serve the
 required COOP/COEP/CORP headers. The [self-hosting guide](docs/self-hosting.md)
 covers reverse-proxy examples, subpath routing, service-worker scope, static
-hosts, and embedding RomWeaver into another application.
+hosts, and embedding rom-weaver into another application.
 
 ## Develop
 
@@ -173,14 +173,14 @@ Bug reports and contributions are welcome in the
 [contribution guide](CONTRIBUTING.md) and [code of conduct](CODE_OF_CONDUCT.md)
 before submitting a change, and report
 suspected vulnerabilities through the private channel in the
-[security policy](SECURITY.md). If RomWeaver has been useful to you, you can
+[security policy](SECURITY.md). If rom-weaver has been useful to you, you can
 support continued development on [Ko-fi](https://ko-fi.com/brandonocasey).
 
 ## License
 
 Copyright (C) Brandon O'Casey
 
-RomWeaver is licensed under the
+rom-weaver is licensed under the
 [GNU Affero General Public License](LICENSE.md), version 3 or later. Modified
 versions offered over a network must make their corresponding source available
 under the same license. Separate commercial terms are available from the
