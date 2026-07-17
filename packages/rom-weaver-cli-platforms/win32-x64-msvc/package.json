@@ -1,0 +1,12 @@
+{
+  "name": "@brandonocasey/rom-weaver-win32-x64-msvc",
+  "version": "0.5.0",
+  "description": "Windows x64 binary for rom-weaver",
+  "author": "Brandon O'Casey",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "bin": {"rom-weaver": "bin/rom-weaver.exe"},
+  "files": ["bin/rom-weaver.exe", "LICENSE.md"],
+  "publishConfig": {"access": "public", "provenance": true}
+}

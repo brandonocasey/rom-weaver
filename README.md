@@ -1,6 +1,16 @@
 # rom-weaver
 
-`rom-weaver` is a CLI (native and WASM) for ROM workflows:
+`rom-weaver` is a source-available toolkit by [Brandon O'Casey](https://github.com/brandonocasey)
+for inspecting, patching, transforming, and preserving video game ROMs and
+disc images. It combines a native CLI, WebAssembly runtime, and browser webapp
+for working with files locally in your browser or terminal.
+
+The hosted webapp is available at [rom-weaver.com](https://rom-weaver.com).
+Source code and issue tracking are on
+[GitHub](https://github.com/brandonocasey/rom-weaver), and project support is
+available through [Ko-fi](https://ko-fi.com/brandonocasey).
+
+The toolkit supports:
 
 - probe containers, patches, and known ROM headers
 - extract containers (with nested extraction)
@@ -9,6 +19,21 @@
 - trim or revert trim for supported ROM/disc image families
 - apply and create many ROM patch formats
 - repair ROM headers/checksums on patch apply (`--repair-checksum`)
+
+## Install The CLI
+
+The Node.js package follows the native-binary distribution model used by
+projects such as SWC: npm installs the launcher and the matching platform
+package automatically.
+
+```bash
+npm install --global rom-weaver
+rom-weaver --help
+```
+
+The package requires Node.js 22 or newer. The browser webapp continues to use
+the separate WASM build described below. Native npm packages currently target
+macOS arm64/x64, Linux x64 glibc, and Windows x64.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the workspace layout,
 crate graph, threading model, and the Rust⇄TypeScript boundary.
@@ -35,11 +60,12 @@ separately:
 - **brotli** (compresses the wasm artifact): `brew install brotli` (or your OS
   package manager).
 
-Then install the JS workspaces and git hooks:
+Then install the JS workspaces and, once, the git hooks:
 
 ```bash
 npm ci --prefix packages/rom-weaver-react
-npm install         # root: installs lefthook + runs `lefthook install`
+npm install         # root: installs lefthook without running repository hooks
+npm run hooks:install
 ```
 
 Run `mise tasks` to list available tasks, or `mise run ci` for the full local
@@ -317,3 +343,11 @@ With `--json`, operations emit structured progress/status lines and include emit
 ## References
 
 See [`REFERENCES.md`](REFERENCES.md) for format specs and reference implementations.
+
+## License
+
+rom-weaver is source-available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE.md): free for personal and
+other noncommercial use; commercial use requires a separate license from the
+author. Bundled third-party components remain under their own licenses - see
+[`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).

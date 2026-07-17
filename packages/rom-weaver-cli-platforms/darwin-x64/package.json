@@ -1,0 +1,12 @@
+{
+  "name": "@brandonocasey/rom-weaver-darwin-x64",
+  "version": "0.5.0",
+  "description": "macOS x64 binary for rom-weaver",
+  "author": "Brandon O'Casey",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "bin": {"rom-weaver": "bin/rom-weaver"},
+  "files": ["bin/rom-weaver", "LICENSE.md"],
+  "publishConfig": {"access": "public", "provenance": true}
+}

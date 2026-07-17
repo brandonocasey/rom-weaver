@@ -6,7 +6,13 @@ import { join } from "node:path";
 const rootDir = process.cwd();
 const packageJsonPath = join(rootDir, "package.json");
 const workspaceCargoTomlPath = join(rootDir, "Cargo.toml");
-const syncedPackageJsonPaths = ["packages/rom-weaver-react/package.json"];
+const syncedPackageJsonPaths = [
+  "packages/rom-weaver-react/package.json",
+  "packages/rom-weaver-cli-platforms/darwin-arm64/package.json",
+  "packages/rom-weaver-cli-platforms/darwin-x64/package.json",
+  "packages/rom-weaver-cli-platforms/linux-x64-gnu/package.json",
+  "packages/rom-weaver-cli-platforms/win32-x64-msvc/package.json",
+];
 const syncedPackageDirs = [".", "packages/rom-weaver-react"];
 
 async function fileExists(filePath) {

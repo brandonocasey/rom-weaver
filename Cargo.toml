@@ -20,8 +20,12 @@ exclude = ["vendor/nod"]
 resolver = "2"
 
 [workspace.package]
+authors = ["Brandon O'Casey"]
+description = "A local-first toolkit for inspecting, patching, transforming, and preserving video game ROMs and disc images—in your browser or terminal."
 edition = "2024"
-license = "MIT OR Apache-2.0"
+homepage = "https://rom-weaver.com"
+license = "PolyForm-Noncommercial-1.0.0"
+repository = "https://github.com/brandonocasey/rom-weaver"
 rust-version = "1.95"
 version = "0.5.0"
 
