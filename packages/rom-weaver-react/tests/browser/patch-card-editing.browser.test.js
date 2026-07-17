@@ -81,11 +81,9 @@ test("pencil opens the inline meta editors; checks add/remove in the drawer; exp
   mount(createElement(ApplyPatchForm, { pageDrop: { files: [romFile, patchFile], id: 1 } }));
   await waitForApplyButtonEnabled();
 
-  // Plain apply view: no inline editors or export controls yet, and none of the
-  // retired bundle-author chrome.
+  // Plain weave view: no inline editors or export controls yet.
   expect(document.getElementById("rom-weaver-patch-name-0")).toBeNull();
   expect(document.getElementById("rom-weaver-patch-input-crc32-0")).toBeNull();
-  expect(document.getElementById("rom-weaver-toggle-bundle-author")).toBeNull();
   expect(document.getElementById("rom-weaver-rom-bundle-crc32")).toBeNull();
   // The bundle dropdown is always present in Output options but defaults to
   // hidden ("") with no create action.

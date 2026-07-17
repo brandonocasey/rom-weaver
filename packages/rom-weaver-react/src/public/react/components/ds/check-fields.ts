@@ -1,5 +1,5 @@
 /**
- * Shared vocabulary for the editable verification fields (bundle authoring):
+ * Shared vocabulary for the editable bundle verification fields:
  * the three hash algorithms plus the exact byte size, with the input
  * normalization/validation the patch cards and the ROM bundle-checks editor
  * both apply before committing a value.

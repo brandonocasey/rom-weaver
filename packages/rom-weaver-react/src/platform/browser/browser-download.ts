@@ -35,7 +35,7 @@ const isShareCancellation = (error: unknown): boolean =>
 //
 // `navigator.share` needs live user activation. The armed "Download output" tap
 // supplies it (`interactive`). The automatic post-apply download does NOT - its
-// activation from the original "Apply & download" tap has expired by the time
+// activation from the original "Weave & download" tap has expired by the time
 // apply finishes - so there it throws `NotAllowedError`, which we swallow and
 // leave the armed button for a real tap. Fast ops whose apply completes within
 // the activation window will still pop the sheet automatically. On the

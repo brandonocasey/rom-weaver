@@ -21,12 +21,17 @@ const RemoveButton = ({ onClick, label }: { onClick: () => void; label: string }
   </button>
 );
 
-/** "Apply patch to" target group shown on a patch's meta line. */
+/** "Weave patch into" target group shown on a patch's meta line. */
 const FileTargetPill = ({ label, bad, onClick }: { label: ReactNode; bad?: boolean; onClick?: () => void }) => (
   <span className={join("target-grp", bad && "bad")}>
     <Crosshair aria-hidden="true" />
     {onClick ? (
-      <button aria-label="Apply patch to" className="meta-target-select mono ptgt-sel" onClick={onClick} type="button">
+      <button
+        aria-label="Weave patch into"
+        className="meta-target-select mono ptgt-sel"
+        onClick={onClick}
+        type="button"
+      >
         <span className="ptgt-name">{label}</span>
         <ChevronDown aria-hidden="true" className="ptgt-chev" />
       </button>

@@ -61,7 +61,7 @@ msgstr "und die Dateien fürs Archiv verkleinern —"
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
 msgid "ui.step.apply"
-msgstr "Anwenden"
+msgstr "Weben"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -256,7 +256,7 @@ msgstr "Die Ausgabe konnte nicht geschrieben werden."
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
 msgid "error.PATCH_APPLY_FAILED"
-msgstr "Das Anwenden des Patches ist fehlgeschlagen."
+msgstr "Das Einweben des Patches ist fehlgeschlagen."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

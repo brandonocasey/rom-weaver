@@ -243,7 +243,7 @@ const buildOutputViewState = ({
 }: OutputViewStateInput) => ({
   applyButton: {
     disabled: disabled || !(busy || hasPendingDownload || canQueueApply),
-    label: hasPendingDownload ? `Download ${pendingDownloadFileName || "output"}` : "Apply & download",
+    label: hasPendingDownload ? `Download ${pendingDownloadFileName || "output"}` : "Weave & download",
     loading: busy || applyQueued,
     progress: hasPendingDownload
       ? null

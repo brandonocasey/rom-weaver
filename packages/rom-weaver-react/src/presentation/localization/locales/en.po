@@ -61,7 +61,7 @@ msgstr "and shrink them for storage —"
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
 msgid "ui.step.apply"
-msgstr "Apply"
+msgstr "Weave"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -256,7 +256,7 @@ msgstr "Output could not be written."
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
 msgid "error.PATCH_APPLY_FAILED"
-msgstr "Patch application failed."
+msgstr "Weaving the patch failed."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

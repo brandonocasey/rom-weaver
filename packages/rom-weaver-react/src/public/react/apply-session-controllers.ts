@@ -48,7 +48,7 @@ const inertOutputController: PatcherOutputController = {
   ...createStaticStoreController({
     applyButton: {
       disabled: true,
-      label: "Apply patch",
+      label: "Weave patch",
       loading: false,
       progress: null,
       title: "",

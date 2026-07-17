@@ -66,7 +66,7 @@ const persistWorkflowView = (storage: ControllerOptions["storage"] | undefined, 
 // server navigation fallback (the fragment never reaches the network).
 const VIEW_TO_HASH_SLUG: Record<WorkflowView, string> = {
   creator: "create",
-  patcher: "apply",
+  patcher: "weave",
   tools: "tools",
   trim: "trim",
 };
@@ -75,6 +75,7 @@ const HASH_SLUG_TO_VIEW: Record<string, WorkflowView> = {
   create: "creator",
   tools: "tools",
   trim: "trim",
+  weave: "patcher",
 };
 
 const readHashSegments = (): string[] => {
@@ -82,11 +83,11 @@ const readHashSegments = (): string[] => {
   return window.location.hash.replace(/^#\/?/, "").trim().toLowerCase().split("/").filter(Boolean);
 };
 
-const readHashSlug = (): string => readHashSegments()[0] || "";
-
 /** Parse the active view from the URL hash (accepts the friendly slug or the raw view id). */
 const readWorkflowViewFromHash = (): WorkflowView | null => {
-  const slug = readHashSlug();
+  const segments = readHashSegments();
+  if (segments.length !== 1) return null;
+  const slug = segments[0] || "";
   return HASH_SLUG_TO_VIEW[slug] || normalizeWorkflowView(slug);
 };
 

@@ -390,7 +390,7 @@ const runApplyWorkflow = async (
   let hasApplyTimeMs = false;
   if (patches.length) {
     deps.reportProgress(options, {
-      label: "Applying patch...",
+      label: "Weaving patch...",
       percent: null,
       stage: "apply",
     });
@@ -417,7 +417,7 @@ const runApplyWorkflow = async (
       patchesByTarget.set(target.id, targetPatches);
     }
     const applyPatchInRuntime = runtime.patch.applyPatch;
-    if (!applyPatchInRuntime) throw new Error("Patch worker support is required for apply workflows");
+    if (!applyPatchInRuntime) throw new Error("Patch worker support is required for weave workflows");
     for (const asset of inputAssets) {
       const assetPatches = patchesByTarget.get(asset.id);
       if (!assetPatches?.length) continue;
@@ -458,12 +458,12 @@ const runApplyWorkflow = async (
               return position === 0 ? ("keep" as const) : ("auto" as const);
             });
             const outputHeaderForChain = options?.output?.header || ("auto" as const);
-            // Descriptive "Applying <patch> to <rom>" label (vs the worker's generic one).
+            // Descriptive "Weaving <patch> into <rom>" label (vs the worker's generic one).
             const targetName = asset.fileName || "ROM";
             const patchNames = selectedPatches.map((entry) => entry.patchFileName).filter(Boolean);
             const patchLabel =
               patchNames.length === 1 ? patchNames[0] : `${patchNames.length || assetPatches.length} patches`;
-            const applyLabel = `Applying ${patchLabel} to ${targetName}`;
+            const applyLabel = `Weaving ${patchLabel} into ${targetName}`;
             const workerOutput = (await applyPatchInRuntime({
               input: toWorkerSourceRef(asset.file, asset.fileName || "input.bin"),
               logLevel: getApplyLogLevel(options),

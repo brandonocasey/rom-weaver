@@ -122,7 +122,7 @@ const DEFAULT_OUTPUT_OPTIONS: OutputOption[] = [
 const cloneOutputOptions = (options: OutputOption[]) => options.map((option) => ({ ...option }));
 
 const createEmptyPatcherOutputState = ({
-  applyButtonLabel = "Apply & Download",
+  applyButtonLabel = "Weave & Download",
   options = DEFAULT_OUTPUT_OPTIONS,
 }: {
   applyButtonLabel?: string;

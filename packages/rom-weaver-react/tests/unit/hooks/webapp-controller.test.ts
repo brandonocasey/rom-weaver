@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createWebappRootController } from "../../../src/webapp/webapp-controller.ts";
+import { createWebappRootController, readWorkflowViewFromHash } from "../../../src/webapp/webapp-controller.ts";
 
 const createStorage = () => {
   const entries = new Map<string, string>();
@@ -36,6 +36,7 @@ describe("createWebappRootController over the vanilla store", () => {
     expect(state.currentView).toBe("patcher");
     expect(state.settingsDialogOpen).toBe(false);
     expect(state.patcherSession.romFilePresent).toBe(false);
+    expect(window.location.hash).toBe("#/weave");
   });
 
   it("hides beta workflow views until enabled", () => {
@@ -57,16 +58,22 @@ describe("createWebappRootController over the vanilla store", () => {
     window.location.hash = "#/tools";
     const controller = createController();
     expect(controller.getState().currentView).toBe("patcher");
-    expect(window.location.hash).toBe("#/apply");
+    expect(window.location.hash).toBe("#/weave");
   });
 
-  it("normalizes a legacy bundle-author deep link to the weave tab", () => {
-    // The retired bundle-author mode segment still routes by its first
-    // segment; the router normalizes the hash to its own shape.
-    window.location.hash = "#/apply/bundle-author";
+  it("normalizes the legacy apply route to the weave route", () => {
+    window.location.hash = "#/apply";
     const controller = createController();
     expect(controller.getState().currentView).toBe("patcher");
-    expect(window.location.hash).toBe("#/apply");
+    expect(window.location.hash).toBe("#/weave");
+  });
+
+  it("rejects multi-segment workflow routes", () => {
+    window.location.hash = "#/weave/extra";
+    expect(readWorkflowViewFromHash()).toBeNull();
+    const controller = createController();
+    expect(controller.getState().currentView).toBe("patcher");
+    expect(window.location.hash).toBe("#/weave");
   });
 
   it("routes and tracks the tools workflow", () => {

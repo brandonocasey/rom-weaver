@@ -258,7 +258,7 @@ const useApplyDownloadOrchestration = (context: ApplyDownloadOrchestrationContex
           applyStartedAt: Date.now(),
           compressionStartedAt: null,
         };
-        setProgress(createIndeterminateWorkflowProgress({ label: "Applying patch...", stage: "apply" }));
+        setProgress(createIndeterminateWorkflowProgress({ label: "Weaving patch...", stage: "apply" }));
         try {
           await waitForNextUiPaint();
           let clearedPatchRowProgress = false;

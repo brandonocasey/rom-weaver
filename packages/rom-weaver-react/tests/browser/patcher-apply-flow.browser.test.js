@@ -24,10 +24,10 @@ test("apply progress cancel button invokes primary cancel without visible cancel
   const state = {
     applyButton: {
       disabled: false,
-      label: "Apply patch",
+      label: "Weave patch",
       loading: true,
       progress: {
-        message: "Applying patch...",
+        message: "Weaving patch...",
         percent: null,
       },
     },
@@ -45,9 +45,9 @@ test("apply progress cancel button invokes primary cancel without visible cancel
   );
 
   await expect
-    .poll(() => document.querySelector("button[aria-label='Cancel apply']") instanceof HTMLButtonElement)
+    .poll(() => document.querySelector("button[aria-label='Cancel weaving']") instanceof HTMLButtonElement)
     .toBe(true);
-  const cancelButton = document.querySelector("button[aria-label='Cancel apply']");
+  const cancelButton = document.querySelector("button[aria-label='Cancel weaving']");
   expect(cancelButton).toBeInstanceOf(HTMLButtonElement);
   expect(cancelButton.textContent).toBe("");
   cancelButton.click();
@@ -127,7 +127,7 @@ test("cancelling active apply clears apply-time extraction progress without reru
     .toContain("Checksumming");
   expect(document.querySelector("#rom-weaver-list-input-stack")?.textContent || "").toContain("game.bin");
 
-  const cancelButton = document.querySelector("button[aria-label='Cancel apply']");
+  const cancelButton = document.querySelector("button[aria-label='Cancel weaving']");
   expect(cancelButton).toBeInstanceOf(HTMLButtonElement);
   cancelButton.click();
 
@@ -138,7 +138,7 @@ test("cancelling active apply clears apply-time extraction progress without reru
       return (
         applyButton instanceof HTMLButtonElement &&
         !applyButton.disabled &&
-        /apply/i.test(applyButton.textContent || "")
+        /weave/i.test(applyButton.textContent || "")
       );
     })
     .toBe(true);

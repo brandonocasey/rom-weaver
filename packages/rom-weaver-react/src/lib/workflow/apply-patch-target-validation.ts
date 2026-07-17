@@ -223,7 +223,8 @@ const validatePreparedGroup = async <TSource>(
       if (verdict) {
         applyPatchVerdict(entry.stage, entry.target, validationKey, startedAt, {
           message:
-            verdict.message || (verdict.status === "passed" ? "Patch validation passed" : "Patch does not apply"),
+            verdict.message ||
+            (verdict.status === "passed" ? "Patch validation passed" : "Patch cannot be woven into this ROM"),
           status: verdict.status === "passed" ? "valid" : "invalid",
         });
         continue;

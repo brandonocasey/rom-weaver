@@ -28,7 +28,7 @@ const MESSAGES: Record<MessageId, MessageDescriptor> = {
     message: "No selectable file was found.",
   }),
   "error.OUTPUT_WRITE_FAILED": msg({ id: "error.OUTPUT_WRITE_FAILED", message: "Output could not be written." }),
-  "error.PATCH_APPLY_FAILED": msg({ id: "error.PATCH_APPLY_FAILED", message: "Patch application failed." }),
+  "error.PATCH_APPLY_FAILED": msg({ id: "error.PATCH_APPLY_FAILED", message: "Weaving the patch failed." }),
   "error.PATCH_CREATE_FAILED": msg({ id: "error.PATCH_CREATE_FAILED", message: "Patch creation failed." }),
   "error.PATCH_PARSE_FAILED": msg({ id: "error.PATCH_PARSE_FAILED", message: "Patch parsing failed." }),
   "error.PATCH_TARGET_MISMATCH": msg({
@@ -124,7 +124,7 @@ const MESSAGES: Record<MessageId, MessageDescriptor> = {
   "ui.settings.title": msg({ id: "ui.settings.title", message: "Settings" }),
   "ui.settings.zipCodec": msg({ id: "ui.settings.zipCodec", message: "ZIP" }),
   "ui.status.doneMsg": msg({ id: "ui.status.doneMsg", message: "rom-weaver finished in {t}" }),
-  "ui.step.apply": msg({ id: "ui.step.apply", message: "Apply" }),
+  "ui.step.apply": msg({ id: "ui.step.apply", message: "Weave" }),
   "ui.step.modified": msg({ id: "ui.step.modified", message: "Modified" }),
   "ui.step.original": msg({ id: "ui.step.original", message: "Original" }),
   "ui.step.output": msg({ id: "ui.step.output", message: "Output" }),

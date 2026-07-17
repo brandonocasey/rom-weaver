@@ -811,10 +811,10 @@ function ApplyWorkflowFormView({
   ) : null;
   const exportTypeInfo = {
     items: [
-      "A rom-weaver bundle is a portable recipe for applying a specific patch chain to a ROM; it is not a pre-patched ROM.",
+      "A rom-weaver bundle is a portable recipe for weaving a specific patch chain into a ROM; it is not a pre-patched ROM.",
       "The required rom-weaver-bundle.json index contains the schema version, optional ROM description/checks, ordered patch entries, and optional output defaults/checks. Patch entries carry their sources, selections, header rules, and expected ROM-state checks.",
       "The archive holds that index plus the patch files. The “+ ROM” variants also include the original ROM, while a patch-only bundle carries its ROM checks and asks the player to provide the matching file.",
-      "The bundle supplies instructions and verification data; rom-weaver still performs the patching when the player applies it.",
+      "The bundle supplies instructions and verification data; rom-weaver still performs the patching when the player weaves it.",
     ],
     summary:
       "Exports this session as a distributable rom-weaver bundle: a portable patch recipe defined by rom-weaver-bundle.json.",
@@ -976,7 +976,7 @@ function ApplyWorkflowFormView({
                   <li>chd, rvz/wia/gcz, and z3ds files are decompressed before patching.</li>
                   <li>Nested archives (7z in rar, chd in 7z, …) are handled recursively.</li>
                   <li>
-                    A rom-weaver bundle is a portable recipe for applying a specific patch chain to a ROM. Its{" "}
+                    A rom-weaver bundle is a portable recipe for weaving a specific patch chain into a ROM. Its{" "}
                     <code>rom-weaver-bundle.json</code> file is the required index. The JSON contains the schema
                     version, optional ROM description/checks, ordered patch entries, and optional output
                     defaults/checks.
@@ -1187,7 +1187,7 @@ function ApplyWorkflowFormView({
                 <>
                   {outputState.applyTiming ? (
                     <span className="rb mono done-chip">
-                      <span className="k">Apply</span>
+                      <span className="k">Weave</span>
                       <span className="t">{outputState.applyTiming}</span>
                     </span>
                   ) : null}
@@ -1199,10 +1199,10 @@ function ApplyWorkflowFormView({
                   ) : null}
                 </>
               ) : outputState.applyTiming ? (
-                // Mid-run the elapsed readout carries the same "Apply" key as the
+                // Mid-run the elapsed readout carries the same "Weave" key as the
                 // finished chip, so the bare number never appears unlabeled.
                 <span className="rb mono">
-                  <span className="k">Apply</span>
+                  <span className="k">Weave</span>
                   <span className="t">{outputState.applyTiming}</span>
                 </span>
               ) : undefined
@@ -1217,7 +1217,7 @@ function ApplyWorkflowFormView({
             num="0x04"
             onFileNameChange={(value) => controllers.output.setDisplayFileName(value)}
             onFormatChange={(value) => controllers.output.setOutputCompression(value)}
-            title="Apply"
+            title="Weave"
             woven={applyDone || running}
           />
         </>
