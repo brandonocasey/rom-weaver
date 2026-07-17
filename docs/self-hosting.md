@@ -11,15 +11,27 @@ At the root, its service worker can control every path on that origin. Under
 
 ## Docker
 
-Build the WASM artifact once, then start the included static server:
+Docker Compose builds the WASM module, bundles the webapp, and starts the
+included static server:
 
 ```bash
-mise run build-wasm-prod
-docker compose up --build
+docker compose up --build --detach
 ```
 
-The container listens on port 8080 over plain HTTP. Put it behind the HTTPS
-reverse proxy that serves the rest of the site. For an Nginx subpath route:
+This path only requires Docker with Compose; the image installs the required
+Rust, WASI SDK, Binaryen, and Node.js toolchains. The first build compiles the
+full WASM application and can take several minutes. Later builds reuse Docker's
+layer cache when their inputs have not changed.
+
+Open `http://localhost:8080` to verify the container. To use another host port:
+
+```bash
+PORT=3000 docker compose up --build --detach
+```
+
+The container listens on port 8080 over plain HTTP. In production, put it
+behind the HTTPS reverse proxy that serves the rest of the site. For an Nginx
+subpath route:
 
 ```nginx
 location = /rom-weaver {
@@ -37,6 +49,13 @@ the required COOP/COEP headers, serves SPA fallbacks, and serves the build's
 precompressed Brotli files.
 
 For a dedicated subdomain, route its `/` location to the same container.
+
+Useful lifecycle commands:
+
+```bash
+docker compose logs --follow webapp
+docker compose down
+```
 
 ## Static files
 

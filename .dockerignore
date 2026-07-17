@@ -1,0 +1,11 @@
+.git
+.codegraph
+.worktrees
+target
+**/node_modules
+**/dist
+**/.vitest-attachments
+**/__screenshots__
+prototype
+third_party
+*.log
