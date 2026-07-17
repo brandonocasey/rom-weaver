@@ -222,6 +222,7 @@ const toPatchStageInfo = (
   const validation = getPatchValidationDetails(patch);
   return {
     archiveName,
+    chainVerdict: patch.chainVerdict,
     checksumPreflightMismatch: validation.checksumMismatch,
     checksumTiming: validation.checksumTiming,
     decompressionTimeMs: patch.decompressionTimeMs,

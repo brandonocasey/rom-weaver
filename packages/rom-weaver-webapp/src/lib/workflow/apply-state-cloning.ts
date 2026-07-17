@@ -107,6 +107,7 @@ const clonePatchState = (
     : undefined,
   id: state.id,
   parentCompressions: parentCompressions.map((entry) => ({ ...entry })),
+  chainVerdict: state.chainVerdict ? { ...state.chainVerdict, matched: { ...state.chainVerdict.matched } } : undefined,
   patchValidation: clonePatchValidation(state.patchValidation),
   requirements: clonePatchRequirements(state.requirements),
   selectedCandidateId: state.selectedCandidateId,

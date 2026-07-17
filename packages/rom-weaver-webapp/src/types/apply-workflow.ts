@@ -127,6 +127,17 @@ type ApplyWorkflowPatchState = {
     targetInputId?: string;
     validationKey?: string;
   };
+  /** This patch's slice of the chain verification plan (advisory; drives the chain chip). */
+  chainVerdict?: {
+    /** What the patch's input checks were authored against. */
+    basis: "base" | "previous";
+    basisSource: "declared" | "inferred_base" | "inferred_chain" | "default";
+    /** What the input checks matched: a base ROM variant, another patch's output (0-based
+     * enabled-chain position), or nothing. */
+    matched: { kind: "base"; variant: string } | { kind: "patch_output"; index: number } | { kind: "none" };
+    /** Set when this patch expects a patch it does not directly follow (0-based position). */
+    expectedPredecessor?: number;
+  };
   /** User-pasted checksum (raw hex) to validate the patch target input before apply. */
   validateInputChecksum?: string;
   /** User-pasted checksum (raw hex) to validate the patched output after apply. */

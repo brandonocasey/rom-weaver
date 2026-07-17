@@ -74,6 +74,14 @@ type PatchStackItemState = {
   progress?: InputProgressState;
   checksumTiming?: string;
   validationState: string;
+  /** This patch's slice of the chain verification plan (drives the chain chip; indices are
+   * 0-based positions in the ENABLED chain, mapped to display numbers by the view). */
+  chainVerdict?: {
+    basis: "base" | "previous";
+    basisSource: "declared" | "inferred_base" | "inferred_chain" | "default";
+    matched: { kind: "base"; variant: string } | { kind: "patch_output"; index: number } | { kind: "none" };
+    expectedPredecessor?: number;
+  };
   /** Source-checksum preflight verdict ("valid"/"invalid"/"pending"/"unknown"); drives ROM verification color. */
   sourceChecksumState: string;
   validationLabel: string;

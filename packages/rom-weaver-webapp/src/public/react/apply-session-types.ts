@@ -48,6 +48,13 @@ type StagedInputInfo = {
   validationState?: string;
   validationValues?: string[];
   checksumPreflightMismatch?: boolean;
+  /** This patch's slice of the chain verification plan (drives the chain chip). */
+  chainVerdict?: {
+    basis: "base" | "previous";
+    basisSource: "declared" | "inferred_base" | "inferred_chain" | "default";
+    matched: { kind: "base"; variant: string } | { kind: "patch_output"; index: number } | { kind: "none" };
+    expectedPredecessor?: number;
+  };
   sourceChecksumState?: string;
   format?: string;
   validateInputChecksum?: string;

@@ -15,6 +15,7 @@ type SourceStatus = ApplyWorkflowInputState["status"];
 type InternalPatchRequirements = NonNullable<ApplyWorkflowPatchState["requirements"]>;
 type InternalPatchChecksumPreflight = NonNullable<ApplyWorkflowPatchState["checksumPreflight"]>;
 type InternalPatchValidation = NonNullable<ApplyWorkflowPatchState["patchValidation"]>;
+type InternalChainVerdict = NonNullable<ApplyWorkflowPatchState["chainVerdict"]>;
 type InternalSourceState = {
   id: string;
   fileName?: string;
@@ -40,6 +41,7 @@ type InternalSourceState = {
   requirements?: InternalPatchRequirements;
   checksumPreflight?: InternalPatchChecksumPreflight;
   patchValidation?: InternalPatchValidation;
+  chainVerdict?: InternalChainVerdict;
   /** User-pasted checksum (raw hex) to validate the patch target input before apply. */
   validateInputChecksum?: string;
   /** User-pasted checksum (raw hex) to validate the patched output after apply. */

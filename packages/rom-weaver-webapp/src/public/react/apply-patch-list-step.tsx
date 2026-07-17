@@ -436,7 +436,38 @@ const EditableCheckRow = ({
  * User checks always export with the bundle; on the chain endpoints they also
  * gate the live run (input checks verify the ROM, output checks the result).
  */
+/** The chain chip: one plain-language line for what this patch's input was matched against.
+ * Positions in the verdict are 0-based ENABLED-chain positions; `enabledIndexes` maps them to
+ * the list numbering the drag handles use. Quiet by design: single-patch stacks show only the
+ * identity verdicts. */
+const chainChipText = (
+  item: PatchStackItemState,
+  enabledIndexes: readonly number[],
+): { text: string; warn?: boolean } | null => {
+  const verdict = item.chainVerdict;
+  if (!verdict) return null;
+  const displayNumber = (enabledPosition: number) => (enabledIndexes[enabledPosition] ?? enabledPosition) + 1;
+  if (item.validationState === "invalid" && verdict.matched.kind === "none" && verdict.basisSource !== "default") {
+    return { text: "expected a different ROM", warn: true };
+  }
+  if (verdict.expectedPredecessor !== undefined) {
+    return { text: `expects patch ${displayNumber(verdict.expectedPredecessor)} first`, warn: true };
+  }
+  if (verdict.matched.kind === "patch_output") {
+    return { text: `applies after patch ${displayNumber(verdict.matched.index)}` };
+  }
+  if (enabledIndexes.length < 2) return null;
+  if (verdict.matched.kind === "base") {
+    return {
+      text: verdict.matched.variant === "raw" ? "matches your ROM" : `matches your ROM (${verdict.matched.variant})`,
+    };
+  }
+  if (item.validationState === "deferred") return { text: "verified during the weave" };
+  return null;
+};
+
 const PatchChecksDrawer = ({
+  chainChip,
   disabled,
   index,
   isChainInput,
@@ -448,6 +479,8 @@ const PatchChecksDrawer = ({
   patchStack,
   romActuals,
 }: {
+  /** Plain-language chain verdict rendered in the drawer header readout. */
+  chainChip?: { text: string; warn?: boolean } | null;
   /** The patch is toggled out of the run: verification state is not part of the
    * plan, so the header verdict/timing readouts stay off - the drawer remains
    * editable. */
@@ -562,6 +595,14 @@ const PatchChecksDrawer = ({
       defaultOpen={hasBuiltIn || hasUserChecks}
       label="Checks"
       match={ok ? undefined : match}
+      sublabel={
+        !(disabled || verifying) && chainChip ? (
+          <span id={`rom-weaver-patch-chain-chip-${index}`}>
+            {chainChip.warn ? "⚠ " : ""}
+            {chainChip.text}
+          </span>
+        ) : undefined
+      }
       timing={disabled ? undefined : CHECKSUM_TIMING_LABEL(item.checksumTiming, "Checks")}
       verifying={verifying}
     >
@@ -832,6 +873,7 @@ const PatchMetaEditToggle = ({
  * verdict). */
 const PatchCard = ({
   canReorder,
+  chainChip,
   handleProps,
   index,
   internalDescription,
@@ -852,6 +894,8 @@ const PatchCard = ({
   total,
 }: {
   canReorder: boolean;
+  /** Plain-language chain verdict for the Checks drawer header readout. */
+  chainChip?: { text: string; warn?: boolean } | null;
   handleProps: ReorderHandleProps;
   index: number;
   /** Embedded description fallback (first patch only); edited metadata wins. */
@@ -1017,6 +1061,7 @@ const PatchCard = ({
               metadata) keep their drawer through staging. */}
           {staging && !hasKnownChecks ? null : (
             <PatchChecksDrawer
+              chainChip={chainChip}
               disabled={isDisabled}
               index={index}
               isChainInput={isChainInput}
@@ -1139,6 +1184,7 @@ const ApplyPatchListStep = ({
         {patches.map((item, index) => (
           <PatchCard
             canReorder={canReorder}
+            chainChip={chainChipText(item, enabledIndexes)}
             handleProps={reorderList.handleProps(index)}
             index={index}
             internalDescription={index === 0 ? internalDescription : undefined}
@@ -1161,6 +1207,36 @@ const ApplyPatchListStep = ({
           />
         ))}
       </div>
+      {(() => {
+        // One list-level order warning: the first enabled patch whose input matches a patch it
+        // does not follow. Fixing one link re-plans the chain; any remaining break surfaces next.
+        const outOfOrder = patches.findIndex(
+          (item, index) => !disabledFlags?.[index] && item.chainVerdict?.expectedPredecessor !== undefined,
+        );
+        if (outOfOrder < 0 || !canReorder) return null;
+        const predecessorPosition = patches[outOfOrder]?.chainVerdict?.expectedPredecessor ?? -1;
+        const predecessorIndex = enabledIndexes[predecessorPosition] ?? -1;
+        if (predecessorIndex < 0) return null;
+        const patchName = patches[outOfOrder]?.fileName || `patch ${outOfOrder + 1}`;
+        const predecessorName = patches[predecessorIndex]?.fileName || `patch ${predecessorIndex + 1}`;
+        const destination = outOfOrder < predecessorIndex ? predecessorIndex : predecessorIndex + 1;
+        return (
+          <p aria-live="polite" className="patch-off-note" id="rom-weaver-patch-order-note">
+            <TriangleAlert aria-hidden="true" />
+            <span>
+              “{patchName}” expects “{predecessorName}” woven first.{" "}
+              <button
+                className="btn ghost slim"
+                id="rom-weaver-button-fix-patch-order"
+                onClick={() => patchStack.reorder(outOfOrder, destination)}
+                type="button"
+              >
+                Fix order
+              </button>
+            </span>
+          </p>
+        );
+      })()}
       {total === 0 &&
       emptyState &&
       !patchInput.embeddedPatchLoadingVisible &&

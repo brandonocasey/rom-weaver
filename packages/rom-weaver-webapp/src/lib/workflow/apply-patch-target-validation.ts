@@ -283,7 +283,7 @@ const validatePreparedGroup = async <TSource>(
       signal: adapters.signal,
     });
     if (result.plan) adapters.onChainPlan?.(first.entry.target.id, result.plan);
-    const planVerdicts = new Map<number, { input_verdict: string; message?: string }>();
+    const planVerdicts = new Map<number, NonNullable<PatchValidateResult["plan"]>["per_patch"][number]>();
     for (const verdict of result.plan?.per_patch || []) planVerdicts.set(verdict.index, verdict);
     const perPatch = new Map<number, PatchValidatePerPatchVerdict>();
     for (const verdict of result.perPatch || []) perPatch.set(verdict.index, verdict);
@@ -308,6 +308,19 @@ const validatePreparedGroup = async <TSource>(
                 : "Input state is only provable during the weave"),
           status,
         });
+        entry.stage.state.chainVerdict = {
+          basis: planVerdict.basis,
+          basisSource: planVerdict.basis_source,
+          matched:
+            planVerdict.matched.kind === "patch_output"
+              ? { index: planVerdict.matched.index, kind: "patch_output" }
+              : planVerdict.matched.kind === "base"
+                ? { kind: "base", variant: planVerdict.matched.variant }
+                : { kind: "none" },
+          ...(planVerdict.expected_predecessor === undefined
+            ? {}
+            : { expectedPredecessor: planVerdict.expected_predecessor }),
+        };
         continue;
       }
       const verdict = perPatch.get(index);

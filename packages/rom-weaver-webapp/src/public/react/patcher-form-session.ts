@@ -897,6 +897,22 @@ const useLocalApplyPatchFormSession = ({
     validatePatchesDeferred,
   ]);
 
+  // Chain verdicts depend on order: a reorder changes every member's chain fingerprint, so the
+  // plan-mode pass must rerun (cached per-patch dry-runs still short-circuit engine-side work).
+  const previousPatchOrderRef = useRef("");
+  useEffect(() => {
+    const order = getBinarySourceListStableIds(activePatches).join("|");
+    const previous = previousPatchOrderRef.current;
+    previousPatchOrderRef.current = order;
+    if (!(validatePatches && activePatches.length && previous)) return;
+    // Same ids, different order: a pure reorder (adds/removals restage and revalidate on their own).
+    const sameMembers =
+      previous.split("|").sort().join("|") === order.split("|").sort().join("|") && previous !== order;
+    if (!sameMembers) return;
+    emitSessionTrace("patch order changed; re-planning chain validation", {});
+    validatePatchesDeferred(createStageSnapshot());
+  }, [activePatches, createStageSnapshot, emitSessionTrace, validatePatches, validatePatchesDeferred]);
+
   // One coalescing window drives BOTH buckets. The ROM and patch staging decisions are the same
   // independent choreographies as before, but a short debounce defers them by a tick so a ROM and
   // its patches that arrive a beat apart (separate drops/picks) collapse into a single staging pass
