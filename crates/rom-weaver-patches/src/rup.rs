@@ -129,9 +129,9 @@ impl PatchHandler for RupPatchHandler {
             "rup patch apply start"
         );
         let patch = parse_rup_file(patch_path)?;
-        let validate_checksums = context.strict_patch_checksums();
+        let scopes = context.patch_check_scopes();
         let selected =
-            select_matching_file_for_input(&patch, &request.input, validate_checksums, context)?;
+            select_matching_file_for_input(&patch, &request.input, scopes.source, context)?;
         let file = selected.file;
         let undo = selected.undo;
         let normalized_input = selected.normalized_input;
@@ -209,7 +209,7 @@ impl PatchHandler for RupPatchHandler {
         apply_overflow_in_place(file, undo, output_len, &mut output)?;
         output.flush()?;
 
-        if validate_checksums {
+        if scopes.target {
             let expected_md5 = if undo {
                 file.source_md5
             } else {
@@ -233,7 +233,7 @@ impl PatchHandler for RupPatchHandler {
             &request.output,
         )?;
 
-        let checksum_suffix = checksum_validation_suffix(validate_checksums);
+        let checksum_suffix = checksum_validation_suffix(scopes.source && scopes.target);
         Ok(crate::patch_success_report(
             self.descriptor,
             "apply",

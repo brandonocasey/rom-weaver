@@ -26,7 +26,9 @@ pub use concurrency::{
     BatchPlan, BatchWave, ConcurrencyLimits, JobDemand, plan_batch, plan_waves,
     resolve_memory_ceiling, working_set_estimate,
 };
-pub use context::{OperationContext, PatchChecksumValidation, PatchPolicy, XdeltaSecondaryMode};
+pub use context::{
+    OperationContext, PatchCheckScopes, PatchChecksumValidation, PatchPolicy, XdeltaSecondaryMode,
+};
 pub use disc_sheet::{
     DiscSheetKind, DiscSheetRefs, detect_disc_sheet, enumerate_disc_sheet_refs,
     parse_disc_sheet_refs_from_text, sibling_gdi_path,

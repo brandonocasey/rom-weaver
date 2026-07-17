@@ -100,14 +100,16 @@ impl PatchHandler for BpsPatchHandler {
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
+        let scopes = context.patch_check_scopes();
         debug!(
             format = self.descriptor.name,
             patch = %patch_path.display(),
-            validate_checksums = context.strict_patch_checksums(),
+            validate_patch_integrity = scopes.patch_integrity,
+            validate_source = scopes.source,
+            validate_target = scopes.target,
             "bps patch apply start"
         );
-        let validate_checksums = context.strict_patch_checksums();
-        let patch = parse_bps_file_with_checksum_validation(patch_path, validate_checksums)?;
+        let patch = parse_bps_file_with_checksum_validation(patch_path, scopes.patch_integrity)?;
         trace!(
             format = self.descriptor.name,
             actions = patch.actions.len(),
@@ -121,7 +123,7 @@ impl PatchHandler for BpsPatchHandler {
             &mut source,
             patch.source_size,
             patch.source_checksum,
-            validate_checksums,
+            scopes.source,
             context,
         )?;
 
@@ -206,11 +208,11 @@ impl PatchHandler for BpsPatchHandler {
             &mut output,
             patch.target_size,
             patch.target_checksum,
-            validate_checksums,
+            scopes.target,
             context,
         )?;
 
-        let checksum_suffix = checksum_validation_suffix(validate_checksums);
+        let checksum_suffix = checksum_validation_suffix(scopes.source && scopes.target);
         Ok(crate::patch_success_report(
             self.descriptor,
             "apply",

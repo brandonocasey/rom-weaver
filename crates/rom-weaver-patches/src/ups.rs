@@ -78,12 +78,12 @@ impl PatchHandler for UpsPatchHandler {
             patch = %patch_path.display(),
             "ups patch apply start"
         );
-        let validate_checksums = context.strict_patch_checksums();
-        let patch = parse_ups_file_with_checksum_validation(patch_path, validate_checksums)?;
+        let scopes = context.patch_check_scopes();
+        let patch = parse_ups_file_with_checksum_validation(patch_path, scopes.patch_integrity)?;
         let input_len = fs::metadata(&request.input)?.len();
         let input_checksum = crc32_path_cached(&request.input, context)?;
         let (output_size, output_checksum) =
-            resolve_apply_target(&patch, input_len, input_checksum, validate_checksums)?;
+            resolve_apply_target(&patch, input_len, input_checksum, scopes.source)?;
         let working_size = max(patch.source_size, patch.target_size);
         trace!(
             format = self.descriptor.name,
@@ -136,7 +136,7 @@ impl PatchHandler for UpsPatchHandler {
             execution
         };
 
-        if validate_checksums {
+        if scopes.target {
             let actual_output_checksum = crc32_path_cached(&request.output, context)?;
             if actual_output_checksum != output_checksum {
                 return Err(RomWeaverError::Validation(format!(
@@ -145,7 +145,7 @@ impl PatchHandler for UpsPatchHandler {
             }
         }
 
-        let checksum_suffix = checksum_validation_suffix(validate_checksums);
+        let checksum_suffix = checksum_validation_suffix(scopes.source && scopes.target);
         Ok(crate::patch_success_report(
             self.descriptor,
             "apply",

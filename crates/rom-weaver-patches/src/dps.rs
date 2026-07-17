@@ -97,8 +97,9 @@ impl PatchHandler for DpsPatchHandler {
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
-        let validate_source_size = context.strict_patch_checksums();
-        let parse_mode = if validate_source_size {
+        let scopes = context.patch_check_scopes();
+        let validate_source_size = scopes.source;
+        let parse_mode = if scopes.patch_integrity {
             DpsParseMode::Strict
         } else {
             DpsParseMode::WarnAndStopOnMalformedRecord
@@ -215,8 +216,9 @@ impl PatchHandler for DpsPatchHandler {
         context: &OperationContext,
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
-        let validate_source_size = context.strict_patch_checksums();
-        let parse_mode = if validate_source_size {
+        let scopes = context.patch_check_scopes();
+        let validate_source_size = scopes.source;
+        let parse_mode = if scopes.patch_integrity {
             DpsParseMode::Strict
         } else {
             DpsParseMode::WarnAndStopOnMalformedRecord

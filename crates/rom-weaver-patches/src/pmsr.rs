@@ -95,7 +95,7 @@ impl PatchHandler for PmsrPatchHandler {
             "pmsr patch apply start"
         );
         let patch = parse_pmsr_file(patch_path)?;
-        let validate_source = context.strict_patch_checksums();
+        let validate_source = context.validate_source_checks();
 
         if validate_source {
             validate_paper_mario_source(&request.input)?;
@@ -190,7 +190,7 @@ impl PatchHandler for PmsrPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let patch = parse_pmsr_file(patch_path)?;
-        let validate_source = context.strict_patch_checksums();
+        let validate_source = context.validate_source_checks();
 
         if validate_source {
             validate_paper_mario_source(&request.input)?;

@@ -131,7 +131,7 @@ impl PatchHandler for SolidPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let parsed = parse_solid_patch_file(patch_path)?;
-        let validate_checksums = context.strict_patch_checksums();
+        let validate_checksums = context.validate_source_checks();
         if validate_checksums {
             validate_source_checksum(parsed.source_md5, &request.input)?;
         }
@@ -177,7 +177,7 @@ impl PatchHandler for SolidPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let parsed = parse_solid_patch_file(patch_path)?;
-        let validate_checksums = context.strict_patch_checksums();
+        let validate_checksums = context.validate_source_checks();
         if validate_checksums {
             validate_source_checksum(parsed.source_md5, &request.input)?;
         }

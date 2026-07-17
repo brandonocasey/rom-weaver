@@ -135,7 +135,7 @@ impl PatchHandler for PpfPatchHandler {
             "ppf patch apply start"
         );
         let parsed = parse_ppf_file(patch_path)?;
-        let validate_checksums = context.strict_patch_checksums();
+        let validate_checksums = context.validate_source_checks();
         let input_len = fs::metadata(&request.input)?.len();
         trace!(
             format = self.descriptor.name,
@@ -221,7 +221,7 @@ impl PatchHandler for PpfPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let parsed = parse_ppf_file(patch_path)?;
-        let validate_checksums = context.strict_patch_checksums();
+        let validate_checksums = context.validate_source_checks();
         let input_len = fs::metadata(&request.input)?.len();
 
         if let Some(expected_len) = parsed.expected_input_len

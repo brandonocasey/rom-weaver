@@ -19,6 +19,31 @@ pub enum PatchChecksumValidation {
     Ignore,
 }
 
+/// Which of a patch's own embedded checks one chain step enforces. Strict
+/// validation enables everything and Ignore disables everything; a
+/// base-basis patch running mid-chain keeps patch-file integrity while
+/// skipping its base-relative source/target checks (they describe the
+/// original ROM, not the running intermediate).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PatchCheckScopes {
+    /// The patch file's own integrity checksum (for example the BPS patch CRC32).
+    pub patch_integrity: bool,
+    /// Checks the patch declares about its input/source bytes.
+    pub source: bool,
+    /// Checks the patch declares about its output/target bytes.
+    pub target: bool,
+}
+
+impl PatchCheckScopes {
+    pub const fn all(enabled: bool) -> Self {
+        Self {
+            patch_integrity: enabled,
+            source: enabled,
+            target: enabled,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum XdeltaSecondaryMode {
     Auto,
@@ -75,6 +100,11 @@ pub struct PatchPolicy {
     /// Whether patch apply/validate enforces the patch's declared input/output
     /// checksums strictly or ignores mismatches.
     pub patch_checksum_validation: PatchChecksumValidation,
+    /// Per-step override narrowing WHICH of the patch's own checks are
+    /// enforced. `None` derives all three scopes from
+    /// `patch_checksum_validation`; the apply chain sets it for base-basis
+    /// mid-chain steps (integrity on, source/target off).
+    pub patch_check_scopes: Option<PatchCheckScopes>,
     /// Secondary-compression mode for xdelta/vcdiff patch create.
     pub xdelta_secondary_mode: XdeltaSecondaryMode,
     /// Per-operation override for the patch-apply in-memory size cap (bytes). `None` uses the
@@ -89,6 +119,7 @@ impl Default for PatchPolicy {
             extract_checksum_algorithms: Vec::new(),
             extract_checksum_rom_only: false,
             patch_checksum_validation: PatchChecksumValidation::Strict,
+            patch_check_scopes: None,
             xdelta_secondary_mode: XdeltaSecondaryMode::default(),
             patch_apply_in_memory_limit: None,
         }
@@ -240,6 +271,33 @@ impl OperationContext {
 
     pub fn with_patch_checksum_validation(mut self, validation: PatchChecksumValidation) -> Self {
         self.patch_policy.patch_checksum_validation = validation;
+        self
+    }
+
+    /// The per-scope view of patch check enforcement (see [`PatchCheckScopes`]).
+    pub fn patch_check_scopes(&self) -> PatchCheckScopes {
+        self.patch_policy
+            .patch_check_scopes
+            .unwrap_or_else(|| PatchCheckScopes::all(self.strict_patch_checksums()))
+    }
+
+    /// Whether the patch file's own integrity checksum is enforced.
+    pub fn validate_patch_integrity(&self) -> bool {
+        self.patch_check_scopes().patch_integrity
+    }
+
+    /// Whether the patch's declared source/input checks are enforced.
+    pub fn validate_source_checks(&self) -> bool {
+        self.patch_check_scopes().source
+    }
+
+    /// Whether the patch's declared target/output checks are enforced.
+    pub fn validate_target_checks(&self) -> bool {
+        self.patch_check_scopes().target
+    }
+
+    pub fn with_patch_check_scopes(mut self, scopes: PatchCheckScopes) -> Self {
+        self.patch_policy.patch_check_scopes = Some(scopes);
         self
     }
 

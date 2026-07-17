@@ -175,7 +175,7 @@ impl PatchHandler for VcdiffPatchHandler {
                 "native VCDIFF backend does not support custom code tables".into(),
             ));
         }
-        let validate_checksums = context.strict_patch_checksums();
+        let validate_checksums = context.validate_target_checks();
         let input_len = std::fs::metadata(&request.input)?.len();
         let uses_xdelta_lzma_sections = patch.secondary_compressor_id
             == Some(XDELTA_LZMA_SECONDARY_ID)

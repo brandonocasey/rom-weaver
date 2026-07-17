@@ -88,7 +88,9 @@ impl PatchHandler for ApsGbaPatchHandler {
             "apsgba patch apply start"
         );
         let patch = parse_apsgba_file(patch_path)?;
-        let validate_checksums = context.strict_patch_checksums();
+        // Per-block source AND target crc16s ride one flag; every real scope
+        // configuration turns them off together (base-basis mid-chain).
+        let validate_checksums = context.validate_source_checks();
         let expected_input_size = u64::from(patch.source_size);
         let actual_input_size = fs::metadata(&request.input)?.len();
         if actual_input_size != expected_input_size {
@@ -189,7 +191,9 @@ impl PatchHandler for ApsGbaPatchHandler {
     ) -> Result<OperationReport> {
         let patch_path = crate::require_single_patch_file(&request.patches, self.descriptor.name)?;
         let patch = parse_apsgba_file(patch_path)?;
-        let validate_checksums = context.strict_patch_checksums();
+        // Per-block source AND target crc16s ride one flag; every real scope
+        // configuration turns them off together (base-basis mid-chain).
+        let validate_checksums = context.validate_source_checks();
         let expected_input_size = u64::from(patch.source_size);
         let actual_input_size = fs::metadata(&request.input)?.len();
         if actual_input_size != expected_input_size {
