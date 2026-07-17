@@ -20,6 +20,11 @@ msgstr ""
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.orderNote"
+msgstr "“{patch}” espera que “{predecessor}” se teja primero."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.patch.offCount"
 msgstr "{count, plural, one {# parche está desactivado - márcalo para incluirlo} other {# parches están desactivados - márcalos para incluirlos}}"
 
@@ -45,13 +50,13 @@ msgstr "Todo local, en tu navegador — tus archivos nunca salen de tu equipo."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.hero.createThesis2"
-msgstr "y genera un parche para compartir —"
+msgid "ui.hero.thesis2"
+msgstr "comprimido para guardar o en un bundle para compartir —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis2"
-msgstr "comprimido para guardar o en un bundle para compartir —"
+msgid "ui.hero.createThesis2"
+msgstr "y genera un parche para compartir —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -60,13 +65,33 @@ msgstr "y redúcelos para almacenarlos —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.step.apply"
-msgstr "Tejer"
+msgid "ui.chain.appliesAfter"
+msgstr "se aplica después del parche {n}"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
 msgid "ui.hero.accent"
 msgstr "a velocidad nativa"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.auto"
+msgstr "auto"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.autoBase"
+msgstr "auto (ROM base)"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.autoPrevious"
+msgstr "auto (anterior)"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.base"
+msgstr "ROM base"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -165,6 +190,16 @@ msgstr "Activar herramientas beta (Recortar y Herramientas)"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.differentRom"
+msgstr "esperaba una ROM distinta"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.expectsFirst"
+msgstr "espera primero el parche {n}"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.log.filter"
 msgstr "Filtrar"
 
@@ -172,6 +207,11 @@ msgstr "Filtrar"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.filterLabel"
 msgstr "Filtrar el registro"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.fixOrder"
+msgstr "Corregir orden"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -215,6 +255,16 @@ msgstr "Nivel de registro"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.matchesRom"
+msgstr "coincide con tu ROM"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.matchesRomVariant"
+msgstr "coincide con tu ROM ({variant})"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.step.modified"
 msgstr "Modificado"
 
@@ -255,8 +305,28 @@ msgstr "No se pudo escribir la salida."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "error.PATCH_APPLY_FAILED"
-msgstr "No se pudo tejer el parche."
+msgid "ui.output.inputMismatch"
+msgstr "La salida no se verificará: un parche anterior no coincide con su entrada."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.bundlePartial"
+msgstr "La salida no se verificará: el resultado esperado del paquete solo cubre su cadena de parches completa."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.differentChain"
+msgstr "La salida no se verificará: la salida esperada describe una cadena de parches distinta."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.bundleDiverged"
+msgstr "La salida no se verificará: la cadena de parches difiere del paquete."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.outOfOrder"
+msgstr "La salida no se verificará: los parches están desordenados."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -277,6 +347,11 @@ msgstr "Parches"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.viewPrevious"
 msgstr "Anterior"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.previous"
+msgstr "salida anterior"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -440,8 +515,18 @@ msgstr "El tipo de fuente seleccionado no es compatible."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.output.verified"
+msgstr "El resultado tejido se verificará contra la salida esperada."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.tools.theme"
 msgstr "Tema"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.rom.baseConflict"
+msgstr "Estos parches esperan ROMs distintas: cada tarjeta de parche muestra la que necesita."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -465,8 +550,23 @@ msgstr "usando los datos de deshacer del propio parche —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.verifiedDuringWeave"
+msgstr "se verifica durante el tejido"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.step.apply"
+msgstr "Tejer"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.hero.thesis"
 msgstr "Teje parches en tu ROM y descarga el resultado,"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "error.PATCH_APPLY_FAILED"
+msgstr "No se pudo tejer el parche."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

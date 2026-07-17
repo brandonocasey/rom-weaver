@@ -20,6 +20,11 @@ msgstr ""
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.orderNote"
+msgstr "„{patch}“ erwartet, dass „{predecessor}“ zuerst gewebt wird."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.patch.offCount"
 msgstr "{count, plural, one {# Patch ist aus - ankreuzen zum Einschließen} other {# Patches sind aus - ankreuzen zum Einschließen}}"
 
@@ -45,13 +50,13 @@ msgstr "Alles lokal in deinem Browser — deine Dateien verlassen nie deinen Rec
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.hero.createThesis2"
-msgstr "und einen teilbaren Patch erzeugen —"
+msgid "ui.hero.thesis2"
+msgstr "komprimiert zum Speichern oder als Bundle zum Teilen —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis2"
-msgstr "komprimiert zum Speichern oder als Bundle zum Teilen —"
+msgid "ui.hero.createThesis2"
+msgstr "und einen teilbaren Patch erzeugen —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -60,13 +65,33 @@ msgstr "und die Dateien fürs Archiv verkleinern —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.step.apply"
-msgstr "Weben"
+msgid "ui.chain.appliesAfter"
+msgstr "wird nach Patch {n} angewendet"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
 msgid "ui.hero.accent"
 msgstr "in nativer Geschwindigkeit"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.auto"
+msgstr "auto"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.autoBase"
+msgstr "auto (Basis-ROM)"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.autoPrevious"
+msgstr "auto (vorheriger)"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.base"
+msgstr "Basis-ROM"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -165,6 +190,16 @@ msgstr "Beta-Tools aktivieren (Trimmen und Tools)"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.differentRom"
+msgstr "erwartete eine andere ROM"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.expectsFirst"
+msgstr "erwartet zuerst Patch {n}"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.log.filter"
 msgstr "Filtern"
 
@@ -172,6 +207,11 @@ msgstr "Filtern"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.filterLabel"
 msgstr "Protokoll filtern"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.fixOrder"
+msgstr "Reihenfolge korrigieren"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -215,6 +255,16 @@ msgstr "Protokollstufe"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.matchesRom"
+msgstr "passt zu deiner ROM"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.matchesRomVariant"
+msgstr "passt zu deiner ROM ({variant})"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.step.modified"
 msgstr "Modifiziert"
 
@@ -255,8 +305,28 @@ msgstr "Die Ausgabe konnte nicht geschrieben werden."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "error.PATCH_APPLY_FAILED"
-msgstr "Das Einweben des Patches ist fehlgeschlagen."
+msgid "ui.output.inputMismatch"
+msgstr "Die Ausgabe wird nicht überprüft - ein früherer Patch passt nicht zu seiner Eingabe."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.bundlePartial"
+msgstr "Die Ausgabe wird nicht überprüft - das erwartete Ergebnis des Pakets gilt nur für die vollständige Patch-Kette."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.differentChain"
+msgstr "Die Ausgabe wird nicht überprüft - die erwartete Ausgabe beschreibt eine andere Patch-Kette."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.bundleDiverged"
+msgstr "Die Ausgabe wird nicht überprüft - die Patch-Kette weicht vom Paket ab."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.outOfOrder"
+msgstr "Die Ausgabe wird nicht überprüft - die Patches sind in falscher Reihenfolge."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -277,6 +347,11 @@ msgstr "Patches"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.viewPrevious"
 msgstr "Vorheriges"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.previous"
+msgstr "vorherige Ausgabe"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -440,8 +515,18 @@ msgstr "Der gewählte Quelltyp wird nicht unterstützt."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.output.verified"
+msgstr "Das gewebte Ergebnis wird gegen die erwartete Ausgabe überprüft."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.tools.theme"
 msgstr "Design"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.rom.baseConflict"
+msgstr "Diese Patches erwarten unterschiedliche ROMs - jede Patch-Karte zeigt die benötigte."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -465,8 +550,23 @@ msgstr "mit den Undo-Daten des Patches —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.verifiedDuringWeave"
+msgstr "wird beim Weben überprüft"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.step.apply"
+msgstr "Weben"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.hero.thesis"
 msgstr "Patches in deine ROM weben und das Ergebnis herunterladen,"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "error.PATCH_APPLY_FAILED"
+msgstr "Das Einweben des Patches ist fehlgeschlagen."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

@@ -797,18 +797,22 @@ function ApplyWorkflowFormView({
 
   const romVerificationStates = buildRomVerificationStates(patches, romInputs, disabledPatchFlags);
   // Each ROM's computed identity, keyed by id, so a patch card can verify the
-  // input checks a user types against the real target ROM values.
-  const romActualsById = new Map<string, RomCheckActuals>(
-    romInputs.map((row) => [
-      row.id,
-      {
-        bytes: typeof row.size === "number" ? row.size : row.sourceSize,
-        crc32: row.info.crc32 || undefined,
-        md5: row.info.md5 || undefined,
-        sha1: row.info.sha1 || undefined,
-      },
-    ]),
-  );
+  // input checks a user types against the real target ROM values. Disc-track
+  // rows are targeted by FILE NAME (their row id is not what the target select
+  // resolves), so those alias their actuals under the file name too.
+  const romActualsById = new Map<string, RomCheckActuals>();
+  for (const row of romInputs) {
+    const actuals = {
+      bytes: typeof row.size === "number" ? row.size : row.sourceSize,
+      crc32: row.info.crc32 || undefined,
+      md5: row.info.md5 || undefined,
+      sha1: row.info.sha1 || undefined,
+    };
+    romActualsById.set(row.id, actuals);
+    if (row.kind === "track" && row.info.fileName && !romActualsById.has(row.info.fileName)) {
+      romActualsById.set(row.info.fileName, actuals);
+    }
+  }
   // The expected-ROM group describes THE base ROM, so it only renders for an
   // unambiguous single-ROM bench. The chain plan's base-basis verdicts feed it
   // (union across every enabled patch authored against the base); without plan
@@ -1080,7 +1084,7 @@ function ApplyWorkflowFormView({
                 ) : null}
                 {baseConflict ? (
                   <Notice id="rom-weaver-rom-expected-conflict" level="warn">
-                    These patches expect different ROMs - each patch card shows the one it needs.
+                    {localizer.message("ui.rom.baseConflict")}
                   </Notice>
                 ) : null}
                 <SectionNotice

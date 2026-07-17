@@ -7,6 +7,7 @@ import Scissors from "lucide-react/dist/esm/icons/scissors.js";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import type { Localizer } from "../../presentation/localization/index.ts";
 import { InfoToggle } from "../../presentation/react/info-toggle.tsx";
 import { formatByteSize } from "../../presentation/workflow-presentation.ts";
 import { createTiming, formatTiming } from "../../storage/shared/timing.ts";
@@ -31,6 +32,7 @@ import { useListReorder } from "./components/ds/use-list-reorder.ts";
 import type { PatcherStackController, PatcherUiController } from "./patcher-form.ts";
 import type { PatchStackItemState } from "./patcher-presentation.ts";
 import type { NoticeState, PatcherUiState } from "./patcher-ui-state.ts";
+import { useUiLocalizer } from "./settings-context.tsx";
 import type { BundlePatchMeta } from "./use-bundle-apply-session.ts";
 import { toWorkflowFileProgressProps } from "./workflow-run-hooks.ts";
 
@@ -443,35 +445,42 @@ const EditableCheckRow = ({
 const chainChipText = (
   item: PatchStackItemState,
   enabledIndexes: readonly number[],
+  localizer: Localizer,
 ): { text: string; warn?: boolean } | null => {
   const verdict = item.chainVerdict;
   if (!verdict) return null;
   const displayNumber = (enabledPosition: number) => (enabledIndexes[enabledPosition] ?? enabledPosition) + 1;
   if (item.validationState === "invalid" && verdict.matched.kind === "none" && verdict.basisSource !== "default") {
-    return { text: "expected a different ROM", warn: true };
+    return { text: localizer.message("ui.chain.differentRom"), warn: true };
   }
   if (verdict.expectedPredecessor !== undefined) {
-    return { text: `expects patch ${displayNumber(verdict.expectedPredecessor)} first`, warn: true };
+    return {
+      text: localizer.message("ui.chain.expectsFirst", { n: displayNumber(verdict.expectedPredecessor) }),
+      warn: true,
+    };
   }
   if (verdict.matched.kind === "patch_output") {
-    return { text: `applies after patch ${displayNumber(verdict.matched.index)}` };
+    return { text: localizer.message("ui.chain.appliesAfter", { n: displayNumber(verdict.matched.index) }) };
   }
   if (enabledIndexes.length < 2) return null;
   if (verdict.matched.kind === "base") {
     return {
-      text: verdict.matched.variant === "raw" ? "matches your ROM" : `matches your ROM (${verdict.matched.variant})`,
+      text:
+        verdict.matched.variant === "raw"
+          ? localizer.message("ui.chain.matchesRom")
+          : localizer.message("ui.chain.matchesRomVariant", { variant: verdict.matched.variant }),
     };
   }
-  if (item.validationState === "deferred") return { text: "verified during the weave" };
+  if (item.validationState === "deferred") return { text: localizer.message("ui.chain.verifiedDuringWeave") };
   return null;
 };
 
 /** The auto option names what inference resolved so pinning is a conscious
  * override; with a pin active (or no plan yet) it stays a plain "auto". */
-const autoBasisLabel = (item: PatchStackItemState, meta?: BundlePatchMeta): string => {
+const autoBasisLabel = (item: PatchStackItemState, localizer: Localizer, meta?: BundlePatchMeta): string => {
   const verdict = item.chainVerdict;
-  if (meta?.basis || !verdict || verdict.basisSource === "declared") return "auto";
-  return verdict.basis === "base" ? "auto (base ROM)" : "auto (previous)";
+  if (meta?.basis || !verdict || verdict.basisSource === "declared") return localizer.message("ui.basis.auto");
+  return verdict.basis === "base" ? localizer.message("ui.basis.autoBase") : localizer.message("ui.basis.autoPrevious");
 };
 
 const PatchChecksDrawer = ({
@@ -516,6 +525,7 @@ const PatchChecksDrawer = ({
   romActuals?: RomCheckActuals;
 }) => {
   const setOption = patchStack.setPatchOption;
+  const localizer = useUiLocalizer();
   const [invalidChecks, setInvalidChecks] = useState<Record<string, boolean>>({});
   // Fields opened via "Add check" that have no committed value yet.
   const [draftFields, setDraftFields] = useState<Record<string, boolean>>({});
@@ -640,9 +650,9 @@ const PatchChecksDrawer = ({
                   title="Which ROM this patch's input checks describe: the base ROM (verified once up front) or the previous patch's output."
                   value={meta?.basis || ""}
                 >
-                  <option value="">{autoBasisLabel(item, meta)}</option>
-                  <option value="base">base ROM</option>
-                  <option value="previous">previous output</option>
+                  <option value="">{autoBasisLabel(item, localizer, meta)}</option>
+                  <option value="base">{localizer.message("ui.basis.base")}</option>
+                  <option value="previous">{localizer.message("ui.basis.previous")}</option>
                 </select>
               </>
             ) : null}
@@ -1183,6 +1193,7 @@ const ApplyPatchListStep = ({
     .filter((patchIndex) => !disabledFlags?.[patchIndex]);
   const chainInputIndex = enabledIndexes[0] ?? -1;
   const chainOutputIndex = enabledIndexes.at(-1) ?? -1;
+  const localizer = useUiLocalizer();
   return (
     <StepSection
       fault={fault}
@@ -1225,7 +1236,7 @@ const ApplyPatchListStep = ({
           <PatchCard
             basisSelectVisible={enabledIndexes.length >= 2 || !!bundleMeta?.[index]?.basis}
             canReorder={canReorder}
-            chainChip={chainChipText(item, enabledIndexes)}
+            chainChip={chainChipText(item, enabledIndexes, localizer)}
             handleProps={reorderList.handleProps(index)}
             index={index}
             internalDescription={index === 0 ? internalDescription : undefined}
@@ -1265,14 +1276,14 @@ const ApplyPatchListStep = ({
           <p aria-live="polite" className="patch-off-note" id="rom-weaver-patch-order-note">
             <TriangleAlert aria-hidden="true" />
             <span>
-              “{patchName}” expects “{predecessorName}” woven first.{" "}
+              {localizer.message("ui.chain.orderNote", { patch: patchName, predecessor: predecessorName })}{" "}
               <button
                 className="btn ghost slim"
                 id="rom-weaver-button-fix-patch-order"
                 onClick={() => patchStack.reorder(outOfOrder, destination)}
                 type="button"
               >
-                Fix order
+                {localizer.message("ui.chain.fixOrder")}
               </button>
             </span>
           </p>

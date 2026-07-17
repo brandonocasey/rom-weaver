@@ -20,6 +20,11 @@ msgstr ""
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.orderNote"
+msgstr "“{patch}” expects “{predecessor}” woven first."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.patch.offCount"
 msgstr "{count, plural, one {# patch is off - tick it to include it} other {# patches are off - tick them to include them}}"
 
@@ -45,13 +50,13 @@ msgstr "All local, in your browser — files never leave your machine."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.hero.createThesis2"
-msgstr "and produce a sharable patch —"
+msgid "ui.hero.thesis2"
+msgstr "and compress the result —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.hero.thesis2"
-msgstr "and compress the result —"
+msgid "ui.hero.createThesis2"
+msgstr "and produce a sharable patch —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -60,13 +65,33 @@ msgstr "and shrink them for storage —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "ui.step.apply"
-msgstr "Weave"
+msgid "ui.chain.appliesAfter"
+msgstr "applies after patch {n}"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
 msgid "ui.hero.accent"
 msgstr "at native speed"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.auto"
+msgstr "auto"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.autoBase"
+msgstr "auto (base ROM)"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.autoPrevious"
+msgstr "auto (previous)"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.base"
+msgstr "base ROM"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -165,6 +190,16 @@ msgstr "Enable beta tools (Trim and Tools)"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.differentRom"
+msgstr "expected a different ROM"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.expectsFirst"
+msgstr "expects patch {n} first"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.log.filter"
 msgstr "Filter"
 
@@ -172,6 +207,11 @@ msgstr "Filter"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.filterLabel"
 msgstr "Filter log"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.fixOrder"
+msgstr "Fix order"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -215,6 +255,16 @@ msgstr "Log level"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.matchesRom"
+msgstr "matches your ROM"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.chain.matchesRomVariant"
+msgstr "matches your ROM ({variant})"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.step.modified"
 msgstr "Modified"
 
@@ -255,8 +305,28 @@ msgstr "Output could not be written."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
-msgid "error.PATCH_APPLY_FAILED"
-msgstr "Weaving the patch failed."
+msgid "ui.output.inputMismatch"
+msgstr "Output won't be verified - an earlier patch doesn't match its input."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.bundlePartial"
+msgstr "Output won't be verified - the bundle's expected result only covers its full patch chain."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.differentChain"
+msgstr "Output won't be verified - the expected output describes a different patch chain."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.bundleDiverged"
+msgstr "Output won't be verified - the patch chain differs from the bundle."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.output.outOfOrder"
+msgstr "Output won't be verified - the patches are out of order."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -277,6 +347,11 @@ msgstr "Patches"
 #: src/presentation/localization/messages.ts
 msgid "ui.log.viewPrevious"
 msgstr "Previous"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.basis.previous"
+msgstr "previous output"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -440,8 +515,18 @@ msgstr "The selected source type is not supported."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.output.verified"
+msgstr "The woven result will be verified against the expected output."
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.tools.theme"
 msgstr "Theme"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.rom.baseConflict"
+msgstr "These patches expect different ROMs - each patch card shows the one it needs."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
@@ -465,8 +550,23 @@ msgstr "using the patch's own undo data —"
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts
+msgid "ui.chain.verifiedDuringWeave"
+msgstr "verified during the weave"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "ui.step.apply"
+msgstr "Weave"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
 msgid "ui.hero.thesis"
 msgstr "Weave patches into any ROM or a sharable patch bundle,"
+
+#. js-lingui-explicit-id
+#: src/presentation/localization/messages.ts
+msgid "error.PATCH_APPLY_FAILED"
+msgstr "Weaving the patch failed."
 
 #. js-lingui-explicit-id
 #: src/presentation/localization/messages.ts

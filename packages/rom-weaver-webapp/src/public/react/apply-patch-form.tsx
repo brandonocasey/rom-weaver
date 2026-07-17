@@ -43,7 +43,7 @@ import { getBinarySourceListStableIds, sameBinarySourceLists } from "./input-ses
 import type { BinarySource } from "./patcher-form.ts";
 import { inertDialogController, useLocalApplyPatchFormSession } from "./patcher-form-session.ts";
 import type { ApplyPatchFormProps, CandidateSelectionPrompt, InternalApplyPatchFormProps } from "./public-types.ts";
-import { useApplySettings, useRomWeaverAssetBaseUrl } from "./settings-context.tsx";
+import { useApplySettings, useRomWeaverAssetBaseUrl, useUiLocalizer } from "./settings-context.tsx";
 import { useApplyPatchEnablement } from "./use-apply-patch-enablement.ts";
 import { type BundleSessionControllers, useBundleApplySession } from "./use-bundle-apply-session.ts";
 import { useUnifiedApplyDrop } from "./use-unified-apply-drop.ts";
@@ -337,6 +337,7 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
   // target); the bundle-level expected output (seeded onto the last patch only while the full
   // authored chain is enabled in order) is the fallback source.
   const enabledPatchCount = currentPatchNames.length - disabledPatchIds.size;
+  const localizer = useUiLocalizer();
   const outputVerification = useMemo((): { level: "ok" | "warn"; message: string } | null => {
     if (enabledPatchCount <= 0) return null;
     const finalEntries: Array<{ enforceable: boolean }> = [];
@@ -353,28 +354,23 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
     }
     if (finalEntries.length) {
       if (finalEntries.every((entry) => entry.enforceable))
-        return { level: "ok", message: "The woven result will be verified against the expected output." };
-      if (orderIssue) return { level: "warn", message: "Output won't be verified - the patches are out of order." };
-      if (inputIssue)
-        return { level: "warn", message: "Output won't be verified - an earlier patch doesn't match its input." };
-      return {
-        level: "warn",
-        message: "Output won't be verified - the expected output describes a different patch chain.",
-      };
+        return { level: "ok", message: localizer.message("ui.output.verified") };
+      if (orderIssue) return { level: "warn", message: localizer.message("ui.output.outOfOrder") };
+      if (inputIssue) return { level: "warn", message: localizer.message("ui.output.inputMismatch") };
+      return { level: "warn", message: localizer.message("ui.output.differentChain") };
     }
     if (bundleOutputChecksum && bundleChainStatus) {
-      if (bundleChainStatus === "full")
-        return { level: "ok", message: "The woven result will be verified against the expected output." };
+      if (bundleChainStatus === "full") return { level: "ok", message: localizer.message("ui.output.verified") };
       return {
         level: "warn",
         message:
           bundleChainStatus === "partial"
-            ? "Output won't be verified - the bundle's expected result only covers its full patch chain."
-            : "Output won't be verified - the patch chain differs from the bundle.",
+            ? localizer.message("ui.output.bundlePartial")
+            : localizer.message("ui.output.bundleDiverged"),
       };
     }
     return null;
-  }, [bundleChainStatus, bundleOutputChecksum, chainPlans, enabledPatchCount]);
+  }, [bundleChainStatus, bundleOutputChecksum, chainPlans, enabledPatchCount, localizer]);
 
   const queueMutation = useCallback(<TValue,>(callback: () => Promise<TValue>) => {
     const run = mutationQueueRef.current.catch(() => undefined).then(callback);
