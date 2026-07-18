@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { execSync } from "node:child_process";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { playwright } from "@vitest/browser-playwright";
 import { mergeConfig } from "vitest/config";
@@ -139,7 +139,10 @@ export default mergeConfig(baseConfig, {
     },
     coverage: {
       ...coverageBase,
-      reportsDirectory: fileURLToPath(new URL("../../dist/coverage/react-browser", import.meta.url)),
+      reporter: process.env.ROM_WEAVER_COVERAGE_SHARD === "1" ? ["lcov"] : coverageBase.reporter,
+      reportsDirectory: process.env.ROM_WEAVER_COVERAGE_DIR
+        ? resolve(process.env.ROM_WEAVER_COVERAGE_DIR)
+        : fileURLToPath(new URL("../../dist/coverage/react-browser", import.meta.url)),
     },
     include: ["tests/browser/**/*.browser.test.js"],
   },

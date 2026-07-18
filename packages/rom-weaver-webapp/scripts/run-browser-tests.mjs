@@ -30,6 +30,7 @@ const TEST_DIR = path.join(ROOT_DIR, "tests", "browser");
 const CONFIG_PATH = path.join(ROOT_DIR, "vitest.browser.config.mjs");
 const VITEST_BIN = path.join(ROOT_DIR, "node_modules", ".bin", "vitest");
 const TEST_FILE_SUFFIX = ".browser.test.js";
+const COVERAGE_ROOT = path.resolve(ROOT_DIR, "..", "..", "dist", "coverage", "react-browser");
 // Vitest's summary line ("  Tests  1 failed | 9 passed (10)"), not the
 // "⎯ Failed Tests 2 ⎯" section banner - hence the line-start + digit anchors.
 const TESTS_LINE_REGEX = /^\s*Tests\s+(\d.*?)\s*$/gm;
@@ -87,9 +88,18 @@ const discoverTestFiles = (requestedFiles) => {
 
 const runFile = (file, vitestArgs) =>
   new Promise((resolve) => {
+    const coverageName = path.basename(file, TEST_FILE_SUFFIX);
+    const env =
+      process.env.ROM_WEAVER_COVERAGE === "1"
+        ? {
+            ...process.env,
+            ROM_WEAVER_COVERAGE_DIR: path.join(COVERAGE_ROOT, coverageName),
+            ROM_WEAVER_COVERAGE_SHARD: "1",
+          }
+        : process.env;
     const child = childProcess.spawn(VITEST_BIN, ["--config", CONFIG_PATH, "run", file, ...vitestArgs], {
       cwd: ROOT_DIR,
-      env: process.env,
+      env,
     });
     let output = "";
     child.stdout.on("data", (chunk) => {
@@ -139,6 +149,9 @@ const main = async () => {
   if (!files.length) {
     process.stdout.write("No browser test files found.\n");
     return;
+  }
+  if (process.env.ROM_WEAVER_COVERAGE === "1") {
+    fs.rmSync(COVERAGE_ROOT, { force: true, recursive: true });
   }
   const concurrency = resolveConcurrency();
   const browser = process.env.ROM_WEAVER_BROWSER || "chromium";

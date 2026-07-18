@@ -173,7 +173,9 @@ run = '''
 #!/usr/bin/env bash
 set -euo pipefail
 out_dir="{{ config_root }}/dist/coverage/rust"
+rm -rf "$out_dir"
 mkdir -p "$out_dir"
+cargo llvm-cov clean --workspace
 cargo llvm-cov --workspace --exclude rom-weaver-akv --exclude rom-weaver-chd-core --exclude rom-weaver-nod --exclude rom-weaver-qbsdiff --exclude rom-weaver-xdvdfs --no-report
 cargo llvm-cov report --html --output-dir "$out_dir"
 cargo llvm-cov report --lcov --output-path "$out_dir/lcov.info"
