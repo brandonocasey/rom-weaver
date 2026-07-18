@@ -20,6 +20,11 @@ const CHAIN_B = "tests/fixtures/browser-generated/chain-step-b.bps";
 const CHAIN_C = "tests/fixtures/browser-generated/chain-step-c.bps";
 const SAME_BASE_D = "tests/fixtures/browser-generated/chain-step-d.bps";
 
+// Two checksumless IPS patches, each an alternative edit of game.bin. IPS carries no source
+// checksum, so the planner has no evidence either is chained.
+const IPS_ALT_A = "tests/fixtures/archive_sources/multi-patch/change.ips";
+const IPS_ALT_B = "tests/fixtures/archive_sources/multi-patch/alternate.ips";
+
 // game.bin's raw crc32 (both base-authored patches embed it as their source).
 const ROM_CRC32 = "c6fb1252";
 
@@ -68,6 +73,21 @@ test("same-base patches all match the ROM and feed the Expected group without co
   await expect.poll(() => !!expectedGroup()?.querySelector(".ck-mark.ok"), { timeout: 60000 }).toBe(true);
   expect(expectedGroup()?.querySelector(".ck-mark.bad")).toBeNull();
   expect(document.getElementById("rom-weaver-rom-expected-conflict")).toBeNull();
+}, 120000);
+
+test("checksumless patches with no evidence each verify against the ROM regardless of position", async () => {
+  mount(createElement(ApplyPatchForm, {}));
+  await dropFixtures([RAW_ROM, IPS_ALT_A, IPS_ALT_B]);
+
+  // Both IPS patches apply cleanly to the ROM. With no checksum to tie either to the other's
+  // output, neither has any more claim to being "chained" than the head does - so both verify
+  // green against the base. Before the fix the second patch read "verified during the weave"
+  // purely for being listed second (an empty promise: IPS has nothing to verify during a weave).
+  const passedChecks = () =>
+    document.querySelectorAll('#rom-weaver-list-patch-stack button[title="Preflight passed"]').length;
+  await expect.poll(passedChecks, { timeout: 60000 }).toBe(2);
+  expect(chipText(1)).not.toBe("verified during the weave");
+  expect(document.querySelector("#rom-weaver-list-patch-stack .file.bad")).toBeNull();
 }, 120000);
 
 test("the basis select names the inferred basis and a pin re-plans the chain", async () => {

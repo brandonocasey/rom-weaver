@@ -3099,6 +3099,31 @@ fn create_bps_patch(
     );
 }
 
+/// IPS carries no source checksum, so a patch built this way gives the planner
+/// zero evidence about what its input state is - the `default`-source case.
+fn create_ips_patch(
+    original: &std::path::Path,
+    modified: &std::path::Path,
+    output: &std::path::Path,
+) {
+    command_stdout(
+        &[
+            "patch",
+            "create",
+            "--original",
+            original.to_str().expect("path"),
+            "--modified",
+            modified.to_str().expect("path"),
+            "--format",
+            "ips",
+            "--output",
+            output.to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+}
+
 #[test]
 fn patch_apply_auto_strips_mid_chain_on_embedded_checksum() {
     let temp = setup_temp_dir();
@@ -4404,7 +4429,12 @@ fn probe_patch_reports_expected_checksums_for_bps() {
     );
 
     let probe_output = command_stdout(
-        &["probe", "--input", patch.path().to_str().expect("path"), "--json"],
+        &[
+            "probe",
+            "--input",
+            patch.path().to_str().expect("path"),
+            "--json",
+        ],
         0,
     );
 
@@ -4446,7 +4476,12 @@ fn probe_patch_reports_structured_summary_for_ups() {
     );
 
     let probe_output = command_stdout(
-        &["probe", "--input", patch.path().to_str().expect("path"), "--json"],
+        &[
+            "probe",
+            "--input",
+            patch.path().to_str().expect("path"),
+            "--json",
+        ],
         0,
     );
 
@@ -5674,6 +5709,58 @@ fn patch_validate_plan_resolves_same_base_patches() {
         .find(|entry| entry["source"] == "embedded target checks")
         .expect("embedded target entry");
     assert_eq!(embedded["enforceable"], false);
+}
+
+#[test]
+fn patch_validate_plan_verifies_checksumless_alternatives_against_base() {
+    let temp = setup_temp_dir();
+    let input = temp.child("input.bin");
+    fs::write(input.path(), b"ORIGINAL-ROM\n").expect("fixture");
+
+    // Two IPS patches, each an alternative edit of the SAME base byte. IPS carries no source
+    // checksum, so the planner has zero evidence either is chained and can only *default* the
+    // second to "previous" basis. Both nonetheless apply cleanly to the ROM, so both must verify
+    // green against the base regardless of order - the second must never read "chain_deferred"
+    // (an empty "verified during the weave" promise for a checksumless format) purely for being
+    // listed second.
+    fs::write(temp.child("mod-a.bin").path(), b"ORIGINXL-ROM\n").expect("fixture");
+    fs::write(temp.child("mod-b.bin").path(), b"ORIGINYL-ROM\n").expect("fixture");
+    let patch_a = temp.child("alt-a.ips");
+    let patch_b = temp.child("alt-b.ips");
+    create_ips_patch(input.path(), temp.child("mod-a.bin").path(), patch_a.path());
+    create_ips_patch(input.path(), temp.child("mod-b.bin").path(), patch_b.path());
+
+    for order in [[&patch_a, &patch_b], [&patch_b, &patch_a]] {
+        let output = command_stdout(
+            &[
+                "patch",
+                "validate",
+                "--input",
+                input.path().to_str().expect("path"),
+                "--patch",
+                order[0].path().to_str().expect("path"),
+                "--patch",
+                order[1].path().to_str().expect("path"),
+                "--plan",
+                "--json",
+            ],
+            0,
+        );
+
+        let json = parse_single_json_line(&output);
+        assert_patch_envelope(&json, "patch-validate", "IPS", "succeeded");
+        let validation = &json["details"]["patch_validation"];
+        assert_eq!(validation["status"], "passed");
+        assert_eq!(validation["passed_count"], 2);
+        assert_eq!(validation["failed_count"], 0);
+        let per_patch = validation["per_patch"].as_array().expect("per_patch array");
+        assert_eq!(per_patch.len(), 2);
+        for entry in per_patch {
+            assert_eq!(entry["basis"], "base");
+            assert_eq!(entry["input_verdict"], "passed");
+            assert_eq!(entry["matched"]["kind"], "none");
+        }
+    }
 }
 
 #[test]

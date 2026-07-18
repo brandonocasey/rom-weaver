@@ -1081,13 +1081,25 @@ impl CliApp {
             }
         }
 
-        // Dry-run only the patches that consume the original input.
+        // Dry-run the patches whose input is the original ROM: the chain head, any patch whose
+        // checksums prove a base basis, and - crucially - a patch the planner could only *guess*
+        // was chained (previous basis, `default` source: no declared basis and no checksum tying
+        // it to the previous output or the base). That guess has no evidence over "an independent
+        // patch on this ROM", so we probe the base and let a clean apply speak. Without this a
+        // second checksumless patch (e.g. plain IPS) reads "verified during the weave" purely for
+        // being second, while the same file alone or first verifies green.
+        let is_speculative_base = |verdict: &PatchPlanVerdict| {
+            verdict.basis == PatchInputBasis::Previous
+                && verdict.basis_source == PatchBasisSource::Default
+        };
         let ready_jobs: Vec<IndependentReadyJob> = resolved_patches
             .iter()
             .enumerate()
             .filter_map(|(index, (patch_path, resolved_patch_path))| {
                 let verdict = &per_patch[index];
-                let consumes_base = index == 0 || verdict.basis == PatchInputBasis::Base;
+                let consumes_base = index == 0
+                    || verdict.basis == PatchInputBasis::Base
+                    || is_speculative_base(verdict);
                 if !consumes_base || verdict.input_verdict == PatchInputVerdict::Failed {
                     return None;
                 }
@@ -1114,12 +1126,24 @@ impl CliApp {
         };
         for preflight in preflight_verdicts {
             let entry = &mut per_patch[preflight.index];
+            let speculative = is_speculative_base(entry);
             if preflight.passed {
-                if entry.input_verdict == PatchInputVerdict::Unknown {
+                if entry.input_verdict == PatchInputVerdict::Unknown
+                    || (speculative && entry.input_verdict == PatchInputVerdict::ChainDeferred)
+                {
                     entry.input_verdict = PatchInputVerdict::Passed;
                     entry.message = preflight.message;
+                    // A guessed-chain patch that cleanly applies to the ROM consumes the base like
+                    // the head: present it identically (base basis, green check) so its verdict no
+                    // longer depends on list position.
+                    if speculative {
+                        entry.basis = PatchInputBasis::Base;
+                    }
                 }
-            } else {
+            } else if !speculative {
+                // A definite base consumer that fails is a real failure. A guessed-chain patch that
+                // fails to apply to the base is NOT proven bad - it may genuinely target an
+                // intermediate - so its honest `chain_deferred` verdict stands.
                 entry.input_verdict = PatchInputVerdict::Failed;
                 entry.message = preflight.message;
             }
