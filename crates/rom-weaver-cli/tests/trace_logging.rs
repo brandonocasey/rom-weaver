@@ -42,7 +42,14 @@ fn run_checksum_json(source: &Path, trace_mode: TraceMode) -> std::process::Outp
     if matches!(trace_mode, TraceMode::Flag) {
         args.extend(["--log-level", "trace"]);
     }
-    args.extend(["checksum", "--input", source, "--algo", "crc32", "--no-extract"]);
+    args.extend([
+        "checksum",
+        "--input",
+        source,
+        "--algo",
+        "crc32",
+        "--no-extract",
+    ]);
 
     command.args(args).assert().code(0).get_output().clone()
 }

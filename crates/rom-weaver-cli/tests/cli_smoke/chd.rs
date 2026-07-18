@@ -279,7 +279,12 @@ fn probe_chd_reports_container_without_extracting() {
     );
 
     let json = run_single_json_event(
-        &["probe", "--input", chd_path.path().to_str().expect("path"), "--json"],
+        &[
+            "probe",
+            "--input",
+            chd_path.path().to_str().expect("path"),
+            "--json",
+        ],
         0,
     );
     assert_eq!(json["command"], "probe");
