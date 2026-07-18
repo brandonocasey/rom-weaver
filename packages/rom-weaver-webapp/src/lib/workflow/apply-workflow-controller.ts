@@ -378,6 +378,68 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
     });
   }
 
+  /** Swap the patch at {@link index} for a new source in place, leaving every OTHER staged patch
+   * untouched - their extraction and cached deep-validation verdicts survive, so only the swapped
+   * slot re-stages and re-validates. The new stage reuses the replaced slot's internal id, so the
+   * target chain's validation fingerprint (its ordered member ids) is unchanged and the untouched
+   * siblings keep matching their cached verdict instead of re-running. This is the replace-analog of
+   * {@link addPatch}'s append fast path; the caller falls back to clear-and-re-add for multi-slot or
+   * length-changing edits. */
+  async replacePatchAt(index: number, patch: TSource): Promise<void> {
+    this.assertCanStartOperation();
+    const previous = this.patches[index];
+    if (index < 0 || index >= this.patches.length || !previous)
+      throw new RomWeaverError("WORKFLOW_INVALID_STATE", `No patch to replace at index ${index}`);
+    try {
+      this.validateSources?.(patch);
+    } catch (error) {
+      throw toRomWeaverError(error);
+    }
+    this.retainOwnedSources([patch]);
+    const stage = this.createInitialSource("patch", patch, index);
+    // Reuse the replaced slot's id so the target chain's validation fingerprint (its ordered member
+    // ids) stays identical - the untouched siblings keep matching their cached verdict and skip
+    // re-validation; only this slot, whose content changed, re-validates.
+    stage.state.id = previous.state.id;
+    stage.outputLabel = createPatchOutputLabel(stage.state.fileName);
+    // Swap the new (loading) stage into the slot immediately so its row reflects the swap while it
+    // stages; the detached previous stage is released once the new one is applied.
+    this.patches[index] = stage;
+    const stagedPromise = this.stageSource(stage, { deferBlockingSelection: true })
+      .then((staged) => {
+        this.emitPatchAwaitingInputProgress(staged);
+        return staged;
+      })
+      .then(async (staged) => {
+        await this.resolvePatchSelectionChoice(staged);
+        this.emitPatchAwaitingInputProgress(staged);
+        return staged;
+      })
+      .catch((error) => {
+        throw toRomWeaverError(error);
+      });
+    void stagedPromise.catch(() => undefined);
+    return this.mutate("replacePatchAt", async () => {
+      try {
+        const staged = await stagedPromise;
+        await this.maybeResolveBlockingPatchSelection(staged);
+        await this.evaluatePatchReadiness(staged);
+        await releasePreparedSourceAndWait(previous);
+        await this.releaseRuntimeSources([previous.source]);
+        await this.releaseOwnedSources([previous.source]);
+        this.recomputeOutputState();
+      } catch (error) {
+        // Restore the previous patch so the slot is never left empty, and release the failed stage.
+        if (this.patches[index] === stage) this.patches[index] = previous;
+        await releasePreparedSourceAndWait(stage);
+        await this.releaseRuntimeSources([stage.source]);
+        await this.releaseOwnedSources([stage.source]);
+        this.recomputeOutputState();
+        throw error;
+      }
+    });
+  }
+
   private async addFannedOutPatch(
     patchFile: PatchFileInstance,
     parentCompressions: InputParentCompression[],

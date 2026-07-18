@@ -123,6 +123,9 @@ const useInputStaging = (context: InputStagingContext) => {
         silent?: boolean;
         /** Index of the first newly-added patch; earlier patches keep their staged cards. */
         freshFromIndex?: number;
+        /** Exact set of re-staged slots (a single in-place replace); every other card keeps its
+         * resolved state, so only these indices shimmer. Takes precedence over `freshFromIndex`. */
+        freshIndices?: ReadonlySet<number>;
       } = {},
     ) => {
       const { machines, report, rows, session, stage } = contextRef.current;
@@ -144,6 +147,13 @@ const useInputStaging = (context: InputStagingContext) => {
       // Patches before this index are already staged in OPFS; only the appended tail
       // shows progress so their resolved cards stay put instead of flashing "Waiting".
       const freshFromIndex = Math.max(0, Math.min(options.freshFromIndex ?? 0, snapshot.patches.length));
+      // A single in-place replace re-stages only its slot; every other card keeps its resolved state.
+      const { freshIndices } = options;
+      const isFreshIndex = (index: number) => (freshIndices ? freshIndices.has(index) : index >= freshFromIndex);
+      const firstFreshIndex = freshIndices
+        ? snapshot.patches.findIndex((_patch, index) => freshIndices.has(index))
+        : freshFromIndex;
+      const preserveExistingProgress = freshIndices ? true : freshFromIndex > 0;
       const initialProgress = {
         indeterminate: true,
         label: "Preparing patch...",
@@ -153,11 +163,11 @@ const useInputStaging = (context: InputStagingContext) => {
         setPatchStaging(true);
         setPatchProgress(null);
         setPatchProgressByKey((current) => {
-          const next = freshFromIndex > 0 ? { ...current } : {};
+          const next = preserveExistingProgress ? { ...current } : {};
           snapshot.patches.forEach((patch, index) => {
-            if (index < freshFromIndex) return;
+            if (!isFreshIndex(index)) return;
             next[getPatchKey(patch, snapshot.patches)] =
-              index === freshFromIndex ? initialProgress : createWaitingWorkflowProgress();
+              index === firstFreshIndex ? initialProgress : createWaitingWorkflowProgress();
           });
           return next;
         });

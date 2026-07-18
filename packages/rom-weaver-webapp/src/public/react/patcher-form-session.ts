@@ -1019,19 +1019,38 @@ const useLocalApplyPatchFormSession = ({
             };
             const skipForInputOnlyChange = inputsChanged && !patchesChanged && !settingsChanged;
             const skipForReorderOrRemove = noNewPatches && !inputsChanged && !settingsChanged;
+            // A single in-place replace (same length, exactly one slot swapped): re-stage just that
+            // slot so the untouched cards keep their resolved state + verdicts. Multi-slot swaps fall
+            // back to the full re-stage below (matching the controller's clear-and-re-add).
+            const inPlaceReplaceIndices =
+              patchesChanged &&
+              !inputsChanged &&
+              !settingsChanged &&
+              currentPatchKeys.length === previousSync.keys.length
+                ? currentPatchKeys.flatMap((key, index) => (key === previousSync.keys[index] ? [] : [index]))
+                : [];
+            const singleReplaceIndex = inPlaceReplaceIndices.length === 1 ? (inPlaceReplaceIndices[0] ?? -1) : -1;
             if (skipForReorderOrRemove) {
               emitSessionTrace("patch reorder/remove skipped re-stage", { patchCount: activePatches.length });
             } else if (!skipForInputOnlyChange) {
               // An input-only change re-runs the deferred validation from syncRomInput's completion
               // (race-free - after the ROM is staged and patch targets resolve), so it is skipped here.
-              const freshFromIndex = patchesAppended && !inputsChanged && !settingsChanged ? previousPatchCount : 0;
-              if (freshFromIndex > 0) {
-                emitSessionTrace("patch append staged incrementally", {
-                  freshFromIndex,
+              if (singleReplaceIndex >= 0) {
+                emitSessionTrace("patch replaced in place; re-staging one slot", {
+                  index: singleReplaceIndex,
                   patchCount: activePatches.length,
                 });
+                syncPatchFiles(createStageSnapshot(), { freshIndices: new Set([singleReplaceIndex]) });
+              } else {
+                const freshFromIndex = patchesAppended && !inputsChanged && !settingsChanged ? previousPatchCount : 0;
+                if (freshFromIndex > 0) {
+                  emitSessionTrace("patch append staged incrementally", {
+                    freshFromIndex,
+                    patchCount: activePatches.length,
+                  });
+                }
+                syncPatchFiles(createStageSnapshot(), { freshFromIndex });
               }
-              syncPatchFiles(createStageSnapshot(), { freshFromIndex });
             }
           } else {
             patchStageSyncRef.current = {

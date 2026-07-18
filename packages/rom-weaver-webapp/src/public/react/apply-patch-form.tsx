@@ -510,19 +510,45 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           !inputsChanged &&
           snapshot.patches.length > previousPatches.length &&
           sameBinarySourceLists(previousPatches, snapshot.patches.slice(0, previousPatches.length));
+        // A single in-place replacement (same length, exactly one slot swapped, every other patch
+        // identical): the untouched patches keep their staged state + cached verdicts, so only the
+        // swapped slot re-stages and re-validates. An append is handled above; a multi-slot or
+        // length change falls back to clear-and-re-add.
+        const singleReplaceIndex = (() => {
+          if (
+            !patchesChanged ||
+            patchesAppended ||
+            forcePatchWorkflowRefreshRef.current ||
+            preparationSettingsChanged ||
+            inputsChanged ||
+            !snapshot.patches.length ||
+            snapshot.patches.length !== previousPatches.length
+          )
+            return -1;
+          const previousIds = getBinarySourceListStableIds(previousPatches);
+          const nextIds = getBinarySourceListStableIds(snapshot.patches);
+          let replaceIndex = -1;
+          for (let index = 0; index < nextIds.length; index += 1) {
+            if (previousIds[index] === nextIds[index]) continue;
+            if (replaceIndex !== -1) return -1;
+            replaceIndex = index;
+          }
+          return replaceIndex;
+        })();
         emitApplyWorkflowTrace(snapshot.options, "prepareWorkflow diff", {
           executionSettingsChanged,
           inputsChanged,
           patchesAppended,
           patchesChanged,
           preparationSettingsChanged,
+          singleReplaceIndex,
         });
         if (executionSettingsChanged) {
           emitApplyWorkflowTrace(snapshot.options, "prepareWorkflow setSettings start");
           await workflow.setSettings(baseSettings);
           emitApplyWorkflowTrace(snapshot.options, "prepareWorkflow setSettings finish");
         }
-        if (patchesChanged && !patchesAppended) {
+        if (patchesChanged && !patchesAppended && singleReplaceIndex < 0) {
           emitApplyWorkflowTrace(snapshot.options, "prepareWorkflow clearPatches start");
           await workflow.clearPatches();
           emitApplyWorkflowTrace(snapshot.options, "prepareWorkflow clearPatches finish");
@@ -579,19 +605,28 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
         // archive extraction inside stageSource - starts at once, overlapping the input extraction above
         // and any sibling patch. The controller still applies each patch's readiness through its
         // serialized mutation queue in call order (after setInput's), so order/state is preserved; only
-        // the heavy extraction now runs concurrently.
-        const patchAdditions = patchesChanged
-          ? (patchesAppended ? snapshot.patches.slice(previousPatches.length) : snapshot.patches).map((patch) =>
-              workflow
-                .addPatch(patch)
-                .catch((error) => {
-                  if (getErrorCode(error) !== "WORKFLOW_SELECTION_SKIPPED") throw error;
-                })
-                .finally(() => {
-                  handlers.onPatchState?.(workflow.getPatches());
-                }),
-            )
-          : [];
+        // the heavy extraction now runs concurrently. A single in-place replace swaps just its one slot
+        // (replacePatchAt) so the untouched patches keep their staged state + cached verdicts.
+        const settlePatchMutation = (mutation: Promise<void>) =>
+          mutation
+            .catch((error) => {
+              if (getErrorCode(error) !== "WORKFLOW_SELECTION_SKIPPED") throw error;
+            })
+            .finally(() => {
+              handlers.onPatchState?.(workflow.getPatches());
+            });
+        const buildPatchAdditions = () => {
+          if (!patchesChanged) return [];
+          if (singleReplaceIndex >= 0)
+            return [
+              settlePatchMutation(
+                workflow.replacePatchAt(singleReplaceIndex, snapshot.patches[singleReplaceIndex] as BinarySource),
+              ),
+            ];
+          const additions = patchesAppended ? snapshot.patches.slice(previousPatches.length) : snapshot.patches;
+          return additions.map((patch) => settlePatchMutation(workflow.addPatch(patch)));
+        };
+        const patchAdditions = buildPatchAdditions();
 
         // Await the input first so its state is emitted before the patches', matching the previous order
         // of UI updates; the heavy extraction already overlapped above. On input failure, drain the
@@ -616,8 +651,10 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
 
         // A clear-and-re-add rebuilt every stage with default options - replay the
         // session's per-patch user options (header/PPF-undo/checks) so a filtered
-        // run doesn't silently drop them.
-        if (patchesChanged && !patchesAppended && snapshot.patchOptions?.length) {
+        // run doesn't silently drop them. A single in-place replace keeps every
+        // untouched stage (and its options), and the swapped slot is a fresh patch,
+        // so there is nothing to replay.
+        if (patchesChanged && !patchesAppended && singleReplaceIndex < 0 && snapshot.patchOptions?.length) {
           const stagedCount = workflow.getPatches().length;
           for (const [index, option] of snapshot.patchOptions.entries()) {
             if (index >= stagedCount) break;
