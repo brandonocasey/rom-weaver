@@ -173,7 +173,16 @@ description = "Find unused Rust dependencies"
 # Heuristic source scan, so confirmed false positives are recorded per-crate
 # under [package.metadata.cargo-machete] with a reason rather than suppressed
 # globally. --skip-target-dir keeps it off build artifacts.
-run = "cargo-machete --skip-target-dir"
+#
+# Paths are explicit because cargo-machete walks directories rather than
+# workspace members, so a bare run also scans the vendor/nod and
+# vendor/libarchive submodules - upstream manifests we don't control and don't
+# build. The vendored crates listed here ARE workspace members, so they stay
+# covered; bump these paths when one of them is revendored at a new version.
+run = """cargo-machete --skip-target-dir \
+  crates tools \
+  vendor/akv-0.1.0 vendor/chd-0.3.4 \
+  vendor/qbsdiff-1.4.4 vendor/xdvdfs-0.8.3"""
 
 [tasks.semver-checks]
 description = "Check published crates for accidental breaking API changes"
