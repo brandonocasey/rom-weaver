@@ -40,7 +40,7 @@ fn run_checksum_json(source: &Path, trace_mode: TraceMode) -> std::process::Outp
 
     let mut args = vec!["--json"];
     if matches!(trace_mode, TraceMode::Flag) {
-        args.push("--trace");
+        args.extend(["--log-level", "trace"]);
     }
     args.extend(["checksum", source, "--algo", "crc32", "--no-extract"]);
 
@@ -65,7 +65,8 @@ fn json_trace_compress_logs_archive_write_bytes_to_stderr() {
         .env_remove("RUST_LOG")
         .args([
             "--json",
-            "--trace",
+            "--log-level",
+            "trace",
             "compress",
             input_dir.path().to_str().expect("path"),
             "--format",
@@ -112,7 +113,7 @@ fn json_trace_compress_logs_archive_write_bytes_to_stderr() {
 }
 
 #[test]
-fn json_trace_flag_emits_trace_json_to_stderr() {
+fn json_log_level_trace_emits_trace_json_to_stderr() {
     let temp = TempDir::new().expect("temp dir");
     let source = write_fixture_file(&temp, "input.bin", b"rom-weaver-trace-fixture");
     let output = run_checksum_json(&source, TraceMode::Flag);
@@ -143,7 +144,7 @@ fn json_trace_flag_emits_trace_json_to_stderr() {
 }
 
 #[test]
-fn rom_weaver_log_env_enables_trace_without_trace_flag() {
+fn rom_weaver_log_env_enables_trace_without_explicit_log_level() {
     let temp = TempDir::new().expect("temp dir");
     let source = write_fixture_file(&temp, "input.bin", b"rom-weaver-trace-env");
     let output = run_checksum_json(&source, TraceMode::Env);
@@ -158,7 +159,7 @@ fn rom_weaver_log_env_enables_trace_without_trace_flag() {
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     assert!(
         stderr.trim().is_empty(),
-        "expected stderr to remain empty without --trace"
+        "expected stderr to remain empty without an explicit log level"
     );
 }
 

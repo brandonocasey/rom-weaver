@@ -6,10 +6,10 @@ use std::io::{self, IsTerminal};
 use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser};
 #[cfg(not(target_arch = "wasm32"))]
 use rom_weaver_app::{
-    BundleCommands, Commands, JsonProgressSink, PatchCommands, RomWeaverRunOutputOptions,
+    BundleCommands, Commands, JsonProgressSink, LogLevel, PatchCommands, RomWeaverRunOutputOptions,
     RunCommandOptions, run_command,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -64,10 +64,35 @@ struct Cli {
         arg(
             long,
             global = true,
-            help = "Enable trace logs (also enabled by ROM_WEAVER_LOG or RUST_LOG)"
+            value_enum,
+            conflicts_with_all = ["verbose", "quiet"],
+            help = "Set application log level (off, error, warn, info, debug, trace)"
         )
     )]
-    trace: bool,
+    log_level: Option<LogLevel>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 'v',
+            long,
+            global = true,
+            action = ArgAction::Count,
+            conflicts_with_all = ["log_level", "quiet"],
+            help = "Increase application log verbosity; repeat for debug and trace"
+        )
+    )]
+    verbose: u8,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            short = 'q',
+            long,
+            global = true,
+            conflicts_with_all = ["log_level", "verbose"],
+            help = "Show only application errors"
+        )
+    )]
+    quiet: bool,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -92,10 +117,26 @@ impl Cli {
         RomWeaverRunOutputOptions {
             json: self.json,
             progress: progress_override(self.progress, self.no_progress),
-            trace: self.trace,
+            log_level: log_level_override(self.log_level, self.verbose, self.quiet),
             dep_trace: self.dep_trace,
             interactive_selection_enabled: interactive,
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn log_level_override(log_level: Option<LogLevel>, verbose: u8, quiet: bool) -> Option<LogLevel> {
+    if log_level.is_some() {
+        return log_level;
+    }
+    if quiet {
+        return Some(LogLevel::Error);
+    }
+    match verbose {
+        0 => None,
+        1 => Some(LogLevel::Info),
+        2 => Some(LogLevel::Debug),
+        _ => Some(LogLevel::Trace),
     }
 }
 
@@ -171,14 +212,15 @@ pub fn main_entry() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{cli_command, progress_override};
-    use rom_weaver_app::{RomWeaverRunOutputOptions, RunCommandOptions};
+    use super::{Cli, cli_command, progress_override};
+    use clap::FromArgMatches;
+    use rom_weaver_app::{LogLevel, RomWeaverRunOutputOptions, RunCommandOptions};
 
     fn output(json: bool, progress: Option<bool>) -> RomWeaverRunOutputOptions {
         RomWeaverRunOutputOptions {
             json,
             progress,
-            trace: false,
+            log_level: None,
             dep_trace: false,
             interactive_selection_enabled: false,
         }
@@ -219,5 +261,40 @@ mod tests {
             "crc32",
         ]);
         assert!(matches.is_ok());
+    }
+
+    #[test]
+    fn log_level_flags_are_global() {
+        let matches = cli_command().try_get_matches_from([
+            "rom-weaver",
+            "--log-level",
+            "debug",
+            "checksum",
+            "input.bin",
+            "--algo",
+            "crc32",
+        ]);
+        let cli = Cli::from_arg_matches(&matches.expect("valid args")).expect("parsed args");
+        assert_eq!(cli.output_options(false).log_level, Some(LogLevel::Debug));
+    }
+
+    #[test]
+    fn verbosity_short_flags_map_to_log_levels() {
+        for (args, expected) in [
+            (vec!["-v"], Some(LogLevel::Info)),
+            (vec!["-vv"], Some(LogLevel::Debug)),
+            (vec!["-vvv"], Some(LogLevel::Trace)),
+            (vec!["--quiet"], Some(LogLevel::Error)),
+            (vec![], None),
+        ] {
+            let mut argv = vec!["rom-weaver"];
+            argv.extend(args);
+            argv.extend(["checksum", "input.bin", "--algo", "crc32"]);
+            let matches = cli_command()
+                .try_get_matches_from(argv)
+                .expect("valid args");
+            let cli = Cli::from_arg_matches(&matches).expect("parsed args");
+            assert_eq!(cli.output_options(false).log_level, expected);
+        }
     }
 }

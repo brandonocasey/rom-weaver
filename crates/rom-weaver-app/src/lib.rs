@@ -225,14 +225,41 @@ pub struct RomWeaverRunOutputOptions {
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub progress: Option<bool>,
     #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub trace: bool,
+    #[cfg_attr(feature = "typescript-types", ts(optional))]
+    pub log_level: Option<LogLevel>,
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub dep_trace: bool,
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub interactive_selection_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(ValueEnum))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "typescript-types", ts(rename_all = "lowercase"))]
+pub enum LogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    const fn filter_name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
 }
 
 impl RomWeaverRunOutputOptions {
@@ -276,7 +303,7 @@ impl RomWeaverApp {
 #[derive(Clone, Copy, Debug)]
 pub struct RunCommandOptions {
     pub json: bool,
-    pub trace: bool,
+    pub log_level: Option<LogLevel>,
     pub dep_trace: bool,
     pub emit_progress_events: bool,
     pub interactive_selection_enabled: bool,
@@ -286,7 +313,7 @@ impl RunCommandOptions {
     pub fn from_output(output: RomWeaverRunOutputOptions, stdout_is_tty: bool) -> Self {
         Self {
             json: output.json,
-            trace: output.trace,
+            log_level: output.log_level,
             dep_trace: output.dep_trace,
             emit_progress_events: output.emit_progress_events(stdout_is_tty),
             interactive_selection_enabled: output.interactive_selection_enabled,
@@ -547,11 +574,11 @@ pub fn run_command(
     reporter: Arc<dyn ProgressSink>,
     prompter: Arc<dyn SelectionPrompter>,
 ) -> ExitCode {
-    init_trace_logging(options.trace, options.dep_trace, options.json);
+    init_logging(options.log_level, options.dep_trace, options.json);
     trace!(
         json = options.json,
         emit_progress_events = options.emit_progress_events,
-        trace_requested = options.trace,
+        log_level = ?options.log_level,
         command = ?command,
         "running rom-weaver command"
     );
@@ -567,19 +594,29 @@ pub fn run_command(
     ExitCode::from(outcome.exit_code)
 }
 
-const APP_TRACE_FILTER: &str = "rom_weaver_app=trace,rom_weaver_core=trace,rom_weaver_containers=trace,rom_weaver_patches=trace,rom_weaver_checksum=trace,rom_weaver_codecs=trace";
+const APP_LOG_TARGETS: &str = "rom_weaver_app,rom_weaver_core,rom_weaver_containers,rom_weaver_patches,rom_weaver_checksum,rom_weaver_codecs";
 const DEP_TRACE_FILTER: &str = "nod=trace";
 
-fn trace_filter_spec(
-    trace_flag: bool,
+fn log_filter_spec(
+    log_level: Option<LogLevel>,
     dep_trace: bool,
     configured_filter: Option<String>,
 ) -> Option<String> {
     let mut directives = Vec::new();
-    if let Some(configured_filter) = configured_filter {
+    if let Some(log_level) = log_level {
+        if log_level == LogLevel::Off {
+            directives.push("off".to_string());
+        } else {
+            directives.push(
+                APP_LOG_TARGETS
+                    .split(',')
+                    .map(|target| format!("{target}={}", log_level.filter_name()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        }
+    } else if let Some(configured_filter) = configured_filter {
         directives.push(configured_filter);
-    } else if trace_flag {
-        directives.push(APP_TRACE_FILTER.to_string());
     } else if dep_trace {
         // Keep application warnings visible while dependency tracing is enabled.
         directives.push("warn".to_string());
@@ -598,10 +635,10 @@ fn configured_trace_filter() -> Option<String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn init_trace_logging(trace_flag: bool, dep_trace: bool, json_mode: bool) {
+fn init_logging(log_level: Option<LogLevel>, dep_trace: bool, json_mode: bool) {
     static TRACE_LOGGING_INIT: OnceLock<()> = OnceLock::new();
     TRACE_LOGGING_INIT.get_or_init(|| {
-        let filter_spec = trace_filter_spec(trace_flag, dep_trace, configured_trace_filter());
+        let filter_spec = log_filter_spec(log_level, dep_trace, configured_trace_filter());
 
         let Some(filter_spec) = filter_spec else {
             return;
@@ -610,7 +647,7 @@ fn init_trace_logging(trace_flag: bool, dep_trace: bool, json_mode: bool) {
         let filter = match filter_spec.parse::<Targets>() {
             Ok(filter) => filter,
             Err(error) => {
-                eprintln!("warning: invalid trace filter `{filter_spec}` ({error}); using off");
+                eprintln!("warning: invalid log filter `{filter_spec}` ({error}); using off");
                 Targets::default()
             }
         };
@@ -635,17 +672,17 @@ fn init_trace_logging(trace_flag: bool, dep_trace: bool, json_mode: bool) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn init_trace_logging(trace_flag: bool, dep_trace: bool, _json_mode: bool) {
+fn init_logging(log_level: Option<LogLevel>, dep_trace: bool, _json_mode: bool) {
     static TRACE_LOGGING_INIT: OnceLock<()> = OnceLock::new();
     TRACE_LOGGING_INIT.get_or_init(|| {
-        let Some(filter_spec) = trace_filter_spec(trace_flag, dep_trace, configured_trace_filter())
+        let Some(filter_spec) = log_filter_spec(log_level, dep_trace, configured_trace_filter())
         else {
             return;
         };
         let filter = match filter_spec.parse::<Targets>() {
             Ok(filter) => filter,
             Err(error) => {
-                eprintln!("warning: invalid trace filter `{filter_spec}` ({error}); using off");
+                eprintln!("warning: invalid log filter `{filter_spec}` ({error}); using off");
                 Targets::default()
             }
         };

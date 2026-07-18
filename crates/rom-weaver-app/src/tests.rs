@@ -14,14 +14,14 @@ use serde_json::json;
 
 use super::selection_resolution::SelectionResolutionOptions;
 use super::{
-    CliApp, Commands, CompressCommand, CompressionLevelProfile, ExtractCommand, N64ByteOrder,
-    N64ByteOrderTransform, ParsedSelectionInput, RomWeaverBundle, trace_filter_spec,
+    CliApp, Commands, CompressCommand, CompressionLevelProfile, ExtractCommand, LogLevel,
+    N64ByteOrder, N64ByteOrderTransform, ParsedSelectionInput, RomWeaverBundle, log_filter_spec,
 };
 
 #[test]
 fn dependency_trace_keeps_application_logging_at_warning() {
     assert_eq!(
-        trace_filter_spec(false, true, None).as_deref(),
+        log_filter_spec(None, true, None).as_deref(),
         Some("warn,nod=trace")
     );
 }
@@ -29,8 +29,26 @@ fn dependency_trace_keeps_application_logging_at_warning() {
 #[test]
 fn dependency_trace_augments_configured_filter() {
     assert_eq!(
-        trace_filter_spec(false, true, Some("rom_weaver_app=info".to_string())).as_deref(),
+        log_filter_spec(None, true, Some("rom_weaver_app=info".to_string())).as_deref(),
         Some("rom_weaver_app=info,nod=trace")
+    );
+}
+
+#[test]
+fn explicit_log_level_targets_application_crates() {
+    assert_eq!(
+        log_filter_spec(Some(LogLevel::Debug), false, None).as_deref(),
+        Some(
+            "rom_weaver_app=debug,rom_weaver_core=debug,rom_weaver_containers=debug,rom_weaver_patches=debug,rom_weaver_checksum=debug,rom_weaver_codecs=debug"
+        )
+    );
+}
+
+#[test]
+fn explicit_off_log_level_still_allows_dependency_trace() {
+    assert_eq!(
+        log_filter_spec(Some(LogLevel::Off), true, None).as_deref(),
+        Some("off,nod=trace")
     );
 }
 
