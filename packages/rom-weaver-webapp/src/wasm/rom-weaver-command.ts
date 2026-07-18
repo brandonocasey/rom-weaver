@@ -157,7 +157,7 @@ function normalizeRomWeaverRunOutputOptions(
 ): RomWeaverRunOutputOptions {
   const normalized: RomWeaverRunOutputOptions = {};
   if (output?.json !== undefined) normalized.json = Boolean(output.json);
-  if (output?.trace !== undefined) normalized.trace = Boolean(output.trace);
+  if (output?.log_level !== undefined) normalized.log_level = output.log_level;
   if (output?.dep_trace !== undefined) normalized.dep_trace = Boolean(output.dep_trace);
   if (typeof output?.progress === "boolean") normalized.progress = output.progress;
   if (output?.interactive_selection_enabled !== undefined) {

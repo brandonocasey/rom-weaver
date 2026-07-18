@@ -515,18 +515,21 @@ describe("rom-weaver-wasm browser runner parity", () => {
     });
   });
 
-  it("runJson emits trace events when --trace is enabled", async () => {
+  it("runJson emits trace events when --log-level trace is enabled", async () => {
     await withTempFixture(async ({ sourcePath, worker }) => {
       let streamedTraceEvents = 0;
       let streamedTraceLines = 0;
-      const result = await worker.runJson(["--trace", "checksum", sourcePath, "--algo", "crc32", "--no-extract"], {
-        onTraceEvent() {
-          streamedTraceEvents += 1;
+      const result = await worker.runJson(
+        ["--log-level", "trace", "checksum", sourcePath, "--algo", "crc32", "--no-extract"],
+        {
+          onTraceEvent() {
+            streamedTraceEvents += 1;
+          },
+          onTraceNonJsonLine() {
+            streamedTraceLines += 1;
+          },
         },
-        onTraceNonJsonLine() {
-          streamedTraceLines += 1;
-        },
-      });
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.ok).toBe(true);

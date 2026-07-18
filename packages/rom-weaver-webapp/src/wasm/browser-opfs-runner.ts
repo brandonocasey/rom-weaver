@@ -515,7 +515,8 @@ function resolveBrowserGlobalRayonThreads(requestedThreadCount: number | null): 
 function readRunOutputOverrides(runOptions: Partial<BrowserOpfsRunOptions> = {}) {
   const output: Partial<RomWeaverRunOutput> & { interactive_selection_enabled?: boolean } = {};
   if (typeof runOptions?.json === "boolean") output.json = runOptions.json;
-  if (typeof runOptions?.trace === "boolean") output.trace = runOptions.trace;
+  if (runOptions?.log_level !== undefined) output.log_level = runOptions.log_level;
+  if (typeof runOptions?.dep_trace === "boolean") output.dep_trace = runOptions.dep_trace;
   if (typeof runOptions?.progress === "boolean") output.progress = runOptions.progress;
   if (typeof runOptions?.interactiveSelectionEnabled === "boolean") {
     output.interactive_selection_enabled = runOptions.interactiveSelectionEnabled;

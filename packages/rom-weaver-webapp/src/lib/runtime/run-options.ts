@@ -107,8 +107,8 @@ const toRomWeaverOptions = (input: {
     options.env = {
       RUST_BACKTRACE: "full",
     };
-    options.trace = true;
   }
+  if (input.logLevel) options.log_level = input.logLevel as LogLevel;
   if (typeof input.defaultThreads === "number" && Number.isFinite(input.defaultThreads)) {
     options.defaultThreads = Math.floor(input.defaultThreads);
   }

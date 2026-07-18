@@ -57,12 +57,12 @@ describe("rom-weaver command boundary helpers", () => {
           output: "/work/output.bin",
           patches: ["/work/update.bps", "--not-a-path"],
         }),
-        output: { dep_trace: true, trace: true },
+        output: { dep_trace: true, log_level: "trace" },
       },
       { json: true },
     );
 
-    expect(request.output).toEqual({ dep_trace: true, json: true, trace: true });
+    expect(request.output).toEqual({ dep_trace: true, json: true, log_level: "trace" });
     expect(collectRomWeaverRunInputPaths(request, { knownInputPaths: ["/work/sidecar.bin"] })).toEqual([
       "/work/original.bin",
       "/work/update.bps",

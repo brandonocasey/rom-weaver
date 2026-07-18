@@ -246,7 +246,12 @@ function commandArgsToRunRequest(args) {
   const { command, index: commandIndex, subcommand } = locateCommand(args);
   const parsed = parseCommandTokens(args, commandIndex);
   const output = {};
-  if (parsed.flags.has('trace')) output.trace = true;
+  const logLevel = readOptionalLogLevel(parsed);
+  if (logLevel) output.log_level = logLevel;
+  else if (parsed.flags.has('quiet')) output.log_level = 'error';
+  else if (readFlagCount(parsed, 'verbose') > 0) {
+    output.log_level = ['info', 'debug', 'trace'][Math.min(readFlagCount(parsed, 'verbose'), 3) - 1];
+  }
   if (parsed.flags.has('dep-trace')) output.dep_trace = true;
   if (parsed.flags.has('progress')) output.progress = true;
   if (parsed.flags.has('no-progress')) output.progress = false;
@@ -363,6 +368,7 @@ function commandArgsToRunRequest(args) {
 
 function parseCommandTokens(args, commandIndex) {
   const flags = new Set();
+  const flagCounts = new Map();
   const options = new Map();
   const positionals = [];
 
@@ -372,6 +378,15 @@ function parseCommandTokens(args, commandIndex) {
       continue;
     }
     const raw = String(args[index] ?? '');
+    const shortFlags = /^-([vq]+)$/.exec(raw);
+    if (shortFlags) {
+      for (const shortFlag of shortFlags[1]) {
+        const name = shortFlag === 'v' ? 'verbose' : 'quiet';
+        flags.add(name);
+        flagCounts.set(name, (flagCounts.get(name) ?? 0) + 1);
+      }
+      continue;
+    }
     if (!raw.startsWith('--')) {
       if (index > commandIndex) positionals.push(raw);
       continue;
@@ -383,7 +398,8 @@ function parseCommandTokens(args, commandIndex) {
     let value = equalsIndex >= 0 ? withoutPrefix.slice(equalsIndex + 1) : null;
     if (
       value === null
-      && index > commandIndex
+      && (index > commandIndex || name === 'log-level')
+      && !['json', 'progress', 'no-progress', 'dep-trace', 'verbose', 'quiet'].includes(name)
       && index + 1 < args.length
       && !String(args[index + 1] ?? '').startsWith('--')
     ) {
@@ -392,6 +408,7 @@ function parseCommandTokens(args, commandIndex) {
     }
     if (value === null) {
       flags.add(name);
+      flagCounts.set(name, (flagCounts.get(name) ?? 0) + 1);
       continue;
     }
     const values = options.get(name) ?? [];
@@ -399,7 +416,7 @@ function parseCommandTokens(args, commandIndex) {
     options.set(name, values);
   }
 
-  return { flags, options, positionals };
+  return { flags, flagCounts, options, positionals };
 }
 
 function readOptionValues(parsed, name) {
@@ -408,6 +425,19 @@ function readOptionValues(parsed, name) {
 
 function readOptionalValue(parsed, name) {
   return readOptionValues(parsed, name)[0] ?? null;
+}
+
+function readFlagCount(parsed, name) {
+  return parsed.flagCounts.get(name) ?? 0;
+}
+
+function readOptionalLogLevel(parsed) {
+  const value = readOptionalValue(parsed, 'log-level');
+  if (value === null) return null;
+  if (!['off', 'error', 'warn', 'info', 'debug', 'trace'].includes(value)) {
+    throw new Error(`log-level must be one of off, error, warn, info, debug, trace`);
+  }
+  return value;
 }
 
 function readOptionalNumber(parsed, name) {

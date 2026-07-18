@@ -266,6 +266,8 @@ export type PatchApplyHeaderMode = "keep" | "strip" | "auto";
 
 export type PatchApplyOutputHeaderMode = "keep" | "strip" | "auto";
 
+export type LogLevel = "off" | "error" | "warn" | "info" | "debug" | "trace";
+
 export type PatchInputBasis = "base" | "previous";
 
 export type PatchBasisMode = "auto" | "base" | "previous";
@@ -475,7 +477,7 @@ export type PlanExtractBatchCommand = { job_sizes?: Array<bigint>, threads?: Thr
 
 export type Commands = { "type": "probe", "args": ProbeCommand } | { "type": "extract", "args": ExtractCommand } | { "type": "checksum", "args": ChecksumCommand } | { "type": "ingest", "args": IngestCommand } | { "type": "compress", "args": CompressCommand } | { "type": "trim", "args": TrimCommand } | { "type": "patch", "args": PatchCommands } | { "type": "bundle", "args": BundleCommands } | { "type": "tools", "args": ToolsCommands } | { "type": "plan-extract-batch", "args": PlanExtractBatchCommand };
 
-export type RomWeaverRunOutputOptions = { json?: boolean, progress?: boolean, trace?: boolean, dep_trace?: boolean, interactive_selection_enabled?: boolean, };
+export type RomWeaverRunOutputOptions = { json?: boolean, progress?: boolean, log_level?: LogLevel, dep_trace?: boolean, interactive_selection_enabled?: boolean, };
 
 export type RomWeaverRunRequest = { command: Commands, output?: RomWeaverRunOutputOptions, };
 

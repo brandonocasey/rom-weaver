@@ -8,6 +8,7 @@ import type {
   RomWeaverRunJsonEvent,
   RomWeaverRunOutputOptions,
   RomWeaverRunRequest,
+  LogLevel,
   ThreadBudget,
   ThreadExecution,
   ThreadMode,
@@ -24,6 +25,7 @@ export type {
   ExtractedFileEntry,
   ExtractStepDetails,
   ListCommand,
+  LogLevel,
   OutputEnforceableEntry,
   PatchApplyCommand,
   PatchBasisMode,
@@ -72,8 +74,8 @@ export interface RomWeaverRunOptions {
   json?: boolean;
   /** Override progress event emission. Defaults to JSON mode or terminal stdout. */
   progress?: boolean;
-  /** Emit trace events to stderr. */
-  trace?: boolean;
+  /** Set the Rust log level. */
+  log_level?: LogLevel;
   /** Emit trace events from dependencies such as nod. */
   dep_trace?: boolean;
   /** Enable interactive selection if a command can ask for one. */
