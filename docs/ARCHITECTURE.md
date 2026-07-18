@@ -291,7 +291,7 @@ filename-based: exactly `rom-weaver-bundle.json`, `rom-weaver-bundle.json.<gz|bz
 worker runtime-caches that name.
 
 - **Commands.** `bundle parse` loads any accepted packaging, resolves
-  entries (extracting referenced archive members into `--extract-dir`,
+  entries (extracting referenced archive members into `--output`,
   attaching ingest-grade patch descriptors), and returns a typed
   `BundleParseResult` under `details.bundle`. `bundle create` builds a
   validated bundle from local files (ROM checks computed from the
