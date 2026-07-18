@@ -8,7 +8,8 @@ import { getWorkbenchActivity, subscribeWorkbenchActivity } from "../lib/activit
 import type { BundleApplySession } from "../lib/bundle/bundle-session-model.ts";
 import { readDataTransferFiles } from "../lib/input/dropped-files.ts";
 import { createLogger } from "../lib/logging.ts";
-import { markResultPaintedAfterFinish } from "../lib/perf/op-perf-marks.ts";
+import { markDropReceived, markResultPaintedAfterFinish } from "../lib/perf/op-perf-marks.ts";
+import { perfNow, recordDrop } from "../lib/runtime/perf-latency.ts";
 import { preloadBrowserRuntime } from "../platform/browser/browser-api.ts";
 import { ApplyBandaidIcon } from "../public/react/components/apply-bandaid-icon.tsx";
 import { runFlatViewTransition } from "../public/react/components/ds/flat-transition.ts";
@@ -253,12 +254,20 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions, urlSession
       event.preventDefault();
       event.stopPropagation();
       if (state.settingsDialogOpen || confirmationDialog.open) return;
+      const droppedAtMs = perfNow();
       // Read synchronously so dropped folders are captured before the transfer
       // clears; routing/classification is owned by the active tab's unified drop
       // handler, so the page-level listener just forwards every file to it.
       const droppedView = state.currentView;
       void readDataTransferFiles(event.dataTransfer).then((files) => {
         if (files.length === 0) return;
+        markDropReceived();
+        for (const file of files) recordDrop(file.name, droppedAtMs);
+        logger.trace("unified drop zone received files", {
+          count: files.length,
+          names: files.map((file) => file.name),
+          source: "page",
+        });
         pageDropIdRef.current += 1;
         setPageDrop({
           drop: {
