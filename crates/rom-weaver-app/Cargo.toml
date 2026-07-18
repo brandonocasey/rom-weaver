@@ -18,7 +18,6 @@ typescript-types = ["dep:ts-rs", "rom-weaver-core/typescript-types"]
 flate2.workspace = true
 rom-weaver-checksum = { path = "../rom-weaver-checksum", version = "0.5.0" }
 rom-weaver-cheats = { path = "../rom-weaver-cheats", version = "0.5.0" }
-rom-weaver-codecs = { path = "../rom-weaver-codecs", version = "0.5.0" }
 rom-weaver-containers = { path = "../rom-weaver-containers", version = "0.5.0" }
 rom-weaver-core = { path = "../rom-weaver-core", version = "0.5.0" }
 rom-weaver-dcp = { path = "../rom-weaver-dcp", version = "0.5.0" }
