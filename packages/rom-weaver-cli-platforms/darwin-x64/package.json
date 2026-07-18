@@ -1,5 +1,5 @@
 {
-  "name": "@brandonocasey/rom-weaver-darwin-x64",
+  "name": "@rom-weaver/darwin-x64",
   "version": "0.5.0",
   "description": "macOS x64 binary for rom-weaver",
   "author": "Brandon Casey",

@@ -15,10 +15,10 @@ const linuxLibc = () => {
 };
 
 const platformPackage = (() => {
-  if (process.platform === "darwin") return `@brandonocasey/rom-weaver-darwin-${process.arch}`;
-  if (process.platform === "win32") return `@brandonocasey/rom-weaver-win32-${process.arch}-msvc`;
+  if (process.platform === "darwin") return `@rom-weaver/darwin-${process.arch}`;
+  if (process.platform === "win32") return `@rom-weaver/win32-${process.arch}-msvc`;
   if (process.platform === "linux" && process.arch === "x64" && linuxLibc() === "gnu")
-    return "@brandonocasey/rom-weaver-linux-x64-gnu";
+    return "@rom-weaver/linux-x64-gnu";
   return null;
 })();
 
@@ -40,6 +40,6 @@ try {
   });
 } catch (error) {
   console.error(`rom-weaver could not load ${platformPackage}: ${error.message}`);
-  console.error("Reinstall rom-weaver with optional dependencies enabled for this platform.");
+  console.error("Reinstall @rom-weaver/cli with optional dependencies enabled for this platform.");
   process.exitCode = 1;
 }

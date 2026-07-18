@@ -88,7 +88,7 @@ verify it, then run the [first weave](docs/cli.md#first-weave).
 <summary><strong>npx</strong> — run once without installing (Node.js 22+)</summary>
 
 ```bash
-npx --yes rom-weaver --help
+npx --yes @rom-weaver/cli --help
 ```
 
 Downloads the native binary for the current platform on first use.
@@ -99,7 +99,7 @@ Downloads the native binary for the current platform on first use.
 <summary><strong>npm</strong> — global install (Node.js 22+)</summary>
 
 ```bash
-npm install --global rom-weaver
+npm install --global @rom-weaver/cli
 rom-weaver --help
 ```
 

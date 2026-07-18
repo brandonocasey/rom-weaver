@@ -12,11 +12,11 @@ The npm launcher requires Node.js 22 or newer and installs the native package
 for the current platform:
 
 ```bash
-npm install --global rom-weaver
+npm install --global @rom-weaver/cli
 rom-weaver --version
 ```
 
-For one-off use without installing, run `npx --yes rom-weaver --help`.
+For one-off use without installing, run `npx --yes @rom-weaver/cli --help`.
 
 Native npm packages target macOS arm64/x64, Linux x64 glibc, and Windows x64.
 On Unix, the npm package also installs the generated `rom-weaver(1)` command

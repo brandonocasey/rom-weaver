@@ -1,5 +1,5 @@
 {
-  "name": "rom-weaver",
+  "name": "@rom-weaver/cli",
   "version": "0.5.0",
   "author": "Brandon Casey",
   "license": "AGPL-3.0-or-later",
@@ -44,10 +44,10 @@
     "node": ">=22"
   },
   "optionalDependencies": {
-    "@brandonocasey/rom-weaver-darwin-arm64": "0.5.0",
-    "@brandonocasey/rom-weaver-darwin-x64": "0.5.0",
-    "@brandonocasey/rom-weaver-linux-x64-gnu": "0.5.0",
-    "@brandonocasey/rom-weaver-win32-x64-msvc": "0.5.0"
+    "@rom-weaver/darwin-arm64": "0.5.0",
+    "@rom-weaver/darwin-x64": "0.5.0",
+    "@rom-weaver/linux-x64-gnu": "0.5.0",
+    "@rom-weaver/win32-x64-msvc": "0.5.0"
   },
   "scripts": {
     "dev": "mise run dev",
