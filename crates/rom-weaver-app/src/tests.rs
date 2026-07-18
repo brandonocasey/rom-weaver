@@ -1053,9 +1053,9 @@ fn libretro_sidecar_matches_basename_stem_and_order() {
 // --------------------------------------------------------------------------------------------
 // patch-validate helper coverage. `parse_patch_apply_checksum_values`,
 // `validate_patch_input_size`, `validate_patch_apply_expected_checksums`, and `checksum_hex_len`
-// drive the `patch-validate`/`patch-apply` `--validate-with-*`/`--checksum-cache` branches and
-// have no in-source tests; they were only exercised end-to-end. Each error case asserts the
-// matched `RomWeaverError` variant plus the guard message so the intended branch is the one hit.
+// back the bundle check-token parser (`bundle_entry_checks` -> `--output-check` and the per-patch
+// check flags) and have no other in-source tests. Each error case asserts the matched
+// `RomWeaverError` variant plus the guard message so the intended branch is the one hit.
 // --------------------------------------------------------------------------------------------
 
 #[test]
@@ -1065,7 +1065,7 @@ fn parse_patch_apply_checksum_values_accepts_and_normalizes_valid_pairs() {
             "CRC32=0xDEADBEEF".to_string(),
             "  md5 = D41D8CD98F00B204E9800998ECF8427E ".to_string(),
         ],
-        "--validate-with-checksum",
+        "--output-check",
     )
     .expect("valid checksum pairs should parse");
 
@@ -1082,7 +1082,7 @@ fn parse_patch_apply_checksum_values_accepts_and_normalizes_valid_pairs() {
 fn parse_patch_apply_checksum_values_deduplicates_matching_repeats() {
     let values = CliApp::parse_patch_apply_checksum_values(
         &["crc32=deadbeef".to_string(), "CRC32=DEADBEEF".to_string()],
-        "--checksum-cache",
+        "--output-check",
     )
     .expect("identical repeats should dedupe");
     assert_eq!(values.len(), 1);
@@ -1109,7 +1109,7 @@ fn parse_patch_apply_checksum_values_rejects_malformed_inputs() {
         ),
     ];
     for (input, fragment) in cases {
-        let error = CliApp::parse_patch_apply_checksum_values(&input, "--validate-with-checksum")
+        let error = CliApp::parse_patch_apply_checksum_values(&input, "--output-check")
             .expect_err("malformed checksum value should fail");
         assert!(
             matches!(error, RomWeaverError::Validation(ref message) if message.contains(fragment)),
