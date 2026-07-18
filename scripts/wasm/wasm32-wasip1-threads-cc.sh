@@ -16,49 +16,6 @@ for arg in "$@"; do
   esac
 done
 
-base=()
-if [[ -n "$SYSROOT" ]]; then
-  base+=(--sysroot="$SYSROOT")
-fi
-
-normalized=()
-has_target=0
-expect_target_value=0
-for arg in "$@"; do
-  if [[ "$expect_target_value" -eq 1 ]]; then
-    case "$arg" in
-      wasm32-wasi|wasm32-wasi-threads)
-        arg="wasm32-wasip1-threads"
-        ;;
-    esac
-    normalized+=("$arg")
-    has_target=1
-    expect_target_value=0
-    continue
-  fi
-
-  case "$arg" in
-    --target|-target)
-      normalized+=("$arg")
-      expect_target_value=1
-      continue
-      ;;
-    --target=wasm32-wasi|--target=wasm32-wasi-threads|-target=wasm32-wasi|-target=wasm32-wasi-threads)
-      normalized+=("${arg%%=*}=wasm32-wasip1-threads")
-      has_target=1
-      continue
-      ;;
-    --target=*|-target=*)
-      has_target=1
-      normalized+=("$arg")
-      continue
-      ;;
-  esac
-  normalized+=("$arg")
-done
-
-if [[ "$has_target" -eq 0 ]]; then
-  base+=(--target=wasm32-wasip1-threads)
-fi
+source "$SCRIPT_DIR/wasm32-wasip1-threads-common.sh"
 
 exec "$COMPILER" "${base[@]}" "${extra[@]}" "${normalized[@]}"
