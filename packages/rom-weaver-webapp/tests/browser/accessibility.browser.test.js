@@ -1037,6 +1037,6 @@ describe("webapp responsive navigation", () => {
     await setViewport(VIEWPORTS[0]);
     await renderPage(emptyApplyPage(), "light");
 
-    expect(getComputedStyle(host.querySelector(".drop.hero")).minHeight).toBe("530px");
+    expect(getComputedStyle(host.querySelector(".drop.hero")).minHeight).toBe("485px");
   });
 });

@@ -415,8 +415,20 @@ export const installPatcherTestHooks = () => {
   });
 
   afterEach(async () => {
+    // Let React's final option-sync effects drain while their workflow is
+    // still alive; unmounting first would dispose it underneath that queue.
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
     mountedRoot?.unmount?.();
     mountedRoot = null;
+    // Form cleanup disposes its workflow asynchronously. Finish the worker and
+    // OPFS teardown here so it cannot overlap the next test's staging pass.
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 40));
+    const retainedSources = getActiveBrowserVirtualFiles()
+      .map((entry) => entry.source)
+      .filter((source) => source !== undefined);
+    await browserRuntime.workerIo.releaseSources?.(retainedSources);
+    await resetRomWeaverRunner();
+    await clearOpfsInputDirectory();
     await new Promise((resolve) => globalThis.setTimeout(resolve, 20));
   });
 };

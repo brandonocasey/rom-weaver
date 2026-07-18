@@ -127,7 +127,7 @@ test("trim workflow sends extracted archive payload to the trim worker", async (
     await result.output.dispose();
 
     const trimDispatch = logs.find((entry) => String(entry?.message || "") === "runJson trim dispatch");
-    const trimSource = trimDispatch?.details?.command?.args?.source?.[0] || "";
+    const trimSource = trimDispatch?.details?.command?.args?.input?.[0] || "";
     const trimOutput = trimDispatch?.details?.command?.args?.output || "";
     expect(trimSource).toMatch(/game\.nds$/i);
     expect(trimSource).not.toMatch(/\.zip$/i);
