@@ -34,8 +34,14 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn new(style: HumanStyle) -> Self {
-        let color = matches!(style, HumanStyle::Rich) && std::env::var_os("NO_COLOR").is_none();
+    /// `color_override` (from `--color`/`--no-color`) wins when set; otherwise
+    /// color follows Rich style with `NO_COLOR` unset. Color is independent of
+    /// style, so `--color` colorizes piped (Simple) output too - only the live
+    /// progress bar stays Rich/tty-only.
+    pub fn new(style: HumanStyle, color_override: Option<bool>) -> Self {
+        let color = color_override.unwrap_or_else(|| {
+            matches!(style, HumanStyle::Rich) && std::env::var_os("NO_COLOR").is_none()
+        });
         Self { style, color }
     }
 

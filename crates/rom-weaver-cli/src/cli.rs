@@ -6,7 +6,7 @@ use std::io::{self, IsTerminal};
 use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
-use clap::{ArgAction, CommandFactory, FromArgMatches, Parser};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 #[cfg(not(target_arch = "wasm32"))]
 use rom_weaver_app::{
     BundleCommands, Commands, JsonProgressSink, LogLevel, PatchCommands, RomWeaverRunOutputOptions,
@@ -102,8 +102,45 @@ struct Cli {
         )
     )]
     dep_trace: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long,
+            global = true,
+            conflicts_with = "no_color",
+            help = "Force colored output on, even when piped"
+        )
+    )]
+    color: bool,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "no-color",
+            global = true,
+            conflicts_with = "color",
+            help = "Disable colored output"
+        )
+    )]
+    no_color: bool,
     #[cfg_attr(not(target_arch = "wasm32"), command(subcommand))]
-    command: Commands,
+    command: CliCommand,
+}
+
+/// The top-level command set. `App` flattens the shared [`Commands`] enum (the
+/// one exported to TypeScript) so every ROM subcommand stays at the top level,
+/// while `Completions` is a native-only CLI concern that never enters the
+/// shared enum or the generated TS types.
+#[derive(Debug)]
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Subcommand))]
+enum CliCommand {
+    #[command(flatten)]
+    App(Commands),
+    #[command(about = "Generate a shell completion script (bash, zsh, fish, powershell, elvish)")]
+    Completions {
+        #[arg(value_name = "SHELL", help = "Shell to generate completions for")]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -151,6 +188,20 @@ fn progress_override(progress: bool, no_progress: bool) -> Option<bool> {
     None
 }
 
+/// Resolve the `--color`/`--no-color` pair into an explicit override, or `None`
+/// to fall back to the `NO_COLOR`-env / tty default in [`Surface`]. Flag beats
+/// env: `--color` forces color even with `NO_COLOR` set.
+#[cfg(not(target_arch = "wasm32"))]
+fn color_override(color: bool, no_color: bool) -> Option<bool> {
+    if no_color {
+        return Some(false);
+    }
+    if color {
+        return Some(true);
+    }
+    None
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub fn main_entry() -> ExitCode {
     // Two-step parse (matches + derive) instead of `Cli::parse()`: positional
@@ -161,20 +212,29 @@ pub fn main_entry() -> ExitCode {
         Ok(cli) => cli,
         Err(error) => error.exit(),
     };
-    if let Commands::Patch(PatchCommands::Apply(command)) = &mut cli.command
+    // `completions` is a native-only concern: emit the script and exit before
+    // any command runs. `cli_command()` rebuilds the same clap tree the parse
+    // used, so the generated script covers every real subcommand.
+    if let CliCommand::Completions { shell } = &cli.command {
+        let shell = *shell;
+        let mut command = cli_command();
+        clap_complete::generate(shell, &mut command, "rom-weaver", &mut io::stdout());
+        return ExitCode::SUCCESS;
+    }
+    if let CliCommand::App(Commands::Patch(PatchCommands::Apply(command))) = &mut cli.command
         && let Some((_, patch_matches)) = matches.subcommand()
         && let Some((_, apply_matches)) = patch_matches.subcommand()
     {
         command.align_patch_header_modes(apply_matches);
         command.align_patch_basis(apply_matches);
     }
-    if let Commands::Bundle(BundleCommands::Create(command)) = &mut cli.command
+    if let CliCommand::App(Commands::Bundle(BundleCommands::Create(command))) = &mut cli.command
         && let Some((_, bundle_matches)) = matches.subcommand()
         && let Some((_, create_matches)) = bundle_matches.subcommand()
     {
         command.align_bundle_patch_metadata(create_matches);
     }
-    if let Commands::Patch(PatchCommands::Validate(command)) = &mut cli.command
+    if let CliCommand::App(Commands::Patch(PatchCommands::Validate(command))) = &mut cli.command
         && let Some((_, patch_matches)) = matches.subcommand()
         && let Some((_, validate_matches)) = patch_matches.subcommand()
     {
@@ -188,12 +248,13 @@ pub fn main_entry() -> ExitCode {
 
     // `--json` passes the event stream straight through; otherwise render for humans - richly when
     // stdout is a terminal, plainly when piped.
+    let color = color_override(cli.color, cli.no_color);
     let reporter: Arc<dyn ProgressSink> = if cli.json {
         Arc::new(JsonProgressSink)
     } else if stdout_is_tty {
-        Arc::new(HumanReporter::new(HumanStyle::Rich))
+        Arc::new(HumanReporter::new(HumanStyle::Rich, color))
     } else {
-        Arc::new(HumanReporter::new(HumanStyle::Simple))
+        Arc::new(HumanReporter::new(HumanStyle::Simple, color))
     };
     let prompter: Arc<dyn SelectionPrompter> = if interactive {
         Arc::new(StdinPrompter::new())
@@ -201,7 +262,10 @@ pub fn main_entry() -> ExitCode {
         Arc::new(NoninteractivePrompter)
     };
 
-    run_command(cli.command, options, reporter, prompter)
+    let CliCommand::App(command) = cli.command else {
+        unreachable!("completions handled and returned above");
+    };
+    run_command(command, options, reporter, prompter)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -212,9 +276,27 @@ pub fn main_entry() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, cli_command, progress_override};
+    use super::{Cli, cli_command, color_override, progress_override};
     use clap::FromArgMatches;
     use rom_weaver_app::{LogLevel, RomWeaverRunOutputOptions, RunCommandOptions};
+
+    #[test]
+    fn command_tree_has_no_flag_collisions() {
+        cli_command().debug_assert();
+    }
+
+    #[test]
+    fn color_flags_map_to_override() {
+        assert_eq!(color_override(false, false), None);
+        assert_eq!(color_override(true, false), Some(true));
+        assert_eq!(color_override(false, true), Some(false));
+    }
+
+    #[test]
+    fn completions_is_a_native_subcommand() {
+        let matches = cli_command().try_get_matches_from(["rom-weaver", "completions", "fish"]);
+        assert!(matches.is_ok(), "completions <shell> parses");
+    }
 
     fn output(json: bool, progress: Option<bool>) -> RomWeaverRunOutputOptions {
         RomWeaverRunOutputOptions {
@@ -256,6 +338,7 @@ mod tests {
             "rom-weaver",
             "--dep-trace",
             "checksum",
+            "--input",
             "input.bin",
             "--algo",
             "crc32",
@@ -270,6 +353,7 @@ mod tests {
             "--log-level",
             "debug",
             "checksum",
+            "--input",
             "input.bin",
             "--algo",
             "crc32",
@@ -289,7 +373,7 @@ mod tests {
         ] {
             let mut argv = vec!["rom-weaver"];
             argv.extend(args);
-            argv.extend(["checksum", "input.bin", "--algo", "crc32"]);
+            argv.extend(["checksum", "--input", "input.bin", "--algo", "crc32"]);
             let matches = cli_command()
                 .try_get_matches_from(argv)
                 .expect("valid args");

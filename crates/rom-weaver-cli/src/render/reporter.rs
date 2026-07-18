@@ -25,9 +25,9 @@ pub struct HumanReporter {
 }
 
 impl HumanReporter {
-    pub fn new(style: HumanStyle) -> Self {
+    pub fn new(style: HumanStyle, color_override: Option<bool>) -> Self {
         Self {
-            surface: Surface::new(style),
+            surface: Surface::new(style, color_override),
             active: Mutex::new(None),
             simple_deciles: Mutex::new(HashMap::new()),
         }
