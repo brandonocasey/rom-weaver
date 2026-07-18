@@ -134,20 +134,31 @@
 .rw-app .patch-meta-inline { display: flex; flex-direction: column; gap: var(--sp-s); margin-block-start: 2px; }
 .rw-app .patch-meta-cols { display: flex; gap: var(--sp-s); }
 .rw-app .patch-meta-cols .patch-meta-field { flex: 1 1 0; min-width: 0; }
-/* The pencil beside the patch name: a quiet inline icon that opens the
-   name/description editors; it wears the thread color while editing. */
-.rw-app .nm-edit {
-  appearance: none; flex: none; display: inline-grid; place-items: center;
-  width: 22px; height: 22px; margin-inline-start: var(--sp-xs); padding: 0;
-  border: 0; border-radius: 5px; background: none; color: var(--ink-4); cursor: pointer;
-  /* the box is taller than the name/description text - centre it on the text's
-     mid-line so the glyph sits with the words rather than riding above them */
-  vertical-align: middle;
-  transition: color .15s, background .15s;
+/* Three-dot patch actions menu (edit details / replace file / remove) in the
+   card's top-right action column: the trigger is a full action button (same
+   box as the drag handle / remove), thread-colored while open or editing; the
+   item list is an info-pop-style dropdown anchored under its right edge. */
+.rw-app .patch-menu { position: relative; display: inline-block; }
+.rw-app .patch-menu-btn:hover, .rw-app .patch-menu-btn:active { color: var(--thread-text); border-color: color-mix(in oklab, var(--thread) 40%, transparent); background: color-mix(in oklab, var(--thread) 8%, transparent); }
+.rw-app .patch-menu-btn.is-open, .rw-app .patch-menu-btn.is-editing { color: var(--thread-text); border-color: color-mix(in oklab, var(--thread) 45%, transparent); }
+.rw-app .patch-menu-list {
+  position: absolute; top: calc(100% + 5px); inset-inline-end: 0; z-index: 70;
+  min-width: 170px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--seam-strong); border-radius: var(--r-m); background: var(--plate-2);
+  box-shadow: var(--overlay-shadow);
+  animation: drop-in .2s var(--ease);
 }
-.rw-app .nm-edit:hover { color: var(--ink); background: color-mix(in oklab, var(--well) 80%, transparent); }
-.rw-app .nm-edit.is-editing { color: var(--thread-text); }
-.rw-app .nm-edit svg { width: 13px; height: 13px; }
+.rw-app .patch-menu-list[hidden] { display: none; }
+.rw-app .patch-menu-item {
+  appearance: none; display: flex; align-items: center; gap: var(--sp-s);
+  width: 100%; padding: 6px 9px; border: 0; border-radius: 5px; background: none;
+  color: var(--ink-2); font: inherit; font-size: .82rem; font-weight: 500;
+  text-align: start; cursor: pointer; transition: color .15s, background .15s;
+}
+.rw-app .patch-menu-item:hover { color: var(--ink); background: color-mix(in oklab, var(--well) 80%, transparent); }
+.rw-app .patch-menu-item svg { width: 13px; height: 13px; flex: none; color: var(--ink-4); }
+.rw-app .patch-menu-item:hover svg { color: inherit; }
+.rw-app .patch-menu-item.is-danger:hover { color: var(--fault); }
 /* Editable Checks-drawer rows read like the computed .ck rows they sit beside:
    the SAME hairline-divided row geometry (label column, min-height, padding,
    seam), so a filled field is visually indistinguishable from a read-only

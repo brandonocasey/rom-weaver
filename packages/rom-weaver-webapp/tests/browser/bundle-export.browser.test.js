@@ -106,6 +106,11 @@ test("export bundle bundles the session from main-page options with a checks-onl
   await expect.poll(() => document.getElementById("rom-weaver-patch-version-0") !== versionInput).toBe(true);
   await expect.poll(() => document.getElementById("rom-weaver-patch-author-0") !== authorInput).toBe(true);
 
+  // Close the editor first: the actions menu (and its replace input) takes the
+  // done-check's slot back once editing ends.
+  document.getElementById("rom-weaver-patch-meta-edit-0")?.click();
+  await expect.poll(() => document.getElementById("rom-weaver-patch-replace-input-0")).not.toBeNull();
+
   // Replacing the source keeps this slot's inline metadata and version edits.
   const replacementFile = new File([await patchFile.arrayBuffer()], "replacement.ips", {
     type: "application/octet-stream",

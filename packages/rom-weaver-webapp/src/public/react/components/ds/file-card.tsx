@@ -48,7 +48,7 @@ const FileCard = ({
   hideName = false,
   onRemove,
   removeLabel = "Remove",
-  replaceAction,
+  menu,
   patch = false,
   handle,
   rootRef,
@@ -68,7 +68,8 @@ const FileCard = ({
   onRemove?: () => void;
   removeLabel?: string;
   /** Optional inline source replacement action for patch cards. */
-  replaceAction?: ReactNode;
+  /** Card actions menu button, rendered beside the drag handle / remove. */
+  menu?: ReactNode;
   /** Mark this as a patch row (reorderable unit). */
   patch?: boolean;
   /** Drag handle button for reorderable rows, rendered in the action column. */
@@ -100,7 +101,7 @@ const FileCard = ({
     <div className="card-actions">
       <div className="card-btns">
         {handle}
-        {replaceAction}
+        {menu}
         {onRemove ? <RemoveButton label={removeLabel} onClick={onRemove} /> : null}
       </div>
     </div>

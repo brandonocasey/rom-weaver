@@ -214,6 +214,7 @@ const usePatchStackController = (context: PatchStackControllerContext) => {
       replaceItem: (index: number, source: BinarySource) => {
         const { actions, state } = contextRef.current;
         if (index < 0 || index >= state.activePatches.length) return;
+        logger.debug("patch replace", { fileName: (source as File).name, index });
         actions.updatePatches(state.activePatches.map((patch, patchIndex) => (patchIndex === index ? source : patch)));
       },
       reorder: (from: number, to: number) => {

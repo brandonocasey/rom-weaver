@@ -85,10 +85,12 @@
 /* patch description rides under the name (some patch types provide one) */
 /* the description is a full-width row below the header, at the card content edge */
 .rw-app .patch-desc { margin: 0; font-size: .8rem; color: var(--ink-3); line-height: 1.45; overflow-wrap: anywhere; }
-/* Editing: the patch-details form replaces the description row; the name-line
-   pencil (now a check) is the single open/close control. */
-.rw-app .patch-desc-line.is-editing { min-width: 0; }
-.rw-app .patch-desc-line.is-editing .patch-meta-inline { min-width: 0; margin-block-start: 0; }
+/* Editing: the patch-details form replaces the description row. It clears the
+   floated action column so it spans the full card width; the name-line check
+   is the single close control. */
+.rw-app .patch-desc-line.is-editing { min-width: 0; clear: both; width: 100%; }
+.rw-app .patch-desc-line.is-editing .patch-meta-inline { min-width: 0; margin-block-start: 0; width: 100%; }
+.rw-app .patch-meta-inline .input { width: 100%; box-sizing: border-box; }
 /* weak-verification note under the name - explains the yellow card border */
 .rw-app .patch-warn { display: flex; align-items: center; gap: var(--sp-s); margin: 0; font-size: .76rem; color: var(--care); }
 .rw-app .patch-warn svg { width: 13px; height: 13px; flex: none; }
@@ -119,7 +121,7 @@
   padding: 5px; margin-block: -5px; margin-inline: -5px 4px;
 }
 .rw-app .patch-enable input[type="checkbox"] { --sw-w: 30px; --sw-h: 18px; --sw-thumb: 14px; --sw-pad: 1px; --sw-travel: 12px; }
-.rw-app .patch-enable .switch-state { display: inline-grid; font-size: var(--badge-fs); font-stretch: 86%; letter-spacing: .02em; line-height: 1; color: var(--ink-3); }
+.rw-app .patch-enable .switch-state { display: inline-grid; font-size: calc(var(--badge-fs) * 0.85); font-stretch: 86%; letter-spacing: .02em; line-height: 1; color: var(--ink-3); }
 .rw-app .patch-enable .switch-state b { grid-area: 1 / 1; font-weight: 600; }
 .rw-app .patch-enable .switch-state .on { color: var(--thread-text); }
 .rw-app .patch-enable input:checked ~ .switch-state .off, .rw-app .patch-enable input:not(:checked) ~ .switch-state .on { visibility: hidden; }
@@ -157,6 +159,13 @@
 .rw-app .cks > .cks-head .rb, .rw-app .fsize, .rw-app .ckgrp .tsz, .rw-app .meta-fmt {
   display: inline-flex; align-items: center;
 }
+/* version/author chips: a small glyph (release tag / person) marks them as
+   authored metadata among the plain file-fact chips; the author's name keeps
+   its own casing */
+.rw-app .meta-ic { gap: 4px; }
+.rw-app .meta-ic svg { width: 11px; height: 11px; flex: none; opacity: .75; }
+.rw-app .meta-ic::before { margin-inline-end: 3px; }
+.rw-app .meta-author { text-transform: none; letter-spacing: normal; font-stretch: normal; }
 .rw-app .patch-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .16s var(--ease); }
 .rw-app .patch-body-inner { min-height: 0; overflow: clip; display: flex; flex-direction: column; gap: var(--sp-s); }
 .rw-app .card { transition: gap .16s var(--ease), border-color .15s, background .15s; }

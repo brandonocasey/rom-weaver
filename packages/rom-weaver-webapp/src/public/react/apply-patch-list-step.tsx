@@ -1,11 +1,15 @@
 import ArrowLeftRight from "lucide-react/dist/esm/icons/arrow-left-right.js";
 import Check from "lucide-react/dist/esm/icons/check.js";
 import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
+import EllipsisVertical from "lucide-react/dist/esm/icons/ellipsis-vertical.js";
 import Pencil from "lucide-react/dist/esm/icons/pencil.js";
+import Trash2 from "lucide-react/dist/esm/icons/trash-2.js";
 import Plus from "lucide-react/dist/esm/icons/plus.js";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.js";
 import Scissors from "lucide-react/dist/esm/icons/scissors.js";
+import Tag from "lucide-react/dist/esm/icons/tag.js";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
+import UserRound from "lucide-react/dist/esm/icons/user-round.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Localizer } from "../../presentation/localization/index.ts";
@@ -30,7 +34,7 @@ import { FileCard } from "./components/ds/file-card.tsx";
 import { InfoPopover, StepSection } from "./components/ds/layout.tsx";
 import { StageStatus, stageBarValue, stagePercent, stageStatusLabel } from "./components/ds/staging-meta.tsx";
 import { useListReorder } from "./components/ds/use-list-reorder.ts";
-import type { BinarySource, PatcherStackController, PatcherUiController } from "./patcher-form.ts";
+import type { PatcherStackController, PatcherUiController } from "./patcher-form.ts";
 import type { PatchStackItemState } from "./patcher-presentation.ts";
 import type { NoticeState, PatcherUiState } from "./patcher-ui-state.ts";
 import { useUiLocalizer } from "./settings-context.tsx";
@@ -948,71 +952,143 @@ const PatchEnableToggle = ({
   </label>
 );
 
-/** Replace one patch source without removing its slot or its author metadata. */
-const PatchReplaceButton = ({
-  index,
-  onReplace,
-}: {
-  index: number;
-  onReplace: (index: number, source: BinarySource) => void;
-}) => {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  return (
-    <>
-      <button
-        aria-label="Replace patch"
-        className="rm replace"
-        id={`rom-weaver-patch-replace-${index}`}
-        onClick={() => inputRef.current?.click()}
-        title="Replace patch"
-        type="button"
-      >
-        <RefreshCw aria-hidden="true" />
-      </button>
-      <input
-        accept=".aps,.bps,.bsdiff,.dcp,.ebp,.gdiff,.hdiff,.hpatchz,.ips,.ips32,.ppf,.rup,.solid,.ups,.vcdiff,.xdelta"
-        className="sr-only"
-        id={`rom-weaver-patch-replace-input-${index}`}
-        onChange={(event) => {
-          const source = event.currentTarget.files?.[0];
-          if (source) onReplace(index, source);
-          event.currentTarget.value = "";
-        }}
-        ref={inputRef}
-        type="file"
-      />
-    </>
-  );
-};
-
-/** The pencil on the name line that opens the card's single patch-details
- * form (name, description, version, author). Shows a check while editing
- * (commit happens on each field's blur; the toggle just closes the form). */
-const PatchMetaEditToggle = ({
-  editing,
-  index,
-  onToggle,
-}: {
-  editing: boolean;
-  index: number;
-  onToggle: () => void;
-}) => (
+/** The check that closes the patch-details form; it takes the menu's slot in
+ * the action column while editing (commit happens on each field's blur; the
+ * check just closes the form). Carries the same id as the menu's Edit item so
+ * open/close drive one control identity. */
+const PatchMetaDoneButton = ({ index, onToggle }: { index: number; onToggle: () => void }) => (
   <button
-    aria-expanded={editing}
-    aria-label={editing ? "Done editing patch details" : "Edit patch details"}
-    className={editing ? "nm-edit is-editing" : "nm-edit"}
+    aria-expanded
+    aria-label="Done editing patch details"
+    className="rm patch-menu-btn is-editing"
     id={`rom-weaver-patch-meta-edit-${index}`}
     onClick={onToggle}
-    title={editing ? "Done" : "Edit patch details"}
+    title="Done"
     type="button"
   >
-    {editing ? <Check aria-hidden="true" /> : <Pencil aria-hidden="true" />}
+    <Check aria-hidden="true" />
   </button>
 );
 
-/** One patch card: staging presentation, pencil-editable name/description,
- * the Extract drawer, and the unified Checks drawer (which owns the dry-run
- * verdict). */
+/** Three-dot menu in the card's top-right action column: Edit (opens the
+ * patch-details form), Replace (swap the file in place), Remove. Present
+ * through staging too. The item list stays mounted (visibility via [hidden])
+ * so its actions keep stable, always-queryable ids. */
+const PatchActionsMenu = ({
+  index,
+  onEdit,
+  onRemove,
+  onReplace,
+}: {
+  index: number;
+  /** Absent while the details form cannot be edited (no bundle meta channel). */
+  onEdit?: () => void;
+  onRemove: () => void;
+  onReplace?: (file: File) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+  return (
+    <div className="patch-menu" ref={rootRef}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Patch actions"
+        className={open ? "rm patch-menu-btn is-open" : "rm patch-menu-btn"}
+        id={`rom-weaver-patch-menu-${index}`}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
+        title="Patch actions"
+        type="button"
+      >
+        <EllipsisVertical aria-hidden="true" />
+      </button>
+      <div
+        aria-label="Patch actions"
+        className="patch-menu-list"
+        hidden={!open}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
+        role="menu"
+      >
+        {onEdit ? (
+          <button
+            className="patch-menu-item"
+            id={`rom-weaver-patch-meta-edit-${index}`}
+            onClick={() => {
+              setOpen(false);
+              onEdit();
+            }}
+            role="menuitem"
+            type="button"
+          >
+            <Pencil aria-hidden="true" />
+            Edit details
+          </button>
+        ) : null}
+        {onReplace ? (
+          <button
+            className="patch-menu-item"
+            id={`rom-weaver-patch-replace-${index}`}
+            onClick={() => fileRef.current?.click()}
+            role="menuitem"
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" />
+            Replace file…
+          </button>
+        ) : null}
+        <button
+          aria-label="Remove patch"
+          className="patch-menu-item is-danger"
+          id={`rom-weaver-patch-menu-remove-${index}`}
+          onClick={() => {
+            setOpen(false);
+            onRemove();
+          }}
+          role="menuitem"
+          type="button"
+        >
+          <Trash2 aria-hidden="true" />
+          Remove
+        </button>
+      </div>
+      {onReplace ? (
+        <input
+          accept=".aps,.bps,.bsdiff,.dcp,.ebp,.gdiff,.hdiff,.hpatchz,.ips,.ips32,.ppf,.rup,.solid,.ups,.vcdiff,.xdelta"
+          aria-label="Replacement patch file"
+          className="sr-only"
+          id={`rom-weaver-patch-replace-input-${index}`}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            setOpen(false);
+            if (file) onReplace(file);
+          }}
+          ref={fileRef}
+          tabIndex={-1}
+          type="file"
+        />
+      ) : null}
+    </div>
+  );
+};
+
+/** One patch card: staging presentation, a three-dot actions menu (edit
+ * details / replace file / remove) at the head of the name line, the Extract
+ * drawer, and the unified Checks drawer (which owns the dry-run verdict). */
 const PatchCard = ({
   basisSelectVisible,
   canReorder,
@@ -1026,7 +1102,6 @@ const PatchCard = ({
   item,
   meta,
   onMetaChange,
-  onReplace,
   onReorder,
   onTogglePatch,
   outputCheckHint,
@@ -1052,7 +1127,6 @@ const PatchCard = ({
   item: PatchStackItemState;
   meta?: BundlePatchMeta;
   onMetaChange?: (updates: Partial<BundlePatchMeta>) => void;
-  onReplace: (index: number, source: BinarySource) => void;
   onReorder: (from: number, to: number) => void;
   onTogglePatch?: (index: number) => void;
   outputCheckHint?: boolean;
@@ -1135,13 +1209,19 @@ const PatchCard = ({
           {item.fileSize ? <span className="fsize mono">{formatByteSize(item.fileSize)}</span> : null}
           {item.format ? <span className="meta-fmt mono">{item.format.toLowerCase()}</span> : null}
           {meta?.label ? <span className="meta-fmt mono">{meta.label}</span> : null}
+          {/* Icon chips mark these as authored metadata (release tag, credit)
+              among the plain file-fact chips. */}
           {meta?.version ? (
-            <span className="meta-fmt mono" id={`rom-weaver-patch-card-version-${index}`}>
+            <span className="meta-fmt mono meta-ic" id={`rom-weaver-patch-card-version-${index}`}>
+              <Tag aria-hidden="true" />
+              <span className="sr-only">Version </span>
               {meta.version}
             </span>
           ) : null}
           {meta?.author ? (
-            <span className="meta-fmt" id={`rom-weaver-patch-card-author-${index}`}>
+            <span className="meta-fmt meta-ic meta-author" id={`rom-weaver-patch-card-author-${index}`}>
+              <UserRound aria-hidden="true" />
+              <span className="sr-only">Author </span>
               {meta.author}
             </span>
           ) : null}
@@ -1179,18 +1259,22 @@ const PatchCard = ({
                   .join(" › ") || undefined
           }
           legacyFileClassName="rom-weaver-patch-stack-file"
-          nameActions={
-            onMetaChange && !staging ? (
-              <PatchMetaEditToggle editing={editing} index={index} onToggle={() => setMetaEditing(!metaEditing)} />
-            ) : undefined
-          }
           parentCompressions={item.archivePathEntries}
         />
       }
-      onRemove={() => patchStack.removeItem(index)}
+      menu={
+        editing ? (
+          <PatchMetaDoneButton index={index} onToggle={() => setMetaEditing(false)} />
+        ) : (
+          <PatchActionsMenu
+            index={index}
+            onEdit={onMetaChange ? () => setMetaEditing(true) : undefined}
+            onRemove={() => patchStack.removeItem(index)}
+            onReplace={(file) => patchStack.replaceItem(index, file)}
+          />
+        )
+      }
       patch
-      removeLabel="Remove patch"
-      replaceAction={!staging && onReplace ? <PatchReplaceButton index={index} onReplace={onReplace} /> : undefined}
       stageBar={stageBarValue(staging, percent)}
       state={staging ? undefined : verdict}
       verifyBar={verifying}
@@ -1352,7 +1436,6 @@ const ApplyPatchListStep = ({
             key={item.key ?? `${index}:${item.fileName}`}
             meta={bundleMeta?.[index]}
             onMetaChange={onBundleMetaChange ? (updates) => onBundleMetaChange(index, updates) : undefined}
-            onReplace={patchStack.replaceItem}
             onReorder={patchStack.reorder}
             onTogglePatch={onTogglePatch}
             outputCheckHint={!!bundleOutputCheckHint && index === chainOutputIndex}
