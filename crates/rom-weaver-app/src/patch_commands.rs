@@ -660,7 +660,7 @@ impl CliApp {
                     "{flag_name} value `{trimmed}` is invalid; checksum must be hexadecimal"
                 )));
             }
-            let Some(expected_hex_len) = Self::checksum_hex_len(&algorithm) else {
+            let Some(expected_hex_len) = super::expect_tokens::checksum_hex_len(&algorithm) else {
                 return Err(RomWeaverError::Validation(format!(
                     "{flag_name} uses unsupported checksum algorithm `{}`",
                     algorithm_raw.trim()
@@ -766,17 +766,6 @@ impl CliApp {
             Ok(format!("input size verified ({actual_size} byte(s))"))
         } else {
             Ok(format!("input size verified ({})", labels.join(", ")))
-        }
-    }
-
-    pub(super) fn checksum_hex_len(algorithm: &str) -> Option<usize> {
-        match algorithm {
-            "crc16" => Some(4),
-            "crc32" | "crc32c" | "adler32" => Some(8),
-            "md5" => Some(32),
-            "sha1" => Some(40),
-            "sha256" | "blake3" => Some(64),
-            _ => None,
         }
     }
 }

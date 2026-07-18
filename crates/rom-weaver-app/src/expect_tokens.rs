@@ -3,9 +3,7 @@ use super::*;
 use std::collections::BTreeMap;
 
 /// Expected hex length for a supported checksum algorithm, or `None` when the
-/// algorithm is unknown. Mirrors `CliApp::checksum_hex_len`; kept here so the
-/// shared `--expect-in`/`--expect-out`/`--assume-in` token parser validates
-/// without reaching into `CliApp`.
+/// algorithm is unknown.
 pub(crate) fn checksum_hex_len(algorithm: &str) -> Option<usize> {
     match algorithm {
         "crc16" => Some(4),

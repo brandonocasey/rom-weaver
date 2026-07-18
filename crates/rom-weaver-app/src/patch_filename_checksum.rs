@@ -85,7 +85,7 @@ fn collect_labeled(file_name: &str, bytes: &[u8], accumulator: &mut RequirementA
         }
         let label = file_name[label_start..index].to_ascii_lowercase();
 
-        if let Some(expected_hex_len) = CliApp::checksum_hex_len(&label) {
+        if let Some(expected_hex_len) = super::expect_tokens::checksum_hex_len(&label) {
             let mut hex_end = index + 1;
             while hex_end < bytes.len() && bytes[hex_end].is_ascii_hexdigit() {
                 hex_end += 1;

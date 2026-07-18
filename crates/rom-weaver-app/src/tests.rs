@@ -12,6 +12,7 @@ use rom_weaver_core::{
 };
 use serde_json::json;
 
+use super::expect_tokens::checksum_hex_len;
 use super::selection_resolution::SelectionResolutionOptions;
 use super::{
     CliApp, Commands, CompressCommand, CompressionLevelProfile, ExtractCommand, LogLevel,
@@ -1120,15 +1121,15 @@ fn parse_patch_apply_checksum_values_rejects_malformed_inputs() {
 
 #[test]
 fn checksum_hex_len_maps_supported_algorithms() {
-    assert_eq!(CliApp::checksum_hex_len("crc16"), Some(4));
-    assert_eq!(CliApp::checksum_hex_len("crc32"), Some(8));
-    assert_eq!(CliApp::checksum_hex_len("crc32c"), Some(8));
-    assert_eq!(CliApp::checksum_hex_len("adler32"), Some(8));
-    assert_eq!(CliApp::checksum_hex_len("md5"), Some(32));
-    assert_eq!(CliApp::checksum_hex_len("sha1"), Some(40));
-    assert_eq!(CliApp::checksum_hex_len("sha256"), Some(64));
-    assert_eq!(CliApp::checksum_hex_len("blake3"), Some(64));
-    assert_eq!(CliApp::checksum_hex_len("nope"), None);
+    assert_eq!(checksum_hex_len("crc16"), Some(4));
+    assert_eq!(checksum_hex_len("crc32"), Some(8));
+    assert_eq!(checksum_hex_len("crc32c"), Some(8));
+    assert_eq!(checksum_hex_len("adler32"), Some(8));
+    assert_eq!(checksum_hex_len("md5"), Some(32));
+    assert_eq!(checksum_hex_len("sha1"), Some(40));
+    assert_eq!(checksum_hex_len("sha256"), Some(64));
+    assert_eq!(checksum_hex_len("blake3"), Some(64));
+    assert_eq!(checksum_hex_len("nope"), None);
 }
 
 #[test]
