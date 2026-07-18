@@ -8,6 +8,7 @@ import type { ApplySettings, CreateSettings, WorkerSettings } from "../../types/
 import type { BrowserSourceRef } from "../../types/source.ts";
 import type { WorkflowOptions } from "../../types/workflow-public.ts";
 import type { RuntimePatchCreateFormatCandidates } from "../../types/workflow-runtime-adapter.ts";
+import { getDefaultBrowserThreadCount } from "../shared/compression-options.ts";
 import { createPublicSourcesValidator, createPublicSourceValidator } from "../shared/public-source-validation.ts";
 import { configureBrowserAssetBaseUrl } from "./browser-asset-base.ts";
 import { scheduleBrowserRuntimeWarmupExtraction } from "./browser-runtime-warmup.ts";
@@ -34,22 +35,23 @@ type BrowserPpfUndoInput = {
   signal?: AbortSignal;
 };
 
-const runtimePreloadKeys = new Set<string>();
-const getRuntimePreloadKey = (threads: BrowserRuntimePreloadOptions["threads"]) => {
-  const normalized = String(threads ?? "").trim();
-  if (normalized === "auto") return "default";
-  return normalized ? `threads:${normalized}` : "default";
+let runtimePreloadKey = "";
+let runtimePreloadPromise = Promise.resolve();
+const resolveRuntimePreloadThreads = (threads: BrowserRuntimePreloadOptions["threads"]) => {
+  const normalized = String(threads ?? "")
+    .trim()
+    .toLowerCase();
+  return !normalized || normalized === "auto" ? getDefaultBrowserThreadCount() : threads;
 };
 
 const preloadBrowserRuntime = (options: BrowserRuntimePreloadOptions = {}) => {
-  const preloadKey = getRuntimePreloadKey(options.threads);
-  if (runtimePreloadKeys.has(preloadKey)) return Promise.resolve();
-  runtimePreloadKeys.add(preloadKey);
-  const preloadOptions = preloadKey === "default" ? undefined : { threads: options.threads };
-  return Promise.all([
-    browserRuntime.preload?.preloadCapability?.("compression", () => undefined, preloadOptions),
-    browserRuntime.preload?.preloadCapability?.("checksum", () => undefined, preloadOptions),
-  ])
+  const threads = resolveRuntimePreloadThreads(options.threads);
+  const preloadKey = String(threads);
+  if (runtimePreloadKey === preloadKey) return runtimePreloadPromise;
+  runtimePreloadKey = preloadKey;
+  runtimePreloadPromise = Promise.resolve(
+    browserRuntime.preload?.preloadCapability?.("compression", () => undefined, { threads }),
+  )
     .then(() => {
       // Runner init (above) warms the WASM module, worker pool, and scratch pool. Schedule one silent
       // dummy extraction at idle so the decode-path JIT and first OPFS input/output handle opens are
@@ -57,9 +59,10 @@ const preloadBrowserRuntime = (options: BrowserRuntimePreloadOptions = {}) => {
       scheduleBrowserRuntimeWarmupExtraction();
     })
     .catch(() => {
-      runtimePreloadKeys.delete(preloadKey);
+      if (runtimePreloadKey === preloadKey) runtimePreloadKey = "";
     })
     .then(() => undefined);
+  return runtimePreloadPromise;
 };
 
 const getCreatePatchFormatCandidates = async ({

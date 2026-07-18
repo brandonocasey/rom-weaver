@@ -132,18 +132,17 @@ const PRE_EXTRACT_GAP = {
   //     dispatch to *gracefully* dispose it (graceful dispose of a wedged worker can block for seconds;
   //     terminate() is instant and the browser releases its OPFS handles on worker teardown).
   hardTerminateStaleOnOom: true,
-  // #1: after warmup, release the heap-dirtied worker while still idle. The compiled module stays cached,
-  //     but idle tabs no longer retain a shared WASM heap and its maximum address-space reservation.
+  // #1: after warmup, keep only the runner that exercised extraction. This preserves first-drop worker/JIT
+  //     state while releasing the rest of the preload pool's shared heaps and address-space reservations.
   recycleRunnerAfterWarmup: true,
 };
 
 // Page-thread cache of the compiled wasm module (#4), keyed by wasm URL so a changed asset recompiles.
 let cachedBrowserWasmModule: { module: WebAssembly.Module; wasmUrl: string } | null = null;
 
-// Single-flight guard for the page-thread compile (#4b). The runtime preload fires the `compression`
-// and `checksum` capability warmups in parallel, so without this both miss the still-empty cache and
-// each compiles the full ~6 MB module (observed as a doubled "compiling on page thread" every boot).
-// Coalesce concurrent first compiles for the same URL onto one in-flight promise.
+// Single-flight guard for the page-thread compile (#4b). Concurrent runner consumers can otherwise
+// both miss the still-empty cache and compile the full ~6 MB module. Coalesce first compiles for the
+// same URL onto one in-flight promise.
 let inflightBrowserWasmCompile: { promise: Promise<WebAssembly.Module>; wasmUrl: string } | null = null;
 
 const nowMs = () =>
@@ -465,16 +464,18 @@ const markRomWeaverRunnerStale = () => {
   runnerPool?.markAllStale();
 };
 
-// #1: Drop heap-dirtied idle runners after warmup. The page-thread compiled-module cache remains warm,
-// while idle tabs release their shared WASM heaps and maximum address-space reservations. The first real
-// operation creates a clean runner without recompiling the module. No-op while any runner is busy.
+// #1: Keep the most recently released runner (the one that performed extraction) and dispose every other
+// idle preload runner. Borrowing it before disposeIdle avoids a pool reset, so the first real operation
+// reuses its worker/JIT/thread-pool state instead of crossing a soft reset and rebuilding on the critical path.
 const recycleWarmRomWeaverRunner = async (threads?: RuntimeValue) => {
   if (!PRE_EXTRACT_GAP.recycleRunnerAfterWarmup) return;
   if (!isBrowserRuntime()) return;
   const pool = getRunnerPool();
-  if (pool.busyCount !== 0) return;
+  if (pool.busyCount !== 0 || pool.idleCount === 0) return;
   runnerCreateThreads = threads ?? runnerCreateThreads;
-  await pool.disposeAll();
+  const warmLease = await pool.acquire({ threads: runnerCreateThreads });
+  await pool.disposeIdle();
+  warmLease.release();
 };
 
 // Back-to-back ops should be as fast as the first. The wasm heap only ever grows, so a runner that just

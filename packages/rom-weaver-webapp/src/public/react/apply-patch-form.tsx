@@ -1024,6 +1024,13 @@ function ApplyPatchForm(props: ApplyPatchFormProps) {
           // surface them so React grows its patch stack instead of showing only the dropped archive.
           const fannedPatchSources = workflow.getPatchSources().filter(isReactBinarySource);
           if (fannedPatchSources.length > input.patches.length && handlers.onImplicitPatches) {
+            // The workflow already owns these selected leaf stages. Adopt their sources in the sync
+            // snapshot before React renders the expanded stack, so that render reuses the stages
+            // instead of clearing them and extracting every selected archive entry a second time.
+            workflowSyncRef.current = {
+              ...workflowSyncRef.current,
+              patches: fannedPatchSources.slice(),
+            };
             const fannedInfos = patches.map((patch, index) =>
               buildInfo(
                 patch,

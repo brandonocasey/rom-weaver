@@ -78,9 +78,9 @@ const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
       message: error instanceof Error ? error.message : String(error),
     });
   }
-  // Still inside the idle warmup task, release the heap-dirtied worker so an idle tab does not retain its
-  // shared WASM heap. The compiled module remains cached, so the first real operation only creates a clean
-  // runner. Self-guards (no-op if disabled or a run is active). Best-effort, like the warmup itself.
+  // Still inside the idle warmup task, trim surplus runners while retaining the one that just exercised
+  // extraction. This keeps first-drop worker/JIT state warm without leaving the whole preload pool resident.
+  // Self-guards (no-op if disabled or a run is active). Best-effort, like the warmup itself.
   await recycleWarmRomWeaverRunner().catch((error) => {
     logger.trace("warmup runner recycle skipped", {
       message: error instanceof Error ? error.message : String(error),

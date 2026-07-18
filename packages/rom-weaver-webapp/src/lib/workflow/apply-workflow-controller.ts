@@ -618,9 +618,12 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       this.trace("settings.set.start", {
         hasInputSession: !!this.inputSession,
       });
+      const previousThreads = this.settings.workers?.threads;
       this.settings = cloneValue(settings || {});
       applyOutputSettings(this.outputState, this.settings, this.inputSession as InputSession<unknown> | undefined);
-      this.preloadRuntimeCapability("compression");
+      if (String(previousThreads ?? "auto") !== String(this.settings.workers?.threads ?? "auto")) {
+        this.preloadRuntimeCapability("compression");
+      }
       await this.refreshPatchReadiness();
       this.recomputeOutputState();
       this.trace("settings.set.finish", {

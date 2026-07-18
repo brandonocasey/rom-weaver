@@ -133,6 +133,7 @@ const useInputStaging = (context: InputStagingContext) => {
       const { setSectionErrorMessage, onError } = report;
       const { stagePatches } = stage;
       const generation = patchStageMachine.nextStageGeneration();
+      let expandedPatchSources = false;
       if (!(snapshot.patches.length && stagePatches)) {
         setPatchStaging(false);
         setPatchProgress(null);
@@ -166,6 +167,7 @@ const useInputStaging = (context: InputStagingContext) => {
         // to N independent sources so every selected patch shows as its own row (mirrors inputs).
         onImplicitPatches: (patches, infos = []) => {
           if (patchStageGenerationRef.current !== generation) return;
+          expandedPatchSources = true;
           updatePatches(patches);
           setPatchInfoByKey(
             Object.fromEntries(
@@ -223,7 +225,7 @@ const useInputStaging = (context: InputStagingContext) => {
           );
           // The card now shows info + cheap preflight; run the deferred deep validation silently in
           // the background so it no longer makes the patch look like it is hanging.
-          validatePatchesDeferred(snapshot, generation);
+          if (!expandedPatchSources) validatePatchesDeferred(snapshot, generation);
         })
         .catch((error) => {
           if (patchStageGenerationRef.current !== generation) return;

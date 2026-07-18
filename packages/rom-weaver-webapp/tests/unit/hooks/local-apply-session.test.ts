@@ -36,7 +36,7 @@ const renderSession = (overrides: Partial<LocalApplyPatchFormSessionOptions> = {
   const utils = renderHook((props: LocalApplyPatchFormSessionOptions) => useLocalApplyPatchFormSession(props), {
     initialProps: options,
   });
-  return { applyPatches, downloadOutput, onSettingsChange, ...utils };
+  return { applyPatches, downloadOutput, onSettingsChange, options, ...utils };
 };
 
 describe("useLocalApplyPatchFormSession derived controllers", () => {
@@ -111,6 +111,40 @@ describe("useLocalApplyPatchFormSession apply flow", () => {
     await waitFor(() => expect(stageInput).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(stagePatches).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(validatePatches).toHaveBeenCalledTimes(1));
+  });
+
+  it("validates the expanded patch leaves without restaging the archive", async () => {
+    const archive = source("patches.zip");
+    const leaves = [source("a.ips"), source("b.ips")];
+    const validatePatches = vi.fn(async () => []);
+    const stageInput = vi.fn(async () => [{ fileName: "rom.bin", id: "rom", order: 0, size: 1024 }]);
+    const stagePatches = vi.fn(async (snapshot, handlers) => {
+      if (snapshot.patches[0] === archive) {
+        handlers.onImplicitPatches?.(leaves, [
+          { fileName: "a.ips", id: "patch-a", order: 0, size: 1024 },
+          { fileName: "b.ips", id: "patch-b", order: 1, size: 1024 },
+        ]);
+      }
+      return snapshot.patches.map((_, index) => ({
+        fileName: index ? "b.ips" : "a.ips",
+        id: `patch-${index}`,
+        order: index,
+        size: 1024,
+      }));
+    });
+    const { options, rerender } = renderSession({
+      patches: [archive],
+      stageInput,
+      stagePatches,
+      validatePatches,
+    } as Partial<LocalApplyPatchFormSessionOptions>);
+
+    await waitFor(() => expect(stagePatches).toHaveBeenCalledTimes(1));
+    expect(validatePatches).not.toHaveBeenCalled();
+    rerender({ ...options, patches: leaves });
+    await waitFor(() => expect(stagePatches).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(validatePatches).toHaveBeenCalledTimes(1));
+    expect(validatePatches.mock.calls[0]?.[0].patches).toEqual(leaves);
   });
 
   it("runs the workflow, then arms a pending download", async () => {
