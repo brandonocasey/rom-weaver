@@ -260,11 +260,13 @@ export const selectPatchCandidates = async (labels) => {
   if (state?.kind === "selected") return;
   if (!getCandidateSelectionList()) return;
   const rows = Array.from(document.querySelectorAll(".rw-modal.select-modal .seltree .selcheck"));
-  for (const label of labels) {
-    const row = rows.find((entry) => entry.textContent?.includes(label));
-    if (!row) throw new Error(`Missing patch candidate selection option: ${label}`);
+  for (const label of labels)
+    if (!rows.some((entry) => entry.textContent?.includes(label)))
+      throw new Error(`Missing patch candidate selection option: ${label}`);
+  for (const row of rows) {
     const checkbox = row.querySelector("input[type='checkbox']");
-    if (checkbox && !checkbox.checked) checkbox.click();
+    const selected = labels.some((label) => row.textContent?.includes(label));
+    if (checkbox && checkbox.checked !== selected) checkbox.click();
   }
   const confirm = document.querySelector(".rw-modal.select-modal .selconfirm");
   if (!confirm) throw new Error("Missing patch candidate confirm button");
