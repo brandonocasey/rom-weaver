@@ -78,6 +78,7 @@ export default mergeConfig(baseConfig, {
   optimizeDeps: {
     include: ["@bjorn3/browser_wasi_shim"],
   },
+  publicDir: fileURLToPath(new URL("./src/assets/app/root", import.meta.url)),
   resolve: {
     alias: {
       "virtual:pwa-register": VIRTUAL_PWA_REGISTER_STUB,

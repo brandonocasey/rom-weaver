@@ -241,6 +241,26 @@ test("url-session files fetched from same-origin urls flow through the drop pipe
   await Promise.all(fetched.map((entry) => entry.cleanup()));
 });
 
+test("sample action stays in-page and flows through the drop pipeline to a green apply", async () => {
+  mount(createElement(ApplyPatchForm));
+  const href = location.href;
+  await expect.poll(() => document.querySelector(".first-weave-demo button")).toBeInstanceOf(HTMLButtonElement);
+  const sampleButton = document.querySelector(".first-weave-demo button");
+  sampleButton.click();
+  expect(location.href).toBe(href);
+
+  await expect.poll(() => getInputStackRows().length, { timeout: 30000 }).toBe(1);
+  await expect.poll(() => getPatchStackFileNames(), { timeout: 30000 }).toEqual(["first-weave.ips"]);
+  await expect
+    .poll(() => document.querySelectorAll('#rom-weaver-list-patch-stack button[title="Preflight passed"]').length, {
+      timeout: 30000,
+    })
+    .toBe(1);
+  await waitForApplyButtonEnabled();
+  await clickApplyButton();
+  expect(await waitForApplyOutcome()).toEqual({ kind: "download" });
+});
+
 test("remote fetch reports http failures and CORS-shaped blocks as coded errors", async () => {
   const originalFetch = globalThis.fetch;
   // The vitest dev server SPA-fallbacks unknown paths, so stub a real 404.

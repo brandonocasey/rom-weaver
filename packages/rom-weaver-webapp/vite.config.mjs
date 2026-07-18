@@ -21,6 +21,7 @@ const rootStaticAssetSources = {
   "/CNAME": path.join(rootDir, "src", "assets", "app", "root", "CNAME"),
   "/apple-touch-icon.png": path.join(rootDir, "src", "assets", "app", "root", "apple-touch-icon.png"),
   "/favicon.ico": path.join(rootDir, "src", "assets", "app", "root", "favicon.ico"),
+  "/first-weave.zip": path.join(rootDir, "src", "assets", "app", "root", "first-weave.zip"),
   "/icon-maskable-192.png": path.join(rootDir, "src", "assets", "app", "root", "icon-maskable-192.png"),
   "/icon-maskable-512.png": path.join(rootDir, "src", "assets", "app", "root", "icon-maskable-512.png"),
   "/logo.svg": path.join(rootDir, "src", "assets", "app", "root", "logo.svg"),
@@ -88,6 +89,7 @@ const suppressNestedWorkerFactoryBundling = () => {
 const setRootStaticAssetContentType = (requestPath, res) => {
   if (requestPath.endsWith(".json")) res.setHeader("Content-Type", "application/json; charset=utf-8");
   else if (requestPath.endsWith(".png")) res.setHeader("Content-Type", "image/png");
+  else if (requestPath.endsWith(".zip")) res.setHeader("Content-Type", "application/zip");
   else if (requestPath.endsWith(".webp")) res.setHeader("Content-Type", "image/webp");
   else if (requestPath.endsWith(".svg")) res.setHeader("Content-Type", "image/svg+xml");
   else if (requestPath.endsWith(".ico")) res.setHeader("Content-Type", "image/x-icon");
@@ -374,6 +376,7 @@ export default defineConfig(({ command, mode }) => {
             "index.html",
             "manifest.json",
             "logo.svg",
+            "first-weave.zip",
             "favicon.ico",
             "apple-touch-icon.png",
             "icon-maskable-192.png",

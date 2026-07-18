@@ -3,7 +3,9 @@
   .rw-app {
     --ctl: 48px;
     --mobile-input-head-h: 38px;
-    --hero-chrome: calc(var(--mobile-input-head-h) + 172px);
+    /* Includes the first-weave action below the hero so the empty bench still
+       occupies one phone viewport. */
+    --hero-chrome: calc(var(--mobile-input-head-h) + 217px);
   }
 
   .rw-app .masthead {
@@ -108,6 +110,10 @@
      anywhere in the panel visibly register */
   .rw-app .step.is-input.is-empty .drop.hero:active {
     background: color-mix(in oklab, var(--thread) 6%, transparent);
+  }
+
+  .rw-app .step.is-input.is-empty .drop.hero {
+    min-height: max(300px, calc(100svh - var(--hero-chrome)));
   }
 
   /* the tools sub-picker becomes a full-width segmented control */

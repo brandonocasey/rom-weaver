@@ -73,11 +73,13 @@ const patchItem = (fileName: string): PatchStackItemState =>
   }) as unknown as PatchStackItemState;
 
 const renderView = ({
+  onUnifiedDrop,
   patches = [] as PatchStackItemState[],
   patchEnablement,
   pendingDrops,
   ui,
 }: {
+  onUnifiedDrop?: Parameters<typeof ApplyWorkflowFormView>[0]["onUnifiedDrop"];
   patches?: PatchStackItemState[];
   patchEnablement?: Parameters<typeof ApplyWorkflowFormView>[0]["patchEnablement"];
   pendingDrops?: Parameters<typeof ApplyWorkflowFormView>[0]["pendingDrops"];
@@ -95,7 +97,12 @@ const renderView = ({
   };
   return render(
     <RomWeaverSettingsProvider settings={{}}>
-      <ApplyWorkflowFormView controllers={controllers} patchEnablement={patchEnablement} pendingDrops={pendingDrops} />
+      <ApplyWorkflowFormView
+        controllers={controllers}
+        onUnifiedDrop={onUnifiedDrop}
+        patchEnablement={patchEnablement}
+        pendingDrops={pendingDrops}
+      />
     </RomWeaverSettingsProvider>,
   );
 };
@@ -107,10 +114,30 @@ describe("apply workflow view - empty bench", () => {
     expect(container.querySelector("section.step.is-input.is-empty")).toBeTruthy();
     expect(container.querySelector("#rom-weaver-input-file-unified")).toBeTruthy();
     expect(container.querySelector(".drop.hero .formats .fmt")).toBeTruthy();
+    const sample = container.querySelector(".first-weave-demo button") as HTMLButtonElement;
+    expect(sample.textContent).toContain("Try a sample weave");
     // The remaining workflow is progressively disclosed after staging begins.
     const numbers = Array.from(container.querySelectorAll(".step-num")).map((el) => el.textContent);
     expect(numbers).toEqual(["0x01"]);
     expect(container.querySelector("#rom-weaver-input-output-file-name")).toBeNull();
+  });
+
+  it("loads the sample into the existing drop pipeline without navigating", async () => {
+    const onUnifiedDrop = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({
+      blob: () => Promise.resolve(new Blob(["sample"], { type: "application/zip" })),
+      ok: true,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = renderView({ onUnifiedDrop, ui: createEmptyPatcherUiState() });
+
+    fireEvent.click(container.querySelector(".first-weave-demo button") as HTMLButtonElement);
+
+    await vi.waitFor(() => expect(onUnifiedDrop).toHaveBeenCalledOnce());
+    const [files] = onUnifiedDrop.mock.calls[0] as [File[]];
+    expect(fetchMock).toHaveBeenCalledWith("/first-weave.zip");
+    expect(files[0]?.name).toBe("first-weave.zip");
+    vi.unstubAllGlobals();
   });
 
   it("shapes an identifying archive like the patch card it will most likely become", () => {

@@ -736,6 +736,7 @@ type PatchEnablement = {
 // The apply view is a singleton in the webapp; a stable per-workflow key keeps
 // its activity slot separate from the create/trim forms in the shared store.
 const APPLY_ACTIVITY_KEY = "react-apply-view";
+const FIRST_WEAVE_URL = "/first-weave.zip";
 
 function ApplyWorkflowFormView({
   controllers,
@@ -1032,6 +1033,22 @@ function ApplyWorkflowFormView({
   // drop handler stages bare files immediately and shows an "identifying"
   // placeholder per archive until its ROM-vs-patch bucket is classified.
   const handleUnifiedDrop = onUnifiedDrop ?? (() => undefined);
+  const [sampleLoading, setSampleLoading] = useState(false);
+  const [sampleError, setSampleError] = useState("");
+  const loadFirstWeave = async () => {
+    setSampleLoading(true);
+    setSampleError("");
+    try {
+      const response = await fetch(FIRST_WEAVE_URL);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      handleUnifiedDrop([new File([blob], "first-weave.zip", { type: "application/zip" })]);
+    } catch {
+      setSampleError("Could not load the sample. Try again.");
+    } finally {
+      setSampleLoading(false);
+    }
+  };
   // Start the hero morph at the gesture, not after a large input finishes enough
   // staging to publish its first row. This is presentation-only; Rust ingestion
   // continues on its existing schedule behind the transition.
@@ -1087,6 +1104,20 @@ function ApplyWorkflowFormView({
                   <PendingDropCard drop={drop} />
                 </div>
               ))}
+            </div>
+          ) : workflowEmpty ? (
+            <div className="first-weave-demo">
+              <span>New here?</span>
+              <button
+                aria-busy={sampleLoading}
+                className="btn ghost slim"
+                disabled={sampleLoading}
+                onClick={() => void loadFirstWeave()}
+                type="button"
+              >
+                {sampleLoading ? "Loading sample…" : "Try a sample weave"}
+              </button>
+              {sampleError ? <span role="status">{sampleError}</span> : null}
             </div>
           ) : null
         }
