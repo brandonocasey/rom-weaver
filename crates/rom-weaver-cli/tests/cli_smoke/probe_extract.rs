@@ -1936,3 +1936,40 @@ fn extract_no_overwrite_fails_when_output_exists() {
         "expected overwrite error on stderr, got: {text}"
     );
 }
+
+#[test]
+fn probe_reads_stdin_for_dash_input() {
+    let temp = setup_temp_dir();
+    temp.child("sample.bin")
+        .write_str("placeholder payload")
+        .expect("fixture");
+    let archive = temp.child("sample.zip");
+
+    command_stdout(
+        &[
+            "compress",
+            "--input",
+            temp.child("sample.bin").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            archive.path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    let bytes = fs::read(archive.path()).expect("read archive");
+    let stdin_output = command_stdout_with_stdin(
+        &["probe", "--input", "-", "--no-extract", "--json"],
+        &bytes,
+        0,
+    );
+    let json = parse_single_json_line(&stdin_output);
+    assert_eq!(json["command"], "probe");
+    assert_eq!(json["family"], "container");
+    assert_eq!(json["format"], "zip");
+    assert_eq!(json["status"], "succeeded");
+    assert_eq!(json["details"]["container"]["entry_count"], 1);
+    assert_eq!(json["details"]["container"]["entries"][0], "sample.bin");
+}

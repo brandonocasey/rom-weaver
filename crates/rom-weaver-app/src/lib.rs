@@ -1253,6 +1253,7 @@ mod header_repair;
 
 #[path = "nested_extract.rs"]
 mod nested_extract;
+mod stdin_input;
 
 struct ProgressFilterReporter {
     inner: Arc<dyn ProgressSink>,

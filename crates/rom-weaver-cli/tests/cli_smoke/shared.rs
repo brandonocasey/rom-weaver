@@ -60,6 +60,23 @@ pub(crate) fn command_stdout(args: &[&str], expected_code: i32) -> Vec<u8> {
         .clone()
 }
 
+pub(crate) fn command_stdout_with_stdin(
+    args: &[&str],
+    stdin: &[u8],
+    expected_code: i32,
+) -> Vec<u8> {
+    let normalized_args = normalize_cli_args(args);
+    let mut command = Command::cargo_bin("rom-weaver").expect("binary");
+    command.args(&normalized_args);
+    command.write_stdin(stdin.to_vec());
+    command
+        .assert()
+        .code(expected_code)
+        .get_output()
+        .stdout
+        .clone()
+}
+
 pub(crate) fn normalize_cli_args(args: &[&str]) -> Vec<String> {
     let mut normalized = Vec::with_capacity(args.len() + 1);
     let mut index = 0;

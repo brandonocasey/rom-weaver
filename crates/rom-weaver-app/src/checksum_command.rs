@@ -2,7 +2,22 @@ use super::checksum_streaming::ChecksumStreamOptions;
 use super::*;
 
 impl CliApp {
-    pub(super) fn run_checksum(&self, args: ChecksumCommand) -> AppRunOutcome {
+    pub(super) fn run_checksum(&self, mut args: ChecksumCommand) -> AppRunOutcome {
+        let _stdin_guard = match crate::stdin_input::spool_stdin_if_dash(&mut args.input) {
+            Ok(guard) => guard,
+            Err(error) => {
+                return self.finish(
+                    "checksum",
+                    OperationReport::failed(
+                        OperationFamily::Checksum,
+                        Some(self.checksum.name().to_string()),
+                        "read",
+                        format!("failed to read stdin input: {error}"),
+                        None,
+                    ),
+                );
+            }
+        };
         let probe = args.probe;
         let mut report = self.run_checksum_inner(args);
         if probe {

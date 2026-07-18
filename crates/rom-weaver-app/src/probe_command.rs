@@ -1,7 +1,22 @@
 use super::*;
 
 impl CliApp {
-    pub(super) fn run_probe(&self, args: ProbeCommand) -> AppRunOutcome {
+    pub(super) fn run_probe(&self, mut args: ProbeCommand) -> AppRunOutcome {
+        let _stdin_guard = match crate::stdin_input::spool_stdin_if_dash(&mut args.input) {
+            Ok(guard) => guard,
+            Err(error) => {
+                return self.finish(
+                    "probe",
+                    OperationReport::failed(
+                        OperationFamily::Command,
+                        None,
+                        "read",
+                        format!("failed to read stdin input: {error}"),
+                        None,
+                    ),
+                );
+            }
+        };
         let rom_filter = args.rom_filter();
         let patch_filter = args.patch_filter();
         let ProbeCommand {

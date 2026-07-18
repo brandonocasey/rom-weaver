@@ -115,6 +115,14 @@ short flags exist for the common options (`-i` input, `-o` output, `-j` threads,
 `-f` format, `-s` select, `-a` algo, `-n` dry-run). Run
 `rom-weaver <command> --help` for every option and caveat on a command.
 
+`probe` and `checksum` also accept `-` as the `--input` value to read the ROM
+from stdin, so they slot into Unix pipelines:
+
+```bash
+curl -sL https://example.com/game.gba | rom-weaver checksum --input - --algo sha256
+xz -dc game.iso.xz | rom-weaver probe --input - --json
+```
+
 ## Commands
 
 | Command | Purpose |

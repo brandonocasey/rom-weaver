@@ -59,7 +59,7 @@ pub struct ProbeCommand {
             short = 'i',
             long = "input",
             value_name = "INPUT",
-            help = "File or container to inspect"
+            help = "File or container to inspect, or - to read from stdin"
         )
     )]
     pub input: PathBuf,
@@ -254,7 +254,7 @@ pub struct ChecksumCommand {
             short = 'i',
             long = "input",
             value_name = "INPUT",
-            help = "File or container payload to checksum"
+            help = "File or container payload to checksum, or - to read from stdin"
         )
     )]
     pub input: PathBuf,

@@ -1502,6 +1502,85 @@ fn checksum_without_probe_succeeds_on_unidentified_source() {
     assert!(json["details"]["platform"].is_null());
 }
 
+#[test]
+fn checksum_reads_stdin_for_dash_input() {
+    let temp = setup_temp_dir();
+    let payload = (0..8_192)
+        .map(|index| (index % 251) as u8)
+        .collect::<Vec<_>>();
+    fs::write(temp.child("game.bin").path(), &payload).expect("payload fixture");
+
+    let file_label = {
+        let output = command_stdout(
+            &[
+                "checksum",
+                "--input",
+                temp.child("game.bin").path().to_str().expect("path"),
+                "--algo",
+                "crc32",
+                "--algo",
+                "sha1",
+                "--json",
+            ],
+            0,
+        );
+        parse_single_json_line(&output)["label"]
+            .as_str()
+            .expect("label")
+            .to_string()
+    };
+
+    let stdin_output = command_stdout_with_stdin(
+        &[
+            "checksum", "--input", "-", "--algo", "crc32", "--algo", "sha1", "--json",
+        ],
+        &payload,
+        0,
+    );
+    let stdin_json = parse_single_json_line(&stdin_output);
+    assert_eq!(stdin_json["status"], "succeeded");
+    let stdin_label = stdin_json["label"].as_str().expect("label");
+    assert_eq!(
+        label_digest_value(stdin_label, "crc32"),
+        label_digest_value(&file_label, "crc32"),
+        "stdin crc32 must match file input"
+    );
+    assert_eq!(
+        label_digest_value(stdin_label, "sha1"),
+        label_digest_value(&file_label, "sha1"),
+        "stdin sha1 must match file input"
+    );
+}
+
+#[test]
+fn checksum_stdin_respects_start_and_length() {
+    let payload = (0..4_096)
+        .map(|index| (index % 193) as u8)
+        .collect::<Vec<_>>();
+    let temp = setup_temp_dir();
+    fs::write(temp.child("full.bin").path(), &payload).expect("payload fixture");
+    // The expected digest is the same window read from a real file, proving the
+    // stdin spool preserves seek-dependent flags.
+    fs::write(temp.child("window.bin").path(), &payload[512..512 + 1024]).expect("window fixture");
+    let expected = checksum_value(temp.child("window.bin").path(), "sha1");
+
+    let stdin_output = command_stdout_with_stdin(
+        &[
+            "checksum", "--input", "-", "--algo", "sha1", "--start", "512", "--length", "1024",
+            "--json",
+        ],
+        &payload,
+        0,
+    );
+    let stdin_json = parse_single_json_line(&stdin_output);
+    assert_eq!(stdin_json["status"], "succeeded");
+    let stdin_label = stdin_json["label"].as_str().expect("label");
+    assert_eq!(
+        label_digest_value(stdin_label, "sha1"),
+        Some(expected.as_str())
+    );
+}
+
 // ---- relocated from shared.rs (single-module helpers) ----
 
 fn write_gzip_fixture(source_path: &Path, gzip_path: &Path) {
