@@ -2,11 +2,12 @@ use super::*;
 
 impl CliApp {
     pub(super) fn run_probe(&self, args: ProbeCommand) -> AppRunOutcome {
+        let rom_filter = args.rom_filter();
+        let patch_filter = args.patch_filter();
         let ProbeCommand {
-            source,
+            input: source,
             select,
-            rom_filter,
-            patch_filter,
+            filter: _,
             no_extract,
             no_ignore,
         } = args;

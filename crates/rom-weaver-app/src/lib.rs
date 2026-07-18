@@ -1089,6 +1089,19 @@ pub enum PatchApplyOutputHeaderMode {
     Auto,
 }
 
+/// Payload class kept during automatic container extraction. `--filter rom`
+/// keeps ROM-like candidates, `--filter patch` keeps patch-like candidates;
+/// the flag is repeatable and comma-separable so both may be requested. An
+/// empty filter list means "no class filter" (keep everything).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(ValueEnum))]
+#[cfg_attr(feature = "typescript-types", derive(TS))]
+#[serde(rename_all = "lowercase")]
+pub enum FilterKind {
+    Rom,
+    Patch,
+}
+
 #[path = "command_dispatch.rs"]
 mod command_dispatch;
 
@@ -1189,6 +1202,9 @@ pub use command_args::{
     CompressCommand, ExtractCommand, IngestCommand, PatchApplyCommand, PatchCreateCommand,
     PatchValidateCommand, PlanExtractBatchCommand, PpfUndoCommand, ProbeCommand, TrimCommand,
 };
+
+mod expect_tokens;
+pub use expect_tokens::{ExpectSpec, ExpectToken, parse_expect_token, parse_expect_tokens};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use extract_batch::{ExtractBatchOptions, ExtractBatchReport, run_extract_batch};

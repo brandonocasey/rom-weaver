@@ -137,8 +137,14 @@ impl CliApp {
         if args.no_bundle_rom && args.rom.is_none() {
             warnings.push("--no-bundle-rom ignored: no local --rom given".to_string());
         }
-        let cached_rom_checks = bundle_entry_checks(&args.rom_checksums, "--rom-checksums")?
-            .filter(|checks| !checks.checksums.is_empty());
+        // Trusted rom checksums/size from a prior staging pass, so export skips
+        // re-hashing the prepared leaf. `algo=hex` tokens seed the rom checks; a
+        // `size=N` token seeds the prepared size.
+        let rom_assume = parse_expect_tokens(&args.assume_in, "--assume-in", true)?;
+        let cached_rom_checks = (!rom_assume.checksums.is_empty()).then(|| BundleChecks {
+            checksums: rom_assume.checksums.clone(),
+            size: rom_assume.size,
+        });
         // Overall hash-progress denominator: only the rom is hashed when the
         // caller did not provide the staged checks; patch files carry no
         // checksums in the bundle.
@@ -176,7 +182,7 @@ impl CliApp {
                         total_hash_bytes,
                     )?
                 };
-                let size = args.rom_size.unwrap_or(fs::metadata(path)?.len());
+                let size = rom_assume.size.unwrap_or(fs::metadata(path)?.len());
                 let bundle_source = args.bundle_rom.as_deref().unwrap_or(path);
                 if !bundle_source.is_file() {
                     return Err(RomWeaverError::Validation(format!(

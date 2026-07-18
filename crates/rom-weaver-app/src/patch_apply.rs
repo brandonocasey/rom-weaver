@@ -47,12 +47,14 @@ fn native_file_identity_matches(_left: &Path, _right: &Path) -> bool {
 
 impl CliApp {
     pub(super) fn run_patch_apply(&self, args: PatchApplyCommand) -> AppRunOutcome {
+        let rom_filter = args.rom_filter();
+        let patch_filter = args.patch_filter();
         trace!(
             input = %args.input.display(),
             selections = args.select.len(),
             target = ?args.target,
-            rom_filter = args.rom_filter,
-            patch_filter = args.patch_filter,
+            rom_filter,
+            patch_filter,
             patch_count = args.patches.len(),
             output = ?args.output,
             bundle = ?args.bundle,
@@ -64,14 +66,14 @@ impl CliApp {
             compress_format = ?args.compress_format,
             compress_codec = ?args.compress_codec,
             compress_level = ?args.compress_level,
-            checksum_cache = args.checksum_cache.len(),
-            validate_with_checksums = args.validate_with_checksums.len(),
+            assume_in = args.assume_in.len(),
+            expect_in = args.expect_in.len(),
             patch_header = ?args.patch_header,
             output_header = ?args.output_header,
             repair_checksum = args.repair_checksum,
             n64_byte_order = ?args.n64_byte_order,
             ignore_checksum_validation = args.ignore_checksum_validation,
-            validate_with_output_checksums = args.validate_with_output_checksums.len(),
+            expect_out = args.expect_out.len(),
             code_count = args.codes.len(),
             code_system = ?args.code_system,
             code_kind = %args.code_kind,
@@ -186,12 +188,13 @@ impl CliApp {
         }) {
             return self.run_dcp_apply(args);
         }
+        let rom_filter = args.rom_filter();
+        let patch_filter = args.patch_filter();
         let PatchApplyCommand {
             input,
             select,
             target,
-            rom_filter,
-            patch_filter,
+            filter: _,
             no_extract,
             no_ignore,
             mut patches,
@@ -203,15 +206,15 @@ impl CliApp {
             compress_format,
             compress_codec,
             compress_level,
-            checksum_cache,
-            validate_with_checksums,
+            assume_in,
+            expect_in,
             patch_header,
             patch_basis,
             output_header,
             repair_checksum,
             n64_byte_order,
             ignore_checksum_validation,
-            validate_with_output_checksums,
+            expect_out,
             codes,
             code_system,
             code_kind,
@@ -284,9 +287,9 @@ impl CliApp {
             mut expected_input_checksums,
             mut expected_output_checksums,
         } = match Self::parse_patch_apply_inputs(
-            &checksum_cache,
-            &validate_with_checksums,
-            &validate_with_output_checksums,
+            &assume_in,
+            &expect_in,
+            &expect_out,
             no_compress,
             compress_format,
             compress_codec,
@@ -2309,9 +2312,9 @@ impl CliApp {
     /// `validate`-stage report. Consumes the owned compress-* args (no later
     /// use).
     fn parse_patch_apply_inputs(
-        checksum_cache: &[String],
-        validate_with_checksums: &[String],
-        validate_with_output_checksums: &[String],
+        assume_in: &[String],
+        expect_in: &[String],
+        expect_out: &[String],
         no_compress: bool,
         compress_format: Option<String>,
         compress_codec: Vec<String>,
@@ -2323,16 +2326,15 @@ impl CliApp {
             compress_codec,
             compress_level,
         )?;
+        // Patch apply has no input-size preflight, so `--expect-in`/`--assume-in`
+        // are checksum-only here (`--expect-in size=N` size gating lives on
+        // `patch validate`); `--expect-out` is checksum-only everywhere.
         let cached_input_checksums =
-            Self::parse_patch_apply_checksum_values(checksum_cache, "--checksum-cache")?;
-        let expected_input_checksums = Self::parse_patch_apply_checksum_values(
-            validate_with_checksums,
-            "--validate-with-checksum",
-        )?;
-        let expected_output_checksums = Self::parse_patch_apply_checksum_values(
-            validate_with_output_checksums,
-            "--validate-output-checksum",
-        )?;
+            parse_expect_tokens(assume_in, "--assume-in", false)?.checksums;
+        let expected_input_checksums =
+            parse_expect_tokens(expect_in, "--expect-in", false)?.checksums;
+        let expected_output_checksums =
+            parse_expect_tokens(expect_out, "--expect-out", false)?.checksums;
         Ok(ParsedPatchApplyInputs {
             compression_options,
             cached_input_checksums,

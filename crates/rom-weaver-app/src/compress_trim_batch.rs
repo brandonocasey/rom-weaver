@@ -210,7 +210,7 @@ impl CliApp {
 
     pub(super) fn run_trim(&self, args: TrimCommand) -> AppRunOutcome {
         trace!(
-            source_count = args.source.len(),
+            source_count = args.input.len(),
             output = ?args.output.as_ref().map(|path| path.display().to_string()),
             extension = ?args.extension,
             in_place = args.in_place,
@@ -224,7 +224,7 @@ impl CliApp {
             "starting trim command"
         );
         let TrimCommand {
-            source,
+            input: source,
             output,
             extension,
             in_place,

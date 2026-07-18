@@ -539,13 +539,11 @@ impl CliApp {
         if args.checksum_name {
             // Prefer a caller-supplied source crc32 (the browser already hashes the
             // original during input prep) to avoid re-reading the original here; fall
-            // back to computing it when the value is absent or malformed.
-            let provided_crc32 = args
-                .source_crc32
-                .as_deref()
-                .map(str::trim)
-                .filter(|hex| hex.len() == 8 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
-                .map(str::to_ascii_lowercase);
+            // back to computing it when the value is absent or malformed. clap has
+            // already validated the token grammar via the value parser.
+            let provided_crc32 = parse_expect_tokens(&args.assume_in, "--assume-in", false)
+                .ok()
+                .and_then(|spec| spec.checksums.get("crc32").cloned());
             let crc32 = match provided_crc32 {
                 Some(crc32) => Some(crc32),
                 None => match checksum_file_values(&args.original, &["crc32"], &context) {

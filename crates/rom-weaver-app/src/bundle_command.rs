@@ -64,14 +64,14 @@ pub struct BundleParseResult {
 impl CliApp {
     pub(super) fn run_bundle_parse(&self, args: BundleParseCommand) -> AppRunOutcome {
         trace!(
-            source = %args.source.display(),
-            extract_dir = ?args.extract_dir,
+            source = %args.input.display(),
+            extract_dir = ?args.output,
             threads = %args.threads,
             "starting bundle parse command"
         );
         let BundleParseCommand {
-            source,
-            extract_dir,
+            input: source,
+            output: extract_dir,
             threads,
         } = args;
         let context = self.context(threads);

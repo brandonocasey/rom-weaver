@@ -3,29 +3,30 @@ use super::*;
 
 impl CliApp {
     pub(super) fn run_extract(&self, args: ExtractCommand) -> AppRunOutcome {
+        let rom_filter = args.rom_filter();
+        let patch_filter = args.patch_filter();
         trace!(
-            source = %args.source.display(),
+            source = %args.input.display(),
             selections = args.select.len(),
-            out_dir = %args.out_dir.display(),
+            out_dir = %args.output.display(),
             split_bin = args.split_bin,
-            rom_filter = args.rom_filter,
-            patch_filter = args.patch_filter,
+            rom_filter,
+            patch_filter,
             no_ignore = args.no_ignore,
             no_nested_extract = args.no_nested_extract,
-            no_overwrite = args.no_overwrite,
+            force = args.force,
             threads = %args.threads,
             "starting extract command"
         );
         let ExtractCommand {
-            source,
+            input: source,
             select: selections,
-            rom_filter,
-            patch_filter,
-            out_dir,
+            filter: _,
+            output: out_dir,
             split_bin,
             no_ignore,
             no_nested_extract,
-            no_overwrite,
+            force,
             checksum,
             checksum_rom,
             probe,
@@ -153,7 +154,7 @@ impl CliApp {
                     kind_filter,
                     split_bin: extract_split_bin,
                     ignore_common_files: !no_ignore,
-                    overwrite: !no_overwrite,
+                    overwrite: force,
                     source_label: "extract input",
                     allow_multi_select: true,
                 },
@@ -189,7 +190,7 @@ impl CliApp {
                 primary_extract_elapsed_ms,
                 kind_filter,
                 !no_ignore,
-                !no_overwrite,
+                force,
                 no_nested_extract,
                 &context,
             ) {

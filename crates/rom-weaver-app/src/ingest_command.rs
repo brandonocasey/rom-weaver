@@ -185,8 +185,8 @@ const INGEST_DEFAULT_CHECKSUM_ALGORITHMS: [&str; 3] = ["crc32", "md5", "sha1"];
 impl CliApp {
     pub(super) fn run_ingest(&self, args: IngestCommand) -> AppRunOutcome {
         trace!(
-            source = %args.source.display(),
-            out_dir = %args.out_dir.display(),
+            source = %args.input.display(),
+            out_dir = %args.output.display(),
             selections = args.select.len(),
             sidecar_count = args.sidecar_names.len(),
             sidecar_only = args.sidecar_only,
@@ -197,8 +197,8 @@ impl CliApp {
             "starting ingest command"
         );
         let IngestCommand {
-            source,
-            out_dir,
+            input: source,
+            output: out_dir,
             select,
             sidecar_names,
             sidecar_only,

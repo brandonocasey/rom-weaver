@@ -8,18 +8,18 @@ use super::patch_commands::{
 
 impl CliApp {
     pub(super) fn run_patch_validate(&self, args: PatchValidateCommand) -> AppRunOutcome {
+        let rom_filter = args.rom_filter();
+        let patch_filter = args.patch_filter();
         trace!(
             input = %args.input.display(),
             selections = args.select.len(),
-            rom_filter = args.rom_filter,
-            patch_filter = args.patch_filter,
+            rom_filter,
+            patch_filter,
             patch_count = args.patches.len(),
             no_extract = args.no_extract,
             no_ignore = args.no_ignore,
-            checksum_cache = args.checksum_cache.len(),
-            validate_with_checksums = args.validate_with_checksums.len(),
-            validate_with_size = ?args.validate_with_size,
-            validate_with_min_size = ?args.validate_with_min_size,
+            assume_in = args.assume_in.len(),
+            expect_in = args.expect_in.len(),
             strip_header = args.strip_header,
             n64_byte_order = ?args.n64_byte_order,
             ignore_checksum_validation = args.ignore_checksum_validation,
@@ -34,15 +34,12 @@ impl CliApp {
         let PatchValidateCommand {
             input,
             select,
-            rom_filter,
-            patch_filter,
+            filter: _,
             no_extract,
             no_ignore,
             patches,
-            checksum_cache,
-            validate_with_checksums,
-            validate_with_size,
-            validate_with_min_size,
+            assume_in,
+            expect_in,
             strip_header,
             n64_byte_order,
             ignore_checksum_validation,
@@ -72,24 +69,22 @@ impl CliApp {
                 probe_threads.clone(),
             )
         };
-        let cached_input_checksums =
-            match Self::parse_patch_apply_checksum_values(&checksum_cache, "--checksum-cache") {
-                Ok(values) => values,
-                Err(error) => {
-                    return self.finish("patch-validate", fail("validate", error.to_string()));
-                }
-            };
-        let n64_byte_order = n64_byte_order.unwrap_or_default();
-        let mut expected_input_checksums = match Self::parse_patch_apply_checksum_values(
-            &validate_with_checksums,
-            "--validate-with-checksum",
-        ) {
-            Ok(values) => values,
+        let cached_input_checksums = match parse_expect_tokens(&assume_in, "--assume-in", false) {
+            Ok(spec) => spec.checksums,
             Err(error) => {
                 return self.finish("patch-validate", fail("validate", error.to_string()));
             }
         };
-        let mut effective_expected_size = validate_with_size;
+        let n64_byte_order = n64_byte_order.unwrap_or_default();
+        let expect_spec = match parse_expect_tokens(&expect_in, "--expect-in", true) {
+            Ok(spec) => spec,
+            Err(error) => {
+                return self.finish("patch-validate", fail("validate", error.to_string()));
+            }
+        };
+        let mut expected_input_checksums = expect_spec.checksums;
+        let mut effective_expected_size = expect_spec.size;
+        let validate_with_min_size = expect_spec.min_size;
         // Plan mode routes every patch's filename requirements through the
         // planner as per-patch declared checks instead of folding the first
         // patch's into the hard input gate.

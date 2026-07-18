@@ -1,5 +1,32 @@
 use super::*;
 
+/// Generate `rom_filter()` / `patch_filter()` accessors over a `filter:
+/// Vec<FilterKind>` field so handler call sites stay a mechanical rename from
+/// the old boolean flags. Shared by every command that takes `--filter`.
+macro_rules! filter_accessors {
+    ($command:ty) => {
+        impl $command {
+            pub fn rom_filter(&self) -> bool {
+                self.filter
+                    .iter()
+                    .any(|kind| matches!(kind, FilterKind::Rom))
+            }
+
+            pub fn patch_filter(&self) -> bool {
+                self.filter
+                    .iter()
+                    .any(|kind| matches!(kind, FilterKind::Patch))
+            }
+        }
+    };
+}
+
+filter_accessors!(ProbeCommand);
+filter_accessors!(ExtractCommand);
+filter_accessors!(ChecksumCommand);
+filter_accessors!(PatchApplyCommand);
+filter_accessors!(PatchValidateCommand);
+
 const fn default_true() -> bool {
     true
 }
@@ -28,12 +55,18 @@ fn default_code_kind() -> String {
 pub struct ProbeCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
-        arg(value_name = "SOURCE", help = "File or container to inspect")
+        arg(
+            short = 'i',
+            long = "input",
+            value_name = "INPUT",
+            help = "File or container to inspect"
+        )
     )]
-    pub source: PathBuf,
+    pub input: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 's',
             long = "select",
             help = "Select an extracted probe payload by exact name, prefix, or glob (repeatable)"
         )
@@ -44,23 +77,15 @@ pub struct ProbeCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "rom-filter",
-            help = "Keep ROM-like payload candidates during automatic extraction"
+            long = "filter",
+            value_enum,
+            value_delimiter = ',',
+            help = "Keep only payload candidates of the given class during automatic extraction: rom, patch, or both (repeatable, comma-separable)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub rom_filter: bool,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long = "patch-filter",
-            help = "Keep patch-like payload candidates during automatic extraction"
-        )
-    )]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub patch_filter: bool,
+    pub filter: Vec<FilterKind>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -89,12 +114,18 @@ pub struct ProbeCommand {
 pub struct ExtractCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
-        arg(value_name = "SOURCE", help = "Container or disc image to extract")
+        arg(
+            short = 'i',
+            long = "input",
+            value_name = "INPUT",
+            help = "Container or disc image to extract"
+        )
     )]
-    pub source: PathBuf,
+    pub input: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 's',
             long = "select",
             help = "Select extracted entries by exact name, prefix, or glob (repeatable). Examples: --select game.disc02.cue --select 'game.disc0?.bin'"
         )
@@ -105,28 +136,25 @@ pub struct ExtractCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "rom-filter",
-            help = "Extract ROM-like entries and nested containers only"
+            long = "filter",
+            value_enum,
+            value_delimiter = ',',
+            help = "Extract only entries (and nested containers) of the given class: rom, patch, or both (repeatable, comma-separable)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub rom_filter: bool,
+    pub filter: Vec<FilterKind>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "patch-filter",
-            help = "Extract patch-like entries and nested containers only"
+            short = 'o',
+            long = "output",
+            value_name = "DIR",
+            help = "Directory for extracted files"
         )
     )]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub patch_filter: bool,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(long, value_name = "DIR", help = "Directory for extracted files")
-    )]
-    pub out_dir: PathBuf,
+    pub output: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -160,19 +188,20 @@ pub struct ExtractCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "no-overwrite",
-            help = "Fail extraction if any destination output file already exists"
+            long = "force",
+            help = "Overwrite destination output files that already exist (default: fail if any exist)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub no_overwrite: bool,
+    pub force: bool,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
             long = "checksum",
             value_name = "ALGO",
-            help = "Compute an output checksum while extracting; repeat for multiple algorithms"
+            value_delimiter = ',',
+            help = "Compute an output checksum while extracting; repeat or comma-separate for multiple algorithms"
         )
     )]
     #[serde(default)]
@@ -183,6 +212,7 @@ pub struct ExtractCommand {
         arg(
             long = "checksum-rom",
             value_name = "ALGO",
+            value_delimiter = ',',
             help = "Like --checksum but only ROM-like outputs are hashed (sidecar/non-ROM entries are skipped); safe to always pass. Ignored if --checksum is also set"
         )
     )]
@@ -202,6 +232,7 @@ pub struct ExtractCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -219,22 +250,30 @@ pub struct ExtractCommand {
 pub struct ChecksumCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
-        arg(value_name = "SOURCE", help = "File or container payload to checksum")
+        arg(
+            short = 'i',
+            long = "input",
+            value_name = "INPUT",
+            help = "File or container payload to checksum"
+        )
     )]
-    pub source: PathBuf,
+    pub input: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'a',
             long = "algo",
             required = true,
             value_name = "ALGO",
-            help = "Checksum algorithm; repeat for multiple algorithms"
+            value_delimiter = ',',
+            help = "Checksum algorithm; repeat or comma-separate for multiple algorithms"
         )
     )]
     pub algo: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 's',
             long = "select",
             help = "Select a container payload by exact name, prefix, or glob (repeatable)"
         )
@@ -245,23 +284,15 @@ pub struct ChecksumCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "rom-filter",
-            help = "Keep ROM-like payload candidates during checksum auto-extract"
+            long = "filter",
+            value_enum,
+            value_delimiter = ',',
+            help = "Keep only payload candidates of the given class during checksum auto-extract: rom, patch, or both (repeatable, comma-separable)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub rom_filter: bool,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long = "patch-filter",
-            help = "Keep patch-like payload candidates during checksum auto-extract"
-        )
-    )]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub patch_filter: bool,
+    pub filter: Vec<FilterKind>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -325,6 +356,7 @@ pub struct ChecksumCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -342,21 +374,28 @@ pub struct ChecksumCommand {
 pub struct IngestCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
-        arg(value_name = "SOURCE", help = "Dropped file or container to classify")
+        arg(
+            short = 'i',
+            long = "input",
+            value_name = "INPUT",
+            help = "Dropped file or container to classify"
+        )
     )]
-    pub source: PathBuf,
+    pub input: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long,
+            short = 'o',
+            long = "output",
             value_name = "DIR",
             help = "Directory for extracted ingest outputs"
         )
     )]
-    pub out_dir: PathBuf,
+    pub output: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 's',
             long = "select",
             help = "Select a payload by exact name, prefix, or glob when an archive carries more than one ROM (repeatable)"
         )
@@ -414,7 +453,8 @@ pub struct IngestCommand {
         arg(
             long = "checksum",
             value_name = "ALGO",
-            help = "ROM checksum algorithm to compute (repeatable); defaults to crc32, md5, sha1 when omitted"
+            value_delimiter = ',',
+            help = "ROM checksum algorithm to compute (repeatable, comma-separable); defaults to crc32, md5, sha1 when omitted"
         )
     )]
     #[serde(default)]
@@ -423,6 +463,7 @@ pub struct IngestCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -441,15 +482,18 @@ pub struct CompressCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'i',
+            long = "input",
             required = true,
             value_name = "INPUT",
-            help = "Input file(s) to place in the output container"
+            help = "Input file(s) to place in the output container (repeatable)"
         )
     )]
     pub input: Vec<PathBuf>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'f',
             long,
             help = "Output container format (derived from the output extension when omitted; required when the output has no recognizable extension; overrides the extension with a warning when they disagree)"
         )
@@ -458,7 +502,7 @@ pub struct CompressCommand {
     pub format: Option<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
-        arg(long, value_name = "PATH", help = "Output container path")
+        arg(short = 'o', long, value_name = "PATH", help = "Output container path")
     )]
     pub output: PathBuf,
     #[cfg_attr(
@@ -466,7 +510,8 @@ pub struct CompressCommand {
         arg(
             long,
             action = ArgAction::Append,
-            help = "Compression codec override; supports codec[:level]. Repeat --codec for multiple codecs (for example CHD: --codec cdzs[:19] --codec cdzl --codec cdfl). If :level is omitted, falls back to --level profile."
+            value_delimiter = ',',
+            help = "Compression codec override; supports codec[:level]. Repeat or comma-separate --codec for multiple codecs (for example CHD: --codec cdzs[:19],cdzl,cdfl). If :level is omitted, falls back to --level profile."
         )
     )]
     #[serde(default)]
@@ -484,6 +529,7 @@ pub struct CompressCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -502,15 +548,18 @@ pub struct TrimCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'i',
+            long = "input",
             required = true,
-            value_name = "SOURCE",
+            value_name = "INPUT",
             help = "File, container, or directory to trim (repeatable)"
         )
     )]
-    pub source: Vec<PathBuf>,
+    pub input: Vec<PathBuf>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'o',
             long,
             conflicts_with = "in_place",
             help = "Destination file for trimmed output (single trim-eligible source only)"
@@ -531,9 +580,7 @@ pub struct TrimCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            short = 'i',
             long = "in-place",
-            alias = "inplace",
             help = "Trim the source file in place instead of writing a new file"
         )
     )]
@@ -543,9 +590,8 @@ pub struct TrimCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            short = 's',
-            long = "simulate",
-            alias = "dry-run",
+            short = 'n',
+            long = "dry-run",
             help = "Simulate trim operations without writing output files"
         )
     )]
@@ -574,7 +620,7 @@ pub struct TrimCommand {
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
     pub recursive: bool,
     #[cfg_attr(not(target_arch = "wasm32"), arg(
-        long = "no-rom-filter",
+        long = "no-filter",
         action = ArgAction::SetFalse,
         default_value_t = true,
         help = "Disable the default ROM-only filter applied to archive payloads before trimming"
@@ -606,6 +652,7 @@ pub struct TrimCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -624,6 +671,7 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'i',
             long,
             value_name = "PATH",
             help = "ROM, disc sheet, bundle, or container to patch"
@@ -633,6 +681,7 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 's',
             long = "select",
             help = "Container payload selection pattern(s) used while auto-extracting patch apply input and patch files"
         )
@@ -653,23 +702,15 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "rom-filter",
-            help = "Keep ROM-like payload candidates while resolving the patch input archive"
+            long = "filter",
+            value_enum,
+            value_delimiter = ',',
+            help = "Keep only payload candidates of the given class while resolving patch input/patch archives: rom, patch, or both (repeatable, comma-separable)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub rom_filter: bool,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long = "patch-filter",
-            help = "Keep patch-like payload candidates while resolving patch archives"
-        )
-    )]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub patch_filter: bool,
+    pub filter: Vec<FilterKind>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -703,6 +744,7 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'o',
             long,
             help = "Output path for the patched result. Optional when a rom-weaver-bundle.json bundle supplies output.name"
         )
@@ -766,7 +808,8 @@ pub struct PatchApplyCommand {
         arg(
             long = "compress-codec",
             action = ArgAction::Append,
-            help = "Patch-output compression codec override; supports codec[:level]. Repeat --compress-codec for multiple codecs (for example CHD: --compress-codec cdzs[:19] --compress-codec cdzl --compress-codec cdfl). If :level is omitted, falls back to --compress-level profile."
+            value_delimiter = ',',
+            help = "Patch-output compression codec override; supports codec[:level]. Repeat or comma-separate --compress-codec for multiple codecs (for example CHD: --compress-codec cdzs[:19],cdzl,cdfl). If :level is omitted, falls back to --compress-level profile."
         )
     )]
     #[serde(default)]
@@ -786,25 +829,29 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "checksum-cache",
+            long = "assume-in",
             value_name = "ALGO=HEX",
-            help = "Provide trusted effective patch input checksum values for validation without recomputing; repeat for multiple algorithms (for example: --checksum-cache crc32=1234abcd)"
+            value_delimiter = ',',
+            value_parser = crate::expect_tokens::validate_expect_token,
+            help = "Provide trusted effective patch input checksum values so validation skips recomputing them; repeat or comma-separate for multiple algorithms (for example: --assume-in crc32=1234abcd)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub checksum_cache: Vec<String>,
+    pub assume_in: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "validate-with-checksum",
+            long = "expect-in",
             value_name = "ALGO=HEX",
-            help = "Validate effective patch input checksum before apply; repeat for multiple algorithms (for example: --validate-with-checksum crc32=1234abcd)"
+            value_delimiter = ',',
+            value_parser = crate::expect_tokens::validate_expect_token,
+            help = "Validate the effective patch input before apply; ALGO=HEX checksum and/or size=N / min-size=N tokens (repeatable, comma-separable, for example: --expect-in crc32=1234abcd,size=1048576)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub validate_with_checksums: Vec<String>,
+    pub expect_in: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -876,14 +923,16 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "validate-output-checksum",
+            long = "expect-out",
             value_name = "ALGO=HEX",
-            help = "Validate the patched output checksum after apply; repeat for multiple algorithms (for example: --validate-output-checksum sha1=...)"
+            value_delimiter = ',',
+            value_parser = crate::expect_tokens::validate_expect_token,
+            help = "Validate the patched output checksum after apply; ALGO=HEX tokens (repeatable, comma-separable, for example: --expect-out sha1=...)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub validate_with_output_checksums: Vec<String>,
+    pub expect_out: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -919,6 +968,7 @@ pub struct PatchApplyCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -1022,6 +1072,7 @@ pub struct PatchValidateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'i',
             long,
             value_name = "PATH",
             help = "ROM or container input against which patches are validated"
@@ -1031,6 +1082,7 @@ pub struct PatchValidateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 's',
             long = "select",
             help = "Container payload selection pattern(s) used while auto-extracting patch validate input and patch files"
         )
@@ -1041,23 +1093,15 @@ pub struct PatchValidateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "rom-filter",
-            help = "Keep ROM-like payload candidates while resolving the patch validation input archive"
+            long = "filter",
+            value_enum,
+            value_delimiter = ',',
+            help = "Keep only payload candidates of the given class while resolving patch validation input/patch archives: rom, patch, or both (repeatable, comma-separable)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub rom_filter: bool,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long = "patch-filter",
-            help = "Keep patch-like payload candidates while resolving patch archives"
-        )
-    )]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub patch_filter: bool,
+    pub filter: Vec<FilterKind>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -1090,45 +1134,29 @@ pub struct PatchValidateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "checksum-cache",
+            long = "assume-in",
             value_name = "ALGO=HEX",
-            help = "Provide trusted effective patch input checksum values for validation without recomputing; repeat for multiple algorithms (for example: --checksum-cache crc32=1234abcd)"
+            value_delimiter = ',',
+            value_parser = crate::expect_tokens::validate_expect_token,
+            help = "Provide trusted effective patch input checksum values so validation skips recomputing them; repeat or comma-separate for multiple algorithms (for example: --assume-in crc32=1234abcd)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub checksum_cache: Vec<String>,
+    pub assume_in: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "validate-with-checksum",
+            long = "expect-in",
             value_name = "ALGO=HEX",
-            help = "Validate effective patch input checksum before patch preflight; repeat for multiple algorithms (for example: --validate-with-checksum crc32=1234abcd)"
+            value_delimiter = ',',
+            value_parser = crate::expect_tokens::validate_expect_token,
+            help = "Validate the effective patch input before preflight; ALGO=HEX checksum and/or size=N / min-size=N tokens (repeatable, comma-separable, for example: --expect-in crc32=1234abcd,size=1048576)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub validate_with_checksums: Vec<String>,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long = "validate-with-size",
-            value_name = "BYTES",
-            help = "Validate exact effective patch input size before patch preflight"
-        )
-    )]
-    #[cfg_attr(feature = "typescript-types", ts(optional))]
-    pub validate_with_size: Option<u64>,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        arg(
-            long = "validate-with-min-size",
-            value_name = "BYTES",
-            help = "Validate minimum effective patch input size before patch preflight"
-        )
-    )]
-    #[cfg_attr(feature = "typescript-types", ts(optional))]
-    pub validate_with_min_size: Option<u64>,
+    pub expect_in: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -1215,6 +1243,7 @@ pub struct PatchValidateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -1339,6 +1368,7 @@ pub struct PatchCreateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'f',
             long,
             help = "Patch format (derived from the output extension when omitted; required when the output has no recognizable patch extension)"
         )
@@ -1349,6 +1379,7 @@ pub struct PatchCreateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'o',
             long,
             value_name = "PATH",
             help = "Output patch path; optional only with --plan"
@@ -1387,13 +1418,16 @@ pub struct PatchCreateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "source-crc32",
-            help = "Precomputed crc32 (8 hex digits) of the original ROM; used with --checksum-name to embed the value without re-reading the original"
+            long = "assume-in",
+            value_name = "ALGO=HEX",
+            value_delimiter = ',',
+            value_parser = crate::expect_tokens::validate_expect_token,
+            help = "Trusted checksum(s) of the original ROM; with --checksum-name the crc32 value is embedded without re-reading the original (for example: --assume-in crc32=1234abcd)"
         )
     )]
     #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional))]
-    pub source_crc32: Option<String>,
+    #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
+    pub assume_in: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -1429,6 +1463,7 @@ pub struct PatchCreateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -1475,6 +1510,7 @@ pub struct PlanExtractBatchCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -1523,24 +1559,29 @@ pub struct BundleParseCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            value_name = "SOURCE",
+            short = 'i',
+            long = "input",
+            value_name = "INPUT",
             help = "Bundle file or archive containing a root bundle"
         )
     )]
-    pub source: PathBuf,
+    pub input: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
-            long = "extract-dir",
+            short = 'o',
+            long = "output",
+            value_name = "DIR",
             help = "Extract bundle-referenced archive members into this directory (path entries stay unresolved without it when the source is an archive)"
         )
     )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
-    pub extract_dir: Option<PathBuf>,
+    pub output: Option<PathBuf>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -1593,17 +1634,22 @@ pub struct BundleCreateCommand {
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub rom: Option<PathBuf>,
-    /// Cached ROM checksum values from a prior staging pass. The webapp uses
-    /// this to avoid hashing the same prepared leaf during bundle export.
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "rom-checksums", hide = true))]
+    /// Trusted ROM checksum/size values from a prior staging pass, so bundle
+    /// export skips re-hashing the same prepared leaf. `algo=hex` tokens supply
+    /// the emitted rom checks; a `size=N` token supplies the prepared size.
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        arg(
+            long = "assume-in",
+            value_name = "ALGO=HEX",
+            value_delimiter = ',',
+            value_parser = crate::expect_tokens::validate_expect_token,
+            help = "Trusted rom checksum(s) and/or size for the bundle's rom checks, skipping recompute (for example: --assume-in crc32=1234abcd,size=1048576)"
+        )
+    )]
     #[serde(default)]
     #[cfg_attr(feature = "typescript-types", ts(optional, as = "Option<_>"))]
-    pub rom_checksums: Vec<String>,
-    /// Cached prepared ROM size from a prior staging pass.
-    #[cfg_attr(not(target_arch = "wasm32"), arg(long = "rom-size", hide = true))]
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript-types", ts(optional, type = "number | null"))]
-    pub rom_size: Option<u64>,
+    pub assume_in: Vec<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
@@ -1784,6 +1830,7 @@ pub struct BundleCreateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'o',
             long,
             help = "Where to write the bundle: rom-weaver-bundle.json, or rom-weaver-bundle.json.gz / rom-weaver-bundle.json.zst for a compressed one"
         )
@@ -1833,6 +1880,7 @@ pub struct BundleCreateCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
         arg(
+            short = 'j',
             long,
             default_value = "auto",
             value_name = "auto|N",
@@ -2003,12 +2051,21 @@ impl BundleCreateCommand {
 pub struct PpfUndoCommand {
     #[cfg_attr(
         not(target_arch = "wasm32"),
-        arg(value_name = "ROM", help = "ROM produced by applying the PPF patch")
+        arg(
+            short = 'i',
+            long = "input",
+            value_name = "ROM",
+            help = "ROM produced by applying the PPF patch"
+        )
     )]
     pub rom: PathBuf,
     #[cfg_attr(
         not(target_arch = "wasm32"),
-        arg(value_name = "PPF", help = "PPF3 patch containing undo data")
+        arg(
+            long = "patch",
+            value_name = "PPF",
+            help = "PPF3 patch containing undo data"
+        )
     )]
     pub patch: PathBuf,
     #[cfg_attr(

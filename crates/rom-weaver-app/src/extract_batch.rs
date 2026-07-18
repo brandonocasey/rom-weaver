@@ -70,7 +70,7 @@ impl CliApp {
         let job_sizes: Vec<u64> = jobs
             .iter()
             .map(|job| {
-                std::fs::metadata(&job.source)
+                std::fs::metadata(&job.input)
                     .map(|meta| meta.len())
                     .unwrap_or(0)
             })
@@ -215,15 +215,16 @@ mod tests {
             .iter()
             .zip(stems.iter().copied())
             .map(|(archive, stem)| ExtractCommand {
-                source: archive.clone(),
+                input: archive.clone(),
                 select: Vec::new(),
-                rom_filter: false,
-                patch_filter: false,
-                out_dir: out.join(stem),
+                filter: Vec::new(),
+                output: out.join(stem),
                 split_bin: false,
                 no_ignore: false,
                 no_nested_extract: false,
-                no_overwrite: false,
+                // Batch waves write into per-job output dirs; keep the old
+                // overwrite-allowed behavior the pre-`--force` default had.
+                force: true,
                 checksum: Vec::new(),
                 checksum_rom: Vec::new(),
                 probe: false,

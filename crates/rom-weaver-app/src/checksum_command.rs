@@ -15,12 +15,14 @@ impl CliApp {
     /// so [`run_checksum`](Self::run_checksum) can apply the `--probe` fail-on-unidentified
     /// gate before the single terminal `finish`).
     fn run_checksum_inner(&self, args: ChecksumCommand) -> OperationReport {
+        let rom_filter = args.rom_filter();
+        let patch_filter = args.patch_filter();
         trace!(
-            source = %args.source.display(),
+            source = %args.input.display(),
             algorithm_count = args.algo.len(),
             selections = args.select.len(),
-            rom_filter = args.rom_filter,
-            patch_filter = args.patch_filter,
+            rom_filter,
+            patch_filter,
             no_extract = args.no_extract,
             no_ignore = args.no_ignore,
             no_trim_fix = args.no_trim_fix,
@@ -30,11 +32,10 @@ impl CliApp {
             "starting checksum command"
         );
         let ChecksumCommand {
-            source,
+            input: source,
             algo,
             select,
-            rom_filter,
-            patch_filter,
+            filter: _,
             no_extract,
             no_ignore,
             no_trim_fix,

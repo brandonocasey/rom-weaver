@@ -61,15 +61,14 @@ fn main() {
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("input");
             ExtractCommand {
-                source: source.clone(),
+                input: source.clone(),
                 select: Vec::new(),
-                rom_filter: false,
-                patch_filter: false,
-                out_dir: out_dir.join(stem),
+                filter: Vec::new(),
+                output: out_dir.join(stem),
                 split_bin: false,
                 no_ignore: false,
                 no_nested_extract: false,
-                no_overwrite: false,
+                force: true,
                 checksum: Vec::new(),
                 checksum_rom: Vec::new(),
                 probe: false,

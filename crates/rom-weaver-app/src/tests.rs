@@ -510,15 +510,14 @@ fn nested_extract_auto_extracts_all_branches_body() {
 
     let out_dir = dir.join("extracted");
     let outcome = app.run(Commands::Extract(ExtractCommand {
-        source: outer_zip,
+        input: outer_zip,
         select: Vec::new(),
-        rom_filter: false,
-        patch_filter: false,
-        out_dir: out_dir.clone(),
+        filter: Vec::new(),
+        output: out_dir.clone(),
         split_bin: false,
         no_ignore: false,
         no_nested_extract: false,
-        no_overwrite: false,
+        force: false,
         checksum: Vec::new(),
         checksum_rom: Vec::new(),
         probe: false,
