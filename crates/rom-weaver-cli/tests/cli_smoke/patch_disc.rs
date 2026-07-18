@@ -1,4 +1,8 @@
 use super::shared::*;
+use rom_weaver_gdrom::{
+    GD_HIGH_DENSITY_START_LBA, GdRomFs, IsoFile, IsoTimestamp, USER_DATA_SIZE, build_iso,
+    encode_mode1_sector,
+};
 
 // ====================================================================
 // Disc patch apply: a multi-track CD/GD disc (many .bin + .cue/.gdi) is a
@@ -687,5 +691,83 @@ fn patch_apply_disc_gdi_target_patches_one_track() {
     assert_eq!(
         fs::read(out_dir.child("track02.bin").path()).expect("track02"),
         apply_ips_literal(track02, DISC_PATCH_OFFSET, &disc_patch_payload())
+    );
+}
+
+#[test]
+fn patch_apply_dcp_rebuilds_gdrom_through_cli() {
+    let temp = setup_temp_dir();
+    let source_files = [IsoFile {
+        path: "KEEP.DAT".to_string(),
+        data: b"source file".to_vec(),
+    }];
+    let cooked = build_iso(
+        &source_files,
+        GD_HIGH_DENSITY_START_LBA,
+        IsoTimestamp::default(),
+    )
+    .expect("source ISO");
+    let raw = cooked
+        .chunks_exact(USER_DATA_SIZE)
+        .enumerate()
+        .flat_map(|(index, sector)| {
+            encode_mode1_sector(
+                GD_HIGH_DENSITY_START_LBA + index as u32,
+                sector.try_into().expect("cooked sector"),
+            )
+        })
+        .collect::<Vec<_>>();
+    fs::write(temp.child("track03.bin").path(), raw).expect("source track");
+    temp.child("disc.gdi")
+        .write_str("1\n3 45000 4 2352 track03.bin 0\n")
+        .expect("source GDI");
+
+    let added = b"added by the DCP";
+    fs::write(temp.child("NEW.DAT").path(), added).expect("DCP payload");
+    command_stdout(
+        &[
+            "compress",
+            "--input",
+            temp.child("NEW.DAT").path().to_str().expect("path"),
+            "--format",
+            "zip",
+            "--output",
+            temp.child("update.dcp").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    );
+
+    let out_dir = temp.child("out");
+    fs::create_dir_all(out_dir.path()).expect("output dir");
+    let events = parse_json_lines(&command_stdout(
+        &[
+            "patch",
+            "apply",
+            "--input",
+            temp.child("disc.gdi").path().to_str().expect("path"),
+            "--patch",
+            temp.child("update.dcp").path().to_str().expect("path"),
+            "--no-compress",
+            "--output",
+            out_dir.child("disc.gdi").path().to_str().expect("path"),
+            "--json",
+        ],
+        0,
+    ));
+    let terminal = events.last().expect("terminal event");
+    assert_patch_envelope(terminal, "patch-apply", "dcp", "succeeded");
+
+    let mut rebuilt = GdRomFs::open(
+        File::open(out_dir.child("track03.bin").path()).expect("rebuilt track"),
+        GD_HIGH_DENSITY_START_LBA,
+    )
+    .expect("rebuilt filesystem");
+    let added_entry = rebuilt.file("NEW.DAT").expect("added DCP file").clone();
+    assert_eq!(rebuilt.read_file(&added_entry).expect("added bytes"), added);
+    let kept_entry = rebuilt.file("KEEP.DAT").expect("kept source file").clone();
+    assert_eq!(
+        rebuilt.read_file(&kept_entry).expect("kept bytes"),
+        b"source file"
     );
 }

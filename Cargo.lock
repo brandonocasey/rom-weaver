@@ -2116,6 +2116,7 @@ dependencies = [
  "owo-colors",
  "rom-weaver-app",
  "rom-weaver-core",
+ "rom-weaver-gdrom",
  "rom-weaver-nod",
  "rom-weaver-xdvdfs",
  "serde_json",
