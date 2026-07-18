@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { join } from "./cx.ts";
 
 /**
@@ -77,14 +77,16 @@ const SelectionCheckList = ({
   onSubmit: (ids: string[]) => void;
   submitLabel?: (count: number) => string;
 }) => {
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const selectableItems = items.filter((item) => item.selectable);
-  const allSelected = selectableItems.length > 0 && selectableItems.every((item) => selectedIds.includes(item.id));
+  const selectableItems = useMemo(() => items.filter((item) => item.selectable), [items]);
+  const selectableIds = useMemo(() => selectableItems.map((item) => item.id), [selectableItems]);
+  const [selectedIds, setSelectedIds] = useState<string[]>(selectableIds);
+  useEffect(() => setSelectedIds(selectableIds), [selectableIds]);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id));
   const toggle = (id: string) =>
     setSelectedIds((previous) =>
       previous.includes(id) ? previous.filter((value) => value !== id) : [...previous, id],
     );
-  const toggleAll = () => setSelectedIds(allSelected ? [] : selectableItems.map((item) => item.id));
+  const toggleAll = () => setSelectedIds(allSelected ? [] : selectableIds);
   return (
     <div className="selcheckwrap">
       <div className="seltree picklist">
@@ -108,17 +110,17 @@ const SelectionCheckList = ({
           ),
         )}
       </div>
-      {selectableItems.length > 1 ? (
-        <div className="seltoolbar">
-          <button className="btn ghost selall" onClick={toggleAll} type="button">
-            {allSelected ? "Clear all" : "Select all"}
-          </button>
-          <span className="selcount">
-            {selectedIds.length} of {selectableItems.length} selected
-          </span>
-        </div>
-      ) : null}
       <div className="selfoot">
+        {selectableItems.length > 1 ? (
+          <>
+            <button className="btn ghost selall" onClick={toggleAll} type="button">
+              {allSelected ? "Clear all" : "Select all"}
+            </button>
+            <span className="selcount">
+              {selectedIds.length} of {selectableItems.length} selected
+            </span>
+          </>
+        ) : null}
         {onCancel ? (
           <button className="btn ghost" onClick={onCancel} type="button">
             Cancel

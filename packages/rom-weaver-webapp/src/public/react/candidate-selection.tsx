@@ -73,7 +73,7 @@ function CandidateSelectionDialog({
       subtitle={
         selectableCount
           ? multiSelect
-            ? "Multiple patches found, select one or more"
+            ? "All patches start selected. Uncheck any you do not want to add, then choose Add patches."
             : "Multiple candidates found, select one"
           : "No selectable files in this source"
       }
