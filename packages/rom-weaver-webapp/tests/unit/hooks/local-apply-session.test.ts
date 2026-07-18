@@ -97,6 +97,22 @@ describe("useLocalApplyPatchFormSession derived controllers", () => {
 });
 
 describe("useLocalApplyPatchFormSession apply flow", () => {
+  it("validates once when input and patches finish staging together", async () => {
+    const validatePatches = vi.fn(async () => []);
+    const stageInput = vi.fn(async () => [{ fileName: "rom.bin", id: "rom", order: 0, size: 1024 }]);
+    const stagePatches = vi.fn(async () => [{ fileName: "a.ips", id: "patch", order: 0, size: 1024 }]);
+    renderSession({
+      patches: [source("a.ips")],
+      stageInput,
+      stagePatches,
+      validatePatches,
+    } as Partial<LocalApplyPatchFormSessionOptions>);
+
+    await waitFor(() => expect(stageInput).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(stagePatches).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(validatePatches).toHaveBeenCalledTimes(1));
+  });
+
   it("runs the workflow, then arms a pending download", async () => {
     const { result, applyPatches, downloadOutput } = renderSession();
     await act(async () => {

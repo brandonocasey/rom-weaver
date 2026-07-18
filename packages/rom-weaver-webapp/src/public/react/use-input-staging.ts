@@ -245,9 +245,10 @@ const useInputStaging = (context: InputStagingContext) => {
 
     const syncRomInput = (snapshot: ApplyWorkflowStageSnapshot, previousInputs: BinarySource[] = []) => {
       const { machines, refs, report, rows, session, stage } = contextRef.current;
-      const { inputStageMachine } = machines;
+      const { inputStageMachine, patchStageMachine } = machines;
       const inputStageGenerationRef = inputStageMachine.stageGenerationRef;
       const inputProgressGenerationRef = inputStageMachine.progressGenerationRef;
+      const patchStageGeneration = patchStageMachine.stageGenerationRef.current;
       const { busyRef, disabledRef } = refs;
       const { emitSessionTrace, onError, setSectionErrorMessage } = report;
       const { getInputKey, getPatchKey, getStableInputInfo, mergeRomInput, reclassifyArchiveToPatch, updatePatches } =
@@ -551,7 +552,11 @@ const useInputStaging = (context: InputStagingContext) => {
           // The ROM is now staged and the controller has resolved each patch's target, so run the
           // deferred deep validation. This is the race-free trigger for a patch dropped BEFORE its
           // ROM: the card flips to "Verifying…" the moment the ROM lands, then shows the verdict.
-          if (snapshot.patches.length) validatePatchesDeferred(snapshot);
+          // A same-tick patch staging run owns validation for the shared snapshot. Without this guard,
+          // ROM and patch completion each queued the same silent validation (and re-extracted archives).
+          if (snapshot.patches.length && patchStageMachine.stageGenerationRef.current === patchStageGeneration) {
+            validatePatchesDeferred(snapshot);
+          }
         })
         .catch((error) => {
           const normalizedError = toError(error);
