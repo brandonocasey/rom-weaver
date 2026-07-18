@@ -68,6 +68,10 @@
    can grow it - otherwise it pins to the top and leaves an empty notch) */
 .rw-app .fname .select { flex: none; align-self: stretch; height: auto; width: auto; border: 0; background-color: var(--plate-2); font-weight: 650; }
 .rw-app .fname .select:focus-visible { box-shadow: none; }
+/* double-extension warning under the name field: reuses the .patch-off-note
+   warn treatment; the code chips echo the typed extension */
+.rw-app .outname-ext-warn { margin-block-end: var(--sp-xs); }
+.rw-app .outname-ext-warn code { font-family: var(--mono); }
 
 /* options: a collapsible drawer (default open) marked by the tune icon, so it
    reads in the same language as the rest of the card sections */
