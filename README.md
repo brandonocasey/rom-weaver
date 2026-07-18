@@ -72,6 +72,8 @@ and save the result. Use **Create** to generate a distributable patch from
 an original and a modified file; optional Trim and Tools workflows can be
 enabled in the webapp settings. Your files are processed locally and never
 leave the device. Install it as a PWA from the browser menu to use it offline.
+New here? [Try the sample weave](https://rom-weaver.com/?bundle=first-weave.zip#/weave)
+with tiny synthetic files.
 
 To run the webapp on your own infrastructure, see
 [Self-host the webapp](#self-host-the-webapp) below.
@@ -80,7 +82,7 @@ To run the webapp on your own infrastructure, see
 
 The CLI needs no runtime beyond the install method you pick. Every method
 below installs the same `rom-weaver` command; run `rom-weaver --help` to
-verify it, then start with the [CLI guide](docs/cli.md).
+verify it, then run the [first weave](docs/cli.md#first-weave).
 
 <details>
 <summary><strong>npx</strong> — run once without installing (Node.js 22+)</summary>
@@ -150,7 +152,7 @@ Mount a working directory to process local files:
 ```bash
 docker run --rm --volume "$PWD:/data" \
   ghcr.io/brandonocasey/rom-weaver-cli:latest \
-  probe /data/game.sfc
+  probe --input /data/game.sfc
 ```
 
 </details>

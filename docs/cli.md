@@ -55,6 +55,20 @@ docker run --rm --volume "$PWD:/data" \
 For a development checkout, follow the [development guide](development.md)
 and use `cargo run -p rom-weaver-cli --` in place of `rom-weaver`.
 
+## First weave
+
+Run a complete patch with the tiny synthetic sample used by the webapp. The
+bundle contains its ROM, patch, and expected output checksum.
+
+```bash
+curl --fail --location --output first-weave.zip https://rom-weaver.com/first-weave.zip
+rom-weaver patch apply --input first-weave.zip --output woven.bin --no-compress
+rom-weaver checksum --input woven.bin --algo sha256
+```
+
+The final SHA-256 should be
+`43b1cc171d0b795e224072752effd13400f6392d0fab8d0793373cce4b4f46fb`.
+
 ## Common workflows
 
 Inspect an unknown file. Container payloads are resolved automatically unless
