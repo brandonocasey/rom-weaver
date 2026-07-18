@@ -293,17 +293,28 @@ worker runtime-caches that name.
 - **Commands.** `bundle parse` loads any accepted packaging, resolves
   entries (extracting referenced archive members into `--output`,
   attaching ingest-grade patch descriptors), and returns a typed
-  `BundleParseResult` under `details.bundle`. `bundle create` builds a
-  validated bundle from local files (ROM checks computed from the
-  real bytes, per-patch metadata flags - including
-  `--patch-input-check`/`--patch-output-check` chain-state requirements -
-  bound to the preceding `--patch` by argv index; `--output-check` pins the
-  final `output.checks`), emits plain/`.gz`/`.zst`, and `--bundle`s the bundle + sources into
-  a creatable archive (the extension picks the format, e.g. `.zip`/`.7z`).
-  `--no-bundle-rom` keeps the local ROM out of the bundle and emits its
+  `BundleParseResult` under `details.bundle`. `bundle parse` also accepts the
+  shared extraction options (`-s`/`--select`, `--filter`, `--no-extract`) for
+  archive-packaged bundles. `bundle create` mirrors `patch apply`'s argument
+  surface: the ROM comes from `-i`/`--input`, and it builds a validated bundle
+  from local files (ROM checks computed from the real bytes, per-patch metadata
+  flags - including `--patch-expect-in`/`--patch-expect-out` chain-state
+  requirements - bound to the preceding `--patch` by argv index; `--expect-out`
+  pins the final `output.checks`), emits plain/`.gz`/`.zst`, and `--bundle`s
+  the bundle + sources into a creatable archive (the extension picks the
+  format, e.g. `.zip`/`.7z`). `--no-bundle-rom` keeps the local ROM out of the
+  bundle and emits its
 entry checks-only. Create re-parses before writing, so it can never emit
   what parse rejects, and reports hash progress as running events (the
-  webapp progress meter).
+  webapp progress meter). `bundle create --from <file|->` bakes a canonical
+  checksummed bundle from a hand-written spec (local `path` entries with
+  optional/omitted checksums; explicit CLI flags override spec values, and a
+  spec `$schema` is preserved), `--schema-ref <url>` stamps a `$schema` into
+  the output (off by default to keep bytes stable), and `bundle schema` prints
+  the JSON Schema. Bundles hand-authored with a `$schema` key are accepted on
+  read. `patch apply --emit-bundle <path>` reuses this same pipeline to emit a
+  byte-identical bundle after an apply, and `patch apply --tui` drives an
+  interactive (dialoguer) authoring wizard over the `--patch` args.
 - **Bundle-driven apply.** `patch apply` routes through
   `bundle_apply.rs` when it sees `--bundle <path-or-url>`, an
   `rom-weaver-bundle.json[.codec]` input, or an archive with a root `rom-weaver-bundle.json` and no

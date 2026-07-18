@@ -138,6 +138,7 @@ xz -dc game.iso.xz | rom-weaver probe --input - --json
 | `patch validate` | Validate a patch and its embedded metadata. |
 | `bundle create` | Build a `rom-weaver-bundle.json` workflow from local files. |
 | `bundle parse` | Validate and resolve a bundle and its referenced entries. |
+| `bundle schema` | Print the `rom-weaver-bundle.json` JSON Schema to stdout. |
 | `tools ppf-undo` | Restore a ROM using undo data embedded in a PPF3 patch. |
 
 Global flags:
@@ -198,6 +199,17 @@ container/platform probe metadata into the result (`--probe`).
   the original input order is restored on output.
 - `--code` can bake supported Game Genie or Pro Action Replay/GameShark codes
   into a ROM as a synthetic patch.
+- `--emit-bundle PATH` also writes a `rom-weaver-bundle.json` after a
+  successful apply, describing the input ROM's computed checks, the ordered
+  patches, and the produced output. It reuses the `bundle create` pipeline, so
+  the file is byte-identical to the equivalent `bundle create`. The result is
+  metadata-light; rich per-patch metadata comes from `bundle create`,
+  `bundle create --from`, or `--tui`.
+- `--tui` opens an interactive wizard, seeded from the `--patch` arguments,
+  that prompts for each patch's name, version, author, and optional state plus
+  an output name, then applies and writes a `rom-weaver-bundle.json`. It needs
+  an interactive terminal and currently requires explicit `--patch` files
+  (re-opening a bundle input is not supported yet).
 
 If `--patch` is omitted, patch apply can discover RetroArch-style sidecar
 patches inside the input archive. A `rom-weaver-bundle.json` file can provide
@@ -225,31 +237,79 @@ aborting the batch on a single failure.
 A `rom-weaver-bundle.json` bundle describes a distributable patching
 workflow: ordered patches, expected input and output checksums, and output
 naming. The machine-readable schema is
-[`rom-weaver-bundle.schema.json`](rom-weaver-bundle.schema.json).
+[`rom-weaver-bundle.schema.json`](rom-weaver-bundle.schema.json); its `$id`
+resolves to
+`https://bcasey.forgejo-pages.koof.win/rom-weaver/rom-weaver-bundle.schema.json`.
+Print the current schema to stdout with `bundle schema`, then redirect it to a
+file or point an editor at it:
+
+```bash
+rom-weaver bundle schema > rom-weaver-bundle.schema.json
+```
 
 Create a bundle from local files; the checks are computed from the real
 bytes:
 
 ```bash
 rom-weaver bundle create \
-  --rom original.sfc \
+  --input original.sfc \
   --patch translation.bps \
   --patch fixes.ips \
   --output rom-weaver-bundle.json
 ```
 
-Per-patch metadata flags (`--patch-id`, `--patch-version`, `--patch-author`,
-`--patch-name`, `--patch-description`, `--patch-optional`, `--patch-label`,
-`--patch-header`, and the chain-state checks) bind to the preceding
-`--patch`. Stable patch IDs let authors replace a patch in the webapp without
-losing its metadata; bump the patch version when publishing the replacement.
-`--bundle <archive>` packages the
-bundle together with its sources into one shareable archive;
-`--no-bundle-rom` keeps the ROM out and records its checks only, which is
-the usual shape for distributing patches.
+`-i`/`--input` supplies the ROM (`--rom-url`/`--rom-name` describe a bundle
+ROM that ships elsewhere). Per-patch metadata flags (`--patch-id`,
+`--patch-version`, `--patch-author`, `--patch-name`, `--patch-description`,
+`--patch-optional`, `--patch-label`, `--patch-source-url`, `--patch-header`,
+and `--patch-basis`) bind to the preceding `--patch`. Stable patch IDs let
+authors replace a patch in the webapp without losing its metadata; bump the
+patch version when publishing the replacement. Checksum expectations use the
+same expect-token vocabulary as `patch apply`: `--expect-out ALGO=HEX` pins the
+final output, `--patch-expect-in`/`--patch-expect-out ALGO=HEX` pin a patch's
+chain-state checks (bound to the preceding `--patch`), and `--assume-in`
+supplies a trusted input checksum without recomputing it. `--bundle <archive>`
+packages the bundle together with its sources into one shareable archive;
+`--no-bundle-rom` keeps the ROM out and records its checks only, which is the
+usual shape for distributing patches. `--schema-ref <URL>` stamps a `$schema`
+URL into the emitted bundle for editor validation; it is not stamped by
+default, which keeps the output byte-stable.
+
+Rather than pass every flag, hand-author a `rom-weaver-bundle.json` spec with
+local `path`s and optional or omitted checksums, add a `$schema` line so your
+editor validates it, then let `bundle create --from` hash the referenced files
+and bake the canonical checksummed bundle:
+
+```json
+{
+  "$schema": "https://bcasey.forgejo-pages.koof.win/rom-weaver/rom-weaver-bundle.schema.json",
+  "version": 3,
+  "rom": { "path": "original.sfc" },
+  "patches": [
+    { "path": "translation.bps", "name": "English translation" },
+    { "path": "fixes.ips", "optional": true }
+  ],
+  "output": { "name": "translated.sfc" }
+}
+```
+
+```bash
+rom-weaver bundle create --from spec.json --output rom-weaver-bundle.json
+```
+
+`--from -` reads the spec from stdin (paths resolve relative to the current
+directory for stdin, or relative to the spec file otherwise). Explicit CLI
+flags override spec values, and a `$schema` already present in the spec is
+preserved automatically. Only local `path` entries are supported for `--from`;
+url-only or checks-only entries error with guidance.
 
 `bundle parse --input <bundle>` validates a bundle and resolves its referenced
-entries (`--output <dir>` extracts archive members). To apply one, run
+entries (`--output <dir>` extracts archive members). For archive-packaged
+bundles it also accepts the shared extraction options `-s`/`--select` (glob
+over bundle entry file names), `--filter rom|patch` (extract only that class),
+and `--no-extract` (report structure without extracting archive members).
+Plain JSON bundles reference files by relative path, so those options have
+nothing to extract. To apply one, run
 `rom-weaver patch apply --bundle <path-or-url>`; `--with` and `--without`
 override which optional patches run.
 
