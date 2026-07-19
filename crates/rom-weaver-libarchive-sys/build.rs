@@ -685,7 +685,11 @@ fn generate_bindings(libarchive_dir: &Path) {
         }
     }
 
-    if let Ok(sysroot) = env::var("WASI_SYSROOT")
+    // WASI-only: the sysroot must not reach a host build. .mise.toml exports
+    // WASI_SYSROOT for every task, so an unguarded --sysroot points the host
+    // bindgen at the WASI tree and it fails on missing headers like sys/stat.h.
+    if wasm_target
+        && let Ok(sysroot) = env::var("WASI_SYSROOT")
         && !sysroot.trim().is_empty()
     {
         bindgen_builder = bindgen_builder.clang_arg(format!("--sysroot={sysroot}"));
