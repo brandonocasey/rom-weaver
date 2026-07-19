@@ -129,7 +129,13 @@ green, so an unreviewed push can never reach `rom-weaver.com`. `workflow_dispatc
 accepts a `channel` input to force any channel manually.
 
 Required repository secrets: `CLOUDFLARE_API_TOKEN` (needs **Account -
-Cloudflare Pages - Edit**) and `CLOUDFLARE_ACCOUNT_ID`.
+Cloudflare Pages - Edit**, plus **Zone - DNS - Edit** to attach custom domains)
+and `CLOUDFLARE_ACCOUNT_ID`.
+
+The workflow creates its own Pages project on first run for a channel, so there
+is no manual bootstrap and no local `wrangler login` - which matters because
+`wrangler login` needs a localhost OAuth callback and cannot complete on a
+headless machine. An API token is the only credential this setup requires.
 
 DNS lives in the same Cloudflare account, so adding a custom domain to a Pages
 project creates the record automatically. Unlike the previous GitHub Pages

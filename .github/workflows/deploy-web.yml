@@ -136,6 +136,27 @@ jobs:
         if: steps.channel.outputs.channel == 'prod'
         run: cp docs/rom-weaver-bundle.schema.json packages/rom-weaver-webapp/dist/rom-weaver-bundle.schema.json
 
+      # Idempotent, so the first run on a channel bootstraps its own project and
+      # no local wrangler auth is ever needed. `project create` is the only
+      # non-obvious failure here: it errors rather than no-ops when the project
+      # already exists, which is the normal steady state.
+      - name: Ensure Cloudflare Pages project exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          project="${{ steps.channel.outputs.project }}"
+          if out=$(npx --yes wrangler@4 pages project create "$project" \
+                     --production-branch=main 2>&1); then
+            echo "created Pages project '$project'"
+          elif printf '%s' "$out" | grep -qiE 'already exists|8000007'; then
+            echo "Pages project '$project' already exists"
+          else
+            printf '%s\n' "$out" >&2
+            exit 1
+          fi
+
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
