@@ -294,7 +294,7 @@ const useLocalApplyPatchFormSession = ({
   const generatedOutputName = getGeneratedOutputName(effectiveInputs[0], outputPatches, activeSettings.output || {});
   const requestedOutputName = outputNameEdited ? getRequestedOutputName(outputName) : undefined;
   const currentResolvedOutputName =
-    resolvedOutputName && (!resolvedOutputNameKey || resolvedOutputNameKey === outputSourceKey)
+    outputPatches.length && resolvedOutputName && (!resolvedOutputNameKey || resolvedOutputNameKey === outputSourceKey)
       ? resolvedOutputName
       : "";
   const automaticResolvedOutputName = effectiveInputs.length
