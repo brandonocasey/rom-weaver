@@ -28,9 +28,13 @@ jobs:
         # is downloaded below (pinning it via mise would shadow clang on PATH and
         # break the libarchive-sys bindgen). sccache backs the RUSTC_WRAPPER set
         # in .mise.toml [env] - without it every cargo call under mise fails.
+        # clang/libclang-dev back bindgen in rom-weaver-libarchive-sys; without
+        # them it cannot resolve system headers ("'sys/stat.h' file not found").
         run: |
           sudo apt-get update
-          sudo apt-get install --yes brotli cmake ninja-build pkg-config sccache
+          sudo apt-get install --yes brotli cmake ninja-build pkg-config sccache clang libclang-dev
+          lc="$(find /usr/lib /usr/lib64 -name 'libclang.so*' 2>/dev/null | head -n1)"
+          [ -n "$lc" ] && echo "LIBCLANG_PATH=$(dirname "$lc")" >> "$GITHUB_ENV" || true
 
       - name: Install mise (rust, node, wasm-opt, ripgrep)
         uses: jdx/mise-action@v2
@@ -148,9 +152,12 @@ jobs:
           submodules: recursive
 
       - name: Install system dependencies
+        # See the quality job for why sccache and clang/libclang-dev are here.
         run: |
           sudo apt-get update
-          sudo apt-get install --yes brotli cmake ninja-build pkg-config sccache
+          sudo apt-get install --yes brotli cmake ninja-build pkg-config sccache clang libclang-dev
+          lc="$(find /usr/lib /usr/lib64 -name 'libclang.so*' 2>/dev/null | head -n1)"
+          [ -n "$lc" ] && echo "LIBCLANG_PATH=$(dirname "$lc")" >> "$GITHUB_ENV" || true
 
       - name: Install mise (rust, node, wasm-opt, ripgrep)
         uses: jdx/mise-action@v2
