@@ -48,3 +48,14 @@ jobs:
             -H "Content-Type: application/json" \
             --data '{"name":"rom-weaver-nightly","production_branch":"main"}' \
             | head -c 1200; echo
+
+      # The real question: wrangler deploy is not replaceable by a curl, so if
+      # the account-enumeration problem affects it too, the whole approach needs
+      # rethinking. Deploys a throwaway page to the nightly project.
+      - name: Attempt wrangler deploy
+        run: |
+          mkdir -p /tmp/probe
+          echo '<!doctype html><title>probe</title>ok' > /tmp/probe/index.html
+          npx --yes wrangler@4 pages deploy /tmp/probe \
+            --project-name=rom-weaver-nightly \
+            --branch=main 2>&1 | tail -20

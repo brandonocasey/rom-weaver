@@ -137,9 +137,12 @@ jobs:
         run: cp docs/rom-weaver-bundle.schema.json packages/rom-weaver-webapp/dist/rom-weaver-bundle.schema.json
 
       # Idempotent, so the first run on a channel bootstraps its own project and
-      # no local wrangler auth is ever needed. `project create` is the only
-      # non-obvious failure here: it errors rather than no-ops when the project
-      # already exists, which is the normal steady state.
+      # no local wrangler auth is ever needed.
+      #
+      # Uses the REST API rather than `wrangler pages project create`: wrangler
+      # enumerates accounts internally, which a token scoped to specific account
+      # resources cannot do, and it surfaces that as a bare "unknown error
+      # [code: 8000000]" against an endpoint that works fine directly.
       - name: Ensure Cloudflare Pages project exists
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -147,13 +150,18 @@ jobs:
         run: |
           set -o pipefail
           project="${{ steps.channel.outputs.project }}"
-          if out=$(npx --yes wrangler@4 pages project create "$project" \
-                     --production-branch=main 2>&1); then
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects"
+          body=$(curl -sS -X POST "$api" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "{\"name\":\"${project}\",\"production_branch\":\"main\"}")
+          if [ "$(printf '%s' "$body" | jq -r '.success')" = "true" ]; then
             echo "created Pages project '$project'"
-          elif printf '%s' "$out" | grep -qiE 'already exists|8000007'; then
+          elif printf '%s' "$body" | jq -e '.errors[]? | select(.code == 8000007)' >/dev/null; then
             echo "Pages project '$project' already exists"
           else
-            printf '%s\n' "$out" >&2
+            echo "unexpected response creating '$project':" >&2
+            printf '%s\n' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
             exit 1
           fi
 
