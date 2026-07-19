@@ -49,15 +49,17 @@ jobs:
           rust-targets: wasm32-wasip1-threads
           wasi-sdk: "true"
 
-      # -D warnings replaces the former standalone `wasm-check` step, which
-      # type-checked only rom-weaver-containers for this target and cost a full
-      # extra 4 min: its differing RUSTFLAGS gave it a separate fingerprint, so
-      # it recompiled the whole dependency chain just to collect warnings.
-      # Applying the flag to the build we already run covers a strict superset
-      # (the entire app, not one crate) for free. Lint levels do not affect
-      # codegen, so output bytes are unchanged.
+      # Never set RUSTFLAGS here. cargo's rustflags sources are mutually
+      # exclusive - an env override *replaces* the `[target.wasm32-wasip1-threads]`
+      # list in .cargo/config.toml rather than extending it - so even a
+      # lint-only `-D warnings` silently drops --max-memory=4294967296, the
+      # atomics/simd target features, linker-plugin-lto and the malloc/free
+      # exports. That produces a module that still builds and still passes
+      # wasm-opt, but declares a 1 GiB ceiling and fails to instantiate against
+      # the runtime's 4 GiB memory. Warnings are denied by the separate
+      # `cargo check` in the `rust` job, which does not link and so is immune.
       - name: Build production WASM
-        run: RUSTFLAGS="${RUSTFLAGS:-} -D warnings" mise run build-wasm-prod
+        run: mise run build-wasm-prod
 
       # The wasm module and its brotli sibling are already compressed, so
       # re-compressing them into the artifact only burns time.
@@ -96,6 +98,10 @@ jobs:
         with:
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
           rust-components: clippy rustfmt
+          # For the threaded-wasm type-check below. It is a `cargo check`, but
+          # libarchive-sys's build script still compiles C against the sysroot.
+          rust-targets: wasm32-wasip1-threads
+          wasi-sdk: "true"
 
       - name: Rust format
         run: mise run fmt
@@ -105,6 +111,14 @@ jobs:
 
       - name: Rust typegen
         run: mise run typegen-check
+
+      # Safe to override RUSTFLAGS for a check: nothing is linked, so losing the
+      # config's link-args is inconsequential. Lives in this job rather than
+      # next to the wasm build so it stays off the critical path - the build
+      # cannot reuse these artifacts anyway, since the differing RUSTFLAGS give
+      # them a separate fingerprint.
+      - name: WASM threaded check
+        run: RUSTFLAGS="${RUSTFLAGS:-} -D warnings" mise run wasm-check
 
       - name: Whitespace
         env:
@@ -137,6 +151,10 @@ jobs:
         # This catches missing direct dependencies and files absent from crates.io
         # tarballs before release automation runs.
         run: cargo publish --workspace --exclude rom-weaver-typegen --locked --dry-run
+
+      # `npm audit` resolves straight from the lockfiles, so this needs node but
+      # no install - which is why it sits in this job rather than behind the
+      # webapp's `npm ci` on the critical path.
       - name: npm advisories
         run: |
           npm run audit:deps
