@@ -1,5 +1,4 @@
-import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.js";
-import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
+import { SlidersHorizontal, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { detectOutputLikeExtension } from "../../../../lib/output/output-name-validation.ts";
 import { join } from "./cx.ts";

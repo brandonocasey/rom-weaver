@@ -1,7 +1,4 @@
-import Check from "lucide-react/dist/esm/icons/check.js";
-import Copy from "lucide-react/dist/esm/icons/copy.js";
-import Download from "lucide-react/dist/esm/icons/download.js";
-import X from "lucide-react/dist/esm/icons/x.js";
+import { Check, Copy, Download, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { copyToClipboard } from "../../lib/clipboard.ts";
 import { createLogger } from "../../lib/logging.ts";

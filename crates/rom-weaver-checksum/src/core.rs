@@ -28,7 +28,7 @@ use rom_weaver_core::{
 };
 use serde_json::json;
 use sha1::Sha1;
-use sha2::{Digest as Sha2Digest, Sha256};
+use sha2::Sha256;
 use tracing::trace;
 
 pub(super) const SUPPORTED_ALGORITHMS: &[&str] = &[

@@ -1,4 +1,4 @@
-import Upload from "lucide-react/dist/esm/icons/upload.js";
+import { Upload } from "lucide-react";
 import { type ReactNode, type Ref, useId, useState } from "react";
 import { readDataTransferFiles } from "../../../../lib/input/dropped-files.ts";
 import { perfNow, recordDrop } from "../../../../lib/runtime/perf-latency.ts";

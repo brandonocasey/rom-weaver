@@ -1,6 +1,4 @@
-import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.js";
-import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
-import X from "lucide-react/dist/esm/icons/x.js";
+import { ChevronDown, Crosshair, X } from "lucide-react";
 import type { CSSProperties, ReactNode, Ref } from "react";
 import { join } from "./cx.ts";
 

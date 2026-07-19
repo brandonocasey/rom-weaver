@@ -1,16 +1,18 @@
-import ArrowLeftRight from "lucide-react/dist/esm/icons/arrow-left-right.js";
-import Check from "lucide-react/dist/esm/icons/check.js";
-import Crosshair from "lucide-react/dist/esm/icons/crosshair.js";
-import EllipsisVertical from "lucide-react/dist/esm/icons/ellipsis-vertical.js";
-import Pencil from "lucide-react/dist/esm/icons/pencil.js";
-import Trash2 from "lucide-react/dist/esm/icons/trash-2.js";
-import Plus from "lucide-react/dist/esm/icons/plus.js";
-import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.js";
-import Scissors from "lucide-react/dist/esm/icons/scissors.js";
-import Tag from "lucide-react/dist/esm/icons/tag.js";
-import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
-import UserRound from "lucide-react/dist/esm/icons/user-round.js";
-import X from "lucide-react/dist/esm/icons/x.js";
+import {
+  ArrowLeftRight,
+  Check,
+  Crosshair,
+  EllipsisVertical,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Scissors,
+  Tag,
+  Trash2,
+  TriangleAlert,
+  UserRound,
+  X,
+} from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Localizer } from "../../presentation/localization/index.ts";
 import { InfoToggle } from "../../presentation/react/info-toggle.tsx";

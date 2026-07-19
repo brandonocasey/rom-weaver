@@ -1,10 +1,4 @@
-import Archive from "lucide-react/dist/esm/icons/archive.js";
-import Disc3 from "lucide-react/dist/esm/icons/disc-3.js";
-import Download from "lucide-react/dist/esm/icons/download.js";
-import ListChecks from "lucide-react/dist/esm/icons/list-checks.js";
-import Package from "lucide-react/dist/esm/icons/package.js";
-import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.js";
-import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
+import { Archive, Disc3, Download, ListChecks, Package, ShieldCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import type { BundleRomExpectation } from "../../lib/bundle/bundle-session-model.ts";

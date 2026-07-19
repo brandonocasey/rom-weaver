@@ -1,6 +1,4 @@
-import Check from "lucide-react/dist/esm/icons/check.js";
-import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
-import X from "lucide-react/dist/esm/icons/x.js";
+import { Check, TriangleAlert, X } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { join } from "./cx.ts";

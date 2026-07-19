@@ -1,5 +1,4 @@
-import Download from "lucide-react/dist/esm/icons/download.js";
-import GitCompare from "lucide-react/dist/esm/icons/git-compare.js";
+import { Download, GitCompare } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPreferredCreatePatchFormat } from "../../lib/create/patch-format-limits.ts";
 import { resolveAutomaticSelection } from "../../lib/input/selection.ts";

@@ -1,4 +1,4 @@
-import X from "lucide-react/dist/esm/icons/x.js";
+import { X } from "lucide-react";
 import { type ReactNode, useEffect, useRef } from "react";
 import type { createProgressViewModel } from "../workflow-presentation.ts";
 import { clampProgressPercent, normalizeProgressDisplayPercent } from "../workflow-presentation.ts";

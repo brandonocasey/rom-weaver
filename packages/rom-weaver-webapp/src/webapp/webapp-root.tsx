@@ -1,8 +1,4 @@
-import GitCompare from "lucide-react/dist/esm/icons/git-compare.js";
-import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.js";
-import Save from "lucide-react/dist/esm/icons/save.js";
-import Scissors from "lucide-react/dist/esm/icons/scissors.js";
-import Wrench from "lucide-react/dist/esm/icons/wrench.js";
+import { GitCompare, RotateCcw, Save, Scissors, Wrench } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getWorkbenchActivity, subscribeWorkbenchActivity } from "../lib/activity-store.ts";
 import type { BundleApplySession } from "../lib/bundle/bundle-session-model.ts";

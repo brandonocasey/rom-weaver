@@ -1,6 +1,4 @@
-import Check from "lucide-react/dist/esm/icons/check.js";
-import Copy from "lucide-react/dist/esm/icons/copy.js";
-import Disc3 from "lucide-react/dist/esm/icons/disc-3.js";
+import { Check, Copy, Disc3 } from "lucide-react";
 import { join } from "./cx.ts";
 import { Drawer } from "./drawer.tsx";
 import { useClipboardCopy } from "./use-clipboard-copy.ts";

@@ -1,4 +1,4 @@
-import Archive from "lucide-react/dist/esm/icons/archive.js";
+import { Archive } from "lucide-react";
 import type { ReactNode } from "react";
 import { getBaseFileName } from "../../../../lib/input/path-utils.ts";
 import { formatByteSize } from "../../../../presentation/workflow-presentation.ts";

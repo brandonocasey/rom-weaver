@@ -1,6 +1,4 @@
-import CircleX from "lucide-react/dist/esm/icons/circle-x.js";
-import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
-import X from "lucide-react/dist/esm/icons/x.js";
+import { CircleX, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { join } from "./cx.ts";
 

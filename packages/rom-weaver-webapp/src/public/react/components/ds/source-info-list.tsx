@@ -1,6 +1,4 @@
-import Check from "lucide-react/dist/esm/icons/check.js";
-import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.js";
-import X from "lucide-react/dist/esm/icons/x.js";
+import { Check, ChevronRight, X } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 import { InfoToggle } from "../../../../presentation/react/info-toggle.tsx";
 import { formatByteSize } from "../../../../presentation/workflow-presentation.ts";

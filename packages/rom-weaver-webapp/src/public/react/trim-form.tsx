@@ -1,5 +1,4 @@
-import Download from "lucide-react/dist/esm/icons/download.js";
-import Scissors from "lucide-react/dist/esm/icons/scissors.js";
+import { Download, Scissors } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getCompressionOutputExtension,

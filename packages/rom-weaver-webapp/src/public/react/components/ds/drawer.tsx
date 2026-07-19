@@ -1,4 +1,4 @@
-import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.js";
+import { ChevronRight } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { join } from "./cx.ts";
 

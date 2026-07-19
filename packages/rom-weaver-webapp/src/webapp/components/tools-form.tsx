@@ -1,6 +1,4 @@
-import Download from "lucide-react/dist/esm/icons/download.js";
-import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.js";
-import Wrench from "lucide-react/dist/esm/icons/wrench.js";
+import { Download, RotateCcw, Wrench } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { setWorkbenchActivity } from "../../lib/activity-store.ts";
 import { undoPpf } from "../../platform/browser/browser-api.ts";

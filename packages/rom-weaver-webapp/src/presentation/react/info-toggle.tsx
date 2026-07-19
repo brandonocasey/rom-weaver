@@ -1,4 +1,4 @@
-import Info from "lucide-react/dist/esm/icons/info.js";
+import { Info } from "lucide-react";
 import {
   type CSSProperties,
   type ReactNode,

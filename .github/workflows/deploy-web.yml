@@ -41,18 +41,19 @@ jobs:
   deploy:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    # Secrets are withheld from fork pull requests by design, so a fork preview
-    # could only ever fail. Skip rather than fail noisily on every outside PR.
+    # Secrets are withheld from fork and Dependabot pull requests, so those
+    # previews could only ever fail. Skip them instead of creating red checks.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]')
     env:
       CARGO_TERM_COLOR: always
       WASI_SDK_VERSION: "33"
       WASI_SDK_SHA256: 0ba8b5bfaeb2adf3f29bab5841d76cf5318ab8e1642ea195f88baba1abd47bce
       MISE_DISABLE_TOOLS: "aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,rust"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
@@ -105,7 +106,7 @@ jobs:
         with:
           targets: wasm32-wasip1-threads
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -115,7 +116,7 @@ jobs:
           key: cargo-v1-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-v1-
 
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@v4
         with:
           install: true
 

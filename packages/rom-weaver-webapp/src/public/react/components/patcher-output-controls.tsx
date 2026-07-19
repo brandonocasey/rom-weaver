@@ -1,4 +1,4 @@
-import Download from "lucide-react/dist/esm/icons/download.js";
+import { Download } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { RunButton } from "../components/ds/feedback.tsx";
 import type { PatcherOutputState } from "../patcher-presentation.ts";

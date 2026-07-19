@@ -1,7 +1,4 @@
-import Check from "lucide-react/dist/esm/icons/check.js";
-import Copy from "lucide-react/dist/esm/icons/copy.js";
-import ListChecks from "lucide-react/dist/esm/icons/list-checks.js";
-import X from "lucide-react/dist/esm/icons/x.js";
+import { Check, Copy, ListChecks, X } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { join } from "./cx.ts";
 import { Drawer, DrawerMark, DrawerReadout } from "./drawer.tsx";
