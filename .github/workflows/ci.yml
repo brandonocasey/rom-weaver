@@ -51,15 +51,34 @@ jobs:
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          # Default is false, so a failing job saves nothing - a red pipeline
+          # then rebuilds from cold every run, which is exactly when the cache
+          # is worth most. The key already covers rustc + Cargo.lock, so a
+          # cache written by a failed run is still valid for the next one.
+          cache-on-failure: true
+
+      # Keyed on the pinned version + its checksum, so a version bump misses the
+      # cache by construction and never serves a stale SDK.
+      - name: Cache WASI SDK
+        id: wasi-sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/wasi-sdk-${{ env.WASI_SDK_VERSION }}.0-x86_64-linux
+          key: wasi-sdk-${{ runner.os }}-${{ env.WASI_SDK_VERSION }}-${{ env.WASI_SDK_SHA256 }}
 
       - name: Install WASI SDK
+        if: steps.wasi-sdk-cache.outputs.cache-hit != 'true'
         run: |
           curl --fail --location --show-error \
             --output "$RUNNER_TEMP/wasi-sdk.tar.gz" \
             "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
           echo "${WASI_SDK_SHA256}  $RUNNER_TEMP/wasi-sdk.tar.gz" | sha256sum --check
           tar --extract --gzip --file "$RUNNER_TEMP/wasi-sdk.tar.gz" --directory "$RUNNER_TEMP"
-          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" >> "$GITHUB_ENV"
+
+      # Runs on both paths - a cache hit restores the tree but sets no env.
+      - name: Export WASI SDK path
+        run: echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" >> "$GITHUB_ENV"
 
       # Node comes from mise (.mise.toml [tools] node); cache npm downloads
       # since we no longer use setup-node's built-in cache.
@@ -173,18 +192,37 @@ jobs:
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          # Default is false, so a failing job saves nothing - a red pipeline
+          # then rebuilds from cold every run, which is exactly when the cache
+          # is worth most. The key already covers rustc + Cargo.lock, so a
+          # cache written by a failed run is still valid for the next one.
+          cache-on-failure: true
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      # Keyed on the pinned version + its checksum, so a version bump misses the
+      # cache by construction and never serves a stale SDK.
+      - name: Cache WASI SDK
+        id: wasi-sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/wasi-sdk-${{ env.WASI_SDK_VERSION }}.0-x86_64-linux
+          key: wasi-sdk-${{ runner.os }}-${{ env.WASI_SDK_VERSION }}-${{ env.WASI_SDK_SHA256 }}
+
       - name: Install WASI SDK
+        if: steps.wasi-sdk-cache.outputs.cache-hit != 'true'
         run: |
           curl --fail --location --show-error \
             --output "$RUNNER_TEMP/wasi-sdk.tar.gz" \
             "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
           echo "${WASI_SDK_SHA256}  $RUNNER_TEMP/wasi-sdk.tar.gz" | sha256sum --check
           tar --extract --gzip --file "$RUNNER_TEMP/wasi-sdk.tar.gz" --directory "$RUNNER_TEMP"
-          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" >> "$GITHUB_ENV"
+
+      # Runs on both paths - a cache hit restores the tree but sets no env.
+      - name: Export WASI SDK path
+        run: echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" >> "$GITHUB_ENV"
 
       - name: Cache npm downloads
         uses: actions/cache@v4
