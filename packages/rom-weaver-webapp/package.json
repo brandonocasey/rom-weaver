@@ -72,7 +72,7 @@
   "dependencies": {
     "@bjorn3/browser_wasi_shim": "0.4.2",
     "@lingui/core": "6.4.0",
-    "lucide-react": "0.554.0",
+    "lucide-react": "1.25.0",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "valibot": "1.4.0"
