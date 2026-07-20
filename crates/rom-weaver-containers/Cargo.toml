@@ -10,6 +10,7 @@ readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
+links = "archive"
 
 [features]
 default = [
@@ -20,13 +21,14 @@ default = [
     "threading",
 ]
 compress-bzip2 = []
-compress-bzip2-vendored = ["compress-bzip2", "dep:bzip2-sys"]
+compress-bzip2-vendored = ["compress-bzip2"]
 compress-lzma = []
 compress-lzma-vendored = ["compress-lzma"]
 compress-zlib = ["dep:adler2"]
-compress-zlib-vendored = ["compress-zlib", "dep:libz-sys"]
+compress-zlib-vendored = ["compress-zlib"]
 compress-zstd = []
-compress-zstd-vendored = ["compress-zstd", "dep:zstd-sys"]
+compress-zstd-vendored = ["compress-zstd"]
+libarchive-write-extra = []
 threading = ["dep:crossbeam-channel", "dep:crossbeam-utils"]
 
 [dependencies]
@@ -35,7 +37,7 @@ aes.workspace = true
 base16ct.workspace = true
 block-padding.workspace = true
 bytes.workspace = true
-bzip2-sys = { workspace = true, optional = true }
+bzip2-sys = { workspace = true, features = ["static"] }
 cbc.workspace = true
 chd.workspace = true
 ciso.workspace = true
@@ -49,17 +51,19 @@ encoding_rs.workspace = true
 flacenc.workspace = true
 flate2.workspace = true
 itertools.workspace = true
+libc.workspace = true
 # The folded CHD module uses liblzma unconditionally, so this cannot stay
 # optional behind compress-lzma-vendored the way the inlined nod source alone
 # would allow.
 liblzma-sys.workspace = true
+libz-sys = { workspace = true, features = ["libc", "static", "stock-zlib"] }
+lz4-sys = "1.9.4"
 lru.workspace = true
 md-5.workspace = true
 polonius-the-crab.workspace = true
 rayon.workspace = true
 rom-weaver-checksum = { path = "../rom-weaver-checksum", version = "0.5.0" }
 rom-weaver-core = { path = "../rom-weaver-core", version = "0.5.0" }
-rom-weaver-libarchive = { workspace = true, default-features = false, features = ["write-archives"] }
 sha1.workspace = true
 serde_json.workspace = true
 simple_moving_average.workspace = true
@@ -75,10 +79,27 @@ serde-big-array.workspace = true
 thiserror.workspace = true
 xxhash-rust.workspace = true
 zerocopy.workspace = true
-libz-sys = { workspace = true, optional = true, features = ["libc", "stock-zlib"] }
-zstd-sys = { workspace = true, optional = true }
+zstd-sys.workspace = true
 zstd.workspace = true
 zeekstd.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+liblzma-sys = { workspace = true, features = ["parallel"] }
+zstd-sys = { workspace = true, features = ["zstdmt"] }
+
+[target.wasm32-wasip1-threads.dependencies]
+liblzma-sys = { workspace = true, features = ["parallel"] }
+zstd-sys = { workspace = true, features = ["zstdmt"] }
+
+[target.'cfg(all(not(target_vendor = "apple"), not(target_arch = "wasm32")))'.dependencies]
+openssl-sys = { version = "0.9.80", features = ["vendored"] }
+
+[build-dependencies]
+bindgen = "0.72.1"
+cmake = "0.1.58"
+flate2.workspace = true
+path-slash = "0.2.1"
+tar.workspace = true
 
 [dev-dependencies]
 claxon.workspace = true
@@ -87,7 +108,7 @@ tar.workspace = true
 
 [package.metadata.cargo-machete]
 # maybe-async expands its async traits to async-trait at macro expansion time.
-ignored = ["async-trait", "crypto-common", "md-5"]
+ignored = ["async-trait", "crypto-common", "libc", "md-5"]
 
 [lints]
 workspace = true

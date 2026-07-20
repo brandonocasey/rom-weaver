@@ -13,7 +13,7 @@
 //! with `default-features = false, features = ["std", "read", "write", "sync"]`
 //! to the workspace dependencies, and replace the `pub mod xdvdfs;` declaration
 //! in `lib.rs` with `pub use ::xdvdfs;`. Call sites in this crate,
-//! `rom-weaver-app`, and `cli_smoke` keep the same paths either way.
+//! `rom-weaver-cli`, and `cli_smoke` keep the same paths either way.
 //!
 //! Local changes against the 0.8.3 release, kept deliberately small:
 //! - `#![no_std]` dropped, since crate-level attributes cannot apply to a

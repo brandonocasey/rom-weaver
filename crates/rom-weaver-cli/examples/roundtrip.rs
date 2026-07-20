@@ -1,7 +1,7 @@
 //! Dev tool: read a GD-ROM data track's whole filesystem, re-author it with the
 //! ISO writer, and verify every file reads back byte-identical.
 //!
-//! Usage: `cargo run --release -p rom-weaver-app --example roundtrip -- <track.bin> [start_lba]`
+//! Usage: `cargo run --release -p rom-weaver-cli --example roundtrip -- <track.bin> [start_lba]`
 
 use std::fs::File;
 use std::io::{BufReader, Cursor};

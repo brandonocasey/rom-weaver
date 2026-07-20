@@ -4,7 +4,7 @@
 //! prepended to the real data. This module identifies those headers from a byte
 //! prefix or file size so callers can strip or re-attach them. It is pure data +
 //! signature matching; the file/IO-driven detection workflow that uses these
-//! types lives in `rom-weaver-app`'s `header_detection_and_finalize`.
+//! types lives in `rom-weaver-cli`'s `header_detection_and_finalize`.
 
 pub const ROM_HEADER_BYTES: usize = 512;
 pub const ROM_HEADER_SCAN_BYTES: usize = 0x8000;

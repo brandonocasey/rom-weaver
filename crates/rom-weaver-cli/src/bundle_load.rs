@@ -1,4 +1,4 @@
-use rom_weaver_libarchive::RegularArchiveFileEntry;
+use rom_weaver_containers::libarchive::RegularArchiveFileEntry;
 
 use super::bundle_parse::{
     bundle_bytes_are_valid, bundle_file_name_codec, bundle_validation, is_bundle_json_candidate,

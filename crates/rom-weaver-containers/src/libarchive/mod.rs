@@ -1,6 +1,4 @@
-#[cfg(feature = "write-archives")]
 use std::ffi::c_void;
-#[cfg(feature = "write-archives")]
 use std::fs::File;
 use std::{
     borrow::Cow,
@@ -14,7 +12,7 @@ use std::{
 
 use rom_weaver_core::{Result, RomWeaverError};
 
-pub use rom_weaver_libarchive_sys as sys;
+pub mod sys;
 
 use sys::{
     ARCHIVE_EOF, ARCHIVE_FORMAT_7ZIP, ARCHIVE_FORMAT_BASE_MASK, ARCHIVE_FORMAT_RAR,
@@ -36,7 +34,6 @@ use sys::{
     archive_read_support_format_tar, archive_read_support_format_warc,
     archive_read_support_format_zip,
 };
-#[cfg(feature = "write-archives")]
 use sys::{
     archive_entry_free, archive_entry_new, archive_entry_set_filetype, archive_entry_set_pathname,
     archive_entry_set_perm, archive_entry_set_size, archive_write_add_filter_none,
@@ -46,7 +43,7 @@ use sys::{
     archive_write_set_format_7zip_progress_callback, archive_write_set_format_7zip_size_hint,
     archive_write_set_format_option, archive_write_set_format_zip,
 };
-#[cfg(feature = "write-extra")]
+#[cfg(feature = "libarchive-write-extra")]
 use sys::{
     archive_write_add_filter_bzip2, archive_write_add_filter_gzip, archive_write_add_filter_xz,
     archive_write_add_filter_zstd, archive_write_set_format_pax_restricted,
@@ -56,7 +53,6 @@ use sys::{
 mod entries;
 mod ffi;
 mod read;
-#[cfg(feature = "write-archives")]
 mod write;
 
 pub(crate) use ffi::{
@@ -70,12 +66,11 @@ pub use entries::{
     visit_selected_regular_archive_entries, with_regular_archive_file_entry_reader,
 };
 pub use read::{ReadArchive, ReadFilter, with_raw_stream_reader};
-#[cfg(feature = "write-archives")]
 pub use write::{
     EntryFileType, EntrySpec, WriteArchive, WriteFilter, WriteFormat, ZeroWriteBehavior,
 };
 
-#[cfg(all(test, feature = "write-archives"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{

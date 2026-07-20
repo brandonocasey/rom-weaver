@@ -13,6 +13,14 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use crate::libarchive::{
+    EntryFileType, EntrySpec, ReadArchive, ReadFilter as LibarchiveReadFilter,
+    RegularArchiveProbeFormat as LibarchiveProbeFormat, SelectedRegularArchiveEntry, WriteArchive,
+    WriteFilter as LibarchiveCreateFilter, WriteFormat as LibarchiveCreateFormat,
+    ZeroWriteBehavior, list_regular_archive_entries,
+    probe_regular_archive as probe_regular_archive_with_libarchive_impl,
+    probe_regular_archive_format, visit_selected_regular_archive_entries,
+};
 use rayon::prelude::*;
 use rom_weaver_core::{
     ArchiveEntryKindFilter, ContainerByteProgress, ContainerCreateRequest, ContainerExtractRequest,
@@ -21,14 +29,6 @@ use rom_weaver_core::{
     bounded_items_for_threads, create_extract_output_file, emit_container_running_progress,
     maybe_emit_container_byte_progress, normalize_archive_name,
     should_ignore_common_container_file,
-};
-use rom_weaver_libarchive::{
-    EntryFileType, EntrySpec, ReadArchive, ReadFilter as LibarchiveReadFilter,
-    RegularArchiveProbeFormat as LibarchiveProbeFormat, SelectedRegularArchiveEntry, WriteArchive,
-    WriteFilter as LibarchiveCreateFilter, WriteFormat as LibarchiveCreateFormat,
-    ZeroWriteBehavior, list_regular_archive_entries,
-    probe_regular_archive as probe_regular_archive_with_libarchive_impl,
-    probe_regular_archive_format, visit_selected_regular_archive_entries,
 };
 use tracing::{debug, trace};
 
@@ -651,7 +651,7 @@ pub(crate) fn probe_stream_with_libarchive(
     }
 }
 
-type LibarchiveProbeSummary = rom_weaver_libarchive::RegularArchiveProbeSummary;
+type LibarchiveProbeSummary = crate::libarchive::RegularArchiveProbeSummary;
 
 pub(crate) fn probe_regular_archive_with_libarchive(
     source: &Path,

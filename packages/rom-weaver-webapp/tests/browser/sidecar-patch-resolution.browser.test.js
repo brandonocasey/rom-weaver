@@ -97,7 +97,7 @@ const createZipFile = (entries, outputName) => {
 };
 
 // Delegates to ingest's Rust sidecar preflight (the single source of truth); the matcher itself is
-// also covered natively in `crates/rom-weaver-app/src/tests.rs` with the same golden cases.
+// also covered natively in `crates/rom-weaver-cli/src/tests.rs` with the same golden cases.
 test("sidecar resolver matches RetroArch patch basename and numeric order (via ingest preflight)", async () => {
   const entries = [
     { filename: "bundle/other.ips" },

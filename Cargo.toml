@@ -1,12 +1,9 @@
 [workspace]
 members = [
-    "crates/rom-weaver-app",
     "crates/rom-weaver-checksum",
     "crates/rom-weaver-cli",
     "crates/rom-weaver-containers",
     "crates/rom-weaver-core",
-    "crates/rom-weaver-libarchive",
-    "crates/rom-weaver-libarchive-sys",
     "crates/rom-weaver-patches",
 ]
 exclude = ["vendor/nod"]
@@ -105,8 +102,6 @@ zerocopy = { version = "0.8", features = ["alloc", "derive"] }
 zeekstd = "0.6.2"
 zstd-sys = { version = "2.0.16", default-features = false }
 zstd = "0.13.3"
-rom-weaver-libarchive-sys = { path = "crates/rom-weaver-libarchive-sys", version = "0.5.0", default-features = false }
-rom-weaver-libarchive = { path = "crates/rom-weaver-libarchive", version = "0.5.0", default-features = false }
 
 [profile.release]
 lto = "fat"

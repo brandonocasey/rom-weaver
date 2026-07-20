@@ -5,21 +5,21 @@ use tracing::trace;
 pub enum WriteFormat {
     Zip,
     SevenZ,
-    #[cfg(feature = "write-extra")]
+    #[cfg(feature = "libarchive-write-extra")]
     TarPax,
-    #[cfg(feature = "write-extra")]
+    #[cfg(feature = "libarchive-write-extra")]
     Raw,
 }
 #[derive(Clone, Copy, Debug)]
 pub enum WriteFilter {
     None,
-    #[cfg(feature = "write-extra")]
+    #[cfg(feature = "libarchive-write-extra")]
     Gzip,
-    #[cfg(feature = "write-extra")]
+    #[cfg(feature = "libarchive-write-extra")]
     Bzip2,
-    #[cfg(feature = "write-extra")]
+    #[cfg(feature = "libarchive-write-extra")]
     Xz,
-    #[cfg(feature = "write-extra")]
+    #[cfg(feature = "libarchive-write-extra")]
     Zstd,
 }
 
@@ -27,13 +27,13 @@ impl WriteFilter {
     pub const fn module_name(self) -> Option<&'static str> {
         match self {
             Self::None => None,
-            #[cfg(feature = "write-extra")]
+            #[cfg(feature = "libarchive-write-extra")]
             Self::Gzip => Some("gzip"),
-            #[cfg(feature = "write-extra")]
+            #[cfg(feature = "libarchive-write-extra")]
             Self::Bzip2 => Some("bzip2"),
-            #[cfg(feature = "write-extra")]
+            #[cfg(feature = "libarchive-write-extra")]
             Self::Xz => Some("xz"),
-            #[cfg(feature = "write-extra")]
+            #[cfg(feature = "libarchive-write-extra")]
             Self::Zstd => Some("zstd"),
         }
     }
@@ -100,9 +100,9 @@ impl WriteArchive {
             match format {
                 WriteFormat::Zip => archive_write_set_format_zip(self.as_ptr()),
                 WriteFormat::SevenZ => archive_write_set_format_7zip(self.as_ptr()),
-                #[cfg(feature = "write-extra")]
+                #[cfg(feature = "libarchive-write-extra")]
                 WriteFormat::TarPax => archive_write_set_format_pax_restricted(self.as_ptr()),
-                #[cfg(feature = "write-extra")]
+                #[cfg(feature = "libarchive-write-extra")]
                 WriteFormat::Raw => archive_write_set_format_raw(self.as_ptr()),
             }
         };
@@ -113,13 +113,13 @@ impl WriteArchive {
         let status = unsafe {
             match filter {
                 WriteFilter::None => archive_write_add_filter_none(self.as_ptr()),
-                #[cfg(feature = "write-extra")]
+                #[cfg(feature = "libarchive-write-extra")]
                 WriteFilter::Gzip => archive_write_add_filter_gzip(self.as_ptr()),
-                #[cfg(feature = "write-extra")]
+                #[cfg(feature = "libarchive-write-extra")]
                 WriteFilter::Bzip2 => archive_write_add_filter_bzip2(self.as_ptr()),
-                #[cfg(feature = "write-extra")]
+                #[cfg(feature = "libarchive-write-extra")]
                 WriteFilter::Xz => archive_write_add_filter_xz(self.as_ptr()),
-                #[cfg(feature = "write-extra")]
+                #[cfg(feature = "libarchive-write-extra")]
                 WriteFilter::Zstd => archive_write_add_filter_zstd(self.as_ptr()),
             }
         };

@@ -1,5 +1,8 @@
 use std::env;
 
+#[path = "libarchive/build.rs"]
+mod libarchive_build;
+
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(rom_weaver_wasi_threads)");
     println!("cargo:rerun-if-env-changed=ROM_WEAVER_WASI_THREADS");
@@ -11,4 +14,6 @@ fn main() {
     if target == "wasm32-wasip1-threads" || forced {
         println!("cargo:rustc-cfg=rom_weaver_wasi_threads");
     }
+
+    libarchive_build::build();
 }

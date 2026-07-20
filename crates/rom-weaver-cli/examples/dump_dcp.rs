@@ -1,6 +1,6 @@
 //! Dev tool: read a `.dcp` and print its classified manifest summary.
 //!
-//! Usage: `cargo run -p rom-weaver-app --example dump_dcp -- <patch.dcp>`
+//! Usage: `cargo run -p rom-weaver-cli --example dump_dcp -- <patch.dcp>`
 
 use std::fs::File;
 use std::io::BufReader;

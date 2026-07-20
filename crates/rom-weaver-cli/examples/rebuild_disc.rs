@@ -1,7 +1,7 @@
 //! Dev tool: apply a `.dcp` and rebuild the data track, then re-read the
 //! rebuilt track to verify patched bytes, verbatim files, and the boot area.
 //!
-//! Usage: `cargo run --release -p rom-weaver-app --example rebuild_disc -- <patch.dcp> <track3.bin> [start_lba] [out_track.bin]`
+//! Usage: `cargo run --release -p rom-weaver-cli --example rebuild_disc -- <patch.dcp> <track3.bin> [start_lba] [out_track.bin]`
 
 use std::fs::File;
 use std::io::{BufReader, Cursor};

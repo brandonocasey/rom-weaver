@@ -3,8 +3,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const WASM_PATCH_ROOT: &str = "patches/wasm";
-const BUNDLED_LIBARCHIVE: &str = "vendor/libarchive.tar.gz";
+const WASM_PATCH_ROOT: &str = "libarchive/patches/wasm";
+const BUNDLED_LIBARCHIVE: &str = "libarchive/vendor/libarchive.tar.gz";
+const WRAPPER_HEADER: &str = "libarchive/wrapper.h";
 const WASM_PATCH_FILES: &[&str] = &[
     "archive_write_set_format_wasm_shim.c",
     "archive_util_tempdir.original.txt",
@@ -174,7 +175,7 @@ fn lib_path<'a>(
         .into_owned()
 }
 
-fn main() {
+pub fn build() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let libarchive_dir = manifest_dir.join("../../vendor/libarchive");
@@ -182,8 +183,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", libarchive_dir.display());
     println!("cargo:rerun-if-changed={}", bundled_libarchive.display());
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WRITE_ARCHIVES");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WRITE_EXTRA");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_LIBARCHIVE_WRITE_EXTRA");
     emit_wasm_patch_rerun_if_changed(&manifest_dir);
 
     let source_dir = prepare_source_tree(
@@ -210,11 +210,11 @@ fn feature_enabled(name: &str) -> bool {
 }
 
 fn write_archives_enabled() -> bool {
-    feature_enabled("write-archives")
+    true
 }
 
 fn write_extra_enabled() -> bool {
-    feature_enabled("write-extra")
+    feature_enabled("libarchive-write-extra")
 }
 
 fn is_wasm_threads_target() -> bool {
@@ -632,7 +632,7 @@ fn build_libarchive(libarchive_dir: &Path) {
 }
 
 fn generate_bindings(libarchive_dir: &Path) {
-    println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed={WRAPPER_HEADER}");
     println!(
         "cargo:rerun-if-changed={}",
         libarchive_dir.join("libarchive/archive.h").display()
@@ -645,7 +645,7 @@ fn generate_bindings(libarchive_dir: &Path) {
     let include_path = libarchive_dir.join("libarchive");
     let wasm_target = is_wasm32_target();
     let mut bindgen_builder = bindgen::builder()
-        .header("wrapper.h")
+        .header(WRAPPER_HEADER)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .allowlist_var("ARCHIVE_.*")
         .allowlist_type("archive")

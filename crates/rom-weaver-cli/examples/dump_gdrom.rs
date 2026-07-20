@@ -1,8 +1,8 @@
 //! Dev tool: open a GD-ROM/CD data track and list (or extract) its ISO9660
 //! files.
 //!
-//! List:    `cargo run -p rom-weaver-app --example dump_gdrom -- <track.bin> [start_lba]`
-//! Extract: `cargo run -p rom-weaver-app --example dump_gdrom -- <track.bin> <start_lba> <NAME> <out>`
+//! List:    `cargo run -p rom-weaver-cli --example dump_gdrom -- <track.bin> [start_lba]`
+//! Extract: `cargo run -p rom-weaver-cli --example dump_gdrom -- <track.bin> <start_lba> <NAME> <out>`
 //! `start_lba` defaults to the GD high-density start (45000).
 
 use std::env;

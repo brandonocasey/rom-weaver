@@ -11,9 +11,28 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[lib]
+name = "rom_weaver_app"
+path = "src/lib.rs"
+
+[features]
+typescript-types = ["dep:ts-rs", "rom-weaver-core/typescript-types"]
+wasm-app = []
+
 [dependencies]
-rom-weaver-app = { path = "../rom-weaver-app", version = "0.5.0" }
+crc32fast.workspace = true
+flate2.workspace = true
+miniz_oxide.workspace = true
+rayon.workspace = true
+rom-weaver-checksum = { path = "../rom-weaver-checksum", version = "0.5.0" }
+rom-weaver-containers = { path = "../rom-weaver-containers", version = "0.5.0" }
 rom-weaver-core = { path = "../rom-weaver-core", version = "0.5.0" }
+rom-weaver-patches = { path = "../rom-weaver-patches", version = "0.5.0" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+ts-rs = { workspace = true, optional = true }
+zstd.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap.workspace = true
@@ -23,21 +42,34 @@ clap_complete = "4.5"
 dialoguer = { version = "0.12", default-features = false }
 indicatif = "0.18.4"
 owo-colors = "4.3.0"
-serde_json.workspace = true
+tracing-subscriber.workspace = true
+# Native-only manifest URL downloads; the wasm build never sees this (the
+# browser prefetches with JS fetch instead).
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tracing-subscriber = { version = "0.3.20", default-features = false, features = ["fmt", "std"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true
 assert_fs.workspace = true
 clap_mangen = "0.3.0"
 flate2.workspace = true
-rom-weaver-containers = { path = "../rom-weaver-containers", version = "0.5.0" }
-serde_json.workspace = true
 tar.workspace = true
-zstd.workspace = true
 
 [[bin]]
 name = "rom-weaver"
 path = "src/main.rs"
+
+[[bin]]
+name = "rom-weaver-app"
+path = "src/wasm_main.rs"
+required-features = ["wasm-app"]
+
+[[bin]]
+name = "rom-weaver-typegen"
+path = "src/typegen_main.rs"
+required-features = ["typescript-types"]
 
 [package.metadata.binstall]
 pkg-fmt = "bin"

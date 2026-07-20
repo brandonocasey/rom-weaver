@@ -1623,29 +1623,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "323c417e1d9665a65b263ec744ba09030cfb277e9daa0b018a4ab62e57bc8189"
 
 [[package]]
-name = "rom-weaver-app"
-version = "0.5.0"
-dependencies = [
- "clap",
- "crc32fast",
- "flate2",
- "miniz_oxide 0.9.1",
- "rayon",
- "rom-weaver-checksum",
- "rom-weaver-containers",
- "rom-weaver-core",
- "rom-weaver-libarchive",
- "rom-weaver-patches",
- "serde",
- "serde_json",
- "tracing",
- "tracing-subscriber",
- "ts-rs",
- "ureq",
- "zstd",
-]
-
-[[package]]
 name = "rom-weaver-checksum"
 version = "0.5.0"
 dependencies = [
@@ -1673,15 +1650,24 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "crc32fast",
  "dialoguer",
  "flate2",
  "indicatif",
+ "miniz_oxide 0.9.1",
  "owo-colors",
- "rom-weaver-app",
+ "rayon",
+ "rom-weaver-checksum",
  "rom-weaver-containers",
  "rom-weaver-core",
+ "rom-weaver-patches",
+ "serde",
  "serde_json",
  "tar",
+ "tracing",
+ "tracing-subscriber",
+ "ts-rs",
+ "ureq",
  "zstd",
 ]
 
@@ -1695,6 +1681,7 @@ dependencies = [
  "async-trait",
  "base16ct",
  "bincode",
+ "bindgen",
  "block-padding",
  "bytes",
  "bzip2-sys",
@@ -1702,6 +1689,7 @@ dependencies = [
  "chd",
  "ciso",
  "claxon",
+ "cmake",
  "crc32fast",
  "crossbeam-channel",
  "crossbeam-utils",
@@ -1712,18 +1700,21 @@ dependencies = [
  "flacenc",
  "flate2",
  "itertools 0.15.0",
+ "libc",
  "liblzma-sys",
  "libz-sys",
  "lru",
+ "lz4-sys",
  "maybe-async",
  "md-5 0.11.0",
+ "openssl-sys",
+ "path-slash",
  "polonius-the-crab",
  "proc-bitfield",
  "rand",
  "rayon",
  "rom-weaver-checksum",
  "rom-weaver-core",
- "rom-weaver-libarchive",
  "serde",
  "serde-big-array",
  "serde_json",
@@ -1755,34 +1746,6 @@ dependencies = [
  "tracing",
  "ts-rs",
  "zstd",
-]
-
-[[package]]
-name = "rom-weaver-libarchive"
-version = "0.5.0"
-dependencies = [
- "libc",
- "rom-weaver-core",
- "rom-weaver-libarchive-sys",
- "tracing",
-]
-
-[[package]]
-name = "rom-weaver-libarchive-sys"
-version = "0.5.0"
-dependencies = [
- "bindgen",
- "bzip2-sys",
- "cmake",
- "flate2",
- "libc",
- "liblzma-sys",
- "libz-sys",
- "lz4-sys",
- "openssl-sys",
- "path-slash",
- "tar",
- "zstd-sys",
 ]
 
 [[package]]

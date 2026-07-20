@@ -115,7 +115,7 @@ target="wasm32-wasip1-threads"
 out_dir="${ROM_WEAVER_WASM_TWIGGY_OUT_DIR:-$MISE_PROJECT_ROOT/target/wasm-twiggy}"
 mkdir -p "$out_dir"
 
-cargo build -p rom-weaver-app --bin rom-weaver-app --profile wasm-release --target "$target"
+cargo build -p rom-weaver-cli --features wasm-app --bin rom-weaver-app --profile wasm-release --target "$target"
 cp "$MISE_PROJECT_ROOT/target/$target/wasm-release/rom-weaver-app.wasm" "$out_dir/rom-weaver-app.wasm"
 
 echo "twiggy-ready artifact: $out_dir/rom-weaver-app.wasm"
@@ -128,19 +128,19 @@ echo "run: twiggy top -n 80 $out_dir/rom-weaver-app.wasm"
 
 [tasks.fmt]
 description = "Check Rust formatting"
-run = "cargo fmt --package rom-weaver-app --package rom-weaver-checksum --package rom-weaver-cli --package rom-weaver-containers --package rom-weaver-core --package rom-weaver-libarchive --package rom-weaver-libarchive-sys --package rom-weaver-patches --check"
+run = "cargo fmt --package rom-weaver-checksum --package rom-weaver-cli --package rom-weaver-containers --package rom-weaver-core --package rom-weaver-patches --check"
 
 [tasks.clippy]
 description = "Lint the workspace with clippy (warnings are errors)"
-run = "cargo clippy --workspace --exclude rom-weaver-nod --all-targets --no-deps -- -D warnings"
+run = "cargo clippy --workspace --all-targets --no-deps -- -D warnings"
 
 [tasks.typegen]
 description = "Regenerate TypeScript bindings from Rust"
-run = "cargo run -p rom-weaver-app --features typescript-types --bin rom-weaver-typegen -- --write"
+run = "cargo run -p rom-weaver-cli --features typescript-types --bin rom-weaver-typegen -- --write"
 
 [tasks.typegen-check]
 description = "Verify TypeScript bindings are up to date"
-run = "cargo run -p rom-weaver-app --features typescript-types --bin rom-weaver-typegen -- --check"
+run = "cargo run -p rom-weaver-cli --features typescript-types --bin rom-weaver-typegen -- --check"
 
 [tasks.manpages]
 description = "Regenerate CLI man pages from Clap definitions"
@@ -202,7 +202,7 @@ run = "cargo semver-checks check-release --workspace"
 description = "Run the Rust workspace test suite"
 # --quiet collapses the ~1400 per-test `... ok` lines into progress dots; a
 # failing test still prints its full name and panic output.
-run = "cargo test --quiet --workspace --exclude rom-weaver-nod"
+run = "cargo test --quiet --workspace"
 
 [tasks.coverage-rust]
 description = "Run the Rust workspace tests under llvm-cov and emit HTML + lcov coverage"
@@ -217,7 +217,7 @@ out_dir="{{ config_root }}/dist/coverage/rust"
 rm -rf "$out_dir"
 mkdir -p "$out_dir"
 cargo llvm-cov clean --workspace
-cargo llvm-cov --workspace --exclude rom-weaver-nod --no-report
+cargo llvm-cov --workspace --no-report
 cargo llvm-cov report --html --output-dir "$out_dir"
 cargo llvm-cov report --lcov --output-path "$out_dir/lcov.info"
 '''

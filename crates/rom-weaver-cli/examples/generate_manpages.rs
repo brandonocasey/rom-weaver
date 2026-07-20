@@ -69,7 +69,7 @@ fn collect_pages(command: &Command, path: &[String], pages: &mut BTreeMap<String
 }
 
 fn expected_pages() -> BTreeMap<String, Vec<u8>> {
-    let mut command = rom_weaver_cli::cli_command();
+    let mut command = rom_weaver_app::cli_command();
     command.build();
     let root = command.get_name().to_string();
     assert_documented(&command, std::slice::from_ref(&root));

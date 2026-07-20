@@ -41,7 +41,7 @@ command -v cargo >/dev/null || { echo "missing command: cargo" >&2; exit 1; }
 mkdir -p "$out_dir"
 
 echo "building $target -> $artifact"
-cargo build -p rom-weaver-app --bin rom-weaver-app --profile wasm-release --target "$target"
+cargo build -p rom-weaver-cli --features wasm-app --bin rom-weaver-app --profile wasm-release --target "$target"
 
 if [[ "$mode" == "prod" ]]; then
   command -v wasm-opt >/dev/null || { echo "missing command: wasm-opt (install via mise or brew install binaryen)" >&2; exit 1; }

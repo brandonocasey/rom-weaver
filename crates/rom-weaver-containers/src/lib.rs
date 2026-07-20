@@ -19,6 +19,7 @@ pub mod chd;
 mod constants;
 mod extract_support;
 mod formats;
+pub mod libarchive;
 mod libarchive_support;
 pub mod nod;
 pub mod xdvdfs;
@@ -27,6 +28,10 @@ pub mod xdvdfs;
 use self::chd::ChdCodec;
 #[cfg(test)]
 use self::chd::ChdContainerHandler;
+use crate::libarchive::{
+    ReadFilter as LibarchiveReadFilter, RegularArchiveProbeFormat as LibarchiveProbeFormat,
+    WriteFilter as LibarchiveCreateFilter, WriteFormat as LibarchiveCreateFormat,
+};
 use crate::nod::{
     common::{Compression as NodCompression, Format as NodFormat},
     read::{DiscOptions as NodDiscOptions, DiscReader as NodDiscReader},
@@ -51,10 +56,6 @@ use rom_weaver_core::{
     emit_container_running_progress, file_starts_with, insert_thread_execution_details,
     maybe_emit_container_byte_progress, operation_report_details, ordered_streaming_compress,
     physical_memory_bytes,
-};
-use rom_weaver_libarchive::{
-    ReadFilter as LibarchiveReadFilter, RegularArchiveProbeFormat as LibarchiveProbeFormat,
-    WriteFilter as LibarchiveCreateFilter, WriteFormat as LibarchiveCreateFormat,
 };
 use serde_json::{Map, Value, json};
 use zeekstd::{DecodeOptions as ZeekstdDecodeOptions, SeekTable as ZeekstdSeekTable};

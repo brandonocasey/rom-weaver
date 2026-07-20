@@ -1,6 +1,6 @@
 //! Dev tool: apply a `.dcp` against a GD-ROM data track and report results.
 //!
-//! Usage: `cargo run -p rom-weaver-app --example apply_dcp -- <patch.dcp> <track3.bin> [start_lba] [out_dir]`
+//! Usage: `cargo run -p rom-weaver-cli --example apply_dcp -- <patch.dcp> <track3.bin> [start_lba] [out_dir]`
 //! With `out_dir`, each patched/verbatim file is written there (flattened);
 //! otherwise only a summary + per-file sizes are printed.
 
