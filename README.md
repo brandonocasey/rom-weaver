@@ -22,8 +22,14 @@
 <!-- START doctoc -->
 ## Table of contents
 
-- [Beta status](#beta-status)
-- [LLM-assisted development](#llm-assisted-development)
+- [Features](#features)
+- [Notices](#notices)
+  - [Beta status](#beta-status)
+  - [LLM-assisted development](#llm-assisted-development)
+- [Install](#install)
+  - [Webapp](#webapp)
+  - [CLI](#cli)
+  - [Self-host the webapp](#self-host-the-webapp)
 - [Screenshots](#screenshots)
   - [Desktop](#desktop)
     - [Apply patches (Weave)](#apply-patches-weave)
@@ -31,66 +37,11 @@
   - [Mobile](#mobile)
     - [Apply patches (Weave)](#apply-patches-weave-1)
     - [Create a patch](#create-a-patch-1)
-- [Features](#features)
-- [Install](#install)
-  - [Webapp](#webapp)
-  - [CLI](#cli)
-  - [Self-host the webapp](#self-host-the-webapp)
 - [Documentation](#documentation)
 - [Contributing and support](#contributing-and-support)
 - [License](#license)
 
 <!-- END doctoc -->
-
-## Beta status
-
-rom-weaver is beta software and follows Semantic Versioning, but until v1.0,
-breaking changes may still happen between minor releases. Patching,
-compressing, extracting, and bundling have all been tested extensively. If you
-rely on the APIs or CLI flags, expect things to be a bit tougher: those
-interfaces may still change as the project heads toward v1.0.
-
-## LLM-assisted development
-
-rom-weaver is built by a full-time software engineer in my spare time. Claude
-and ChatGPT are used during development for brainstorming, implementation,
-debugging, and review. I make the engineering decisions and review and test
-the resulting work myself; the goal is high-quality, dependable software, but
-AI-assisted code may still need extra scrutiny.
-
-## Screenshots
-
-### Desktop
-
-#### Apply patches (Weave)
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="packages/rom-weaver-webapp/design/weave-desktop-dark.png">
-  <img src="packages/rom-weaver-webapp/design/weave-desktop-light.png" alt="Filled Weave patch workflow on desktop">
-</picture>
-
-#### Create a patch
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="packages/rom-weaver-webapp/design/create-desktop-dark.png">
-  <img src="packages/rom-weaver-webapp/design/create-desktop-light.png" alt="Filled Create patch workflow on desktop">
-</picture>
-
-### Mobile
-
-#### Apply patches (Weave)
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="packages/rom-weaver-webapp/design/weave-mobile-dark.png">
-  <img src="packages/rom-weaver-webapp/design/weave-mobile-light.png" alt="Filled Weave patch workflow on mobile">
-</picture>
-
-#### Create a patch
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="packages/rom-weaver-webapp/design/create-mobile-dark.png">
-  <img src="packages/rom-weaver-webapp/design/create-mobile-light.png" alt="Filled Create patch workflow on mobile">
-</picture>
 
 ## Features
 
@@ -118,6 +69,24 @@ AI-assisted code may still need extra scrutiny.
 
 The complete format, codec, and checksum compatibility tables are maintained
 in the [CLI guide](docs/cli.md#supported-formats).
+
+## Notices
+
+### Beta status
+
+rom-weaver is beta software and follows Semantic Versioning, but until v1.0,
+breaking changes may still happen between minor releases. Patching,
+compressing, extracting, and bundling have all been tested extensively. If you
+rely on the APIs or CLI flags, expect things to be a bit tougher: those
+interfaces may still change as the project heads toward v1.0.
+
+### LLM-assisted development
+
+rom-weaver is built by a full-time software engineer in my spare time. Claude
+and ChatGPT are used during development for brainstorming, implementation,
+debugging, and review. I make the engineering decisions and review and test
+the resulting work myself; the goal is high-quality, dependable software, but
+AI-assisted code may still need extra scrutiny.
 
 ## Install
 
@@ -288,6 +257,40 @@ supports SPA fallback and the required COOP/COEP/CORP headers; see
 [static files](docs/self-hosting.md#static-files) for host configuration.
 
 </details>
+
+## Screenshots
+
+### Desktop
+
+#### Apply patches (Weave)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packages/rom-weaver-webapp/design/weave-desktop-dark.png">
+  <img src="packages/rom-weaver-webapp/design/weave-desktop-light.png" alt="Filled Weave patch workflow on desktop">
+</picture>
+
+#### Create a patch
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packages/rom-weaver-webapp/design/create-desktop-dark.png">
+  <img src="packages/rom-weaver-webapp/design/create-desktop-light.png" alt="Filled Create patch workflow on desktop">
+</picture>
+
+### Mobile
+
+#### Apply patches (Weave)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packages/rom-weaver-webapp/design/weave-mobile-dark.png">
+  <img src="packages/rom-weaver-webapp/design/weave-mobile-light.png" alt="Filled Weave patch workflow on mobile" width="390">
+</picture>
+
+#### Create a patch
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packages/rom-weaver-webapp/design/create-mobile-dark.png">
+  <img src="packages/rom-weaver-webapp/design/create-mobile-light.png" alt="Filled Create patch workflow on mobile" width="390">
+</picture>
 
 ## Documentation
 
