@@ -30,11 +30,8 @@ type CachedStagedSource = {
   staged: StagedBrowserSource;
 };
 
-// How long a staged source survives after its last reference is released. One input load stages the
-// same source independently for each pass (drop-routing probe -> descent listings -> extract, then a
-// post-extract listing), and each pass otherwise re-copies the whole compressed file into OPFS. A
-// short retention lets the next pass reuse the existing copy; a re-stage within the window cancels the
-// timer (see stageSource), and an explicit session release (releaseSources) still cleans immediately.
+// Retain staged input briefly between probe/list/extract passes to avoid
+// re-copying it into OPFS. Explicit session release still cleans immediately.
 const STAGED_SOURCE_RETENTION_MS = 3000;
 
 const emitBrowserRuntimeVfsTrace = (
@@ -52,28 +49,16 @@ const emitBrowserRuntimeVfsTrace = (
     details,
   );
 
-// Staging dedup state is process-global, not per-runtime-instance. The app builds several
-// WorkflowRuntime instances (the module singleton in workflow-runtime.ts plus the lazily-created
-// input-preparation and output-verification runtimes), and one dropped input is staged by passes that
-// land on *different* instances. The virtual-file path allocator (browser-opfs-source-ref) is already a
-// module global, so two instances staging the same input concurrently collide there and the loser is
-// handed a phantom `name-2.ext` - which the codec/disc extractors then bake into `-2` outputs. Keeping
-// the dedup cache global (keyed by content identity, namespaced by mount) makes every pass on any
-// instance reuse one staged copy and one bare visible name. String-keyed (not a WeakMap), so entries are
-// pruned explicitly in cleanupCachedStagedSource - which already runs for every staged source.
+// Global cache deduplicates staging across several WorkflowRuntime instances.
+// Without it, concurrent instances allocate phantom `name-2.ext` paths that
+// leak into codec outputs. String keys are pruned during staged-source cleanup.
 const stagedSourceCache = new Map<string, CachedStagedSource>();
-// In-flight stages keyed by the same content identity, so a second pass that starts before the first
-// finishes staging coalesces onto it instead of running a duplicate stage (the resolved-entry cache only
-// dedupes *after* the first pass caches). Each carries a per-stage token so a release can be tied to the
-// exact in-flight stage it targets. Cleared in stageSource's finally once the entry caches.
+// Coalesce concurrent stages before the resolved cache exists. Tokens bind a
+// release to the exact in-flight stage it targets.
 const pendingStages = new Map<string, { promise: Promise<void>; token: number }>();
 let nextStageToken = 0;
-// Sources released while a staging pass was still in flight: releaseSources misses the cache for those
-// (the entry is only cached after staging completes), and the cancelled consumer never calls its wrapped
-// cleanup, stranding the staged OPFS copy. Track the release so the in-flight pass cleans up after itself
-// when it lands. The value is the token of the in-flight stage the release targets, so a re-stage that
-// starts later (a different token) is never destroyed by this stale release; a later re-stage of the same
-// source also clears the mark.
+// Remember releases that beat cache insertion so the completed stage cleans
+// itself up. Tokens prevent a stale release from destroying a later re-stage.
 const releasedStagingSources = new Map<string, number>();
 // Per-object identity key for staged sources. File metadata is not content identity: two distinct files
 // can have the same name, size, and lastModified. Callers that intentionally derive a new File view keep
@@ -268,18 +253,9 @@ const createBrowserRuntimeVfsIo = ({
     };
     const cached = cacheKey ? stagedSourceCache.get(cacheKey) : undefined;
     if (cacheKey && cached) return reuseCachedEntry(cacheKey, cached);
-    // Coalesce concurrent stages of the SAME source onto one in-flight stage. The resolved-entry cache
-    // above only dedupes once the first pass has finished staging *and* cached its entry; a second pass
-    // that starts inside that window would otherwise run its own stageFromSource, copy the input into
-    // OPFS a second time, and - because the first copy still holds the bare visible name - be handed a
-    // phantom `name-2.ext`. Codec/disc extractors derive output names from the staged stem, so the stray
-    // copy surfaced as a `-2` extraction with no base file (e.g. during ingest). Awaiting the in-flight
-    // stage lets this pass reuse the single bare-named copy instead.
+    // Coalesce in-flight stages so one source cannot acquire a duplicate `name-2.ext` OPFS path.
     if (cacheKey) {
-      // Loop rather than a single check: several passes can wake from the SAME failed in-flight stage at
-      // once. The first to resume starts a fresh stage and republishes it in pendingStages below, so the
-      // rest must re-check and coalesce onto that one instead of each starting a duplicate (the `-2`
-      // phantom this coalescing exists to prevent).
+      // Recheck after failures because another waiter may already have published a replacement stage.
       let inFlight = pendingStages.get(cacheKey);
       while (inFlight) {
         emitBrowserRuntimeVfsTrace(trace, "stageSource awaiting in-flight stage of same source", { scope });
@@ -298,20 +274,12 @@ const createBrowserRuntimeVfsIo = ({
         refCount: 1,
         staged: resolved,
       };
-      // A release landed while this stage was in flight and targets THIS stage (token match): the
-      // releasing session no longer wants the copy, but the live consumer of this fresh stage still holds
-      // its ref. Mark cleanupWhenIdle so the copy drops when that consumer releases (refCount -> 0)
-      // instead of being cleaned out from under its in-flight command; consumers release in a finally
-      // (workflow-runtime-core cleanupWorkerSources / runPathWorkerToOutput), so this cannot pin forever.
-      // A stale mark from an earlier stage carries a different token and is ignored here.
+      // Defer a matching in-flight release until the live consumer drops its reference.
       if (releasedStagingSources.get(cacheKey) === stageToken) {
         releasedStagingSources.delete(cacheKey);
         entry.cleanupWhenIdle = true;
       }
-      // A concurrent same-key stage may have cached a live entry while this one was in flight; don't
-      // clobber it (identity guard, like the delete above) - overwriting would strand its staged copy and
-      // let our later cleanup evict the wrong entry. Keep ours untracked; its wrapper cleanup still
-      // releases the duplicate staged copy.
+      // Do not replace a concurrently cached entry; this stage's wrapper will clean up its duplicate.
       if (stagedSourceCache.get(cacheKey)) {
         emitBrowserRuntimeVfsTrace(trace, "stageSource skipped caching (key already live)", {
           fileName: resolved.fileName,

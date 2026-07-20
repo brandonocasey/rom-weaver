@@ -285,13 +285,7 @@ impl<R: Read + Seek> Z3dsPayloadReader<R> {
         Self::with_window(inner, start, 0, len)
     }
 
-    /// Reader over a *window* of the compressed payload: `inner` holds only payload offsets
-    /// `[base, len)` and its physical byte 0 corresponds to logical payload offset `base`.
-    /// The decoder seeks using absolute payload offsets (from the seek table), so this maps a
-    /// logical offset `o` to inner position `start + (o - base)`. Used by the wasm streaming
-    /// extract, where `inner` is a `Cursor` over just one task's frame-group compressed bytes
-    /// and `base` is that group's `frame_start_comp`. With `base = 0` and `start = payload
-    /// offset`, this is exactly the whole-payload reader behavior.
+    /// Maps absolute decoder offsets into a bounded payload window at `start + (offset - base)`.
     fn with_window(mut inner: R, start: u64, base: u64, len: u64) -> io::Result<Self> {
         inner.seek(SeekFrom::Start(start))?;
         Ok(Self {
@@ -355,13 +349,8 @@ impl<R: Read + Seek> Seek for Z3dsPayloadReader<R> {
 }
 
 thread_local! {
-    /// Per-worker reusable zstd compression context, keyed by level. `zstd::bulk::compress` builds
-    /// and frees a fresh `CCtx` (and its match-finder workspace) on every call; a z3ds create fans
-    /// hundreds-to-thousands of frames across a handful of workers, so re-allocating that workspace
-    /// per frame is pure overhead. Caching one compressor per thread reuses the workspace across
-    /// every frame the thread handles. Keyed by level so a level change rebuilds it; each
-    /// `compress` call is independent (one frame in, one frame out), so reuse never changes output
-    /// bytes. Lives across the scoped-thread create path.
+    /// Per-worker zstd context, rebuilt when the level changes, to avoid allocating its workspace
+    /// for every independent frame.
     static Z3DS_THREAD_COMPRESSOR: std::cell::RefCell<Option<(i32, ZstdCompressor<'static>)>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -491,15 +480,10 @@ impl Z3dsContainerHandler {
 
     /// Group the seekable frames into frame-aligned extract tasks.
     ///
-    /// Every task starts exactly on a frame boundary (`frame_start_decomp`), so the decoder seeks
-    /// straight to a frame start and decompresses zero bytes it then discards - unlike a fixed
-    /// byte-grid, which would force a worker landing mid-frame to re-inflate that frame's prefix.
-    /// Deriving boundaries from the seek table (rather than the create-time frame constant) keeps
-    /// extract optimal for archives written with any frame size, including older 256 KiB ones.
+    /// Seek-table boundaries avoid reinflating partial frames and support any
+    /// writer frame size, including older 256 KiB archives.
     ///
-    /// Task span is [`Z3DS_EXTRACT_MAX_CHUNK_BYTES`] for large archives but shrinks so the count
-    /// reaches roughly `requested_threads * Z3DS_EXTRACT_TASKS_PER_THREAD`; otherwise a mid-size
-    /// file would collapse into a handful of big tasks and leave most requested threads idle.
+    /// Shrink task spans below the max when needed to keep requested threads busy.
     fn build_extract_tasks(
         &self,
         seek_table: &ZeekstdSeekTable,
@@ -889,13 +873,8 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
         let source = request.source.clone();
 
         let decode_result: Result<()> = if execution.used_parallelism {
-            // Each worker opens its own windowed reader over the source and decodes its assigned
-            // frame-aligned task range (the zeekstd seek table + offset limits make it read only
-            // those frames, so peak memory is one task's working set per worker - not the whole
-            // payload). In the browser the OPFS proxy worker owns the source handle, so a spawned
-            // wasm thread's `path_open` is marshalled to it and succeeds; the old streaming
-            // read-on-main pipeline that read each frame range on the main thread is no longer
-            // needed. A multi-GiB 3DS image still never needs a whole-payload allocation.
+            // Workers decode bounded, frame-aligned windows independently, keeping peak memory to
+            // one task per worker instead of the full image.
             decode_tasks_ordered(
                 &tasks,
                 execution.effective_threads,
@@ -1042,14 +1021,8 @@ impl ContainerHandlerOperations for Z3dsContainerHandler {
             }
 
             if execution.used_parallelism {
-                // Single threaded-reader/parallel-compressor pipeline for every target. The calling
-                // thread reads each frame and hands it to `std::thread::scope` workers that run zstd
-                // in parallel, reading ahead up to `inflight` frames and draining compressed frames
-                // in order. Reading on one thread is required in the browser - only the main OPFS
-                // runner can open the source - and costs nothing on native because create is
-                // compression-bound, so the reader stays ahead of the compressors. It also keeps
-                // the worker count exactly `effective_threads`, so it never double-books the
-                // bounded wasm thread pool.
+                // Read frames on the caller and hand bounded buffers to workers, keeping output ordered and
+                // the worker count at `effective_threads`.
                 let create_progress_bytes = Arc::clone(&create_progress_bytes);
                 let create_progress_bucket = Arc::clone(&create_progress_bucket);
                 let mut input = BufReader::new(File::open(input_path)?);

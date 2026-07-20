@@ -6,14 +6,7 @@ import type {
   RomWeaverRunJsonEvent,
 } from "./rom-weaver-types.d.ts";
 
-/**
- * Host selection callback. The wasm app calls a host-select import with a UTF-8 JSON request
- * (`{mode, heading, candidates:[{value,label,size}]}`) and the host resolves it to the chosen
- * 0-based indices. A single-select prompt uses the first index; a multi-select prompt uses all of
- * them. An empty array means cancel. The runner supplies an implementation that blocks the worker
- * until the UI resolves the pick; when no handler is registered it returns `[]` (cancel), matching
- * the historical non-interactive behavior.
- */
+/** Resolves a wasm selection request to zero-based indices; an empty result means cancel. */
 type HostSelectCallback = (request: string) => number[];
 
 type WasmEnvImports = {

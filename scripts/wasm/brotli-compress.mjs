@@ -1,12 +1,6 @@
 #!/usr/bin/env node
-// Brotli-compress a build artifact using Node's bundled libbrotli, so the build
-// needs no `brotli` CLI (it ships no macOS/Linux release binaries, forcing an
-// OS package install in every CI job and the Docker image).
-//
-// LGWIN is pinned to 24 to match the CLI's default window; Node otherwise
-// defaults to 22 and produces a measurably larger file. With that pin the
-// output is the same size as `brotli --quality=11` and decodes to identical
-// bytes - only the one-byte window-size header differs.
+// Use Node's bundled Brotli to avoid another CI dependency. Pin LGWIN to the CLI default because
+// Node's smaller default produces larger artifacts.
 
 import fs from "node:fs";
 import process from "node:process";

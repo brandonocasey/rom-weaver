@@ -1,13 +1,6 @@
-// WASI thread-start handshake - the "start barrier" that serializes wasi.thread-spawn so concurrent
-// memory.grow calls (from per-thread stack allocation) cannot race V8's shared-memory size
-// propagation and trip an out-of-bounds hang. The requester publishes one spawn request on a
-// pooled worker's control word and blocks here until the worker acknowledges it has started; only
-// then may the next spawn proceed. See docs/browser-concurrency.md for the full protocol and the
-// state-transition table, and rom-weaver-browser-opfs-api.ts / workers/browser-wasi-thread-worker.ts
-// for the requester and worker halves.
-//
-// This module holds the wire constants and the leaf Atomics helpers so the protocol is defined in
-// one place and is unit-testable without spinning up real worker threads.
+// WASI thread-start barrier. Serializing spawns prevents per-thread memory.grow
+// calls from racing V8 shared-memory propagation. The requester blocks until a
+// pooled worker acknowledges startup. See docs/browser-concurrency.md.
 
 // --- WASI errnos returned to the wasm thread-spawn import ----------------------------------------
 

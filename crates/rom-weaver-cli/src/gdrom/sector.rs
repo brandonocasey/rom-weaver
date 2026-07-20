@@ -1,17 +1,8 @@
 //! CD/GD-ROM track sector handling.
 //!
-//! A data track on a CD or GD-ROM stores its 2048-byte ISO9660 logical sectors
-//! wrapped in physical sectors that may also carry a 12-byte sync pattern, a
-//! 4-byte address/mode header and trailing EDC/ECC error-correction bytes
-//! (`MODE1/2352`), or a smaller framing (`MODE2/2336`), or none at all when the
-//! track is already "cooked" to bare 2048-byte sectors. Reading an ISO9660
-//! filesystem out of a track therefore means stripping that framing to recover
-//! the user-data payload of each sector.
-//!
-//! This module detects a track's physical sector format and presents it as a
-//! stream of cooked 2048-byte logical sectors. It performs no error correction
-//! and never rewrites EDC/ECC - that belongs to the (write-side) GD-ROM author,
-//! not the reader.
+//! Detects cooked 2048, MODE1/2352, MODE2/2352 Form 1, and MODE2/2336 layouts
+//! and exposes their 2048-byte ISO9660 payloads. Reading only strips framing;
+//! EDC/ECC regeneration belongs to the writer.
 
 use std::io::{Read, Seek, SeekFrom};
 

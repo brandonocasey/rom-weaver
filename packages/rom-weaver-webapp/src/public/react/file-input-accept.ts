@@ -7,17 +7,15 @@ import {
 import { ARCHIVE_FILE_EXTENSIONS, PATCH_FILE_EXTENSION_VARIANTS, ROM_FILE_EXTENSIONS } from "./file-classification.ts";
 
 /**
- * Accept attributes for the unified drop surface's browse/folder pickers. The
- * extension sets come from {@link file-classification.ts} so the picker and the
- * drop-time classifier never drift apart. Two variants mirror the CLI filters:
+ * Picker accept attributes derived from the drop classifier's extension sets:
  *
  *   - `unifiedApply` - ROMs, patches, bundles, and archives (`--rom-filter`
  *     + `--patch-filter`), used by the Apply tab.
  *   - `unifiedRom` - ROMs and archives only (`--rom-filter`), used by the
  *     Make Patch and Trim tabs, which have no patch bucket.
  *
- * Mobile Safari ignores extension-only `accept` lists, so it falls back to a
- * MIME + archive-extension list that still lets any binary ROM/patch through.
+ * Mobile Safari ignores extension-only lists, so it receives MIME types plus
+ * archive extensions while still allowing binary ROMs and patches.
  */
 
 type FileInputAcceptEnvironment = {

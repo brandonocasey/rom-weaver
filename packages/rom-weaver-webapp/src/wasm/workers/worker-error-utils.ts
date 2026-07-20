@@ -5,15 +5,9 @@ import type {
 } from "../rom-weaver-types.d.ts";
 
 /**
- * Compile-time exhaustiveness guard for the *set* of core (Rust) error kinds.
- * Keyed by the generated {@link RomWeaverErrorKind}, so adding a new Rust kind
- * (which regenerates that union) makes tsc fail here until the new kind is
- * handled. This locks the recognized kind set - NOT the message-prefix
- * classification below. Runtime classification of a Rust failure now comes from
- * the typed `error_kind` the core attaches to failed events (preferred by
- * {@link resolveWorkerErrorKind}); the {@link inferCoreWorkerErrorKind} regex is
- * only a fallback. Its keys also seed WORKER_ERROR_KINDS below, so it is
- * load-bearing, not dead code.
+ * Compile-time exhaustive set of generated Rust error kinds. Typed event kinds
+ * drive runtime classification; message-prefix inference is fallback-only. The
+ * keys also seed WORKER_ERROR_KINDS.
  */
 const CORE_ERROR_KINDS = {
   cancelled: true,

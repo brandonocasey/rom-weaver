@@ -1081,13 +1081,8 @@ impl CliApp {
             }
         }
 
-        // Dry-run the patches whose input is the original ROM: the chain head, any patch whose
-        // checksums prove a base basis, and - crucially - a patch the planner could only *guess*
-        // was chained (previous basis, `default` source: no declared basis and no checksum tying
-        // it to the previous output or the base). That guess has no evidence over "an independent
-        // patch on this ROM", so we probe the base and let a clean apply speak. Without this a
-        // second checksumless patch (e.g. plain IPS) reads "verified during the weave" purely for
-        // being second, while the same file alone or first verifies green.
+        // Probe the base for chain heads, proven base inputs, and speculative chained inputs. A
+        // checksumless patch should not appear chained merely because it follows another patch.
         let is_speculative_base = |verdict: &PatchPlanVerdict| {
             verdict.basis == PatchInputBasis::Previous
                 && verdict.basis_source == PatchBasisSource::Default

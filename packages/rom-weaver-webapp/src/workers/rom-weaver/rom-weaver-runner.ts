@@ -113,15 +113,9 @@ let operationScheduler: OperationScheduler | null = null;
 // replies, and dispose must not hang resets behind it.
 const RUNNER_DISPOSE_GRACE_MS = 2000;
 
-// --- pre-extract-gap experiments (perf/pre-extract-gap) -----------------------------------------
-// The wasm heap only ever grows. The page-load warmup (and the 8-thread pool init) leaves the shared
-// worker's heap near the cap, so the first real op OOMs and forces a worker recycle ON the critical
-// path (~2.5s observed: dispatch a `list`/`extract`, OOM, then tear down the wedged worker + stand up
-// a replacement before the extract can run). These three toggles attack that; flip any to false to
-// A/B test its contribution. (#4 - caching the compiled WebAssembly.Module - is intentionally NOT
-// implemented: the post-recycle instantiate measured ~25ms, i.e. the browser already caches the
-// compiled module, so recompile is not the cost; the recycle teardown is.)
-//
+// The WASM heap only grows, so warmup can leave a runner near its cap and force
+// first-op recycling. These toggles keep recycling off the critical path and
+// remain individually switchable for performance comparisons.
 const PRE_EXTRACT_GAP = {
   // #4: compile the wasm module once on the main/page thread, cache it, and hand the precompiled
   //     WebAssembly.Module to every (re)created runner worker so worker recycles skip the fetch+compile.
@@ -388,12 +382,8 @@ const createBrowserRunner = async (options?: { threads?: RuntimeValue }): Promis
     });
     return {
       dispose: async () => {
-        // Gracefully release the worker's resources (OPFS sync access handles, thread pool) first,
-        // then terminate the Worker thread itself. `dispose()` alone leaves the worker - and its wasm
-        // linear memory, which only ever grows - alive, so recycling it would leak the grown heap.
-        // The graceful request must be time-bounded: a worker blocked in a synchronous wait (e.g. an
-        // interactive selection prompt that was abandoned mid-flight) never acknowledges dispose, and
-        // an unbounded await here deadlocks every later reset/warmup behind it.
+        // Bound graceful cleanup because a worker blocked in a synchronous wait cannot acknowledge it;
+        // always terminate afterward to release its grow-only wasm heap.
         const graceful = client.dispose?.().catch(() => undefined);
         if (graceful) {
           await Promise.race([graceful, new Promise((resolve) => setTimeout(resolve, RUNNER_DISPOSE_GRACE_MS))]);
@@ -478,14 +468,9 @@ const recycleWarmRomWeaverRunner = async (threads?: RuntimeValue) => {
   warmLease.release();
 };
 
-// Back-to-back ops should be as fast as the first. The wasm heap only ever grows, so a runner that just
-// ran a heavy op sits closer to its memory cap; reusing it makes the next op slower (and eventually
-// forces an out-of-memory recycle onto the critical path). After a heavy op, once the runtime goes
-// quiet, recycle to a fresh clean-heap runner (which the eager pool pre-warm re-warms) so the next
-// action starts from the same clean+warm baseline as the first. Debounced + idle-gated so a burst of
-// back-to-back ops never recycles mid-burst - the warm runner stays available for immediate reuse, and
-// only a genuine pause stands up the clean replacement. Skipped for light ops, whose heap growth is
-// small enough that the reactive out-of-memory recycle already covers the rare exhaustion.
+// After a heavy op, recycle during the next idle gap so the following action
+// gets a clean, prewarmed heap. Debounce avoids recycling mid-burst; light ops
+// rely on reactive OOM handling.
 const IDLE_RECYCLE_DEBOUNCE_MS = 600;
 const IDLE_RECYCLE_MIN_OP_BYTES = 32 * 1024 * 1024;
 let idleRecycleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -507,12 +492,9 @@ const scheduleIdleRecycle = (operationBytes: number) => {
   }, IDLE_RECYCLE_DEBOUNCE_MS);
 };
 
-// Apple mobile keeps a warm runner across back-to-back light ops (so a readiness pass reuses one worker
-// instead of booting a fresh one each time), but must not hold that worker's ~1 GiB shared-memory
-// reservation into a genuine idle gap - a paused tab sitting on the reservation is what triggers the
-// WebKit out-of-memory reload. Once the burst goes quiet, evict the lone warm runner so the reservation
-// is released; the next op boots a fresh worker. Short debounce so an in-flight burst never evicts
-// mid-pass; while runners are busy or the scheduler still has queued work the timer re-arms instead.
+// Apple mobile reuses a runner during light bursts but evicts it at idle to
+// release the large shared-memory reservation that can trigger WebKit reloads.
+// Busy or queued work re-arms the debounce.
 const MOBILE_IDLE_EVICTION_DEBOUNCE_MS = 250;
 let mobileIdleEvictionTimer: ReturnType<typeof setTimeout> | null = null;
 const scheduleMobileIdleRunnerEviction = () => {
@@ -521,12 +503,8 @@ const scheduleMobileIdleRunnerEviction = () => {
     mobileIdleEvictionTimer = null;
     const pool = runnerPool;
     if (!pool || pool.idleCount === 0) return;
-    // A staging pass queues ops faster than they drain: between two ops the pool is momentarily idle
-    // while the scheduler still holds admitted or waiting work (a multi-patch drop stages each patch
-    // through its own light op). Evicting then destroys the warm runner the very next op needs, and a
-    // pool reset would also discard that op's in-flight replacement boot - so keep re-arming until the
-    // scheduler is drained, and only then release the reservation. disposeIdle (not disposeAll) so a
-    // creation racing the final eviction is never thrown away.
+    // Momentary pool idleness can occur between queued staging ops. Wait for the
+    // scheduler to drain, then dispose only idle runners so racing creation survives.
     const scheduler = operationScheduler;
     const schedulerDrained = !scheduler || (scheduler.inFlightCount === 0 && scheduler.waitingCount === 0);
     if (pool.busyCount !== 0 || !schedulerDrained) {
@@ -662,12 +640,8 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
           signal.addEventListener("abort", abortRun, { once: true });
           removeAbortListener = () => signal.removeEventListener("abort", abortRun);
         }
-        // Force this op to the worker-thread count the scheduler assigned it. For an I/O op that's the
-        // Rust plan's wave `threadsPerJob` (`fair_thread_allotment` over the whole admitted wave - incl.
-        // a noted simultaneous drop); for a non-I/O op it's the op's own reservation. A full-budget
-        // assignment is left as "auto" (no force). This keeps K concurrent jobs' WASI thread pools
-        // summing to the budget instead of each grabbing it whole (which oversubscribed the pool →
-        // `os error 6` → single-thread fallback). The scheduler already decided *which* ops overlap.
+        // Force the scheduler's per-op thread allotment unless it equals the full
+        // budget. This keeps concurrent WASI pools from each claiming everything.
         const forcedThreads = Math.max(1, Math.floor(assignedThreads));
         const dispatchInput =
           romWeaverCommandSupportsThreads(command) && forcedThreads < threadBudget
@@ -713,12 +687,9 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
     } finally {
       removeAbortListener?.();
       if (resolveAppleMobileSharedMemoryMaximumPages()) {
-        // A heavy or threaded op leaves this worker's heap grown toward its cap and its thread-pool
-        // shared memory reserved; WebKit does not promptly reclaim that, so end the worker with the
-        // command to free the large reservation before the next op needs its own. A light single-
-        // threaded op (patch parse/validate, small checksum) grew almost nothing, so keep the worker
-        // warm and reuse it across a back-to-back readiness pass instead of paying a fresh worker boot
-        // each time - then evict it once the burst goes quiet so the reservation is not held into idle.
+        // WebKit does not promptly reclaim grown heaps or thread-pool memory.
+        // Terminate after heavy/threaded work; keep light runners for the burst,
+        // then let idle eviction release them.
         const mobileHeavyOp = operationBytes >= IDLE_RECYCLE_MIN_OP_BYTES || operationThreads > 1;
         if (mobileHeavyOp) {
           emitRunnerTraceLine(
@@ -751,12 +722,8 @@ const runRomWeaverJson = async (commandOrRequest: RomWeaverRunInput, options?: R
   // a preceding probe `list`) closes the drop -> done arc.
   const submittedAtMs = perfNow();
   const threadCapable = romWeaverCommandSupportsThreads(command);
-  // `plan-extract-batch` is the scheduler's OWN decision oracle (the browser asks Rust how to group the
-  // pending I/O ops). It is thread-less and pure, so it bypasses the scheduler entirely - routing it
-  // through schedule() would re-enter the scheduler from inside its admission step and deadlock.
-  // Extract/ingest/checksum are I/O-bound: admit them via the Rust batch plan (it owns memory fit and
-  // which jobs overlap) rather than the local thread/memory gates. The runner's per-dispatch
-  // `budget / inFlightThreadedCount` split then gives each concurrent job its fair thread slice.
+  // The batch-plan command bypasses its calling scheduler to avoid reentrant
+  // deadlock. Extract/ingest/checksum use that Rust plan for memory and overlap.
   const ioCommand = command.type === "extract" || command.type === "ingest" || command.type === "checksum";
   const result =
     command.type === "plan-extract-batch"
@@ -811,14 +778,9 @@ const parseRomWeaverBatchPlan = (details: unknown): RomWeaverBatchPlan | undefin
   return { waves };
 };
 
-// Plan a concurrent extraction schedule via the shared Rust planner (`plan-extract-batch`): the single
-// source of truth the native batch executor also uses, so both group jobs identically. The browser
-// passes only what it alone knows - its resolved (mobile-capped) memory ceiling and thread budget -
-// plus each job's source size; Rust owns the working-set multiplier, wave packing, and thread split.
-// Lives in the runner (not the wasm-command layer) so the OperationScheduler's planBatch can call it
-// WITHOUT the runner importing wasm-command-runtime - which would re-form the runner⇄command module
-// cycle. It runs OUTSIDE the scheduler (runRomWeaverJson dispatches plan-extract-batch directly) because
-// the scheduler itself calls this to decide admission.
+// Ask the shared Rust planner to group jobs from browser limits and source sizes.
+// Lives here to avoid a runner↔command module cycle and runs outside the
+// scheduler because the scheduler calls it during admission.
 const invokeRomWeaverPlanExtractBatchWorker = async (input: {
   jobSizes: number[];
   logLevel?: LogLevel | string;

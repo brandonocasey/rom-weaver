@@ -71,12 +71,7 @@ type WorkflowRunLifecycleOptions = {
   setWorkflowOutputError: (error: Error) => void;
 };
 
-// Owns the run/cancel/timing lifecycle shared by the create and trim forms: it allocates the
-// AbortController, flips `busy`, clears the previous output/message/progress, runs the body, and applies
-// the identical cancellation → WORKFLOW_SELECTION_SKIPPED → output-error catch and the
-// detach/dispose/clear-abort/setBusy(false) finally. The divergent run body (workflow construction,
-// source staging, result handling) is the `execute` callback; the divergent pre-run guards stay at the
-// call site. Returns `runWorkflow` (wrap a body) and `cancelOutputProgress` (the shared cancel handler).
+// Shares run, cancellation, timing, and cleanup state between create and trim workflows.
 const useWorkflowRunLifecycle = ({
   abortActiveOperation,
   activeAbortControllerRef,

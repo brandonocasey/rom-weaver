@@ -138,9 +138,8 @@ const PendingDropCard = ({ drop }: { drop: PendingDrop }) => (
 );
 
 /**
- * Apply-workflow view, rebuilt on the dark-pro design-system primitives. It is
- * purely presentational: it reads the same ui/patchStack/output/notice/dialog
- * controllers that ApplyPatchForm wires up and renders the step layout.
+ * Purely presentational apply-workflow view: renders the step layout from the
+ * ui/patchStack/output/notice/dialog controllers ApplyPatchForm wires up.
  */
 
 /** Full registry support, listed in the 0x01 info popover. */
@@ -191,9 +190,8 @@ const formatRomTypeTag = (romType: { platform?: string; discFormat?: string } | 
 const EXPECTED_ROM_CHECK_LABELS: Record<string, string> = { crc32: "CRC32", md5: "MD5", sha1: "SHA-1" };
 
 /**
- * "Provide this ROM" card for a bundle that ships patches only: a regular file
- * card (name, size meta, open Checks drawer) so it reads exactly like the ROM
- * card it becomes once the input lands - only the meta note marks it expected.
+ * "Provide this ROM" card for a patches-only bundle, styled like the ROM card
+ * it becomes once the input lands - only the meta note marks it expected.
  */
 const BundleRomExpectationCard = ({ expectation }: { expectation: BundleRomExpectation }) => (
   <div className="cards bundle-rom-expectation" id="rom-weaver-bundle-rom-expectation">
@@ -258,11 +256,9 @@ const SectionNotice = ({ id, onDismiss, state }: { id?: string; onDismiss?: () =
 const ROM_CHECKSUM_HEX_LENGTHS: Record<number, "crc32" | "md5" | "sha1"> = { 8: "crc32", 32: "md5", 40: "sha1" };
 
 /**
- * Compare a user-pasted input checksum against a ROM's computed checksums,
- * mirroring the apply-time hex auto-detection (crc32/md5/sha1 by length).
- * Returns "ok" on match, "bad" on mismatch, or undefined when there is nothing
- * to compare yet (no/invalid pasted value, unsupported length, or the matching
- * ROM checksum has not been computed).
+ * Compare a user-pasted checksum against a ROM's computed checksums, mirroring
+ * the apply-time hex auto-detection (crc32/md5/sha1 by length). Undefined when
+ * there is nothing to compare yet.
  */
 const matchPastedInputChecksum = (pasted: string, info: RomInputRowState["info"]): "bad" | "ok" | undefined => {
   const hex = pasted.trim().toLowerCase().replace(/^0x/, "");
@@ -275,16 +271,13 @@ const matchPastedInputChecksum = (pasted: string, info: RomInputRowState["info"]
 };
 
 /**
- * Derive each ROM's verification color from the patches targeting it. A ROM is
- * only highlighted once a patch has actually verified it: green when the ROM
- * matches a required source checksum (the patch's embedded preflight) or a
- * user-pasted input checksum, red on mismatch, and no color when there is
- * nothing to verify against. A mismatch from any signal wins over a match.
+ * ROM verification color: green once a patch verifies it (embedded preflight
+ * or user-pasted checksum), red on mismatch, none when nothing verifies it.
+ * A mismatch from any signal wins over a match.
  */
-/* A patch's own ROM requirements (embedded in the patch file, or carried by
-   its manifest entry) describe its input exactly like bundle rom.checks do -
-   parse them from the card's "in ..." rows so they can fold into the same
-   Expected marks on the ROM card. */
+/* A patch's embedded/manifest ROM requirements describe its input like bundle
+   rom.checks - parse them from the card's "in ..." rows so they fold into the
+   same Expected marks on the ROM card. */
 const parsePatchInputExpectation = (patch: PatchStackItemState): ParsedBundleChecks | undefined => {
   const checksums: Record<string, string> = {};
   let size: number | undefined;
@@ -317,14 +310,11 @@ const parseChainInputExpectation = (
 };
 
 /**
- * Plan-fed base expectation for a single-ROM bench: every enabled patch the
- * chain plan resolved as base-basis describes THE base ROM, so union its
- * declared checks (bundle/user), else its embedded input values, with the
- * bundle's rom.checks. When two contributions disagree on an algorithm the
- * value matching the staged ROM wins the Expected rows and the disagreement
- * is reported as a base conflict (the losing patch's own card shows the
- * mismatch). Returns null when the plan offered no base-basis verdicts -
- * callers fall back to the sequential chain-input parse.
+ * Plan-fed base expectation for a single-ROM bench: union the checks of every
+ * base-basis patch with the bundle's rom.checks. On disagreement the value
+ * matching the staged ROM wins and a base conflict is flagged (the losing
+ * patch's own card shows the mismatch). Null when the plan offered no
+ * base-basis verdicts - callers fall back to the chain-input parse.
  */
 const buildPlanBaseExpectation = (
   patches: PatchStackItemState[],
@@ -445,18 +435,13 @@ const groupRomInputs = (rows: RomInputRowState[]): RomInputGroup[] => {
   });
 };
 
-/** Render a single (non-disc) ROM input row. */
 const renderRomInputRow = (romInput: RomInputRowState, index: number, deps: RomRowDeps): WorkflowRomInputStepItem => {
   const { romInputs, verificationStates, ui } = deps;
   const state = verificationStates.get(romInput.id);
-  // ── Input staging treatment (CLS) ──────────────────────────────────────────
-  // The resolved card structure stays mounted through staging: a slim determinate
-  // bar on the card's top edge + a status in the meta line carry progress, and the
-  // Checks drawer reserves its rows as shimmer placeholders sized to the eventual
-  // hash lengths. So nothing below the card moves when the checksums land - the
-  // bare-panel → full-card swap (~116px → ~530px, ~2s after drop, outside the input
-  // grace window) was the dominant layout shift. The bar stays full once finished;
-  // only the status text drops, leaving the platform tag in its slot.
+  // CLS: the resolved card stays mounted through staging - a slim top-edge bar +
+  // meta status carry progress, and the Checks drawer reserves shimmer rows sized
+  // to the eventual hash lengths, so nothing below the card moves when checksums
+  // land (the bare-panel → full-card swap was the dominant layout shift).
   const staging = !!romInput.progress;
   const stagingPhase = romInput.info.validationPhase === "checksum" ? "checksum" : "rom";
   let stagingProps: ReturnType<typeof toWorkflowFileProgressProps> = null;
@@ -467,10 +452,9 @@ const renderRomInputRow = (romInput: RomInputRowState, index: number, deps: RomR
         : toWorkflowFileProgressProps(romInput.progress);
   }
   const percent = stagePercent(stagingProps);
-  // A container ROM extracts and checksums in one pass (Rust hashes inline), so it sits
-  // in the "extract" phase throughout - show both verbs. A bare ROM has no extract phase
-  // and reads plain "Checksumming…". The phase comes from the runtime stage, not the
-  // label text, so the combined verb no longer drops out on stageless progress ticks.
+  // A container ROM extracts and checksums in one pass (Rust hashes inline), so it
+  // sits in the "extract" phase throughout - show both verbs. Phase comes from the
+  // runtime stage, not the label text, so the verb survives stageless ticks.
   const stageLabel = stageStatusLabel("Checksumming", romInput.info.validationPhase === "extract");
   const romBytes = romInput.size ?? romInput.sourceSize;
   const romTypeTag = formatRomTypeTag(romInput.info.romType);
@@ -498,9 +482,8 @@ const renderRomInputRow = (romInput: RomInputRowState, index: number, deps: RomR
           { fileName: romInput.info.fileName, fileSize: romBytes },
         ]
       : undefined;
-  // Phase A reserves the always-present base group; the streamed variant plan will
-  // extend this to the exact group set. No group label → bare rows, matching the
-  // no-variant resolved layout.
+  // Phase A reserves the always-present base group; the streamed variant plan
+  // extends it. No group label → bare rows, matching the no-variant layout.
   const pendingGroups = [
     {
       id: "raw",
@@ -562,11 +545,7 @@ const renderRomInputRow = (romInput: RomInputRowState, index: number, deps: RomR
   };
 };
 
-/**
- * Normalize a disc-related filename into a display name by dropping the extension
- * and a trailing "(Track N)" suffix - e.g. "Game (Track 1).bin" → "Game",
- * "Final Fantasy VII (Disc 1).7z" → "Final Fantasy VII (Disc 1)".
- */
+/** Drop the extension and a trailing "(Track N)" suffix - "Game (Track 1).bin" → "Game". */
 const discDisplayName = (fileName: string): string => {
   const base = fileName.replace(/^.*[/\\]/, "");
   const withoutExt = base.replace(/\.[^.]+$/, "");
@@ -574,11 +553,9 @@ const discDisplayName = (fileName: string): string => {
 };
 
 /**
- * The disc's display name. The cue is not a row of its own (its text rides on the
- * track rows), so a track filename like "track01.bin" is a poor title. Prefer the
- * source archive's base name (what the user dropped, e.g. "disc-bincue.7z" →
- * "disc-bincue"), then a `.cue`/`.gdi` sheet row if one exists, and only fall back
- * to a track-derived name when nothing better is available.
+ * Disc display name: a track filename like "track01.bin" is a poor title, so
+ * prefer the dropped archive's base name, then a `.cue`/`.gdi` sheet row, and
+ * only fall back to a track-derived name.
  */
 const discGroupDisplayName = (
   groupRows: RomInputRowState[],
@@ -853,9 +830,7 @@ function ApplyWorkflowFormView({
   // Inputs/patches still resolving - surfaced only on the selvage status strip.
   const inputsStaging =
     romInputs.some((row) => !!row.progress) || patches.some((item) => !!item.progress) || uiState.patchInput.loading;
-  // The selvage status strip mirrors the apply job: staging while files route,
-  // running with the active stage label, done once a download is pending,
-  // failed on an error notice.
+  // The selvage status strip mirrors the apply job's lifecycle.
   const applyProgress = outputState.applyButton.progress;
   const applyStage = applyProgress ? String(applyProgress.label || applyProgress.message || "") : "";
   const applyFailed = !!errorNotice?.visible && errorNotice.level !== "warning";
@@ -874,10 +849,9 @@ function ApplyWorkflowFormView({
   const wovenSteps = running || applyDone;
 
   const romVerificationStates = buildRomVerificationStates(patches, romInputs, disabledPatchFlags);
-  // Each ROM's computed identity, keyed by id, so a patch card can verify the
-  // input checks a user types against the real target ROM values. Disc-track
-  // rows are targeted by FILE NAME (their row id is not what the target select
-  // resolves), so those alias their actuals under the file name too.
+  // Each ROM's computed identity, keyed by id, for patch-card check verification.
+  // Disc-track rows are targeted by FILE NAME (their row id is not what the
+  // target select resolves), so those alias their actuals under the file name too.
   const romActualsById = new Map<string, RomCheckActuals>();
   for (const row of romInputs) {
     const actuals = {
@@ -892,10 +866,8 @@ function ApplyWorkflowFormView({
     }
   }
   // The expected-ROM group describes THE base ROM, so it only renders for an
-  // unambiguous single-ROM bench. The chain plan's base-basis verdicts feed it
-  // (union across every enabled patch authored against the base); without plan
-  // evidence the bundle expectation, then the chain-input patch's own checks,
-  // stand in.
+  // unambiguous single-ROM bench. Plan base-basis verdicts feed it; without plan
+  // evidence the bundle expectation, then the chain-input patch's checks, stand in.
   const singleRom = romInputs.length === 1;
   const planBaseExpectation = singleRom
     ? buildPlanBaseExpectation(patches, disabledPatchFlags, bundleMeta, bundleExpectedRomChecks, romInputs[0]?.info)
@@ -911,9 +883,9 @@ function ApplyWorkflowFormView({
   };
   const compressHeaderFormat = getOutputCompressionFormatLabel(outputState.compressionFormat, outputState.options);
   const compressionTypeOptions = createCompressionTypeOptions(outputState.options, "none");
-  // The output "ROM header" select only exists when the staged ROM actually has a
-  // strippable copier header (the checksum variants carry the detection). Auto follows
-  // the engine's rule: re-add emulator-required headers, drop junk copier headers.
+  // The "ROM header" select only exists when the staged ROM has a strippable
+  // copier header (the checksum variants carry the detection). Auto follows the
+  // engine's rule: re-add emulator-required headers, drop junk copier headers.
   const outputHeaderVariant = romInputs
     .flatMap((row) => row.info.checksumVariants || [])
     .find(
@@ -971,9 +943,7 @@ function ApplyWorkflowFormView({
       "Exports this session as a distributable rom-weaver bundle: a portable patch recipe defined by rom-weaver-bundle.json.",
     title: "Bundle",
   };
-  // The bundle action names what it does: "Create <format> [ROM] Bundle" until
-  // an export exists, then "Download <format> [ROM] Bundle". "ROM" appears only
-  // when the dropdown packs the ROM in.
+  // "Create <format> [ROM] Bundle" until an export exists, then "Download ...".
   const bundleCreateLabel = (() => {
     if (!bundleExport) return "";
     const formatValue = bundleExport.format && bundleExport.format !== "bundle" ? bundleExport.format : "zip";
@@ -988,9 +958,8 @@ function ApplyWorkflowFormView({
     const downloadKey = bundleExport.bundleRom ? "ui.bundleExport.downloadRom" : "ui.bundleExport.download";
     return localizer.message(downloadKey, { format: formatName });
   })();
-  // The bundle package select lives permanently in Output options and mirrors
-  // the persisted "Bundle" user setting - "" hides the create action, a format
-  // arms it. Empty string is the hide sentinel so it matches the stored value.
+  // The bundle package select mirrors the persisted "Bundle" user setting - ""
+  // is the hide sentinel (matches the stored value), a format arms the action.
   const bundleFormatValue = (() => {
     const format = bundleTools?.exportVisible ? bundleExport?.format : "";
     if (!format || format === "bundle") return "";
@@ -1023,9 +992,8 @@ function ApplyWorkflowFormView({
     outputHeaderField
   );
 
-  // Combined drop surface (--rom-filter + --patch-filter): the parent's unified
-  // drop handler stages bare files immediately and shows an "identifying"
-  // placeholder per archive until its ROM-vs-patch bucket is classified.
+  // Unified drop: bare files stage immediately; each archive shows an
+  // "identifying" placeholder until its ROM-vs-patch bucket is classified.
   const handleUnifiedDrop = onUnifiedDrop ?? (() => undefined);
   const [sampleLoading, setSampleLoading] = useState(false);
   const [sampleError, setSampleError] = useState("");

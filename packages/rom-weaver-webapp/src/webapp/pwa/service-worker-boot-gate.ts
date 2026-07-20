@@ -1,17 +1,6 @@
-// Holds back the first render until cross-origin isolation settles.
-//
-// When the service worker provides cross-origin isolation (it is enabled and the server does NOT send
-// COOP/COEP) the first document loads un-isolated; the service worker client then reloads the page to
-// gain control and inject the isolation headers. Without this gate the app would paint on the un-isolated
-// document only to be torn down by that reload (a visible flash). The gate suppresses rendering on the
-// doomed document so the page stays on the static background until the isolated document loads. If the
-// server already sends the headers (document is isolated on first paint) or the service worker is
-// disabled/unsupported, the gate is open from the start and boot proceeds immediately.
-//
-// Recovery: the per-document COOP/COEP handshake can intermittently land controlled-but-not-isolated and
-// the service worker client does not always reload again. When that happens the gate reloads the page
-// itself to retry (bounded, so a browser that can never isolate is not stuck in a loop). After the retry
-// budget is spent it gives up and boots un-isolated rather than hanging.
+// Delay first render while the service worker reloads an unisolated document
+// under COOP/COEP, avoiding a visible flash. A controlled-but-unisolated page
+// retries within a bound, then boots unisolated rather than hanging.
 
 type GateLogger = {
   debug: (message: string, details?: Record<string, unknown>) => void;

@@ -1,17 +1,8 @@
 #!/usr/bin/env node
 
-// Parallel browser-test runner: one vitest process per test file.
-//
-// Each vitest invocation starts its own vite dev server on its own port, so
-// every file gets a distinct origin - and therefore its own OPFS. That isolation
-// is the whole point: the in-process suite shares one origin's OPFS across files,
-// which cascades state between them and hangs the no-arg `vitest run` at a file
-// boundary. One-file-per-process removes the shared origin, so failure counts are
-// trustworthy and the full suite completes.
-//
-// CPU contention under parallel load can still flake timing-sensitive files
-// (heavy nested extraction), so any file that fails is retried once on its own
-// with no neighbours before it counts as a real failure.
+// Run each browser-test file in its own Vitest process and origin. Sharing one
+// origin leaks OPFS state between files and can hang Vitest at file boundaries.
+// Retry failures once alone to distinguish CPU-contention flakes from failures.
 //
 // Usage:
 //   node scripts/run-browser-tests.mjs [file ...] [summary-preserving vitest flags ...]

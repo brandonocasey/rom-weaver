@@ -78,17 +78,10 @@ fn into_event_omits_error_kind_for_success_and_context_wrapped_failures() {
     assert_eq!(wrapped.into_event("patch-apply").error_kind, None);
 }
 
-// ---------------------------------------------------------------------------
 // Container wrapper forwarding guard.
 //
-// Containers register through a single wrapper (`traced_container_handler`).
-// Because `ContainerHandlerOperations` has default methods, a wrapper that
-// forgets to forward one silently resolves to the trait default instead of the
-// concrete handler - no compile error, arguments vanish at runtime. These tests
-// lock that down: the stub returns a sentinel from every method, and the wrapped
-// handler must surface the sentinel, not the default. When adding a new
-// `ContainerHandlerOperations` method, add it to the stub + an assertion here.
-// ---------------------------------------------------------------------------
+// Default trait methods can hide a missing forwarder. The stub returns sentinels
+// from every operation; add an assertion whenever the trait gains a method.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

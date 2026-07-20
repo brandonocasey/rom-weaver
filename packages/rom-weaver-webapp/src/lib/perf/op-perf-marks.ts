@@ -1,20 +1,11 @@
-// User Timing instrumentation for the user-perceived latency around an operation. These land on the
-// main-thread performance timeline, so they show up both in `performance.getEntriesByType("measure")`
-// and in the DevTools Performance panel "Timings" track:
+// Main-thread User Timing measures for perceived operation latency:
 //
-//   romweaver:warmup       - page-load warmup extraction: start → done.
-//   romweaver:before-start - a drop/file-selection begins → the FIRST progress event from wasm. This is
-//                            the dead time the user waits after dropping before the operation visibly
-//                            starts working (JS staging + input prep + runner/proxy spawn + wasm boot).
-//   romweaver:after-finish - wasm reports the run finished → the result is painted in the UI. This is
-//                            the dead time the user waits for the info to appear after the work is
-//                            already done (JS result post-processing + React render + paint).
+//   warmup: page-load warmup extraction
+//   before-start: drop/selection to first WASM progress
+//   after-finish: final WASM event to result paint
 //
-// Correlation is time-ordered: the workflow state machine runs one user operation at a time, so the most
-// recent drop / wasm-finished mark is the active one. Concurrent operations would interleave their marks,
-// but the common flows (ROM load, apply, create, trim) are sequential. A multi-step user action (e.g. a
-// ROM load = extract + checksum) measures before-start against the FIRST wasm progress and after-finish
-// against the LAST wasm finish (the after-finish measure is taken only on the terminal "done" render).
+// Correlation is time-ordered because workflows run one user operation at a
+// time. Multi-step operations use the first progress and final completion.
 
 const perf =
   typeof performance !== "undefined" &&
@@ -33,9 +24,7 @@ const MEASURE_AFTER_FINISH = "romweaver:after-finish";
 
 let beforeStartArmed = false;
 let afterFinishArmed = false;
-// True while the silent page-load warmup runs. The warmup drives a real wasm extract through the same
-// runtime chokepoints, so its progress/finish marks must NOT be mistaken for a user operation (otherwise
-// it arms a bogus after-finish that a much-later user render closes against the warmup's finish).
+// Suppress user-op marks while warmup drives the same runtime chokepoints.
 let warmupActive = false;
 
 const mark = (name: string): void => {

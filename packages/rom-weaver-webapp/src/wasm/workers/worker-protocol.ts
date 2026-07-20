@@ -99,12 +99,8 @@ interface RomWeaverWorkerErrorMessage {
 }
 
 /**
- * Mid-run interactive selection request. The runner worker posts this when the wasm app needs the
- * user to pick one or more candidates, then blocks on `control` (a SharedArrayBuffer-backed
- * Int32Array) until the main thread writes the result and wakes it with `Atomics.notify`. The same
- * message serves single- and multi-select prompts; the embedded `request` JSON carries a
- * `mode: "single" | "many"` discriminant that the UI routes on. `request` is the UTF-8 JSON the
- * wasm prompter emitted (`{mode, heading, candidates:[{value,label,size}]}`).
+ * Mid-run selection request. The worker blocks on `control` until the main
+ * thread writes indices and notifies it. JSON `mode` routes single vs multi UI.
  */
 interface RomWeaverWorkerSelectRequestMessage {
   type: "selectRequest";
@@ -114,8 +110,7 @@ interface RomWeaverWorkerSelectRequestMessage {
 }
 
 /**
- * Layout of the `control` Int32Array backing a {@link RomWeaverWorkerSelectRequestMessage} handshake.
- * It is a 2-slot header followed by a variable-length payload region of selected indices:
+ * Shared selection-control layout: two header slots, then selected indices.
  *
  * ```
  *   slot 0                       : readiness flag (PENDING -> READY)
@@ -123,13 +118,8 @@ interface RomWeaverWorkerSelectRequestMessage {
  *   slots 2 .. 2 + count         : the chosen 0-based indices (only `count` slots are meaningful)
  * ```
  *
- * The runner sizes the buffer to {@link SELECT_REQUEST_HEADER_LENGTH} + (candidate count) so a
- * multi-select reply can carry at most one index per candidate. It stores
- * {@link SELECT_REQUEST_PENDING} at the flag and {@link SELECT_REQUEST_CANCEL_COUNT} at the count,
- * then waits. The main thread writes the indices into the payload region (which begins at
- * {@link SELECT_REQUEST_HEADER_LENGTH}), sets the count, flips the flag to
- * {@link SELECT_REQUEST_READY}, and calls `Atomics.notify`. Single-select prompts use the same
- * protocol with a count of 1 (or cancel).
+ * The runner initializes PENDING/cancel, the main thread writes payload and
+ * count, flips READY, then notifies. Single-select uses count 1.
  */
 export const SELECT_REQUEST_HEADER_LENGTH = 2;
 export const SELECT_REQUEST_READY_INDEX = 0;

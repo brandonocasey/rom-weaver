@@ -7,13 +7,9 @@
 #   3. /opt/homebrew/opt/wasi-sdk
 #   4. newest ~/.local/toolchains/wasi-sdk-*
 #
-# The WASI SDK is intentionally NOT a mise [tools] entry: pinning it would put its
-# clang on PATH and break the libarchive-sys bindgen on macOS (see .mise.toml).
-#
-# This is consumed by mise's `[env]` block (see .mise.toml), which derives the
-# sysroot and tool paths from the printed root. It must always exit 0 so a missing
-# SDK never breaks mise for non-wasm commands; the build tasks fail later with a
-# clear message if the toolchain is absent.
+# Kept outside mise tools so its clang does not shadow the host clang and break
+# libarchive-sys bindgen on macOS. Mise consumes the printed root; absence still
+# exits successfully so only WASM build tasks fail on a missing SDK.
 set -uo pipefail
 
 if [[ -n "${WASI_SDK_PATH:-}" && -d "${WASI_SDK_PATH}" ]]; then

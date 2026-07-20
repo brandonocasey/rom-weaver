@@ -23,14 +23,9 @@ impl CliApp {
             .collect::<Vec<_>>();
         let file_len = fs::metadata(&request.source)?.len();
         let name_hint = request.source.file_name().and_then(|name| name.to_str());
-        // Hash with the same parallelism as the inline extract path (shared budget policy) instead of
-        // forcing single-threaded - previously this path was pinned to one thread, which made
-        // `checksum` slower than extract's inline checksum. `engine_budget` is the full op budget so
-        // the engine can split it across the active variants (each capping internally at its
-        // algorithm count); capping the engine budget itself at the algorithm count would zero out
-        // parallelism on multi-variant ROMs. The *reported* thread count is the algorithm-count cap,
-        // which matches the command's failure-path reporting and the worker count actually spawned
-        // for a single-variant file (the common case).
+        // Give the variant engine the full shared budget so it can split threads
+        // across variants. Report the per-variant algorithm cap, matching the
+        // common single-variant worker count and failure paths.
         let engine_budget = context.variant_hash_execution().effective_threads;
         let execution =
             context.plan_threads(ThreadCapability::parallel(Some(algorithms.len().max(1))));

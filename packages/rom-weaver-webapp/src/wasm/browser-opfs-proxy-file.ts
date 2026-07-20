@@ -1,38 +1,23 @@
 // RandomAccessFileLike adapter backed by the OPFS async proxy.
 //
-// Instead of owning a FileSystemSyncAccessHandle (BrowserOpfsRandomAccessFile), this adapter marshals
-// every read/write/size/truncate/flush to the proxy worker via an OpfsProxyClient. It is the consumer
-// seam that lets any WASM thread operate on a real OPFS file the proxy opened - no per-thread handle,
-// so it sidesteps the "spawned thread cannot path_open OPFS (os error 44)" wall and WebKit's
-// one-handle-per-file rule (the proxy holds the single handle; this adapter just references it by id).
+// Marshals file operations to the sole handle-owning proxy, allowing spawned
+// WASM threads to access OPFS without violating WebKit's one-handle rule.
 //
-// The handle is opened lazily on first use (open is a proxy round-trip; deferring it means files that
-// are listed but never touched cost nothing). A single-block consumer-side read cache amortises the
-// per-read SAB round-trip for bursty small/sequential reads, and is validated against the proxy's
-// per-handle version stamp: any write/truncate (from THIS thread or another) bumps the stamp, so the
-// next read drops the stale block - cross-thread coherence without explicit invalidation messages.
+// Lazily opens handles and caches one read block. Proxy version stamps invalidate
+// the cache after any thread writes or truncates.
 
 import type { OpfsProxyClient } from "./browser-opfs-proxy-client.ts";
 import { OpfsProxyError } from "./browser-opfs-proxy-client.ts";
 import type { RandomAccessFileLike } from "./browser-opfs-wasi-file-inode.ts";
 
-/** Block size for the consumer read cache; large reads above this bypass the cache and stream. Bigger
- * than the slot buffer on purpose: a miss fills the whole block in slot-sized chunks, so a 4 MiB block is
- * one cache fill spanning ~2 backend reads instead of 4 separate 1 MiB fills. This matters most on the
- * Safari Blob-handle path - WebKit pays a high fixed per-call cost on `blob.slice().arrayBuffer()`, so
- * fewer, larger backend reads win (4 MiB mirrors the retired SAB virtual-file proxy's Safari-tuned
- * chunk). Decode reads are scattered but locally sequential (CHD hunks within a thread's range), so the
- * extra prefetch is reused, not wasted. Per-handle JS-heap cost; the SAB slot buffer is unchanged. */
+/** Read-cache block tuned above the SAB slot size to reduce Safari Blob calls.
+ * Locally sequential decode reads reuse the prefetch; cost is per-handle JS heap. */
 const PROXY_READ_CACHE_BLOCK_BYTES = 4 * 1024 * 1024;
 /** Requests larger than this are streamed directly rather than cached. */
 const PROXY_READ_CACHE_MAX_REQUEST_BYTES = 256 * 1024;
 /**
- * Consumer-side write-back buffer for sequential output. Decoders like CHD emit their image as tens of
- * thousands of tiny (~per-sector) writes; one proxy round-trip each would dominate the run (≈90k hops
- * for a CD image). Contiguous writes coalesce into this buffer and flush as one large `client.write`,
- * collapsing the round-trips to `bytes / slot-buffer`. A write at a non-contiguous offset, or any
- * read/size/truncate/flush/close, flushes first so the proxy (and this file's reads) always see
- * committed bytes. 4 MiB amortises the per-flush overhead while bounding the per-writable-file cost.
+ * Coalesces small sequential decoder writes into 4 MiB proxy writes. Any
+ * non-contiguous write or read/metadata operation flushes first for coherence.
  */
 const PROXY_WRITE_BUFFER_BYTES = 4 * 1024 * 1024;
 
@@ -102,12 +87,10 @@ export class BrowserProxyRandomAccessFile implements RandomAccessFileLike {
       this.cacheLen = 0;
       this.cacheVersion = version;
     }
-    // Cache hit: the whole request lies within the cached block.
     if (this.cacheBuf && start >= this.cacheStart && start + dst.byteLength <= this.cacheStart + this.cacheLen) {
       dst.set(this.cacheBuf.subarray(start - this.cacheStart, start - this.cacheStart + dst.byteLength));
       return dst.byteLength;
     }
-    // Miss: refill one aligned block, then copy out.
     if (!this.cacheBuf) this.cacheBuf = new Uint8Array(PROXY_READ_CACHE_BLOCK_BYTES);
     const blockStart = Math.floor(start / PROXY_READ_CACHE_BLOCK_BYTES) * PROXY_READ_CACHE_BLOCK_BYTES;
     const filled = this.client.readInto(handleId, blockStart, this.cacheBuf);
@@ -138,8 +121,6 @@ export class BrowserProxyRandomAccessFile implements RandomAccessFileLike {
       return this.client.write(handleId, start, data);
     }
     if (!this.wbuf) this.wbuf = new Uint8Array(PROXY_WRITE_BUFFER_BYTES);
-    // Append only when this write continues the buffered run and still fits; otherwise commit and
-    // restart the run at this offset.
     const contiguous = this.wbufLen > 0 && start === this.wbufStart + this.wbufLen;
     if (!contiguous || this.wbufLen + data.byteLength > this.wbuf.byteLength) {
       this.flushWriteBuffer();

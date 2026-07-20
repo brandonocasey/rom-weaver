@@ -1,10 +1,4 @@
-// Minimal framework-free state container for the webapp root controller. It replaces the single
-// `zustand/vanilla` `createStore` use with the same store/subscribe pattern the rest of the app
-// already hand-rolls (see `useLiveStoreController`), so the app carries no third-party store dep.
-//
-// Semantics match the slice of zustand we relied on: `setState` shallow-merges a partial (or the
-// result of an updater) into the current state and synchronously notifies every subscriber with
-// `(state, previousState)`; `subscribe` returns an unsubscribe function.
+// Minimal framework-free store: shallow-merge updates and synchronously notify subscribers.
 type StoreApi<TState> = {
   getState: () => TState;
   setState: (partial: Partial<TState> | ((state: TState) => Partial<TState>)) => void;

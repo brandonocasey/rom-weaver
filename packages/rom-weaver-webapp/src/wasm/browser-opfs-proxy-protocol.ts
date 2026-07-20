@@ -1,27 +1,10 @@
-// Shared wire-protocol definition for the browser "OPFS async proxy" SharedArrayBuffer channel.
+// Shared wire protocol for the OPFS proxy worker, the sole owner of sync access
+// handles. WASM threads publish requests, block on Atomics.wait, and wake when
+// the proxy replies; this satisfies WebKit's one-handle-per-file constraint.
 //
-// A single dedicated worker (the OPFS proxy) owns every OPFS FileSystemSyncAccessHandle and the
-// directory tree. Any WASM thread - the main runner OR a spawned WASI compute thread - marshals
-// each OPFS operation (open/read/write/truncate/flush/close/unlink/rename/mkdir/readdir/stat) over
-// this channel and blocks on Atomics.wait until the proxy services it. This is the one model that
-// respects WebKit's "one SyncAccessHandle per file" rule while letting spawned threads (which cannot
-// path_open OPFS files themselves - os error 44) perform real I/O.
-//
-//   consumer = any WASM thread (browser-opfs-io-adapters.ts BrowserProxyRandomAccessFile, and the
-//              fd-builder path routing). Publishes a request into a slot and blocks on Atomics.wait.
-//   producer = the OPFS proxy worker (workers/browser-opfs-proxy-worker.ts). Owns the handles, runs
-//              a doorbell loop, services every REQUESTED slot synchronously, and Atomics.notify-s back.
-//
-// This module is the ONE place the control-word layout, the opcodes, the slot states, and the
-// data-buffer framing are defined, so the consumer and the proxy can never silently disagree on the
-// wire format. It deliberately imports nothing (no wasiShim) so it can be loaded on every thread and
-// inside the worker without pulling the WASI shim along; STATUS carries the raw WASI errno integer
-// and the proxy/consumer translate against wasiShim on their own side.
-//
-// Memory ordering: the `Atomics.store(STATE, ...) + Atomics.notify` that flips a slot to REQUESTED
-// (consumer) or DONE (producer) is the release/acquire fence. All data-buffer and control-word writes
-// for a request happen-before that STATE flip, so the other side observes them once it sees the new
-// state. This is the same discipline as the WASI thread-start protocol.
+// Kept dependency-free so every worker can share one definition of the control
+// layout, opcodes, states, and raw WASI errno values. STATE stores plus notify
+// form the release/acquire fence for each request and response.
 
 // --- Control-word layout (indices into the Int32Array view of a slot's control buffer) -----------
 
@@ -113,16 +96,8 @@ export const OPFS_PROXY_STATUS_EIO = 29;
 export const OPFS_PROXY_HANDLE_BY_PATH = 0;
 
 /**
- * Size of each slot's data buffer. Large transfers chunk over this unit, so each chunk costs one
- * consumer↔proxy Atomics round-trip plus one SyncAccessHandle write; the runner thread streams the
- * whole decoded image through one slot during a bulk extract. At the original 64 KiB a 1.5 GiB ISO
- * needed ~22k round-trips (~11s of pure latency); pairing this with the write-back coalescing in
- * browser-opfs-proxy-file.ts collapses both the per-write and per-sector cases to bandwidth-bound.
- *
- * 2 MiB is empirically the knee (Safari, 1.5 GiB RVZ extract + 632 MB CHD extract): 1 MiB regressed
- * badly (an extract that runs ~2.8s ballooned to ~36s - not in the write path, writeMs stayed ~700ms,
- * so a smaller slot perturbs decode-thread scheduling/allocation), while 4 MiB was within noise of
- * 2 MiB (~2.8s, ~2300 MiBps writes) for double the SAB. Cost is slotCount × this; slotCount ≈
- * threadPool + 4, so ~48 MiB on a ~10-thread desktop.
+ * Per-slot transfer buffer. 2 MiB is the measured Safari knee: smaller buffers
+ * add enough Atomics round trips and scheduling pressure to stall large
+ * extracts, while 4 MiB showed no gain and doubles shared-memory cost.
  */
 export const OPFS_PROXY_DATA_BUFFER_BYTES = 2 * 1024 * 1024;

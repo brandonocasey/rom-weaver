@@ -1,15 +1,7 @@
 name: Parity
 
-# Re-validate rom-weaver's compression output against the REAL reference tools
-# (chdman, dolphin-tool) so a vendored-codec regression (lzma-rust2, flac, zstd,
-# nod, ciso) is caught. The main `quality` gate in ci.yml only checks parity
-# against frozen in-repo vectors and rom-weaver's own round-trips; nothing there
-# re-checks the live tools. This job is that regression signal.
-#
-# It is intentionally SEPARATE from ci.yml and NOT wired into branch protection:
-# it depends on third-party npm tool releases (chdman/dolphin-tool) that can
-# change independently of this repo, so it runs nightly + on demand rather than
-# blocking every PR.
+# Nightly compression parity against live chdman and dolphin-tool releases. It is non-blocking
+# because those third-party tools change independently of this repository.
 
 on:
   workflow_dispatch:
@@ -17,8 +9,7 @@ on:
     # 07:13 UTC nightly (off the top of the hour to dodge scheduler congestion).
     - cron: "13 7 * * *"
 
-# Least privilege: this workflow only reads the repo. Declared explicitly so it
-# does not inherit whatever the repository default happens to be.
+# Least privilege: this workflow only reads the repository.
 permissions:
   contents: read
 

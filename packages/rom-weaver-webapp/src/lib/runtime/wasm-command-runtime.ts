@@ -491,13 +491,8 @@ const invokeRomWeaverPatchApplyWorker = async (
       const validateWithOutputChecksums = normalizePatchValidationChecksumEntries(
         applyOptionRecord?.validateWithOutputChecksums ?? applyOptionRecord?.validate_with_output_checksums,
       );
-      // One header mode per patch (chain order). The browser resolved the FIRST patch
-      // against the staged checksum variants, so entry 0 is always concrete ("keep"/
-      // "strip") and suppresses an engine re-hash of the OPFS input; later entries may
-      // be "auto" - the engine decides those per step from its own local intermediates.
-      // Legacy compatibility booleans (settings.compatibility add/remove header) remap
-      // onto the same enums: removeHeader => strip for the whole chain, with the
-      // output-header choosing whether the header returns.
+      // The browser resolves the first header mode to avoid rehashing OPFS input; the engine may
+      // resolve later `auto` steps from local intermediates. Legacy booleans map to these enums.
       const rawHeaderModes = Array.isArray(applyOptionRecord?.headerModes) ? applyOptionRecord.headerModes : [];
       const headerModes: ("keep" | "strip" | "auto")[] = removeHeader
         ? ["strip"]

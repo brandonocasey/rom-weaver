@@ -1,15 +1,10 @@
 // Producer (proxy worker) side of the OPFS async proxy channel.
 //
-// This is the single owner of every OPFS FileSystemSyncAccessHandle and the directory tree. It runs
-// an async "doorbell" servicing loop: it waits on the shared doorbell counter, scans every slot, and
-// services each REQUESTED op. Reads/writes/truncate/flush on an already-open handle are synchronous
-// (fast); only open/mkdir/unlink/rename touch the async OPFS namespace APIs, which is why the loop is
-// async (Atomics.waitAsync) rather than a blocking Atomics.wait. Consumers (browser-opfs-proxy-client)
-// always block synchronously; only this side may yield.
+// Sole owner of OPFS sync handles and directories. Its async doorbell loop may
+// yield for namespace operations; consumers block synchronously on their slots.
 //
-// The loop never throws: every op is wrapped so a single failed request becomes an errno on its slot
-// instead of killing the loop (which would hang every waiting consumer). A fatal/poison condition
-// sets the global poison flag so consumers fail fast with EIO instead of waiting out their timeouts.
+// Request failures become per-slot errno values. Fatal failures poison the
+// channel so every consumer fails fast instead of timing out.
 
 import {
   isGuestPathWithinMount,
@@ -76,12 +71,8 @@ interface OpfsProxyMountDescriptor {
 }
 
 /**
- * Mount metadata posted to the proxy worker - the directory handle is intentionally NOT included.
- * Safari/iOS cannot structured-clone a FileSystemDirectoryHandle to a (nested) worker (DataCloneError),
- * so the worker re-resolves its own handle from the per-origin OPFS root. `rootRelativeParts` is the
- * path from the OPFS root to the mount's directory (computed by the runner via `root.resolve(handle)`):
- * empty when the mount IS the root (the app's case), or the subdirectory segments when it is a nested
- * handle (e.g. a test fixture dir). The worker navigates these from `navigator.storage.getDirectory()`.
+ * Mount metadata without a directory handle: Safari cannot clone handles to a
+ * nested worker, so the proxy resolves `rootRelativeParts` from the OPFS root.
  */
 export interface OpfsProxyMountBootstrap {
   mountPath: string;
@@ -124,7 +115,6 @@ interface FileLocation {
   parts: string[];
 }
 
-/** Start the proxy servicing loop. The returned handle stops the loop and exposes its completion. */
 export function startOpfsProxyServer(options: OpfsProxyServerOptions): OpfsProxyServerHandle {
   const server = new OpfsProxyServer(options);
   const done = server.run();
@@ -220,10 +210,9 @@ class OpfsProxyServer {
     }
   }
 
-  // Mark the proxy dead and wake every consumer parked on a slot's STATE word. The poison flag alone
-  // is invisible to a consumer already blocked in Atomics.wait, and the failure path never signalled
-  // any slot, so parked consumers used to wait out their full timeouts. Notifying each STATE word
-  // unblocks them to re-check isPoisoned() and fail fast.
+  // Mark the proxy dead and wake every consumer parked on a slot's STATE word — the poison flag alone
+  // is invisible to a consumer already blocked in Atomics.wait; the notify unblocks it to re-check
+  // isPoisoned() and fail fast.
   private poisonAndWakeConsumers(): void {
     Atomics.store(this.channel.global, OPFS_PROXY_GLOBAL_POISONED_INDEX, 1);
     for (const slot of this.channel.slots) {
@@ -339,8 +328,6 @@ class OpfsProxyServer {
     const offset = readOffset(control);
     const length = Atomics.load(control, OPFS_PROXY_CONTROL_LENGTH_INDEX);
     const target = data.subarray(0, Math.min(length, data.byteLength));
-    // Blob-backed input: slice asynchronously (the servicing loop awaits this). The dedicated worker's
-    // free event loop is what makes this safe - consumers block synchronously on the SAB while we yield.
     if (entry.blob) return this.readBlobAt(entry.blob, offset, target);
     if (!entry.handle) throw new ProxyErrno(ERRNO_IO);
     return entry.handle.read(target, { at: offset });

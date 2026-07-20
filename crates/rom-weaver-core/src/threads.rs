@@ -63,14 +63,8 @@ pub fn physical_memory_bytes() -> Option<u64> {
     (rc == 0 && value > 0).then_some(value)
 }
 
-/// Realistic memory budget for a single wasm instance, in bytes.
-///
-/// The link-time `--max-memory` in `.cargo/config.toml` caps linear memory at 4 GiB, but that is
-/// the hard address-space ceiling, not what the runtime can actually use: mobile browsers -
-/// notably iOS Safari - terminate a tab whose memory grows well before that, around ~1 GiB. So the
-/// budget the concurrency planner (and memory-hungry per-op parallelism) reasons about is set to
-/// what the constrained platform actually sustains. A single operation can still grow toward the 4
-/// GiB hard cap; this only governs how aggressively independent work is overlapped.
+/// Conservative wasm memory budget used to plan concurrency. The 4 GiB link cap is an address-space
+/// ceiling; mobile browsers terminate tabs much earlier.
 #[cfg(target_arch = "wasm32")]
 pub const WASM_MEMORY_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
 

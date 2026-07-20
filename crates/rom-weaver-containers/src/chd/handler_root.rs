@@ -5,22 +5,12 @@ use super::*;
 pub struct ChdContainerHandler;
 
 /// Removes the tracked output files on drop unless [`commit`](Self::commit)ed.
-/// CHD extract/create write their outputs incrementally and propagate errors
-/// with `?` mid-write; without this a failed run leaves a partial `.bin`/`.chd`
-/// that blocks a later `--no-overwrite` retry (or looks like a corrupt file to a
-/// probe). Mirrors the cleanup-on-error the other container handlers already
-/// perform (e.g. `PartialExtractCleanup` in `rom-weaver-containers`); being
-/// Drop-based it also cleans up on a panic. A no-op once committed, so success
-/// output stays byte-identical.
+/// Incremental CHD writes can fail or panic mid-file; cleanup prevents partial
+/// output from blocking `--no-overwrite` retries.
 ///
-/// A path is only ever tracked *after* this op has created/truncated it, via
-/// [`create_output`](Self::create_output) (or [`track`](Self::track) for the
-/// create path, which opens `request.output` unconditionally elsewhere). A
-/// `--no-overwrite` refusal returns `Err` from `create_output` without tracking
-/// the path, so the guard never deletes a pre-existing file this op left
-/// untouched - the bug that arming the guard up-front over a planned-output set
-/// caused. Interior mutability lets the guard be shared `&` across the deep
-/// CD/GD writer call chains without threading a `&mut`.
+/// Paths are tracked only after this operation creates or truncates them, so a
+/// refused pre-existing file is never deleted. Interior mutability lets deep
+/// writer call chains share the guard immutably.
 pub(super) struct ChdOutputCleanup {
     paths: RefCell<Vec<PathBuf>>,
     committed: Cell<bool>,
@@ -34,19 +24,14 @@ impl ChdOutputCleanup {
         }
     }
 
-    /// Create the extract output at `path`, tracking it for cleanup-on-drop only
-    /// once the file has actually been created/truncated by this op. On a
-    /// `--no-overwrite` refusal the error propagates and the path stays
-    /// untracked, so the pre-existing file is preserved.
+    /// Create and then track output, preserving files refused by `--no-overwrite`.
     pub(super) fn create_output(&self, path: &Path, overwrite: bool) -> Result<File> {
         let file = create_extract_output_file(path, overwrite)?;
         self.paths.borrow_mut().push(path.to_path_buf());
         Ok(file)
     }
 
-    /// Track a path whose writer this op creates/truncates unconditionally
-    /// elsewhere (the CHD create path opens `request.output` via `File::create`,
-    /// which always creates or truncates, so removing it on error is safe).
+    /// Track output already created or truncated elsewhere in this operation.
     pub(super) fn track(&self, path: PathBuf) {
         self.paths.borrow_mut().push(path);
     }
@@ -103,14 +88,9 @@ impl DiscLayout {
 
     /// Apply MAME's CD track padding to a freshly built CD-ROM layout.
     ///
-    /// Each track's hunk-stream frame count is rounded up to a multiple of
-    /// `CD_TRACK_PADDING`; `frames` becomes the padded total and `pad_frames`
-    /// records the zero-filled remainder. The track metadata still reports the
-    /// unpadded data count (`frames - pad_frames`). GD-ROM carries explicit
-    /// `PAD:` metadata, so this is a no-op for that media.
-    ///
-    /// Assumes each track currently holds its unpadded data frame count with
-    /// `pad_frames == 0`, so it must run exactly once per layout.
+    /// Round CD tracks to `CD_TRACK_PADDING`, recording the zero-filled tail in
+    /// `pad_frames`. GD-ROM declares padding explicitly. Must run once while
+    /// `pad_frames == 0`.
     fn apply_cd_track_padding(&mut self) {
         if self.kind != DiscKind::CdRom {
             return;
@@ -124,13 +104,9 @@ impl DiscLayout {
         }
     }
 
-    /// Redirect tracks whose resolved `file_path` matches an override's
-    /// `original_path` to the override's source (an alternate path or in-memory
-    /// bytes), so a freshly produced track is read in place of the original
-    /// while every untouched track still reads from the source disc. A
-    /// shared-bin FILE backing several tracks redirects them all, each keeping
-    /// its own `file_offset_bytes`. Errors if an override matches no track -
-    /// that would silently emit the original (unpatched) bytes and break parity.
+    /// Redirect matching tracks to alternate path or memory sources. Shared-bin
+    /// tracks retain their offsets. An unmatched override errors rather than
+    /// silently emitting original bytes.
     fn apply_input_overrides(&mut self, overrides: &[CreateInputOverride]) -> Result<()> {
         for ovr in overrides {
             let mut matched = false;

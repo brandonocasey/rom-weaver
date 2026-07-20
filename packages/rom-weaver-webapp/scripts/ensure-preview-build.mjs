@@ -1,13 +1,7 @@
 #!/usr/bin/env node
 
-// Prebuild gate for `npm run preview`. Keeps the previewed bundle honest by
-// asking Cargo to validate the prod WASM module before checking the vite
-// bundle, then hands off to the preview server. The WASM build itself skips
-// expensive wasm-opt/brotli work when its content fingerprint is unchanged.
-//
-// Vite staleness is decided by filesystem mtimes:
-//   - missing dist, or any web source / config / WASM artifact newer than the
-//     built dist/index.html.
+// Ensure `npm run preview` serves current WASM and Vite output. The WASM build
+// skips unchanged wasm-opt/Brotli work; Vite freshness uses filesystem mtimes.
 //
 // Override with ROM_WEAVER_PREVIEW_FORCE=wasm|vite|all to force a rebuild, or
 // ROM_WEAVER_PREVIEW_SKIP_BUILD=1 to skip the gate entirely.

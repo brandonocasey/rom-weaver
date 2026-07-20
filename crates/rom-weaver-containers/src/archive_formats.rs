@@ -1,18 +1,9 @@
 //! Canonical archive-format detection table.
 //!
-//! The web UI routes a dropped file synchronously - before staging it into
-//! libarchive - to decide whether it is an archive and, if so, which archive
-//! type it is (so it can pick the right extraction path and naming). That
-//! routing needs magic-byte signatures and the full universe of extensions our
-//! bundled libarchive can open (squashfs/qcow/wim/xar/dmg/vmdk/ext4/… - formats
-//! with no dedicated [`crate::ContainerRegistry`] handler). Those facts are a
-//! property of the Rust/libarchive build, so they live here and are mirrored to
-//! TypeScript via typegen (`ROM_WEAVER_ARCHIVE_FORMATS`) rather than being
-//! hand-maintained a second time in the browser.
-//!
-//! The matcher logic stays in TS (it runs per-entry in synchronous worker
-//! decompression loops where a wasm round-trip is infeasible); only the data is
-//! canonical here.
+//! Owns the magic bytes and full libarchive extension set used to route browser
+//! inputs before staging. Typegen mirrors the data as
+//! `ROM_WEAVER_ARCHIVE_FORMATS`; matching stays in synchronous TypeScript loops
+//! where a WASM round trip is impractical.
 
 /// A magic-byte signature and the archive type it resolves to. Matched in table
 /// order, first hit wins.

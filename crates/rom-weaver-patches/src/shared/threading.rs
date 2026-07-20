@@ -54,16 +54,11 @@ pub(crate) fn parallel_chunked_capability(len: u64, chunk_bytes: u64) -> ThreadC
     ThreadCapability::parallel(Some(chunk_count_for_len(len, chunk_bytes).max(1)))
 }
 
-/// Plans `capability` against the context's thread budget and runs `parallel`
-/// with a freshly built pool when the plan negotiated parallelism (and the
-/// caller's `allow_parallel` gate permits it), otherwise runs `serial` under
-/// the planned single-thread execution.
+/// Run with a fresh pool when capability and caller permit parallelism;
+/// otherwise use the planned serial path.
 ///
-/// Reproduces the orchestration previously duplicated across the format
-/// handlers byte-for-byte: plan first, branch on `used_parallelism`, build the
-/// pool (which re-plans and may fall back) only on the parallel path, and
-/// surface the planned execution unchanged on the serial path. `allow_parallel`
-/// carries per-site gates that disable parallelism for specific patch shapes.
+/// Pool construction may re-plan and fall back. `allow_parallel` carries
+/// format-specific shape gates.
 pub(crate) fn run_with_optional_pool<T>(
     context: &OperationContext,
     capability: ThreadCapability,

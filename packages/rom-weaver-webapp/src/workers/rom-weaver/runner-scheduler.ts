@@ -10,23 +10,14 @@ const createSchedulerAbortError = () => {
 };
 
 /**
- * A unit of work the scheduler admits subject to its gates. Two admission lanes share one scheduler:
+ * A unit of work admitted through one of two lanes:
  *
- * - **Non-I/O ops** (compress, patch, probe, …) keep the local gates: a concurrency cap, a summed
- *   worker-thread budget, a summed working-set ceiling, and OPFS path exclusivity.
- * - **I/O ops** (extract/ingest/checksum - `io: true`) are admitted by the shared **Rust planner**
- *   (`plan-extract-batch`) instead. The browser passes only what it alone knows - its mobile-capped
- *   memory ceiling and thread budget - plus each job's source size (`jobSizeBytes`); Rust owns the
- *   working-set multiplier, the memory-ceiling fit, and which jobs may overlap. This is the single
- *   source of truth the native batch executor also uses, so both group identically. Path exclusivity
- *   and the concurrency cap still apply on top (OPFS handle exclusivity is a browser-only concern the
- *   Rust policy cannot model). Each admitted I/O op runs with the wave's `threadsPerJob` (the planner's
- *   `fair_thread_allotment`), passed to the run callback so the runner forces exactly that count.
+ * - Non-I/O ops use local concurrency, thread, memory, and OPFS-path gates.
+ * - I/O ops use Rust's shared `plan-extract-batch` policy, plus browser-only
+ *   concurrency and path-exclusivity gates.
  *
- * A simultaneous multi-file drop stages each file asynchronously, so the I/O ops reach the scheduler
- * staggered (not in one tick). {@link OperationScheduler.noteIoBatch} lets the drop point - which knows
- * every file's size synchronously - declare the whole batch up front, so the very first plan call sees
- * all of them and the first job's thread share already reflects the full drop.
+ * {@link OperationScheduler.noteIoBatch} declares staggered multi-file drops
+ * up front so the first Rust plan assigns threads across the whole batch.
  */
 type ScheduledOperation = {
   /**
@@ -171,11 +162,8 @@ export function createOperationScheduler(options: SchedulerOptions): OperationSc
     return false;
   };
 
-  // Claim one declared-but-not-yet-arrived slot for an arriving op, marking it a MEMBER of the noted drop
-  // so it is counted once (as a real waiter) rather than twice (also as a pending size). Membership is
-  // keyed on the exact source size the drop point declared: an unrelated I/O op (a prior drop's
-  // checksum/extract still in flight) whose size matches no noted slot claims nothing, so it can neither
-  // mis-size the plan nor prematurely mark the note consumed. Returns whether a slot was claimed.
+  // Claim one pending batch slot so an arriving op replaces, rather than
+  // duplicates, its declared size in the next plan.
   // ponytail: membership keyed by exact declared size, not a batch id threaded from the drop point; a
   // coincidental same-size unrelated op can still false-match (perf-only: one drop wave gets the wrong
   // thread share, never a correctness/data issue). Thread a real batch id through schedule() if that

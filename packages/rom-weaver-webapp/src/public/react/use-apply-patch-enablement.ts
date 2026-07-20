@@ -3,19 +3,11 @@ import { getBinarySourceListStableIds } from "./input-session-helpers.ts";
 import type { BinarySource } from "./patcher-form.ts";
 
 /**
- * Owns the apply form's patch enable/disable state (the loom On/Off switch).
- * Disabled patches stay on the bench but are excluded from the apply run; the
- * set is keyed by stable patch-slot id so replacements/reorders keep the right patches
- * off. Extracted from `ApplyPatchForm` as a cohesive state+refs+callback group:
+ * Owns patch enablement, keyed by stable slot ids so replacements and reorders
+ * retain state. Disabled patches remain visible but are removed from run inputs.
  *
- * - `disabledPatchIds` / `togglePatchEnabled` drive the per-patch switch.
- * - `seedPatchEnablement` carries a bundle session's default on/off state.
- * - `syncPatchTracking` mirrors the current patch list into stable patch slots
- *   (so replacement at an index keeps its metadata and toggle state) and drops
- *   stale toggles whenever a slot is removed.
- * - `filterEnabledPatchRun` strips disabled patches (and their index-aligned
- *   per-patch run options) before they reach the workflow; `getPatchIds`
- *   feeds the view's enablement controls.
+ * Bundle sessions seed defaults; tracking drops removed slots; run filtering
+ * keeps patch-aligned options in sync.
  */
 const useApplyPatchEnablement = () => {
   const [disabledPatchIds, setDisabledPatchIds] = useState<ReadonlySet<string>>(new Set());

@@ -423,12 +423,8 @@ type WorkflowRuntimePatch = {
 };
 
 type WorkflowRuntimeIngest = {
-  // Classify a dropped source as ROM or patch, nested-extract + checksum ROMs (in place for bare
-  // ROMs), and describe patches - one consolidated call the drop/staging flow routes on. Archive ROM
-  // leaves are adopted into `outputs` (path-backed PublicOutputs carrying the ingest checksums + disc
-  // structure), aligned with `result.assets` for non-`copiedInPlace` assets, so the staging pipeline
-  // reuses its existing PublicOutput→PatchFileInstance bridge. A bare ROM (`copiedInPlace`) yields no
-  // output - the caller keeps its own source ref and uses the result's checksums.
+  // Classify and prepare a drop in one call. Extracted leaves become path-backed outputs; bare ROMs
+  // are checksummed in place and retain the caller's source reference.
   run?: (input: {
     source: unknown;
     fileName?: string;

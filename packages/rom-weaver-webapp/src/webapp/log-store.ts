@@ -3,18 +3,11 @@ import type { LogLevel, LogRecord } from "../types/logging.ts";
 import { type ConsoleLogRecord, subscribeConsoleLogRecords } from "./console-log-capture.ts";
 
 /**
- * Ring buffer behind the in-app log viewer (the masthead Log dialog). Installs
- * a capturing logger sink that chains to the default console sink, so the
- * dialog mirrors exactly what reaches the console at the configured level.
- * Subscribe/getSnapshot follow the vanilla-store shape for
- * useSyncExternalStore.
+ * Ring buffer behind the in-app log viewer, mirroring the configured console
+ * sink through a useSyncExternalStore-compatible API.
  *
- * Pushes are O(1) and never touch React: appends land in a mutable buffer and
- * a single flush is coalesced onto the next animation frame, which trims to the
- * cap, rebuilds the immutable snapshot once, and notifies listeners once. Under
- * trace logging the buffer can take hundreds of lines per frame (each Rust
- * tracing line is a record); coalescing keeps that a single re-render per frame
- * instead of one full-array rebuild and render per line.
+ * Pushes append to a mutable buffer; one animation-frame flush trims, snapshots,
+ * and notifies so trace bursts cause at most one render per frame.
  */
 
 const MAX_LOG_LINES = 2500;
@@ -32,15 +25,9 @@ let installed = false;
 let flushScheduled = false;
 const listeners = new Set<() => void>();
 
-// The session log is mirrored to localStorage so a run that OOM-reloads the tab stays recoverable: the
-// in-memory ring buffer dies with the tab, but a synchronous localStorage write survives the reload.
-// Stored as a JSON array of the WHOLE session (not just the viewer's MAX_LOG_LINES ring) so a long trace
-// run isn't truncated to its tail; structured (not flattened text) so the previous-session view renders
-// with full fidelity - no lossy re-parse. Two keys: this session streams into `currentLog`; on boot the
-// previous session's `currentLog` is promoted to `lastLog` (below) before this session overwrites it, so
-// the prior - possibly crashed - run is what the Log panel can show. The write rides the snapshot flush
-// (coalesced to once per animation frame, only when new lines landed), so the freshest lines before a
-// crash are saved without an O(n^2) rewrite-the-whole-log-per-line.
+// Persist the structured full-session log on each coalesced flush so an OOM
+// reload remains diagnosable. Boot promotes `currentLog` to `lastLog` before
+// the new session starts overwriting it.
 const CURRENT_LOG_STORAGE_KEY = "currentLog";
 const LAST_LOG_STORAGE_KEY = "lastLog";
 // Cap the persisted session so its JSON stays well under the ~5 MB localStorage quota; oldest entries

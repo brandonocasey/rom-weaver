@@ -1,17 +1,9 @@
 use super::shared::*;
 
-// ====================================================================
 // Table-driven per-format smoke tests.
 //
-// Four families of per-format tests (create round-trip, apply, probe,
-// ignore-checksum) shared an identical CLI-orchestration + JSON-envelope
-// skeleton repeated once per patch format. These runners capture that
-// skeleton; each format supplies only its inputs, patch bytes, and
-// expected output. Formats with genuinely unique behaviour (reverse
-// patching, generated multi-megabyte inputs, parallel apply, multi-
-// extension probing, rich structural assertions) remain standalone tests
-// further down this file.
-// ====================================================================
+// Shared runners cover create/apply/probe/ignore-checksum orchestration; unique
+// format behavior remains in standalone tests below.
 
 /// One `patch create` -> `patch apply` round-trip for a single format.
 struct RoundTrip {

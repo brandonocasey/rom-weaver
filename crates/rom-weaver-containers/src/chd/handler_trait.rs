@@ -438,13 +438,8 @@ impl ChdContainerHandler {
             compression_plan.codecs,
             compression_plan.primary_codec,
         );
-        // Both create paths write `request.output` incrementally (a placeholder
-        // header first, then hunks/map): remove the partial file if any step
-        // fails so a corrupt/placeholder CHD is not left behind. Track the output
-        // only once we commit to the attempt AND only when it does not already
-        // exist - a pre-open error (unsupported codec plan, store+parent, invalid
-        // geometry) never opens the file via `File::create`, so it must not
-        // delete an unrelated pre-existing target this op never created.
+        // Remove partial incremental output on failure, but never track a pre-existing target that
+        // an early validation error did not create.
         let guard_output = should_attempt_rust && !request.output.exists();
         trace!(
             output = %request.output.display(),

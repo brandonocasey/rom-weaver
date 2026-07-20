@@ -347,16 +347,10 @@ impl RunCommandOptions {
     }
 }
 
-/// Browser host selection callback. The wasm prompter serializes the choice request to JSON and
-/// hands it to the JS runner, which blocks the worker until the UI resolves the pick (or a negative
-/// return cancels - also used when no interactive handler is registered). Lives in the `env` import
-/// module the runner already supplies at instantiation.
-/// Pure encode/decode helpers for the browser selection-prompt channel, kept out of the
-/// `wasm32`-gated module so they can be unit-tested on the native target. The wasm prompter owns
-/// only the raw `extern` calls; everything testable (request shape, response decoding, bounds and
-/// cancel handling) lives here. Compiled only where it is exercised - the wasm build (used by the
-/// prompter) or any test build (used by the unit tests) - so it is never dead code on the native
-/// release path.
+/// Browser selection channel. WASM serializes requests and blocks until JS
+/// returns indices or cancellation. Pure request/response helpers live here so
+/// native tests cover shape, bounds, and cancellation without compiling them
+/// into native releases.
 #[cfg(any(target_arch = "wasm32", test))]
 mod wasm_host_prompt_protocol {
     use rom_weaver_core::{PromptCandidate, Selection, SelectionList};
@@ -1095,11 +1089,8 @@ struct N64ByteOrderTransform {
     to: N64ByteOrder,
 }
 
-/// Which bytes a patch applies against. `Auto` (the default) strips the detected
-/// copier header only when that patch's required input checksum proves it was
-/// authored against the headerless bytes - decided per patch in a chain, so a
-/// later patch can strip (or restore) the header mid-chain on checksum proof.
-/// Whether the header appears on the final output is [`PatchApplyOutputHeaderMode`].
+/// Which bytes a patch consumes. `Auto` uses input checksums to choose headered or headerless bytes
+/// for each chain step.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(ValueEnum))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
@@ -1111,11 +1102,8 @@ pub enum PatchApplyHeaderMode {
     Auto,
 }
 
-/// Whether a detected ROM copier header appears on the patched OUTPUT. `Auto` (the
-/// default) re-adds format headers that emulators require (iNES/fwNES/LNX/A78) and drops
-/// junk copier headers (SNES/PCE/Game Doctor) per the headerless-`.sfc` convention.
-/// `Strip` also removes a still-present header from the output when the apply itself ran
-/// on the headered bytes.
+/// Whether a detected ROM header appears on output. `Auto` restores required format headers and
+/// drops optional copier headers; `Strip` always removes one.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(ValueEnum))]
 #[cfg_attr(feature = "typescript-types", derive(TS))]

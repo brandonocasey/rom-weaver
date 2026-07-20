@@ -47,12 +47,7 @@ const formatDetails = (details: LogStoreEntry["details"]) => {
   }
 };
 
-// Copy/download text omits the UI-only columns so the output is clean, paste-ready log lines. The dialog
-// uses the short timestamp column shown on screen, while copy/download keeps the original ISO timestamps.
-// Lines use a fixed-width level so pasted/downloaded logs stay aligned in a monospace view. `formatLine`
-// (capped details) feeds the filter - capping keeps a giant
-// payload from being re-serialized on every keystroke; `formatCopyLine` (full details) feeds copy/download,
-// where the on-screen cap and its "…(N chars)" marker would just corrupt a saved log.
+// Filter capped UI lines to avoid repeated large serialization; copy and download retain full details.
 const renderLine = (entry: LogStoreEntry, detailsText: string) =>
   `${formatTimestamp(entry.timestamp)} ${entry.level.toUpperCase().padEnd(5)} ${entry.namespace}: ${entry.message}${detailsText ? ` ${detailsText}` : ""}`;
 

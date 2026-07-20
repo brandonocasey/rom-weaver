@@ -152,13 +152,9 @@ const createVisibleCollisionFileName = (fileName: string, suffixIndex: number) =
   return `${stem}-${suffixIndex}${extension}`;
 };
 
-// Hand out the smallest visible name not currently in use: the bare name when it is free, otherwise
-// the first `name-N` whose path is unallocated. The suffix is collision-driven, not monotonic - once a
-// source is cleaned up its name is reclaimed, so a same-named re-stage reuses the bare name instead of
-// forever climbing `-2`/`-3`. Safe because a name is only released in `cleanup`, which runs after the
-// staged source's command has finished and dropped its (read-only, Blob-backed) proxy handle, so reuse
-// never races a still-open handle. Concurrently-live same-named stages still get distinct names: the
-// live one is still in `allocatedVirtualInputPaths`, so the next one lands on `-2`.
+// Allocate the bare name or smallest free `name-N`. Cleanup reclaims names only
+// after command handles close, so later stages reuse names safely while live
+// collisions remain distinct.
 const allocateVirtualInputPath = (mountPoint: string, fileName: string) => {
   const normalizedMountPoint = String(mountPoint || WORKER_OPFS_MOUNTPOINT).replace(TRAILING_SLASHES_REGEX, "");
   for (let suffixIndex = 1; suffixIndex < Number.MAX_SAFE_INTEGER; suffixIndex += 1) {
@@ -288,36 +284,12 @@ const createBrowserOpfsSourceRef = async (
   const virtualFileName = normalizeVirtualFileName(fileName || fallbackFileName, fallbackFileName || "input.bin");
   const virtualPath = createVirtualInputPath(options, virtualFileName);
 
-  // Browser-gated input read strategy. There are two ways to feed a Blob/File input to the wasm decode
-  // threads, and the right one is decided per-engine:
-  //
-  //   fast path (useProxyHandle=false): each decode thread opens its OWN FileReaderSync and reads its own
-  //     slice of the File directly, behind a per-thread LRU cache (BrowserVirtualRandomAccessFile). N
-  //     readers run at once.
-  //   proxy handle (useProxyHandle=true): one dedicated OPFS proxy worker owns the File and serves every
-  //     decode thread's reads over a SharedArrayBuffer (BrowserProxyRandomAccessFile). Exactly ONE reader.
-  //
-  // Which is faster comes down to one thing: does the browser actually run concurrent reads of the SAME
-  // File in parallel? That is decided in the engine's file-I/O layer, BELOW JavaScript, so no amount of
-  // thread coordination (Atomics/SharedArrayBuffer) can change it - the proxy already uses both and is
-  // still a single reader.
-  //
-  //   * Chrome/Firefox genuinely serve those N reads in parallel, so the fast path scales ~Nx and beats a
-  //     single proxy reader. Measured (CHD extract, 8 threads): fast path ~4395ms vs proxy ~5472ms.
-  //   * WebKit (desktop Safari + every iOS/iPadOS browser) serializes concurrent FileReaderSync reads of
-  //     one File at the file layer, so the fast path's "parallel" reads queue behind each other AND burn
-  //     time contending - one thread races ahead (~326 MiB/s) while the rest starve (~33 MiB/s). The
-  //     single proxy reader has no contention and wins. Measured (RVZ extract, 4 threads): fast path
-  //     ~5747ms with 3-of-4 threads starved (the 70/86% progress stall) vs proxy ~4612ms, balanced.
-  //
-  // So: WebKit + an input big enough to be decoded multi-threaded -> proxy handle; small inputs (a patch,
-  // a small ROM - single-threaded, so no concurrent readers to contend) and everything on Chrome/Firefox
-  // -> fast path. The size threshold keeps small Safari inputs off the proxy's per-read SAB round-trips.
-  // (A SAB-preload variant - read the whole input into shared memory once, then serve in-memory reads in
-  // parallel - would beat both on Safari, but it pins the entire compressed input in RAM, which OOMs
-  // memory-constrained iOS; deliberately not used.) Inputs already on OPFS (extracted files, patch
-  // outputs) never reach here - they return above by path. Nothing stages an input Blob into OPFS; input
-  // staging is fully retired.
+  // Chrome/Firefox parallelize per-thread FileReaderSync reads, while WebKit
+  // serializes reads of the same File and performs better through one proxy
+  // reader. Use the proxy only for WebKit inputs large enough to decode in
+  // parallel; small inputs avoid its per-read SAB round trips. Preloading the
+  // whole input into shared memory is faster but can OOM memory-constrained iOS.
+  // OPFS-backed inputs return above and never use either Blob path.
   const inputBytes = typeof virtualSize === "number" && Number.isFinite(virtualSize) ? virtualSize : virtualSource.size;
   const useProxyHandle = isWebKitInputRuntime() && inputBytes >= PROXY_HANDLE_INPUT_MIN_BYTES;
   emitBrowserSourceRefTrace(options.trace, "registering virtual input", {

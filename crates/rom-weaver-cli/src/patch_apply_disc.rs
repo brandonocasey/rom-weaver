@@ -1,17 +1,8 @@
 //! Disc-aware support for `patch apply`.
 //!
-//! A multi-track CD/GD disc is a single logical ROM: many `.bin` data files
-//! described by a `.cue` and/or sibling `.gdi` sheet. `patch apply` lets the
-//! user target one track within such a disc with `--target <glob>` (the same
-//! glob matching as `--select`), patch only that track, and emit the full disc
-//! (the patched track plus every other track and the sheet copied through
-//! verbatim) - which is then usually compressed to CHD by the existing
-//! compression path.
-//!
-//! This module owns the disc-specific pieces: detecting a sheet input,
-//! enumerating its tracks, resolving the `--target` glob to exactly one track,
-//! confirming when the directory holds unreferenced data files, and staging the
-//! reassembled disc for the compressor.
+//! Resolves one `--target` track from a `.cue`/`.gdi`, patches it, and stages the
+//! full disc with untouched tracks and sheets for optional compression. Also
+//! reports unreferenced data files beside the sheet.
 
 use super::patch_filename_checksum::parse_filename_requirements;
 use super::*;

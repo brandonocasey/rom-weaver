@@ -471,14 +471,9 @@ impl ChdContainerHandler {
         compression_level: i32,
         label: &str,
     ) -> Result<Vec<u8>> {
-        // One-shot (bulk) compression pledges the source size so zstd shrinks the window log and
-        // match tables to fit this hunk. A streaming encoder leaves the window at the level's
-        // default (windowLog 27 / ~128 MiB workspace at level 22), which - multiplied across the
-        // create thread pool - overruns the wasm memory cap and trips a concurrent memory.grow
-        // out-of-bounds in the browser. The compressed data is identical for a sub-window input;
-        // only the frame header differs, and it stays a valid, chdman-decodable zstd frame. The
-        // compressor is reused per worker thread so the level-22 workspace is allocated once
-        // rather than per hunk.
+        // Bulk compression sizes zstd's workspace to the hunk. A streaming level-22 encoder keeps
+        // a ~128 MiB workspace per worker and can exhaust wasm memory. Reuse one compressor per
+        // worker to avoid reallocating that workspace for every hunk.
         let compressed = CD_ZSTD_COMPRESSOR.with(|cell| {
             let mut slot = cell.borrow_mut();
             if slot.is_none() {

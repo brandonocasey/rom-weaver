@@ -1,20 +1,9 @@
 //! Memory- and thread-aware admission for running independent jobs concurrently.
 //!
-//! This is the native/wasm-shared analog of the browser runner scheduler (which lives in
-//! TypeScript and reasons over separate wasm workers). Here a single process - or a single wasm
-//! instance whose main thread plus spawned WASI threads share one linear memory - owns a batch of
-//! independent jobs and decides which may run at the same time, gated by three limits:
-//!
-//! 1. a hard cap on the number of concurrent jobs,
-//! 2. a shared worker-thread budget (the sum of admitted jobs' thread demand), and
-//! 3. a ceiling on the admitted jobs' combined estimated working set.
-//!
-//! A lone job is always admitted, even when it alone exceeds a limit, so one oversized job never
-//! deadlocks waiting for capacity that will never free; it simply runs by itself.
-//!
-//! The planner is deliberately pure: it holds no job state and performs no I/O, so it unit-tests
-//! cleanly and the same logic drives both a live admit-as-jobs-finish executor (via
-//! [`ConcurrencyLimits::can_admit`]) and a static "how would these split" view (via [`plan_waves`]).
+//! Gates jobs by concurrency, total worker threads, and combined estimated
+//! memory. A lone job always runs even when oversized, avoiding a capacity
+//! deadlock. The pure planner drives both live admission through
+//! [`ConcurrencyLimits::can_admit`] and static schedules through [`plan_waves`].
 
 use serde::{Deserialize, Serialize};
 
@@ -73,22 +62,16 @@ impl ConcurrencyLimits {
         true
     }
 
-    /// Even split of the thread budget across `concurrent` jobs, floored at 1 thread each. A live
-    /// executor can hand each admitted job this many threads so the shared pool is not
-    /// oversubscribed (the cause of the browser's `EAGAIN`/`os error 6` spawn failures, where N
-    /// runners each grabbed the full budget).
+    /// Even split of the thread budget across `concurrent` jobs, floored at 1.
+    /// Prevents each concurrent worker pool from claiming the full budget.
     pub fn fair_thread_allotment(&self, concurrent: usize) -> usize {
         (self.thread_budget / concurrent.max(1)).max(1)
     }
 }
 
-/// Greedily group jobs - referenced by their original index - into sequential "waves" of
-/// concurrently-runnable jobs. First-fit from the front mirrors the runner scheduler's pump: a
-/// job that does not fit the current wave is deferred rather than blocking jobs behind it.
-///
-/// This models a barrier between waves, so it is a *planning/visualisation* aid (and the natural
-/// shape for tests); a live executor uses [`ConcurrencyLimits::can_admit`] directly and admits the
-/// next queued job the moment an in-flight one frees capacity, with no barrier.
+/// Greedily group job indices into sequential concurrent waves. Jobs that do
+/// not fit are deferred without blocking later jobs. Live executors use
+/// [`ConcurrencyLimits::can_admit`] directly and have no wave barrier.
 pub fn plan_waves(jobs: &[JobDemand], limits: &ConcurrencyLimits) -> Vec<Vec<usize>> {
     let mut remaining: Vec<usize> = (0..jobs.len()).collect();
     let mut waves: Vec<Vec<usize>> = Vec::new();
@@ -112,11 +95,8 @@ pub fn plan_waves(jobs: &[JobDemand], limits: &ConcurrencyLimits) -> Vec<Vec<usi
 
 /// Resolve the combined-working-set ceiling from a best-effort total-memory figure.
 ///
-/// `total_memory` is what [`crate::physical_memory_bytes`] reports (host RAM natively, the
-/// linear-memory cap on wasm); `None` falls back to `fallback`. The usable ceiling is `fraction`
-/// of that total, clamped to `[min, max]`, leaving headroom for the runtime itself and for the
-/// per-job overhead the estimates do not capture. Mirrors the browser scheduler's
-/// `resolveMemoryCeilingBytes`, but driven by a real memory figure rather than `navigator.deviceMemory`.
+/// Uses `fraction` of `total_memory`, clamped to `[min, max]`; `None` uses
+/// `fallback`. The unused share covers runtime and unmodeled per-job overhead.
 pub fn resolve_memory_ceiling(
     total_memory: Option<u64>,
     fraction: f64,

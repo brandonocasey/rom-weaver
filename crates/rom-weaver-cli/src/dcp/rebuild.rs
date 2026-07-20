@@ -1,13 +1,8 @@
 //! Rebuild a GD-ROM data track from a `.dcp` applied to a source track.
 //!
-//! This is the disc-producing half of DCP apply. It plans the rebuilt ISO9660
-//! layout from file *sizes* (each patched file's size is read cheaply from its
-//! VCDIFF header without decoding), then **streams** the raw `MODE1/2352` track
-//! straight to a writer, producing each file's bytes on demand as it is written
-//! and dropping them immediately. Nothing accumulates across files: the cooked
-//! image, the raw track, and the full file set are never buffered. Peak memory
-//! is one file's working set (its delta + source + decoded output) at a time -
-//! it scales with the largest single file, not the disc or the patch.
+//! Plans ISO9660 from file sizes (reading patched sizes from VCDIFF headers),
+//! then streams raw `MODE1/2352` output one file at a time. Peak memory scales
+//! with the largest file rather than the disc.
 //!
 //! Reassembling the full disc (the low-density tracks + sheet, then optional
 //! CHD) is the caller's job.
@@ -54,8 +49,7 @@ where
     T: Read + Seek,
     W: Write,
 {
-    // 1. Classify the patch into per-target ZIP entries (metadata only - no
-    //    bytes held).
+    // Classify ZIP metadata without loading entry bytes.
     let manifest = DcpManifest::from_entries(&read_central_directory(dcp)?);
     let mut delta_by_key: BTreeMap<String, ZipEntry> = BTreeMap::new();
     let mut verbatim_by_key: BTreeMap<String, ZipEntry> = BTreeMap::new();
@@ -72,9 +66,7 @@ where
         }
     }
 
-    // 2. Plan the layout from sizes: every source file (patched size where
-    //    applicable, read from the delta header without decoding) plus any
-    //    patch-added files not present on the source.
+    // Plan from source/patched sizes plus patch-added files.
     let source_entries: Vec<_> = source.files().values().cloned().collect();
     let source_by_key: BTreeMap<String, FileEntry> = source_entries
         .iter()

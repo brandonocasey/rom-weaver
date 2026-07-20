@@ -202,8 +202,8 @@ export async function syncMountedInputPathsFromOpfs({
 }
 
 function collectMountedInputPaths(request: RomWeaverRunInput | undefined, knownInputPaths: unknown) {
-  // request is always provided on real runs; preserve the original behavior (a TypeError from
-  // collectRomWeaverRunInputPaths) instead of silently skipping when it is missing.
+  // request is always provided on real runs; a missing one should TypeError in
+  // collectRomWeaverRunInputPaths rather than be silently skipped.
   return collectRomWeaverRunInputPaths(request as RomWeaverRunInput, {
     knownInputPaths: normalizeKnownInputPaths(knownInputPaths),
   });

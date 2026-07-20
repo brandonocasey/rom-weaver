@@ -8,15 +8,9 @@ import { browserRuntime } from "./workflow-runtime.ts";
 // first op and is NOT warmed by an extract without checksums.
 const WARMUP_CHECKSUM_ALGORITHMS = ["crc32", "md5", "sha1"];
 
-// A tiny deflate-compressed zip (one entry, 426 bytes) embedded as base64. It is used to run one silent
-// end-to-end ingest (classify + extract + inline checksum) on page load so every per-op code path is
-// warm before the user's first real op. The fixture is a zip rather than a CHD because the common first
-// op is a dropped ROM archive, and a prod-build measurement showed the first archive extract+checksum
-// pays ~50ms of one-time cost split roughly evenly between the shared thread-pool/OPFS spawn (which any
-// extraction warms) and the libarchive/DEFLATE + inline-checksum JIT (which only an archive extract with
-// checksums warms). A CHD warmup covered only the former half; this covers both, and being the lighter
-// extract it also finishes sooner, narrowing the window where a quick first drop beats it. A disc-image
-// (CHD) first op is rarer and still gets the shared-spawn half from this archive warmup.
+// Tiny embedded ZIP for a silent page-load ingest. Unlike a CHD fixture, it
+// warms both shared worker/OPFS setup and the common libarchive+checksum path,
+// while finishing quickly enough to precede most first drops.
 const WARMUP_ZIP_BASE64 =
   "UEsDBBQAAAAIAHV70FxlzFsPNAEAAAAQAAAKAAAAd2FybXVwLmJpbuM2CK2af+Qln3FE7aLjbwTNohuWnnovYhnXvOLsJ3GbxLbVF75K2ad0rrv8Q9YpvWf" +
   "jtd8Krln9W27+U/bInbT9DqOad8HUXfdZNP2KZ+x9xK4TWDb7wFMu/ZDKeYdf8BqF1yw89lrANKp+ycl3whaxTcvPfBSzTmhddf6LpF1yx9pL32Uc07o3XP" +
@@ -50,11 +44,8 @@ const cleanupWarmupOutputs = async (outputs: ReadonlyArray<{ cleanup?: () => Pro
   }
 };
 
-// Runs one tiny zip end-to-end through `ingest` (the real first-op path: classify + extract + inline
-// checksum in one pass), so every per-op code path (decode JIT, inline checksum, OPFS input/output
-// handles through the proxy, and the shared worker pool) is warm before the user's first real op.
-// Best-effort only: it is single-flight, swallows all errors, and explicitly cleans the outputs returned
-// by this warmup without inspecting or deleting any other tab's OPFS entries.
+// Best-effort, single-flight warmup of the real ingest path. Cleans only its own
+// returned outputs and never scans another tab's OPFS entries.
 const warmupBrowserRuntimeExtraction = async (): Promise<void> => {
   if (warmupExtractionStarted) return;
   warmupExtractionStarted = true;

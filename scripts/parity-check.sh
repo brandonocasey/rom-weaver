@@ -1,45 +1,17 @@
 #!/usr/bin/env bash
-# Re-validate rom-weaver's compression output against the REAL reference tools
-# (chdman, dolphin-tool), so a vendored-codec regression (lzma-rust2, flac,
-# zstd, nod, ciso) is caught.
+# Cross-check compression against chdman and dolphin-tool; in-repo tests only
+# self-round-trip rom-weaver or compare frozen vectors.
 #
-# The in-repo cli_smoke tests only round-trip rom-weaver against itself and
-# diff against frozen vectors; nothing re-checks the live tools. This script
-# closes that gap and is the regression signal for the nightly `parity`
-# workflow (.github/workflows/parity.yml).
-#
-# What "parity" means here, and why this is NOT a naive `cmp` of the two
-# container files:
-#
-#   * CHD: rom-weaver's `createhd` output is content-identical to chdman's --
-#     the decompressed-hunk Raw SHA1 and the Overall SHA1 stored in the CHD v5
-#     header match byte-for-byte -- but the *container byte layout* differs
-#     (rom-weaver appends the GDDD hard-disk metadata block after the hunk map;
-#     chdman writes it right after the header). So `cmp rw.chd ref.chd` would
-#     false-fail. The real codec/payload signal is: chdman fully VERIFIES
-#     rom-weaver's CHD (Raw + Overall SHA1) and extracts it back byte-for-byte,
-#     and rom-weaver extracts chdman's CHD back byte-for-byte. A broken
-#     lzma-rust2 / flac / zstd encoder changes the decompressed hunks, which
-#     `chdman verify` and the extract-and-cmp catch.
-#
-#   * RVZ: dolphin-tool's RVZ encoder scrubs/repacks disc structures, so its
-#     RVZ is not byte-identical to rom-weaver's on a synthetic fixture (and a
-#     valid licensed disc image cannot be committed). The honest, regression-
-#     sensitive check is a cross-tool ROUND TRIP: rom-weaver creates an RVZ
-#     that dolphin-tool extracts back to the source ISO byte-for-byte, and
-#     dolphin-tool creates an RVZ that rom-weaver extracts back byte-for-byte.
-#     A broken nod / zstd encoder corrupts the RVZ and the round trip diverges.
-#
-# All fixtures are generated deterministically (seeded byte patterns, never
-# random) under the repo `target/` dir so reruns are reproducible.
+# Compare decoded content, not container bytes: CHD metadata placement differs,
+# while dolphin-tool scrubs/repacks RVZ disc structures. Each tool therefore
+# verifies/extracts the other's output back to the deterministic source fixture.
+# Fixtures live under `target/`; this backs the nightly `parity` workflow.
 #
 # Tool binaries are parameterized via env for CI / non-PATH installs:
 #   CHDMAN_BIN       (default: PATH lookup for `chdman`)
 #   DOLPHIN_TOOL_BIN (default: PATH lookup for `dolphin-tool`)
 #   ROM_WEAVER_BIN   (default: the built CLI under target/{release,debug})
 #   PARITY_CARGO_PROFILE (default: debug; set to `release` to build/use release)
-#
-# Exits non-zero with a clear diff message on ANY mismatch.
 #
 # Usage (from anywhere in the checkout):  scripts/parity-check.sh
 set -euo pipefail

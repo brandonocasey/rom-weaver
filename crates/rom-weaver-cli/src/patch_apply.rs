@@ -91,10 +91,8 @@ impl CliApp {
             threads = %args.threads,
             "starting patch-apply command"
         );
-        // Bundle-driven runs merge the rom-weaver-bundle.json into a plain command first.
-        // The context built here owns the temp namespace any bundle-extracted
-        // archive members live in, so it must outlive the whole apply - it is
-        // dropped (and its files cleaned) only after the run completes.
+        // The bundle context owns the temp namespace for bundle-extracted
+        // archive members, so it must outlive the whole apply.
         let mut args = args;
         let original_input = args.input.clone();
         let local_bundle = args.bundle.as_ref().filter(|path| path.exists()).cloned();
@@ -115,8 +113,6 @@ impl CliApp {
                 );
             }
         };
-        // Snapshot what --emit-bundle needs before `args` moves into the run:
-        // the resolved input rom, the ordered patches, and per-patch header/basis.
         let emit_bundle = args.emit_bundle.clone();
         let emit_inputs = emit_bundle.as_ref().map(|_| EmitBundleInputs {
             input: args.input.clone(),
@@ -128,8 +124,7 @@ impl CliApp {
         });
         let outcome =
             self.run_patch_apply_resolved(args, bundle_resolution, original_input, local_bundle);
-        // A successful apply optionally emits a bundle describing it. Failures
-        // here don't undo the apply (the output is already written), so warn
+        // --emit-bundle failures don't undo the already-written apply; warn
         // rather than fail.
         if let (Some(emit_path), Some(inputs)) = (emit_bundle, emit_inputs)
             && outcome.status == OperationStatus::Succeeded
@@ -144,9 +139,7 @@ impl CliApp {
         outcome
     }
 
-    /// Write a bundle describing a just-completed apply: the input ROM (checks
-    /// computed), the ordered patches (referenced by base name, header/basis
-    /// preserved), and the produced output's checks/name. Reuses
+    /// Write a bundle describing a just-completed apply. Reuses
     /// `bundle_create_inner`, so the emitted bundle is byte-for-byte what
     /// `bundle create` would write for the same inputs.
     fn emit_apply_bundle(&self, emit_path: &Path, inputs: EmitBundleInputs) -> Result<()> {
@@ -205,10 +198,8 @@ impl CliApp {
         original_input: PathBuf,
         local_bundle: Option<PathBuf>,
     ) -> AppRunOutcome {
-        // Everything downstream (staging, finalize, compression naming) needs a
-        // concrete output path. A bundle-driven run fills this from
-        // output.name before we get here, so only the flag-less, bundle-less
-        // case can still be empty.
+        // Bundle-driven runs fill output from output.name before this point, so
+        // only the flag-less, bundle-less case can still be empty.
         let Some(output) = args.output.as_deref() else {
             let thread_execution = self.context(args.threads).single_thread_execution();
             return self.finish(
@@ -333,12 +324,11 @@ impl CliApp {
                 probe_threads.clone(),
             )
         };
-        // Per-patch header modes: entry i governs patch i; a missing entry inherits
-        // the last given mode (so a single value applies to the whole chain) and an
-        // empty list means all-auto. `Auto` needs checksum evidence to act on:
-        // N64 byte-order rewrites and cheat codes pin offsets to the original bytes,
-        // and --ignore-checksum-validation removes the evidence itself, so those runs
-        // degrade auto to keep.
+        // Per-patch header modes: a missing entry inherits the last given mode;
+        // an empty list means all-auto. `Auto` needs checksum evidence: N64
+        // byte-order rewrites and cheat codes pin offsets to the original bytes,
+        // and --ignore-checksum-validation removes the evidence itself, so those
+        // runs degrade auto to keep.
         let any_explicit_n64_transform = n64_byte_order.iter().any(|mode| mode.target().is_some());
         let auto_evidence_available =
             !any_explicit_n64_transform && codes.is_empty() && !ignore_checksum_validation;
@@ -445,9 +435,8 @@ impl CliApp {
             );
         }
         // A disc reassembles into multiple track files (or a CHD), not a single
-        // checksummable artifact; the would-be output path here is the sheet
-        // text, so checksumming it never reflects the patched disc. Reject the
-        // combination rather than report a misleading validate failure.
+        // checksummable artifact, so --expect-out could never reflect the
+        // patched disc; reject rather than fail validate misleadingly.
         if disc_context.is_some() && !expected_output_checksums.is_empty() {
             return self.finish(
                 "patch-apply",
@@ -499,10 +488,8 @@ impl CliApp {
         }
 
         let mut expected_input_size: Option<u64> = None;
-        // Bundle checks merge after the CLI flags (already parsed into
-        // `expected_input_checksums`) and before the file-name requirements,
-        // so precedence is CLI > bundle > file name and any conflict names
-        // the bundle source that introduced it.
+        // Input-check precedence is CLI > bundle > file name; any conflict
+        // names the bundle source that introduced it.
         if !ignore_checksum_validation && let Some(resolution) = &bundle_resolution {
             for (source_label, requirements) in &resolution.checks {
                 if let Some(report) = self.merge_expected_input_requirements(
@@ -516,10 +503,9 @@ impl CliApp {
                     return self.finish("patch-apply", report);
                 }
             }
-            // Bundle output checks merge after the CLI output flags with
-            // the same conflict rule as input requirements. Disc inputs
-            // reassemble into multiple files, so there is no single output to
-            // checksum - skip rather than fail an otherwise valid bundle.
+            // Bundle output checks merge with the same conflict rule. Disc
+            // inputs have no single output to checksum - skip rather than fail
+            // an otherwise valid bundle.
             match (&resolution.output_checks, disc_context.is_some()) {
                 (Some((source_label, _)), true) => {
                     trace!(
@@ -609,11 +595,10 @@ impl CliApp {
                 } = resolved;
                 (source, extracted_archives, cleanup_paths)
             };
-        // Reuse the host-provided input checksums (the CRC32 the webapp already computed during
-        // staging) for the handler's source-checksum verification instead of re-reading the input.
-        // Keyed by the original resolved path; any header/N64 transform writes a distinct temp path
-        // whose lookup misses and falls back to a fresh compute. Skipped for disc apply, where the
-        // resolved input is a single track but the cached checksums describe the whole disc.
+        // Seed host-provided input checksums so handler source verification skips
+        // a re-read. Keyed by the resolved path; header/N64 transforms write a
+        // distinct temp path whose lookup misses and recomputes. Skipped for disc
+        // apply, where the cached checksums describe the whole disc, not the track.
         if disc_context.is_none() {
             context.seed_checksums(&resolved_input, &cached_input_checksums);
         }
@@ -794,15 +779,13 @@ impl CliApp {
                 stripped_header,
                 stripped_header_match,
             };
-            // The output-header decision: on a headerless final state, `--output-header`
-            // decides whether the stripped header returns (auto re-adds emulator-required
-            // headers like iNES/fwNES/LNX/A78 and drops junk copier headers like SNES/PCE/
-            // Game Doctor - except NSRT-signed copier headers, which carry real dump
-            // metadata and come back, matching the RUP handler's own normalization).
-            // Explicit `--output-header strip` on a headered state removes
-            // the still-present header during finalize. Evaluated here for the patch-0
-            // state; chains re-evaluate after the loop from the final chain state (they
-            // always stage, so the staging decision below is unaffected).
+            // On a headerless final state `--output-header` decides whether the
+            // stripped header returns: auto re-adds emulator-required headers
+            // (iNES/fwNES/LNX/A78) and NSRT-signed copier headers (real dump
+            // metadata, matching RUP's normalization) but drops junk copier
+            // headers (SNES/PCE/Game Doctor). Explicit strip removes a
+            // still-present header during finalize. Chains re-evaluate after the
+            // loop; they always stage, so the staging decision below holds.
             let resolve_output_header = |state: &ChainHeaderState| -> (bool, bool) {
                 let add_header = state.headerless
                     && state
@@ -837,12 +820,10 @@ impl CliApp {
             let (mut add_header, mut strip_output_header) = resolve_output_header(&header_state);
 
             let patch_count = resolved_patches.len();
-            // Single-patch runs know the final header state before anything is
-            // written, so the extension swap lands here and every writer (direct
-            // handler output, finalize, compression entry naming) targets the
-            // adjusted path - no post-hoc rename, which the browser VFS cannot
-            // observe. Chains re-evaluate after the loop; they always stage, so
-            // the finalize/compression writers pick the adjusted path up there.
+            // Single-patch runs know the final header state up front, so the
+            // extension swap lands before any writer chooses a path - no
+            // post-hoc rename, which the browser VFS cannot observe. Chains
+            // re-evaluate after the loop (they always stage).
             let mut extension_swap_note: Option<String> = None;
             if patch_count == 1
                 && !is_disc
@@ -1048,11 +1029,10 @@ impl CliApp {
             }
 
             // Reassemble the full disc from the patched track. When compressing,
-            // every untouched track is read in place from the original disc and
-            // only the patched track is redirected via a create override (no
-            // whole-disc scratch copy); the original sheet feeds the compressor
-            // below. With --no-compress the disc is staged and written beside
-            // `output` directly.
+            // only the patched track is redirected via a create override
+            // (untouched tracks read in place; no whole-disc scratch copy) and
+            // the original sheet feeds the compressor below. With --no-compress
+            // the disc is staged and written beside `output` directly.
             if is_disc && report.status == OperationStatus::Succeeded {
                 let disc = disc_context
                     .as_ref()
@@ -1204,11 +1184,9 @@ impl CliApp {
                         );
                     }
                 };
-                // For a disc, feed the original sheet to the compressor: untouched
-                // tracks are read in place from the source disc and the patched
+                // Disc: feed the original sheet to the compressor; the patched
                 // track is redirected via `disc_track_overrides`. Plain inputs
-                // stage the single patched payload under an archive-appropriate
-                // entry name.
+                // stage the payload under an archive-appropriate entry name.
                 let archive_input = if is_disc {
                     raw_ready_output.clone()
                 } else {
@@ -1312,19 +1290,10 @@ impl CliApp {
         self.finish("patch-apply", report)
     }
 
-    /// Resolve each requested patch path through auto-extract, returning the
-    /// `(original, resolved)` pairs plus any "resolved via N container extract
-    /// step(s)" notes. Shared by patch-apply and patch-validate, which differ
-    /// only in the command name, the label noun, and the temp-file prefix.
-    /// Cleanup paths from each extract are pushed onto `temp_paths` as they are
-    /// produced, matching the previous inline loops.
-    /// Decide the default (`--patch-header auto`) handling for the FIRST patch: strip
-    /// the detected copier header before apply only when the patch's required input
-    /// checksum proves it was authored against the headerless bytes. Any doubt - no
-    /// strippable header, no checksum evidence, or a checksum matching neither
-    /// variant - keeps the input as-is, so runs without evidence behave exactly like
-    /// the pre-policy default. Later chain steps decide per patch in
-    /// [`Self::chain_header_transition`].
+    /// Decide `--patch-header auto` for the FIRST patch: strip the detected
+    /// copier header only when the patch's required input checksum proves it was
+    /// authored against the headerless bytes; any doubt keeps the input as-is.
+    /// Later chain steps decide per patch in [`Self::chain_header_transition`].
     fn auto_header_strip_decision(
         &self,
         resolved_input: &Path,
@@ -1723,6 +1692,9 @@ impl CliApp {
         Some(format!("{source_crc32:08x}"))
     }
 
+    /// Resolve each requested patch path through auto-extract, returning
+    /// `(original, resolved)` pairs plus any container-extract notes. Shared by
+    /// patch-apply and patch-validate, which differ only in the labels.
     pub(super) fn resolve_patches(
         &self,
         patches: &[PathBuf],
@@ -1876,14 +1848,8 @@ struct ChainHeaderState {
 }
 
 impl CliApp {
-    /// Apply each resolved patch in sequence, threading the running output
-    /// through every step (intermediate steps write temp files registered in
-    /// `temp_paths`; the final step writes `staged_output`). Returns the last
-    /// successful apply report plus the patched-output path and applied formats
-    /// on full success, or `Err(report)` carrying the failure report when a
-    /// patch handler is missing or an apply fails - the exact reports the
-    /// inline loop produced. Extracted from `run_patch_apply` to shrink it; the
-    /// `Err` early-exits map one-to-one onto the loop's former `return`s.
+    /// Apply the resolved chain through temporary intermediates into
+    /// `staged_output`. Errors carry the failing operation report.
     #[expect(clippy::too_many_arguments)]
     fn run_patch_apply_loop(
         &self,
@@ -2334,22 +2300,12 @@ impl CliApp {
         Ok(steps)
     }
 
-    /// Shared compress-and-emit core for `patch apply` output compression, used
-    /// by both the plain patch-apply path and the `.dcp` disc rebuild. Resolves
-    /// the create handler for `plan.format`, emits the caller-supplied
-    /// "compressing…" running event, builds the container create request, runs
-    /// it with `overrides`, and returns the create report plus the codec label.
+    /// Compress output for both plain apply and `.dcp` disc rebuilds, returning
+    /// the create report and codec label.
     ///
-    /// The two callers diverge on the surrounding wording (running noun,
-    /// failure prefix, success label) and on the report family/format/threads
-    /// they attach, so status-check and label assembly stay at the call sites;
-    /// only this byte-for-byte-identical core (handler resolution, codec label,
-    /// thread plan, running event, request build, create + create-error
-    /// fallback) is shared. A missing handler - unreachable once `plan` came
-    /// from [`Self::resolve_patch_apply_compression_plan`], which already
-    /// validated registration/create capability - surfaces as the original
-    /// "requested output format is not registered" validation error for the
-    /// caller to wrap.
+    /// Caller-specific labels and report metadata stay outside. A missing
+    /// handler preserves the validation error expected by callers, though the
+    /// compression plan should already have validated it.
     pub(super) fn run_patch_apply_compression(
         &self,
         plan: &PatchApplyCompressionPlan,

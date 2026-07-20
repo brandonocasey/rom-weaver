@@ -20,13 +20,9 @@ pub(super) const DELTA_ADDR_COMP: u8 = 0x04;
 pub(super) const DELTA_KNOWN_MASK: u8 = DELTA_DATA_COMP | DELTA_INST_COMP | DELTA_ADDR_COMP;
 pub(super) const NATIVE_CHUNK_SIZE: usize = 64 * 1024;
 
-/// Output buffer for the windowed VCDIFF apply paths. Each window's decoded target is often only
-/// ~16 KiB, so writing it straight to the file costs one `write` syscall per window - tens of
-/// thousands for a large patch (measured: ~27k writes → ~270 on a 443 MiB apply). Buffering
-/// coalesces those into far fewer, larger writes: a large win for native syscall count, and it
-/// improves browser read-cache locality by dropping the per-window seek. (Browser write *time* is
-/// bandwidth-bound on the data copy, so larger buffers don't help there - 1 MiB matched 4 MiB on
-/// wall time at a quarter of the memory.)
+/// Output buffer for the windowed VCDIFF apply paths: coalesces the ~16 KiB per-window writes
+/// (measured ~27k → ~270 syscalls on a 443 MiB apply) and drops the per-window seek. 1 MiB matched
+/// 4 MiB on browser wall time at a quarter of the memory (browser writes are bandwidth-bound).
 pub(super) const APPLY_OUTPUT_BUFFER_BYTES: usize = 1024 * 1024;
 pub(super) const XDELTA_SECONDARY_MIN_INPUT: usize = 10;
 pub(super) const XDELTA_SECONDARY_MIN_SAVINGS: usize = 2;
@@ -386,9 +382,7 @@ impl PatchHandler for VcdiffPatchHandler {
         let mut secondary_candidate_paths = Vec::new();
 
         // One monotonic 0→100 stream across whichever phases actually run, so the bar never jumps
-        // across an empty band. Secondary compression only runs for non-`none` modes; without it the
-        // diff and (for xdelta) the uncompressed-baseline write are the only heavy phases and own the
-        // bar between them.
+        // across an empty band.
         let create_progress = CreateProgress::new(context, self.descriptor.name);
         let will_run_secondary =
             compare_secondary && !xdelta_secondary_candidates_for_mode(secondary_mode).is_empty();
@@ -460,10 +454,9 @@ impl PatchHandler for VcdiffPatchHandler {
                     None,
                 )
             };
-            // Size of the uncompressed app-header baseline (the size-comparison fallback) without
-            // materializing it: for large patches a secondary candidate almost always wins, so
-            // writing the baseline would be a wasted full-patch rewrite. It is materialized lazily
-            // below only if it actually wins (or no secondary candidate ran).
+            // Measure the app-header baseline analytically: a secondary candidate almost always
+            // wins, so materializing it here would be a wasted full-patch rewrite. It is written
+            // lazily below only if it wins (or no candidate ran).
             let baseline_size = if xdelta_app_header.is_some() {
                 measure_appheader_baseline_size(
                     baseline_loaded_for_secondary
@@ -579,9 +572,8 @@ impl PatchHandler for VcdiffPatchHandler {
             if let Some(parent) = request.output.parent() {
                 fs::create_dir_all(parent)?;
             }
-            // The winning patch is already a fully written temp file, so move it into place rather
-            // than copying its bytes. `rename` is O(1) when the temp dir and output share a
-            // filesystem (the common case); only a cross-mount move falls back to a full copy.
+            // The winner is already a fully written temp file: move it into place; only a
+            // cross-mount move falls back to a full copy.
             let finalize_start = SystemTime::now();
             move_or_copy_file(&selected.path, &request.output)?;
             create_progress.emit_overall(CREATE_FINALIZE_PERCENT);
@@ -947,8 +939,7 @@ pub(super) fn read_window_index<R: Read + Seek>(
         )));
     }
 
-    // The section start offsets above are only seek targets; validate the full
-    // window extent against the real patch length here so a malformed window
+    // Validate the full window extent against the real patch length so a malformed window
     // cannot drive `read_section`/`skip_bytes` into an oversized allocation.
     let patch_len = reader.seek(SeekFrom::End(0))?;
     if window_end > patch_len {
@@ -1067,9 +1058,8 @@ where
                 "source",
             )?,
             Some(WindowSourceKind::Target) => {
-                // The output file doubles as a copy source for target-referencing windows. Flush
-                // buffered writes so the requested span is on disk, read it, then restore the
-                // append cursor for the next write.
+                // The output file doubles as a copy source for target-referencing windows: flush
+                // so the requested span is on disk, read it, then restore the append cursor.
                 output.flush()?;
                 let segment = read_source_segment(
                     output.get_mut(),
@@ -1154,13 +1144,11 @@ pub(super) fn apply_windows_with_target_sources(
 /// Apply a VCDIFF/xdelta patch held entirely in memory against an in-memory
 /// `source`, returning the reconstructed target bytes.
 ///
-/// This is the byte-slice counterpart to [`VcdiffPatchHandler::apply`], for
-/// callers (such as the `.dcp` apply pipeline) that patch many small files in
-/// memory rather than on disk. It supports the patch shapes stock xdelta3
-/// produces with `flags=0`: source- and target-referencing windows with no
-/// secondary compression. Patches that use xdelta3's LZMA secondary sections or
-/// a custom code table must go through the file-based handler and are rejected
-/// here with a clear error. Source-window checksums are always validated.
+/// Byte-slice counterpart to [`VcdiffPatchHandler::apply`] for callers (e.g. the
+/// `.dcp` pipeline) that patch many small files in memory. Supports the shapes
+/// stock xdelta3 emits with `flags=0`; LZMA secondary sections and custom code
+/// tables are rejected and must go through the file-based handler.
+/// Source-window checksums are always validated.
 pub fn apply_patch_bytes(source: &[u8], patch_bytes: &[u8]) -> Result<Vec<u8>> {
     let patch = parse_patch(&mut std::io::Cursor::new(patch_bytes))?;
     if patch.custom_code_table.is_some() {
@@ -1216,16 +1204,14 @@ pub fn apply_patch_bytes(source: &[u8], patch_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// The decoded output (target) size of a VCDIFF/xdelta patch, read from the
-/// window headers without decoding any data. Lets callers plan output layout
-/// before applying - e.g. the `.dcp` rebuild sizes each patched file up front.
+/// The decoded output (target) size of a VCDIFF/xdelta patch, read from the window
+/// headers without decoding - lets callers (e.g. the `.dcp` rebuild) size outputs up front.
 pub fn vcdiff_output_size(patch_bytes: &[u8]) -> Result<u64> {
     let patch = parse_patch(&mut std::io::Cursor::new(patch_bytes))?;
     patch.target_size()
 }
 
-/// In-memory counterpart to [`patch_uses_xdelta_lzma_sections`]: detect whether
-/// any compressed window section carries an xdelta3 LZMA stream header.
+/// In-memory counterpart to [`patch_uses_xdelta_lzma_sections`].
 fn patch_bytes_use_xdelta_lzma_sections(patch: &ParsedPatch, patch_bytes: &[u8]) -> Result<bool> {
     patch_reader_uses_xdelta_lzma_sections(patch, &mut std::io::Cursor::new(patch_bytes))
 }
@@ -1291,16 +1277,10 @@ pub(super) fn create_native_compress_options(
     }
 }
 
-/// Progress context for the create-time encode. Present only when the encode is driven by a
-/// `patch-create` command (so it can emit per-window running progress); absent for the
-/// streaming entry point used by tests, which stays single-threaded and silent.
-///
-/// Shared, monotonic progress for the whole `patch-create` operation. The encode, the optional
-/// app-header/secondary recode passes, and finalization each emit into a slice of the 0→100 range
-/// (a "band"), so the reported percentage reflects the *entire* process and only reaches 100% once
-/// the patch is finished - the percentage where it stalls also identifies the slow phase. All
-/// emission happens on the calling (main) thread, so interior mutability via `Cell`/`RefCell` is
-/// sufficient (the parallel encode never captures this).
+/// Shared, monotonic progress for the whole `patch-create` operation. Each phase emits into a
+/// slice ("band") of the 0→100 range, so the percentage reflects the entire process and the
+/// stall point identifies the slow phase. All emission happens on the calling (main) thread, so
+/// `Cell`/`RefCell` interior mutability is sufficient (the parallel encode never captures this).
 pub(super) struct CreateProgress<'a> {
     context: &'a OperationContext,
     format: &'a str,
@@ -1359,10 +1339,9 @@ impl<'a> CreateProgress<'a> {
     }
 }
 
-/// Overall-range bands for each create phase. The secondary LZMA recode is the dominant single-threaded
-/// cost for large patches, so it owns the widest slice; the parallel encode is fast and owns less. The
-/// uncompressed app-header baseline is normally not materialized (its size is computed analytically),
-/// so it has no band of its own except in the rare case it wins, where it borrows the finalize slice.
+/// Overall-range bands for each create phase. The secondary LZMA recode dominates for large
+/// patches, so it owns the widest slice. The app-header baseline is normally not materialized
+/// (its size is computed analytically); when it rarely wins it borrows the finalize slice.
 pub(super) const CREATE_ENCODE_BAND_END: f64 = 35.0;
 pub(super) const CREATE_SECONDARY_RECODE_BAND_END: f64 = 95.0;
 pub(super) const CREATE_FINALIZE_PERCENT: f64 = 98.0;
@@ -1385,8 +1364,7 @@ pub(super) struct CreateEncodeProgress<'a> {
     band_end: f64,
 }
 
-/// File inputs and window geometry shared by both window-encode loops, grouped to keep their
-/// signatures small.
+/// File inputs and window geometry shared by both window-encode loops.
 pub(super) struct WindowEncodeInputs<'a> {
     source_path: &'a Path,
     target_path: &'a Path,
@@ -1409,9 +1387,9 @@ pub(super) fn encode_patch_with_native_streaming(
         .map(|(candidate, _execution)| candidate)
 }
 
-/// Create-command encode: spreads the independent VCDIFF windows across the negotiated thread
-/// budget and emits per-window running progress. Returns the resolved [`ThreadExecution`] so the
-/// operation report reflects the diff threading rather than the (often single-thread) secondary pass.
+/// Create-command encode: fans the independent VCDIFF windows across the negotiated thread budget
+/// with per-window progress. Returns the resolved [`ThreadExecution`] so the report reflects the
+/// diff threading rather than the (often single-thread) secondary pass.
 pub(super) fn encode_patch_create(
     source_path: &Path,
     target_path: &Path,
@@ -1547,11 +1525,10 @@ pub(super) fn encode_windows_sequential<W: Write>(
     Ok(())
 }
 
-/// Encodes the VCDIFF windows in parallel. Each window is self-contained (its own source window,
-/// address cache, and section bytes), so the heavy diff/match work fans out across the pool while
-/// the assembled window bytes are written back in order. Source/target reads stay on the calling
-/// thread (OPFS-safe in wasm) and only `effective_threads` windows are buffered at a time to keep
-/// peak memory bounded.
+/// Encodes the VCDIFF windows in parallel: each window is self-contained, so the diff work fans
+/// out while assembled bytes are written back in order. Source/target reads stay on the calling
+/// thread (OPFS-safe in wasm) and only `effective_threads` windows are buffered at a time to
+/// bound peak memory.
 pub(super) fn encode_windows_parallel<W: Write>(
     encoder: &mut StreamEncoder<W>,
     inputs: &WindowEncodeInputs<'_>,
@@ -1628,10 +1605,8 @@ pub(super) fn encode_windows_parallel<W: Write>(
     Ok(())
 }
 
-/// Create runs two independently parallelizable phases (the window diff and the secondary-candidate
-/// comparison); the report should describe whichever fanned out widest, so pick the execution with
-/// more effective threads (`used_parallelism` tracks `effective_threads > 1`, so this also reports
-/// parallelism whenever either phase used it).
+/// Create runs two independently parallelizable phases (window diff, secondary comparison); the
+/// report describes whichever fanned out widest, so pick the execution with more effective threads.
 pub(super) fn richer_thread_execution(a: ThreadExecution, b: ThreadExecution) -> ThreadExecution {
     if b.effective_threads > a.effective_threads {
         b
@@ -1640,8 +1615,8 @@ pub(super) fn richer_thread_execution(a: ThreadExecution, b: ThreadExecution) ->
     }
 }
 
-/// Milliseconds elapsed since `start`, saturating to 0 if the clock went backwards. Used for the
-/// per-phase create timing log; `SystemTime` is the wasm-supported clock in this runtime.
+/// Milliseconds since `start`, saturating to 0 if the clock went backwards. `SystemTime` is the
+/// wasm-supported clock in this runtime.
 pub(super) fn elapsed_ms(start: SystemTime) -> u64 {
     start
         .elapsed()
@@ -1655,8 +1630,6 @@ pub(super) fn elapsed_ms(start: SystemTime) -> u64 {
 pub(super) fn move_or_copy_file(from: &Path, to: &Path) -> Result<()> {
     #[cfg(target_arch = "wasm32")]
     {
-        // browser-wasi-shim can report a cross-mount rename as successful without persisting the
-        // destination to OPFS; copy the completed temp file so browser outputs survive teardown.
         fs::copy(from, to)?;
         let _ = fs::remove_file(from);
         Ok(())
@@ -1998,11 +1971,9 @@ pub(super) fn recode_window_section(
 }
 
 /// Computes, from window metadata alone (no I/O), the exact byte size the uncompressed app-header
-/// baseline patch would have if materialized by [`recode_loaded_patch_with_xdelta_options`] with no
-/// secondary compressor. The uncompressed recode keeps every section's length, so each window's size
-/// is fully determined by the parsed metadata. This lets `create` compare the baseline against the
-/// secondary candidates without writing it - a full-patch rewrite that a candidate almost always
-/// makes redundant. `create_xdelta_appheader_baseline_size_matches_materialized` guards the formula
+/// baseline would have if materialized by [`recode_loaded_patch_with_xdelta_options`] with no
+/// secondary compressor - so `create` can compare it against candidates without a full-patch
+/// rewrite. `create_xdelta_appheader_baseline_size_matches_materialized` guards the formula
 /// against serialization drift.
 pub(super) fn measure_appheader_baseline_size(
     baseline_patch: &LoadedXdeltaRecodePatch,
@@ -2213,9 +2184,8 @@ mod audit_alloc_guard_tests {
         }
     }
 
-    /// A window whose declared sections run past the end of the (tiny) patch
-    /// must be rejected at parse time instead of being trusted into an oversized
-    /// `read_section` allocation downstream.
+    /// Sections running past the end of the patch must be rejected at parse time,
+    /// not trusted into an oversized `read_section` allocation downstream.
     #[test]
     fn oversized_window_extent_is_rejected() {
         let huge_data_len: u64 = 1_000_000_000;

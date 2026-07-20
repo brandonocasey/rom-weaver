@@ -1,29 +1,17 @@
 import type { ReactNode } from "react";
 
 /**
- * Shared staging-card helpers for the input cards (ROM + patch). During staging
- * the resolved card structure stays mounted - a determinate bar on the card's top
- * edge ({@link "./file-card.tsx" FileCard} `stageBar`) plus a status in the meta
- * line carry progress, while the Checks drawer reserves its rows as shimmer
- * placeholders - so nothing below the card moves when the result lands.
+ * Keep the resolved input-card structure mounted during staging so progress,
+ * shimmer rows, and final checks do not shift the surrounding layout.
  */
 
 /** Minimal shape of the converted workflow progress props the staging UI reads. */
 type StageProgress = { label?: ReactNode; percent?: number | null } | null | undefined;
 
 /**
- * Phase-aware staging label: "<verb>…" while the input is only being read/hashed,
- * "Extracting & <verb>…" while it is also being extracted from a container. `verb` is
- * "Checksumming" for ROM inputs (extraction hashes inline, so both verbs apply) and
- * "Reading" for patches (staging a patch is extract + parse - it is never hashed; its
- * deep dry-run validation is deferred and runs silently after staging).
- *
- * `extracting` is driven by the runtime's authoritative stage (a ROM input's
- * `validationPhase`, sourced from Rust's `stage` field) rather than sniffing the
- * label text for "extract": the old regex fell back to a bare "<verb>…" whenever a
- * byte-progress event carrying an "extracting …" label wasn't the most recent one
- * seen (startup, the finalize tail, formats whose progress label omits the word),
- * so a combined extract+checksum input read as plain "Checksumming…".
+ * Use the runtime's stage flag, not progress-label text, to distinguish
+ * "<verb>…" from "Extracting & <verb>…". Labels vary across startup/finalize and
+ * formats, so text sniffing hid combined phases.
  */
 const stageStatusLabel = (verb: string, extracting: boolean): string =>
   extracting ? `Extracting & ${verb}…` : `${verb}…`;

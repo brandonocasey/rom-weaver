@@ -13,18 +13,13 @@ import {
 import { getFileInputAcceptAttributes } from "../../src/public/react/file-input-accept.ts";
 
 /**
- * Behavior-preservation pin for the WebKit/Safari user-agent detection.
+ * Pins WebKit/Safari behavior against the pre-centralization predicates below.
  *
- * The three production call sites compose DIFFERENT predicates from the shared
- * primitives (see webkit-runtime.ts); they intentionally classify some UAs
- * differently. Every `expected` value in this file was computed by running each
- * site's ORIGINAL (pre-refactor) logic, reproduced verbatim below, so the table
- * is an independent oracle: if a primitive or a composition drifts, these break.
- *
- * The three site compositions, exactly as they shipped before centralization:
+ * Call sites intentionally classify some UAs differently. Expected values come
+ * from these original predicates, keeping the table independent:
  *   site 1 - isMobileSafariLike (browser-runtime-diagnostics.ts)
  *   site 2 - isMobileSafari (file-input-accept.ts)
- *   site 3 - isWebKitInputRuntime (browser-opfs-source-ref.ts; LOAD-BEARING)
+ *   site 3 - isWebKitInputRuntime (browser-opfs-source-ref.ts)
  */
 
 const SAFARI_TOKEN = /Safari/;

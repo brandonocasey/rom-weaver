@@ -48,13 +48,9 @@ pub fn insert_thread_execution_details(
     }
 }
 
-/// Record the full set of files an extract wrote into `report.details["emitted_files"]` as path-only
-/// entries, so the app can treat the handler's report as the authoritative output set rather than
-/// inferring outputs from a filesystem scan of the (possibly shared) out dir - a scan that, under
-/// concurrent extracts into one dir, also picks up a sibling op's freshly-written files. Call this
-/// AFTER any checksum-detail attach: paths already reported (with their checksums) are skipped, and the
-/// rest are appended as `{path, file_name, size_bytes}` (the app re-derives kind and merges checksums by
-/// path). Every container handler must pass its COMPLETE output set here.
+/// Attach the handler's complete output set so callers never scan a shared
+/// directory and capture sibling-operation files. Call after checksum details;
+/// existing paths are preserved and missing paths gain name and size.
 pub fn attach_emitted_file_paths<P: AsRef<Path>>(
     mut report: OperationReport,
     paths: &[P],

@@ -1,33 +1,6 @@
 /**
- * Accessibility automation for the loom webapp. Every scan runs against real
- * computed styles in BOTH light and dark themes.
- *
- *  1. Component WCAG 2.1 A/AA scan of the checksum card (text contrast, roles,
- *     names, ARIA) - the broad "are we meeting our goals" gate.
- *  2. A surface-separation guard for the bug this suite was added for: the
- *     *opened* checksum drawer must stay a distinct recessed well, not wash
- *     into the card. axe's contrast rules only cover text vs background (WCAG
- *     1.4.3), never surface vs surface, so it's asserted from getComputedStyle.
- *  3. An expanded-sections + states gallery: every collapsible section rendered
- *     OPEN (axe skips visibility:hidden content) plus the progress / error /
- *     fault primitives.
- *  4. Full-page scans (WCAG A/AA + best-practice incl. landmarks) of the Apply
- *     (staged/empty/verdict/done), Create (empty + staged) and Trim (empty +
- *     staged) pages, in the production shell (Masthead + <main> + Selvage).
- *  5. A dense Apply page - one disc ROM with every panel + three patches
- *     spanning every verdict - with every collapsible drawer clicked OPEN, so
- *     the control-heavy patch Options fields (name/description/verification
- *     inputs/header checkbox) that render closed elsewhere get audited too.
- *
- * Every scan runs at WCAG 2.0 + 2.1 + 2.2 (A/AA) across a viewport ladder that
- * lands inside each responsive layout regime (see VIEWPORTS), in both themes.
- *
- * Forms render inert: Apply via controllers-as-stores, Make Patch/Trim via their
- * presentational views (CreatePatchFormView/TrimPatchFormView) fed a staged model, the empty
- * benches via the real forms (wasm only boots on a file action). No wasm/OPFS/
- * worker boot. Runs in-browser via axe-core rather than @axe-core/playwright,
- * because vitest browser mode's `page` is not a Playwright Page. The live-app
- * audit lives in scripts/run-webapp-e2e.mjs.
+ * Axe scans components and inert full-page states in both themes and viewports.
+ * Custom assertions cover surface contrast and keyboard behavior axe cannot express.
  */
 
 import axeModule from "axe-core";
@@ -62,13 +35,9 @@ import "../../src/webapp/design-system/index.css";
 const axe = axeModule.default ?? axeModule;
 const THEMES = ["light", "dark"];
 
-// One viewport landing inside each layout regime the design system actually
-// defines (viewport seams in design-system/responsive.css: 720/860/1100px; everything
-// else rides fluid tokens or container queries), plus a short-height
-// landscape-phone case for `(max-width: 860px) and (max-height: 520px)`.
-// Every axe scan runs at each, so responsive layouts - the phone masthead, the
-// masthead-wrap seam, the ≥1100px two-column split, coarse-pointer targets -
-// are all exercised, not just the default width.
+// One viewport inside each layout regime (seams in design-system/responsive.css:
+// 720/860/1100px; the rest rides fluid tokens or container queries), plus a
+// short-height case for `(max-width: 860px) and (max-height: 520px)`.
 const VIEWPORTS = [
   { height: 740, name: "360w smallest phone", width: 360 },
   { height: 860, name: "400w phone", width: 400 },
@@ -79,9 +48,8 @@ const VIEWPORTS = [
   { height: 900, name: "1280w desktop", width: 1280 },
   { height: 430, name: "740w landscape phone", width: 740 },
 ];
-// Matches the vitest browser config default (vitest.browser.config.mjs), so the
-// viewport-agnostic tests (colour-distinctness guards, keyboard nav) run at a
-// stable width after afterEach restores it.
+// vitest browser config default (vitest.browser.config.mjs); afterEach restores
+// it so viewport-agnostic tests run at a stable width.
 const DEFAULT_VIEWPORT = { height: 900, width: 1280 };
 const setViewport = (viewport) => page.viewport(viewport.width, viewport.height);
 
@@ -176,12 +144,9 @@ const contrastRatio = (a, b) => {
 
 const bgString = (selector) => getComputedStyle(host.querySelector(selector)).backgroundColor;
 
-// Run axe over `context` and return readable violation strings (with the
-// contrast diagnostic inlined when present). `bestPractice` adds the
-// best-practice ruleset (landmark relationships, dialog names, …); `region`
-// enables the region rule (only meaningful for a full page - an isolated mount
-// or lone modal has no landmarks). Always assert against [] so failures show
-// exactly what broke.
+// Returns readable violation strings (contrast diagnostic inlined) to assert
+// against [] so failures show exactly what broke. `region` is only meaningful
+// for a full page - an isolated mount or lone modal has no landmarks.
 const scanViolations = async (context, { bestPractice = false, region = false } = {}) => {
   const tags = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
   if (bestPractice) tags.push("best-practice");
@@ -216,15 +181,14 @@ describe("design-system accessibility", () => {
 
     // The opened drawer must keep the solid well fill it has when collapsed -
     // the bug was the open state diluting to a near-transparent tint that read
-    // as the card behind it. Opening must not change the recess colour.
+    // as the card behind it.
     expect(bgString(".cks.is-open")).toBe(bgString(".cks:not(.is-open)"));
 
     const openBg = parseColor(bgString(".cks.is-open"));
     expect(openBg.a).toBe(1);
 
-    // …and that well must be perceptibly separated from the card. The washed
-    // out tint measured ~1.01:1 against the card (≈invisible); the solid well
-    // clears a small but real margin.
+    // …and perceptibly separated from the card: the washed-out tint measured
+    // ~1.01:1 (≈invisible); the solid well clears a small but real margin.
     const ratio = contrastRatio(openBg, parseColor(bgString(".card")));
     expect(ratio).toBeGreaterThan(1.05);
   });
@@ -248,7 +212,6 @@ describe("design-system accessibility", () => {
   }
 });
 
-// ── Shared mount helpers ─────────────────────────────────────────────────────
 const noop = () => undefined;
 
 // Inert controller: a store with the live shape but no subscriptions/mutations.
@@ -265,10 +228,8 @@ const renderPage = async (node, theme) => {
   await renderNode(node, theme);
 };
 
-// ── Expanded design-system sections + states gallery ─────────────────────────
-// Every collapsible section, rendered OPEN, plus the progress / error / fault
-// primitives, so axe sees the *contents* of each section and each status state
-// in both themes - a collapsed drawer is visibility:hidden and axe skips it.
+// Every collapsible section rendered OPEN, plus the progress / error / fault
+// primitives - a collapsed drawer is visibility:hidden and axe skips it.
 
 const ROM_CHECKSUMS = {
   crc32: "C6FB1252",

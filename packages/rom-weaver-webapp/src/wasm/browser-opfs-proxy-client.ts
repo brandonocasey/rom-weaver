@@ -1,15 +1,7 @@
-// Consumer (WASM-thread) side of the OPFS async proxy channel.
-//
-// Every WASM thread that needs OPFS I/O holds an OpfsProxyClient over the shared channel. The client
-// is fully synchronous: it claims an idle slot, serializes the request into the slot's control words
-// (+ data buffer), rings the doorbell, then blocks on Atomics.wait until the proxy worker flips the
-// slot to DONE. This is what lets a spawned WASI compute thread - which cannot path_open an OPFS file
-// itself - perform real reads/writes: it asks the one handle-owning proxy to do them.
-//
-// The proxy side (workers/browser-opfs-proxy-worker.ts) is the single producer; see
-// browser-opfs-proxy-protocol.ts for the wire format and browser-opfs-proxy-channel.ts for the SAB
-// layout. Read/write payloads larger than the slot data buffer are chunked here so callers can pass
-// arbitrary lengths.
+// Synchronous WASM-thread client for the handle-owning OPFS proxy. It claims a
+// slot, publishes a request, and blocks on Atomics.wait until DONE, allowing
+// spawned WASI threads that cannot path_open OPFS files to perform I/O. Large
+// payloads are chunked to the shared slot buffer.
 
 import {
   OPFS_PROXY_GLOBAL_DOORBELL_INDEX,

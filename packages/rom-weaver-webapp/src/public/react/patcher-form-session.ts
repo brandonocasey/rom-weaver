@@ -912,14 +912,9 @@ const useLocalApplyPatchFormSession = ({
     validatePatchesDeferred(createStageSnapshot());
   }, [activePatches, createStageSnapshot, emitSessionTrace, validatePatches, validatePatchesDeferred]);
 
-  // One coalescing window drives BOTH buckets. The ROM and patch staging decisions are the same
-  // independent choreographies as before, but a short debounce defers them by a tick so a ROM and
-  // its patches that arrive a beat apart (separate drops/picks) collapse into a single staging pass
-  // - syncRomInput's snapshot already carries the patches, so prepareWorkflow extracts the input and
-  // every patch concurrently - instead of the ROM bucket staging first and the patch bucket queueing
-  // behind it. Reading the latest snapshot at fire time means rapid successive changes fold into the
-  // final batch; the input block runs before the patch block so the input mutation is still enqueued
-  // first and every patch's readiness evaluates against a fully staged input.
+  // One short debounce coalesces ROM and patch changes into a concurrent staging
+  // pass. Read the latest snapshot at fire time and enqueue input first so patch
+  // readiness evaluates against the staged target.
   useEffect(() => {
     if (!(stageInput || stagePatches)) return;
     // Identity by stable KEY, not raw name/size/lastModified signature: a source that was cleared and
@@ -929,12 +924,8 @@ const useLocalApplyPatchFormSession = ({
     const currentPatchKeys = activePatches.map((source) => getPatchKey(source, activePatches));
     const sameKeyList = (left: string[], right: string[]) =>
       left.length === right.length && left.every((key, index) => key === right[index]);
-    // Reflect "preparation pending" synchronously the moment sources change, so a click landing in
-    // the coalesce window below queues instead of starting against not-yet-staged sources. Only the
-    // pending flags move earlier here; the staging *work* stays debounced in the timeout. (syncRomInput
-    // otherwise sets inputStaging inside the deferred callback, leaving a window where the form looks
-    // ready.) The conditions mirror the debounced decisions: a fresh/changed input, or a genuinely new
-    // patch (reorders/removals don't re-stage), or a settings change that re-stages.
+    // Mark preparation pending before the debounce fires so a click queues
+    // instead of running against unstaged sources. Work remains deferred.
     if (
       stageInput &&
       effectiveInputs.length > 0 &&

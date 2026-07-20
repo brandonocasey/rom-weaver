@@ -1,17 +1,9 @@
 #!/usr/bin/env sh
 # Install lefthook git hooks, but ONLY from the main checkout.
 #
-# Why the guard: git worktrees share one hooks directory (the common git dir's
-# `.git/hooks`), so a single installed hook serves every worktree. `lefthook
-# install` bakes the absolute path of the node_modules it was run from into that
-# shared hook. If `npm ci` runs the `prepare` lifecycle inside a worktree (e.g.
-# scripts/setup-worktree.sh), it rewrites the shared hook to point at that
-# transient worktree's binary - so commits from main and every other worktree
-# start shelling into a sibling worktree that may later be removed.
-#
-# Running install only from the main checkout keeps the baked path stable
-# (main's node_modules always exists); worktrees inherit the shared hook for
-# free. Re-runnable; no-op outside a git work tree.
+# Worktrees share `.git/hooks`, and lefthook bakes its node_modules path into the
+# hook. Installing from a disposable worktree would break every checkout after
+# that worktree is removed. Worktrees inherit the stable main-checkout hook.
 set -eu
 
 # Outside a git work tree (e.g. installed as a dependency, or a tarball build),

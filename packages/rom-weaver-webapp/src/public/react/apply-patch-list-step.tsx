@@ -501,12 +501,9 @@ const EditableCheckRow = ({
 };
 
 /**
- * The one Checks drawer every patch card carries: the requirements built into
- * the patch file (read-only rows), the user's own expected checks (editable,
- * addable per side), and the ROM-header handling when the target has a
- * strippable header. The dry-run verdict + timing ride the drawer header.
- * User checks always export with the bundle; on the chain endpoints they also
- * gate the live run (input checks verify the ROM, output checks the result).
+ * Patch-card checks: embedded requirements, editable user expectations, header
+ * handling, and dry-run status. User checks export with bundles and gate live
+ * chain endpoints.
  */
 /** The chain chip: one plain-language line for what this patch's input was matched against.
  * Positions in the verdict are 0-based ENABLED-chain positions; `enabledIndexes` maps them to

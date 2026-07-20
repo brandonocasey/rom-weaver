@@ -1,24 +1,12 @@
 //! Streaming checksum-variant engine shared by the `checksum` command and the
 //! extract write path.
 //!
-//! ROM dumps frequently differ from their canonical No-Intro/Redump entry only
-//! by a removable copier header, an incorrect internal header checksum, or an
-//! N64 byte order. Rather than force the user to guess which transform a tool
-//! expects, the engine folds every applicable transform into the same forward
-//! pass over the bytes and emits one checksum per *variant*.
+//! Computes header, checksum-repair, and N64 byte-order variants in one
+//! streaming pass for both files and extracted chunks.
 //!
-//! It is push-based and streaming-only (no random access), so the exact same
-//! code can hash a file on disk (the `checksum` command) or hash decoded output
-//! chunks as they are written during extraction. Feed bytes in order with
-//! [`StreamingVariantChecksums::update`] and collect the rows with
-//! [`StreamingVariantChecksums::finalize`].
-//!
-//! The one transform whose corrected bytes can sit *before* the data they are
-//! derived from (`fix-header`: Genesis sums to EOF, N64 over a 1 MiB boot range)
-//! is handled with a bounded prefix buffer - see [`FixHeader`]. When that buffer
-//! would exceed [`FIX_HEADER_PREFIX_CAP`] the variant is returned *deferred*
-//! (patches only, no digest) so the caller can compute it with a single extra
-//! read; see [`overlay_checksums`].
+//! Repairs whose bytes precede their checksum range use a bounded prefix. Past
+//! [`FIX_HEADER_PREFIX_CAP`], [`overlay_checksums`] finishes the digest in one
+//! extra read.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -346,12 +334,10 @@ struct N64Repair {
 struct FixHeader {
     checksum: Option<StreamingChecksum>,
     flush_offset: u64,
-    /// Produce a [`DeferredFixHeader`] instead of an in-pass digest: the streamed
-    /// accumulators still resolve the repair, but the digest is computed in one
-    /// extra read via [`overlay_checksums`]. Set when the prefix would exceed the
-    /// in-memory cap *or* when a Genesis repair spans the whole file (its checksum
-    /// sits near the start yet sums to EOF, so an in-pass hasher would buffer all
-    /// of it).
+    /// Emit a [`DeferredFixHeader`] (patches resolved in-pass, digest via one
+    /// extra [`overlay_checksums`] read) instead of hashing inline. Set when the
+    /// prefix would exceed the in-memory cap *or* for Genesis, whose checksum
+    /// sits near the start yet sums to EOF (inline hashing would buffer it all).
     deferred: bool,
     /// True only when `deferred` was forced by [`FIX_HEADER_PREFIX_CAP`] (an
     /// anomaly worth a warning); a routine Genesis deferral leaves this false.
@@ -392,8 +378,7 @@ impl FixHeader {
             return Ok(());
         }
 
-        // This chunk crosses the flush boundary: buffer the prefix portion,
-        // flush, then hash the remainder live.
+        // Chunk crosses the flush boundary: buffer the prefix part, flush, hash the rest live.
         let split = (self.flush_offset - offset) as usize;
         self.prefix.extend_from_slice(&chunk[..split]);
         self.flush()?;
@@ -477,8 +462,7 @@ impl FixHeader {
     }
 
     fn into_output(mut self) -> Result<FixHeaderOutcome> {
-        // Ensure accumulators are finalized even if the stream ended before the
-        // flush boundary (should not happen for valid inputs).
+        // Resolve even if the stream ended before the flush boundary (invalid inputs).
         let patches = self.resolve_patches();
         if patches.is_empty() {
             return Ok(FixHeaderOutcome::None);
@@ -683,11 +667,9 @@ impl StreamingVariantChecksums {
     /// then replay the buffered bytes through it.
     fn plan(&mut self) -> Result<()> {
         let header = std::mem::take(&mut self.header_buf);
-        // Build every applicable variant with a synchronous hasher first so the active count is
-        // known, then split the worker budget across them and upgrade each to a parallel hasher.
-        // Each variant only differs from `raw` by its transform and is fed the same bytes (one
-        // read), but the hashing is independent - giving each its own workers lets them overlap the
-        // producer instead of serializing on the decode thread.
+        // Build each variant with a synchronous hasher first so the active count is known, then
+        // split the worker budget and upgrade each to a parallel hasher - independent per-variant
+        // hashing overlaps the producer instead of serializing on the decode thread.
         let Some(raw_checksum) = StreamingChecksum::new(&self.algorithms)? else {
             self.state = State::Empty;
             return Ok(());
@@ -705,12 +687,10 @@ impl StreamingVariantChecksums {
         let mut fix = self.plan_fix_header(&header)?;
         let mut n64_orders = self.plan_n64_orders(&header)?;
 
-        // Split the budget evenly across the active variants. `raw` is always active; a `fix-header`
-        // only counts when it hashes in-pass (it carries no hasher when deferred over the prefix
-        // cap). `new_parallel` internally caps each variant at its algorithm count, so a share
-        // larger than the algorithm count is harmless. A share of 1 leaves the synchronous hasher
-        // in place, so an over-subscribed case (many variants, small budget) degrades to the prior
-        // fully-inline behavior rather than spawning more workers than the op budgeted.
+        // Split the budget evenly across active variants: a deferred `fix-header` carries no hasher
+        // so it doesn't count; `new_parallel` caps each share at its algorithm count; a share of 1
+        // keeps the synchronous hasher, so over-subscription degrades to fully-inline hashing
+        // rather than spawning more workers than the op budgeted.
         let active = 1
             + usize::from(remove_header.is_some())
             + usize::from(fix.as_ref().is_some_and(|fix| fix.checksum.is_some()))
@@ -740,8 +720,7 @@ impl StreamingVariantChecksums {
             n64_orders,
         }));
 
-        // Replay the buffered header bytes (offset 0..header.len()). `consumed`
-        // already counted the header bytes during buffering.
+        // Replay the buffered header bytes; `consumed` already counted them during buffering.
         self.feed_planned(0, &header)?;
         Ok(())
     }
@@ -860,11 +839,10 @@ impl StreamingVariantChecksums {
             flush_offset = flush_offset.max(n64.accumulator.end);
         }
         let cap_exceeded = flush_offset > FIX_HEADER_PREFIX_CAP;
-        // The Genesis checksum is stored near the start (0x18E) yet sums to EOF,
-        // so an in-pass single hasher would have to buffer the whole file. Defer
-        // it: the streamed accumulator still computes the sum, then the 2-byte
-        // repair is applied as a sparse overlay in one extra read (see
-        // `overlay_checksums`), the same mechanism the cap-exceeded path uses.
+        // The Genesis checksum sits near the start (0x18E) yet sums to EOF, so an
+        // in-pass hasher would buffer the whole file. Defer it: the streamed
+        // accumulator still computes the sum and the 2-byte repair lands via the
+        // same sparse-overlay read the cap-exceeded path uses (`overlay_checksums`).
         let deferred = cap_exceeded || sega.is_some();
         let checksum = if deferred {
             None
@@ -942,13 +920,12 @@ fn plan_n64_repair(header: &[u8], total_len: u64) -> Option<N64Repair> {
         return None;
     }
     let order = N64Order::detect(header)?;
-    // The streamed CRC pair below implements only the CIC-6101/6102 seed and
-    // round function. The 6103/6105/6106 boot chips use a different seed (6105
-    // also a different round and final combine), so applying this algorithm to
-    // them would emit a wrong fix-header digest and a corrupting "repair". When
-    // the IPL3 bootcode positively identifies one of those, skip the variant
-    // rather than emit garbage. An unidentified bootcode (homebrew, synthetic
-    // fixtures) falls back to the 6101/6102 algorithm as before.
+    // The streamed CRC pair implements only the CIC-6101/6102 seed and round
+    // function; 6103/6105/6106 use a different seed (6105 also a different round
+    // and final combine), so running it on them would emit a wrong digest and a
+    // corrupting "repair" - skip the variant when the IPL3 bootcode positively
+    // identifies one. Unidentified bootcode (homebrew, synthetic fixtures) keeps
+    // the 6101/6102 default.
     if let Some(cic) = detect_n64_cic(header, order)
         && !cic.uses_6102_algorithm()
     {
@@ -1115,11 +1092,9 @@ fn extension_with_dot(name: &str) -> Option<String> {
     Some(name[dot..].to_string())
 }
 
-/// Complete a deferred `fix-header` variant (if any) by applying its repair patches in one extra
-/// read of `path`, appending the finished row to `rows`. The engine defers only the digest - the
-/// patches are already known - when the repair dependency exceeds [`FIX_HEADER_PREFIX_CAP`]. Both
-/// variant callers (the `checksum` command and the extract write path) finish it this same way; a
-/// `None` deferral is a no-op so callers can pipe `VariantOutput::deferred_fix_header` straight in.
+/// Complete a deferred `fix-header` variant (if any) by applying its already-known repair patches
+/// in one extra read of `path`, appending the finished row to `rows`. Both variant callers finish
+/// deferrals this way; `None` is a no-op so `VariantOutput::deferred_fix_header` pipes straight in.
 pub fn finish_deferred_fix_header(
     rows: &mut Vec<VariantRow>,
     deferred: Option<DeferredFixHeader>,
@@ -1238,8 +1213,7 @@ mod tests {
     #[test]
     fn n64_repair_kept_for_unidentified_bootcode() {
         // An all-zero IPL3 bootcode matches no known CIC, so the engine keeps the
-        // 6101/6102 default rather than dropping the variant (this mirrors the
-        // synthetic fixtures used elsewhere).
+        // 6101/6102 default rather than dropping the variant.
         let rom = build_n64_rom();
         assert!(detect_n64_cic(&rom, N64Order::BigEndian).is_none());
         assert!(plan_n64_repair(&rom, rom.len() as u64).is_some());

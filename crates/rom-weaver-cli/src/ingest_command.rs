@@ -402,14 +402,9 @@ impl CliApp {
         // patch dialog - the two single-modal prompts never overlap.
         let resolved_split_bin =
             self.resolve_ingest_split_bin(handler, source, split_bin, context)?;
-        // A mixed archive (ROM + sidecar patches) enumerates and extracts its patches FIRST - cheap
-        // relative to the ROM's fused extract+checksum below - and streams them in a `patch-manifest`
-        // event. That lets the host surface the patch-selection dialog while the ROM is still being
-        // hashed, instead of waiting for the whole ingest (incl. checksum) to return. The sidecar
-        // patches are enumerated independently of the ROM keep-one `select` (a chosen ROM must not hide
-        // the bundle's patches) and never prompt - every patch leaf is returned so the host drives the
-        // patch choice. `rom_hint` for libretro `sidecar_order` matching comes from the classified
-        // entries (the ROM entry's file name) since the ROM asset is not extracted yet.
+        // Emit mixed-archive patches before the slower ROM extract+checksum so
+        // the host can open selection early. Return every patch independently
+        // of ROM selection; derive sidecar ordering from classified ROM names.
         let mut patches = if has_patch {
             let rom_hint = summaries
                 .iter()
@@ -444,17 +439,10 @@ impl CliApp {
         ) {
             Ok(assets) => assets,
             Err(rom_error) => {
-                // `classify_container_entries` only inspects TOP-LEVEL names, so an archive whose only
-                // entries are nested containers carries no patch names and defaults to `is_rom = true`.
-                // When the patches actually live a level down, the rom-filtered descent finds no ROM and
-                // errors. Re-ingest as patches before surfacing that error: a bundle that is patches all
-                // the way down routes as a patch source; anything else keeps the original ROM failure.
-                // Reuse the mixed-archive pre-pass patches when it already found some (top-level patch
-                // names); otherwise (patches only nested below) enumerate now.
+                // Top-level classification can mistake nested patch-only archives for ROM archives.
+                // Retry as patches before preserving the original ROM failure.
                 if patches.is_empty() {
-                    // Enumerate independently of the ROM `--select` and without prompting, matching the
-                    // mixed-archive pre-pass above: the ROM glob must not filter the bundle's patches, and
-                    // the host drives the patch choice from the full leaf set.
+                    // The ROM selection must not filter nested patch leaves.
                     patches = self
                         .ingest_patch_leaves(
                             handler,

@@ -1,20 +1,12 @@
-// Allocation + attachment for the OPFS async proxy SharedArrayBuffer channel.
-//
-// The channel is the set of SharedArrayBuffers shared between the OPFS proxy worker (the single
-// producer that owns every handle) and every WASM consumer thread. It is built once on the main
-// runner, posted to the proxy worker, and forwarded into each spawned WASI thread's runtime payload
-// so all threads address the same shared memory. See browser-opfs-proxy-protocol.ts for the per-slot
-// wire format; this module owns the GLOBAL control region (doorbell, poison flag, handle-id
-// allocator, per-handle version counters) and the slot ring.
+// Allocates the shared OPFS proxy channel and its global control region. See
+// browser-opfs-proxy-protocol.ts for the per-slot wire format.
 
 import { OPFS_PROXY_CONTROL_WORD_COUNT, OPFS_PROXY_DATA_BUFFER_BYTES } from "./browser-opfs-proxy-protocol.ts";
 
 // --- Global control region (indices into the Int32Array view of globalControl) -------------------
 
 /**
- * Monotonic doorbell counter. Every consumer bumps this (Atomics.add + notify) after publishing a
- * request; the proxy waits on this value and re-scans whenever it advances, closing the lost-wakeup
- * window (a request landing between the proxy's "scan found nothing" and its Atomics.wait).
+ * Consumers increment this doorbell after publishing to close the proxy's lost-wakeup window.
  */
 export const OPFS_PROXY_GLOBAL_DOORBELL_INDEX = 0;
 /** Poison flag: 0 = proxy alive, 1 = proxy is dead/unusable. Consumers fail fast (EIO) when set. */

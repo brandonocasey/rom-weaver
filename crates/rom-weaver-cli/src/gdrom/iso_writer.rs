@@ -1,17 +1,9 @@
 //! Minimal ISO9660 (ECMA-119) primary-descriptor *writer*.
 //!
-//! Authors a cooked (2048-byte logical sectors) ISO9660 image from a flat list
-//! of files, deterministically: stable directory ordering, a pinnable
-//! timestamp, and a configurable absolute-LBA bias so the recorded extents
-//! match a GD-ROM high-density track (which begins at LBA 45000, not 0). This
-//! is the write counterpart to [`super::iso9660`] and is what rebuilds a
-//! patched GD-ROM data track.
-//!
-//! Scope mirrors the reader: a single Primary Volume Descriptor with 8.3
-//! uppercase identifiers, directory records, and both path tables (L/M). No
-//! Joliet, El Torito, or extended attributes. Layout after the volume
-//! descriptors is: L-path table, M-path table, directory extents (path-table
-//! order), then file data - each aligned to a logical sector.
+//! Deterministically authors cooked 2048-byte ISO9660 sectors with stable
+//! ordering, a fixed timestamp, and configurable GD-ROM LBA bias. Scope is one
+//! Primary Volume Descriptor, 8.3 names, directories, and L/M path tables; no
+//! Joliet, El Torito, or extended attributes.
 
 use std::collections::BTreeMap;
 

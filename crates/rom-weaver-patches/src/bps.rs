@@ -1945,13 +1945,8 @@ fn copy_target_range(
         )));
     }
 
-    // A TargetCopy reads already-written output starting at `start` while the write cursor sits
-    // `period` bytes ahead, so the copied bytes are a repeating pattern with period `period`
-    // (`output[start + i] == period[i % period]`). When `period >= buffer`, every buffer-sized
-    // chunk reads bytes that were written before this copy began, so a plain chunked copy never
-    // overlaps the write region. When `period < buffer` (the common RLE fill, e.g. period 1), the
-    // old code copied only `period` bytes per seek+read+write - up to four syscalls per output byte
-    // for a period-1 run. Instead, read the period once, tile it across the buffer, and bulk-write.
+    // TargetCopy repeats the already-written `period`. Large periods copy safely in chunks; small
+    // periods are read once and tiled to avoid per-byte seek/read/write calls for RLE runs.
     let period = *output_offset - start;
     let mut buffer = [0u8; COPY_BUFFER_SIZE];
 

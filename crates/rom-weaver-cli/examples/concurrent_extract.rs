@@ -1,15 +1,12 @@
-//! Measurement harness for memory-/thread-aware concurrent extraction.
-//!
-//! Compare the concurrent batch executor against the serial baseline on real inputs:
+//! Compares concurrent extraction against a serial baseline on real inputs:
 //!
 //! ```text
 //! cargo run --release --example concurrent_extract -- --output /tmp/out a.zip b.7z c.chd
 //! cargo run --release --example concurrent_extract -- --sequential --output /tmp/out a.zip b.7z c.chd
 //! ```
 //!
-//! Each input extracts into its own `<output>/<stem>/` subdir, so the jobs never collide. The
-//! harness prints the planner's chosen waves and the total wall-clock, so the two modes can be
-//! compared directly on your own large ROMs.
+//! Inputs use separate `<output>/<stem>/` directories. The harness prints planned waves and total
+//! wall time.
 
 use std::{path::PathBuf, sync::Arc, time::Instant};
 

@@ -54,11 +54,10 @@ pub(crate) fn emit_container_indeterminate_progress(
     });
 }
 
-/// Surface a decoded output's detected platform identity mid-extraction as a `probe-identity`
-/// progress event, the moment enough bytes have streamed to determine it (see
-/// [`ExtractHasher::take_ready_identity`]) - so the host can light up the ROM-type tag without
-/// waiting for the whole file. The payload mirrors the early `probe-manifest` shape
-/// (`details.probe_manifest.{platform,disc_format}`) so the host consumes it through one path.
+/// Emit a decoded output's detected platform identity mid-extraction as a `probe-identity`
+/// progress event so the host can light the ROM-type tag before the file completes. The payload
+/// mirrors the early `probe-manifest` shape (`details.probe_manifest.{platform,disc_format}`)
+/// so the host consumes both through one path.
 pub(crate) fn emit_extract_identity(
     context: &OperationContext,
     format: &str,
@@ -85,12 +84,10 @@ pub(crate) fn emit_extract_identity(
     });
 }
 
-/// Fold the next ordered slice of a decoded output into `identity` and, the moment the prefix
-/// fills, emit the streaming `probe-identity` event exactly ONCE (tracked by `emitted`). Used by
-/// the disc-image extract handlers that decode their own stream (rvz, cso, z3ds) so the ROM-type
-/// tag pops mid-extraction instead of only in `emitted_files` at completion. Detection uses the
-/// KNOWN final output length these handlers already have - more accurate than the bytes-consumed
-/// length the prefix tracks, since it resolves size-dependent media (e.g. PS2 CD vs DVD) correctly.
+/// Fold the next ordered slice into `identity` and emit the `probe-identity` event exactly once
+/// (tracked by `emitted`) when the prefix fills. Used by handlers that decode their own stream
+/// (rvz, cso, z3ds). Detection uses the KNOWN final output length so size-dependent media
+/// (e.g. PS2 CD vs DVD) resolves correctly.
 pub(crate) fn stream_extract_identity(
     context: &OperationContext,
     format: &str,
@@ -111,8 +108,7 @@ pub(crate) fn stream_extract_identity(
     }
 }
 
-/// The output file extension (with leading dot, lowercased by the caller's path) used to
-/// disambiguate cartridge identity. Disc handlers pass their decoded output's extension.
+/// Output extension (with leading dot) used to disambiguate cartridge identity.
 fn output_extension(output_path: &Path) -> Option<String> {
     output_path
         .extension()
@@ -242,11 +238,9 @@ pub(crate) fn create_extract_checksum(
     StreamingChecksum::new_with_context(context.extract_checksum_algorithms(), context)
 }
 
-/// Timing for an inline extract checksum, surfaced from [`ExtractHasher::finish_timed`] so the
-/// extract loop can log how much of the hashing overlapped decoding. `threaded`/`workers` describe a
-/// worker-backed [`StreamingChecksum`]; the synchronous variant engine hashes inline on the extract
-/// thread (its cost is the loop's own per-chunk feed timing) and reports the default - not threaded,
-/// zero busy.
+/// Timing for an inline extract checksum from [`ExtractHasher::finish_timed`]. `threaded`/`workers`
+/// describe a worker-backed [`StreamingChecksum`]; the synchronous variant engine hashes inline on
+/// the extract thread and reports the default (not threaded, zero busy).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ExtractChecksumTiming {
     pub(crate) threaded: bool,
@@ -254,16 +248,14 @@ pub(crate) struct ExtractChecksumTiming {
     pub(crate) hash_busy_ns: u128,
 }
 
-/// Inline extract hasher that folds output bytes into either a plain checksum or
-/// the full streaming variant engine (when the output's total length is known),
-/// so archive extracts emit the same `checksum_variants` as the `checksum`
-/// command without a second read of the output.
-/// Detect a decoded output's identity from an [`IdentityPrefix`] using the output
-/// file's extension, mirroring how the file-based detection derives it.
+/// Detect a decoded output's identity from an [`IdentityPrefix`] using the output file's extension.
 fn detect_emitted_identity(identity: &IdentityPrefix, output_path: &Path) -> RomIdentity {
     identity.detect(output_extension(output_path).as_deref())
 }
 
+/// Inline extract hasher folding output bytes into a plain checksum or the full streaming variant
+/// engine (when the total length is known), so archive extracts emit the same `checksum_variants`
+/// as the `checksum` command without a second read of the output.
 pub(crate) enum ExtractHasher {
     None,
     Plain {
@@ -292,13 +284,10 @@ impl ExtractHasher {
         if algorithms.is_empty() {
             return Ok(Self::None);
         }
-        // `--checksum-rom` only hashes ROM-like outputs; skip sidecar/non-ROM entries entirely
-        // (no checksum and no identity for them). Single-payload disc-image handlers use a
-        // different writer and always emit a ROM, so this gate only affects multi-entry archives.
-        //
-        // A `.cue`/`.gdi` disc sheet still counts as part of the ROM (it stays a ROM-filter
-        // candidate and is extracted alongside its tracks) but is itself a text index, not data -
-        // so it is never hashed here; only its referenced data tracks are.
+        // `--checksum-rom` hashes only ROM-like outputs; sidecar/non-ROM entries get no checksum
+        // and no identity. Single-payload disc-image handlers use a different writer, so this gate
+        // only affects multi-entry archives. A `.cue`/`.gdi` disc sheet stays a ROM-filter
+        // candidate but is a text index, not data, so only its referenced data tracks are hashed.
         if context.extract_checksum_rom_only() {
             let is_rom = output_path
                 .file_name()
@@ -321,12 +310,9 @@ impl ExtractHasher {
         };
         let name_hint = output_path.file_name().and_then(|name| name.to_str());
         // Plan the variant hashers' worker budget against the full op budget, independent of the
-        // extract's decode-threading decision (negotiate is pure, so this does not consume it). The
-        // engine splits this budget across the active variants so each one's crc32/md5/sha1 hash in
-        // parallel and overlap the producer instead of serializing on the decode thread. A lone ROM
-        // with only the `raw` variant gets the whole budget (capped at the algorithm count); a ROM
-        // with several variants (e.g. raw + fix-header) gives each a share so they run concurrently.
-        // Shared with the standalone `checksum` command so both hash with identical parallelism.
+        // decode-threading decision (negotiate is pure, so this consumes nothing). The engine
+        // splits it across the active variants so their hashes run in parallel and overlap the
+        // producer. Shared with the standalone `checksum` command for identical parallelism.
         let hash_thread_budget = context.variant_hash_execution().effective_threads;
         let engine =
             StreamingVariantChecksums::new(algorithms, total_len, name_hint, hash_thread_budget)?;
@@ -338,10 +324,8 @@ impl ExtractHasher {
         })
     }
 
-    /// Once the identity prefix has filled (enough bytes have streamed through to fully determine the
-    /// platform/medium), return the detected identity exactly ONCE so the caller can surface it
-    /// mid-extraction instead of waiting for the whole file. Returns `None` until it is ready, after
-    /// it has already been taken, or when nothing was detected.
+    /// Return the detected identity exactly once, as soon as the identity prefix fills, so the
+    /// caller can surface it mid-extraction. `None` until ready, after taken, or nothing matched.
     pub(crate) fn take_ready_identity(&mut self, output_path: &Path) -> Option<RomIdentity> {
         match self {
             Self::None => None,
@@ -390,10 +374,9 @@ impl ExtractHasher {
         Ok(self.finish_timed(output_path)?.0)
     }
 
-    /// Like [`finish`](Self::finish) but also returns the hashing timing so the caller can log how
-    /// much of the checksum overlapped extraction. The worker-backed plain checksum reports its
-    /// parallel hashing wall; the inline variant engine reports the default (its cost is the caller's
-    /// own per-chunk feed timing).
+    /// Like [`finish`](Self::finish) but also returns hashing timing. The worker-backed plain
+    /// checksum reports its parallel hashing wall; the inline variant engine reports the default
+    /// (its cost is the caller's own per-chunk feed timing).
     pub(crate) fn finish_timed(
         self,
         output_path: &Path,
@@ -502,8 +485,7 @@ fn build_extract_checksum_emitted_file_detail(
     }
     let mut entry = build_emitted_file_detail(path)?;
     entry.insert("checksums".to_string(), json!(checksums));
-    // Console + optical medium of this decoded entry (no exact-title lookup), detected
-    // from the streamed output by the producing path - no extra read here.
+    // Identity detected from the streamed output by the producing path - no extra read here.
     rom_identity.write_into(&mut entry);
     if let Some(timing) = timing {
         entry.insert(
@@ -526,14 +508,10 @@ fn build_extract_checksum_emitted_file_detail(
     Some(Value::Object(entry))
 }
 
-/// Run an ordered, threaded extract over `tasks`, decoding each task on a worker thread and handing
-/// finished chunks to `write_chunk` in strict ascending task order.
-///
-/// This is the task-based decode wrapper shared by the seekable single-file extract handlers (cso,
-/// z3ds): every one of them clones a task onto a worker, decodes it, and streams the decoded chunk
-/// back in order alongside the task's expected length. The only per-format inputs are the channel
-/// error messages, how to read a task's expected length, and the decode itself; pairing the chunk
-/// with `task_len` lets `write_chunk` validate the decoded size without re-deriving it.
+/// Run an ordered, threaded extract over `tasks`: decode each on a worker and hand finished chunks
+/// to `write_chunk` in strict ascending task order. Shared by the seekable single-file extract
+/// handlers (cso, z3ds); pairing each chunk with `task_len` lets `write_chunk` validate the
+/// decoded size without re-deriving it.
 pub(crate) fn decode_tasks_ordered<TTask, TChunk, TaskLen, Decode, WriteChunk>(
     tasks: &[TTask],
     effective_threads: usize,
@@ -563,13 +541,11 @@ where
     )
 }
 
-/// Ordered, checksum-and-progress aware sink for decoded extract chunks.
-///
-/// Wraps the write half shared by the seekable single-file extract handlers (cso, z3ds): each
-/// decoded chunk is validated against its task's expected length, folded into the optional extract
-/// checksum, written to the [`OrderedChunkWriter`] in ascending index order, and counted toward the
-/// byte-progress stream. Hashing the bytes here - in their final on-disk order - computes a
-/// requested `--checksum` during extract instead of forcing a second full read of the output.
+/// Ordered, checksum-and-progress aware sink for decoded extract chunks, shared by the seekable
+/// single-file extract handlers (cso, z3ds). Each chunk is length-validated, folded into the
+/// optional extract checksum, written in ascending index order, and counted toward byte progress.
+/// Hashing here - in final on-disk order - computes a requested `--checksum` during extract
+/// instead of forcing a second full read of the output.
 pub(crate) struct ExtractChunkWriter<'a> {
     context: &'a OperationContext,
     execution: &'a ThreadExecution,
@@ -641,9 +617,8 @@ impl<'a> ExtractChunkWriter<'a> {
         let ordered_index = u64::try_from(chunk_index).map_err(|_| {
             RomWeaverError::Validation(format!("{} extract chunk index overflowed", self.format))
         })?;
-        // `write` is invoked in strict ascending index order, so hashing here folds the output bytes
-        // into the checksum in their final on-disk order. Update before the value is moved into the
-        // ordered writer below.
+        // `write` runs in strict ascending index order, so hashing here folds the bytes into the
+        // checksum in their final on-disk order (before `data` moves into the ordered writer).
         if let Some(checksum) = self.checksum.as_mut() {
             checksum.update(&data)?;
             // Surface the platform/medium tag the instant enough bytes have decoded, using the
@@ -705,12 +680,10 @@ impl<'a> ExtractChunkWriter<'a> {
 mod tests {
     use super::*;
 
-    /// Regression for the PBP parallel disc extract overflow: a real-size disc fans out into far
-    /// more decode tasks than the writer's reorder window holds (the window is only ~2x the thread
-    /// count, a PS1 disc yields dozens-to-hundreds of tasks). `decode_tasks_ordered` must hand chunks
-    /// to the writer in strict ascending order so a small-window [`OrderedChunkWriter`] never trips
-    /// "exceeded max reorder window", regardless of the order workers finish in. The earlier
-    /// `par_iter` fan-out delivered chunks out of order and overflowed the window.
+    /// Regression: a real disc fans out into far more decode tasks than the writer's reorder
+    /// window (~2x thread count) holds. `decode_tasks_ordered` must deliver chunks in strict
+    /// ascending order so a small-window [`OrderedChunkWriter`] never trips "exceeded max reorder
+    /// window"; the old `par_iter` fan-out delivered out of order and overflowed it.
     #[test]
     fn decode_tasks_ordered_keeps_writer_window_bounded() {
         let task_count = 64usize;

@@ -10,12 +10,7 @@ const OPERATION_ROOT_NAME = "operations";
 // A `createVfsPathId()` segment: a `crypto.randomUUID()` (dashed) or the 32-hex fallback.
 const VFS_PATH_ID_REGEX = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
 
-/** Drop the internal per-operation output scratch dir (`operations/<uuid>`) from a display path chain.
- * Ingest extracts leaves into this scope root, so without stripping it its two segments surface as a
- * meaningless `operations › <uuid>` breadcrumb in the file picker and patch-stack rows. Removes the
- * `operations` element together with the id element that immediately follows it, wherever the pair
- * appears; other segments (real archive/folder names) are preserved in order. Generic over the item
- * shape so it works on bare segment strings and on `{ fileName }` breadcrumb entries alike. */
+/** Removes internal `operations/<uuid>` segments from user-facing path chains. */
 const stripOperationScopeChain = <T>(items: readonly T[], getName: (item: T) => string | undefined): T[] => {
   const kept: T[] = [];
   for (let index = 0; index < items.length; index += 1) {

@@ -2,16 +2,9 @@
 //! `MODE1/2352` physical sector - the exact inverse of the cooking that
 //! [`crate::sector`] performs when reading.
 //!
-//! Rebuilding a Dreamcast GD-ROM data track byte-for-byte requires regenerating
-//! the full CD-ROM physical framing of each sector: the 12-byte sync pattern,
-//! the 3-byte BCD address, the mode byte, the 2048 user bytes, the 4-byte EDC
-//! checksum, an 8-byte zero intermediate field, and the 276-byte Reed-Solomon
-//! Product Code (ECC) P/Q parity.
-//!
-//! The EDC and ECC math here is the canonical ECMA-130 / CD-ROM algorithm as
-//! popularized by Neill Corlett's ECM tool (`edc_partial_computeblock`,
-//! `ecc_computeblock`, `ecc_writesector`) and libcdio. The Galois-field tables
-//! are built once on first use.
+//! Regenerates sync, BCD address, mode, EDC, and P/Q ECC around 2048 user bytes.
+//! EDC/ECC follows the ECMA-130 algorithm used by Neill Corlett's ECM and
+//! libcdio; lookup tables initialize once.
 
 use std::sync::OnceLock;
 
@@ -151,12 +144,8 @@ fn to_bcd(v: u8) -> u8 {
 
 /// Compute the 3-byte BCD MIN/SEC/FRAME address for an absolute `lba`.
 ///
-/// The MSF minute field is a single packed-BCD byte and so can only hold two
-/// decimal digits. A full-size GD-ROM high-density track runs past 99 minutes
-/// of address (~LBA 445350), so the minute wraps modulo 100 to stay valid BCD -
-/// the standard MSF/CD-subcode behavior for a value that overflows its field.
-/// The EDC/ECC are computed over the encoded bytes afterwards, so they remain
-/// self-consistent regardless of how the minute is represented.
+/// MSF minutes wrap modulo 100 because the field is one packed-BCD byte. EDC/ECC
+/// covers the resulting address bytes.
 fn address_bcd(lba: u32) -> [u8; 3] {
     let total_frames = lba.wrapping_add(ADDRESS_LBA_BIAS);
     let minute = total_frames / (75 * 60);
@@ -172,9 +161,7 @@ fn address_bcd(lba: u32) -> [u8; 3] {
 /// Encode a 2048-byte cooked sector into a 2352-byte raw `MODE1` physical
 /// sector for the given absolute `lba`.
 ///
-/// The output is byte-identical to the original physical sector of a real
-/// CD/GD-ROM data track: sync pattern, BCD address, mode byte, user data, EDC
-/// checksum, zero intermediate field, and the full P/Q Reed-Solomon ECC.
+/// Emits sync, BCD address, mode, user data, EDC, zero field, and P/Q ECC.
 pub fn encode_mode1_sector(lba: u32, user_data: &[u8; USER_DATA_SIZE]) -> [u8; RAW_SECTOR_SIZE] {
     let tables = tables();
     let mut sector = [0u8; RAW_SECTOR_SIZE];

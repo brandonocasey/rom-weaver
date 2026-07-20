@@ -76,14 +76,8 @@ const execCommandCopy = (value: string): boolean => {
 
 const copyToClipboard = async (text: string): Promise<void> => {
   const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-  // The async Clipboard API rejects (NotAllowedError: "Document is not focused")
-  // whenever the page lacks focus - DevTools or another window is focused, or the
-  // click landed during a focus handoff - which made copy fail intermittently. And
-  // recovering by awaiting that rejection then calling execCommand is too late: the
-  // await defers it to a microtask where the user gesture is gone, so execCommand
-  // fails too. When the document is focused, use the clean modern API; otherwise go
-  // straight to the synchronous execCommand path, which still runs inside the live
-  // gesture and copies the current selection regardless of window focus.
+  // An awaited Clipboard API rejection loses the user gesture required by execCommand. Use the
+  // synchronous fallback immediately when the document is unfocused.
   const documentFocused = typeof document === "undefined" || document.hasFocus();
   if (clipboard?.writeText && documentFocused) {
     try {

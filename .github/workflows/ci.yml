@@ -46,26 +46,10 @@ jobs:
         with:
           submodules: recursive
 
-      # Keyed on the committed content of everything that can change the emitted
-      # module, so a webapp/docs/CI-only pull request reuses it instead of paying
-      # a 6.5 min compile.
-      #
-      # `git ls-tree` rather than hashFiles(): it yields one hash per path,
-      # records the vendor/ submodules as gitlink SHAs (hashFiles cannot see
-      # into a submodule), and reflects the tree actually checked out - on a
-      # pull request that is the merge commit, which is what gets built.
-      #
-      # Inputs, and why each is here:
-      #   crates, vendor/libarchive - the sources themselves
-      #   Cargo.lock, Cargo.toml - resolved dependency versions
-      #   .cargo                 - target rustflags, incl. --max-memory and LTO
-      #   scripts/wasm, license generator - build and attribution post-processing
-      #   .mise.toml             - the rust and binaryen (wasm-opt) pins
-      #   .github/actions/...    - the WASI SDK version and checksum
-      #
-      # Deliberately over-broad: a needless miss costs one rebuild, while a
-      # false hit silently ships a stale module. Bump CACHE_EPOCH to invalidate
-      # by hand.
+      # Hash every source, dependency, toolchain, and build-script input to the
+      # emitted module. git ls-tree includes submodule SHAs and the PR merge tree,
+      # unlike hashFiles. The key is deliberately broad: a miss costs one build;
+      # a false hit ships stale WASM. Bump CACHE_EPOCH to invalidate manually.
       - name: Compute wasm cache key
         id: wasm-key
         env:
@@ -83,15 +67,8 @@ jobs:
           echo "key=wasm-prod-${{ runner.os }}-e${CACHE_EPOCH}-${hash}" >> "$GITHUB_OUTPUT"
           printf 'cache basis:\n%s\n' "$basis"
 
-      # No restore-keys: a prefix match would serve a module built from
-      # different sources. This cache is all-or-nothing by design.
-      #
-      # Where the hits come from: a run reads caches written by its own branch
-      # and by the default branch, so the payoff arrives via main. Every push
-      # there writes an entry that any later pull request can restore, provided
-      # its wasm inputs are identical. A cache written on a pull request stays
-      # local to it - useful across that branch's own pushes, invisible to
-      # every other one.
+      # No restore-keys: partial-prefix hits could serve different source. GitHub
+      # exposes default-branch caches to PRs; PR-written caches remain branch-local.
       - name: Restore built wasm module
         id: wasm-cache
         uses: actions/cache@v6
@@ -128,25 +105,15 @@ jobs:
           rust-targets: wasm32-wasip1-threads
           wasi-sdk: "true"
 
-      # Never set RUSTFLAGS here. cargo's rustflags sources are mutually
-      # exclusive - an env override *replaces* the `[target.wasm32-wasip1-threads]`
-      # list in .cargo/config.toml rather than extending it - so even a
-      # lint-only `-D warnings` silently drops --max-memory=4294967296, the
-      # atomics/simd target features, linker-plugin-lto and the malloc/free
-      # exports. That produces a module that still builds and still passes
-      # wasm-opt, but declares a 1 GiB ceiling and fails to instantiate against
-      # the runtime's 4 GiB memory. Warnings are denied by the separate
-      # `cargo check` in the `wasm-check` job, which does not link and so is
-      # immune.
+      # Never set RUSTFLAGS here: Cargo replaces configured target flags instead
+      # of extending them, silently dropping shared-memory, LTO, and exports.
+      # The separate non-linking Rust check denies warnings.
       - name: Build production WASM
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: mise run build-wasm-prod
 
-      # Runs on both paths. On a hit it is the only thing standing between a
-      # partial cache restore and a confusing failure in the browser suite; on a
-      # miss it asserts the 4 GiB memory ceiling, whose loss to a RUSTFLAGS
-      # override is what broke this branch earlier. Uses the runner's node, not
-      # mise's, since setup is skipped on a hit.
+      # Validate completeness and the 4 GiB memory ceiling on both cache paths.
+      # Use runner Node because toolchain setup is skipped on hits.
       - name: Verify wasm artifact
         run: node scripts/wasm/verify-wasm-artifact.mjs packages/rom-weaver-webapp/src/wasm
 
@@ -338,28 +305,15 @@ jobs:
       - name: Build
         run: npm --prefix packages/rom-weaver-webapp run build
 
-  # Publishes the webapp to Cloudflare Pages on three channels, each its own
-  # origin so OPFS / service-worker scope / Cache Storage stay isolated:
+  # Deploy three isolated Cloudflare origins:
   #
   #   rom-weaver.com          <- release tags (vX.Y.Z)
   #   beta.rom-weaver.com     <- prerelease tags (vX.Y.Z-alpha.N, -beta.N, ...)
   #   nightly.rom-weaver.com  <- every push to main
   #
-  # Pull requests additionally get a throwaway preview at
-  # pr-<n>.rom-weaver-preview.pages.dev. Previews are non-production deployments,
-  # so they never disturb a channel's live deployment.
-  #
-  # Artifacts are pushed with wrangler Direct Upload, so Cloudflare never needs
-  # the WASI SDK and no Cloudflare build minutes are used.
-  #
-  # This lives in ci.yml rather than its own workflow specifically so it can
-  # consume the `wasm` job's artifact. As a separate workflow it was a separate
-  # run, so it built the module a second time - and with a different toolchain
-  # (dtolnay stable plus a hand-installed binaryen) than the one CI tests. The
-  # deployed bytes are now exactly the bytes the suite validated.
-  #
-  # Gated on `wasm` alone rather than on the test jobs, matching the previous
-  # behaviour: a preview URL is most useful while the suite is still running.
+  # PRs get disposable previews. Direct Upload reuses the CI-tested WASM artifact
+  # without Cloudflare build minutes or a second toolchain. Depend only on `wasm`
+  # so preview URLs arrive while the rest of the suite is running.
   deploy:
     name: Deploy web
     runs-on: ubuntu-24.04

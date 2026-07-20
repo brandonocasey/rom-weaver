@@ -1,8 +1,6 @@
-/* ═══ dialogs ═══ */
+/* Dialogs */
 .dlg { border: 0; padding: 0; background: transparent; max-width: min(640px, calc(100vw - 32px)); width: 100%; }
-/* open AND close animate: transitions + @starting-style drive the entry, and
-   allow-discrete display/overlay transitions keep the dialog (and backdrop)
-   rendered while the exit plays - no JS choreography needed */
+/* Discrete transitions keep dialogs rendered through their exit animation. */
 .dlg { transition: display .26s allow-discrete, overlay .26s allow-discrete; }
 .dlg .dlg-frame { opacity: 0; transform: translateY(10px) scale(.97); transition: opacity .22s ease, transform .26s var(--ease); }
 .dlg[open] .dlg-frame { opacity: 1; transform: none; }
@@ -32,11 +30,9 @@
 .dlg-x:active { transform: translateY(0) scale(.99); }
 .dlg-x svg { width: 15px; height: 15px; }
 .dlg-body { padding: var(--sp-l); overflow: auto; overscroll-behavior: contain; }
-/* log dialog: a tall, readable trace with a level filter + copy in the header */
-/* the log is tall - fill the available dialog height so more lines are visible */
+/* Log dialog */
 .rw-app .log-dlg { max-width: min(1280px, calc(100vw - 32px)); }
 .rw-app .log-dlg .dlg-frame { max-height: min(90dvh, 940px); height: min(90dvh, 940px); }
-/* Keep view and export actions beside the title; they wrap only when the header runs out of room. */
 .rw-app .log-dlg .dlg-head { flex-wrap: wrap; row-gap: var(--sp-m); }
 .rw-app .log-dlg .dlg-title { flex: 0 1 auto; }
 .rw-app .log-actions { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: var(--sp-s); align-items: center; margin-inline-start: auto; min-inline-size: 0; }
@@ -44,8 +40,6 @@
 .rw-app .log-actions .log-icon-btn { flex: 0 0 30px; inline-size: 30px; padding-inline: 0; }
 .rw-app .log-actions .btn.copied { color: var(--verified); border-color: color-mix(in oklab, var(--verified) 55%, transparent); }
 .rw-app .log-actions .btn.copy-failed { color: var(--fault); border-color: color-mix(in oklab, var(--fault) 55%, transparent); }
-/* View-source switch: the selected segment is filled with the accent, the other
-   stays muted. aria-pressed drives the visual state. */
 .rw-app .log-dlg .logview {
   flex: 0 1 auto; display: flex; gap: var(--sp-2xs); margin: 0; padding: 3px; min-inline-size: 0;
   border: 1px solid var(--seam-strong); border-radius: var(--r-s); background: var(--well);
@@ -80,7 +74,7 @@
 .rw-app .log-dlg .tracelog .ln { box-sizing: border-box; height: 25px; }
 .rw-app .tracelog-empty { color: var(--ink-4); font-size: .78rem; padding: 4px 2px; }
 
-/* archive candidate picker */
+/* Archive candidate picker */
 .rw-app .picklist { display: flex; flex-direction: column; gap: var(--sp-xs); margin-block-start: var(--sp-s); }
 .rw-app .pick-row {
   display: flex; align-items: center; gap: var(--sp-m); padding: var(--sp-xs) var(--sp-m); cursor: pointer;
@@ -91,17 +85,13 @@
 .rw-app .pick-row:has(input:checked) { border-color: var(--thread); background: color-mix(in oklab, var(--thread) 7%, var(--plate-2)); }
 .rw-app .pick-row.skip { opacity: .55; cursor: not-allowed; }
 .rw-app .pick-row { align-items: flex-start; position: relative; }
-/* no visible checkbox - the highlighted row IS the selection state. The input
-   stays real (clipped away, not display:none) so keyboard toggling and SR
-   state announcements keep working. clip-path (not opacity) so the :disabled
-   opacity rule can't resurface the switch knob as a stray dot. */
+/* Visually clip inputs while preserving keyboard and screen-reader behavior. */
 .rw-app .pick-row .pick-input {
   position: absolute; width: 1px; height: 1px; margin: 0; border: 0;
   clip-path: inset(50%); overflow: hidden; pointer-events: none;
 }
 .rw-app .pick-row:has(.pick-input:focus-visible) { outline: 2px solid var(--thread); outline-offset: 2px; }
-/* non-color selection cues: a filled left edge + the name gains weight, so a
-   selected row reads without relying on the border tint alone */
+/* Pair color with edge and weight selection cues. */
 .rw-app .pick-row::before {
   content: ""; position: absolute; inset-block: -1px; inset-inline-start: -1px; width: 4px;
   border-start-start-radius: var(--r-m); border-end-start-radius: var(--r-m);
@@ -110,21 +100,14 @@
 .rw-app .pick-row:has(.pick-input:checked)::before { background: var(--thread); }
 .rw-app .pick-row:has(.pick-input:checked) .pick-name { font-weight: 750; }
 .rw-app .pick-row .pick-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2xs); }
-/* the archive path WRAPS instead of truncating - on a phone the crumb is the
-   only way to tell two same-named candidates apart */
+/* Preserve paths that distinguish duplicate filenames. */
 .rw-app .pick-row .pick-crumb { font-size: .68rem; color: var(--ink-3); overflow-wrap: anywhere; }
 .rw-app .pick-row .pick-name { min-width: 0; font-size: .84rem; font-weight: 600; overflow-wrap: anywhere; }
 .rw-app .pick-row .pick-archive { flex: 1 1 auto; min-width: 0; font-size: .68rem; color: var(--ink-3); overflow-wrap: anywhere; }
-/* archive sub-heading + size (+ tag/note) share one meta line so each card is
-   two rows, not three; the size rides to the trailing edge and the line wraps
-   only when the archive path can't fit alongside it */
 .rw-app .pick-row .pick-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2xs) var(--sp-s); margin-block-start: 2px; }
 .rw-app .pick-row .pick-size { flex: none; margin-inline-start: auto; font-size: .76rem; color: var(--ink-3); }
 
-/* settings groups */
-/* each group is a 2-col grid (label column sized to its WIDEST label) and the
-   rows are subgrids - labels and controls align in clean columns within the
-   group while the label column still hugs its text */
+/* Settings groups use subgrid to align labels and controls. */
 .rw-app .setgroup {
   border: 1px solid var(--seam); border-radius: var(--r-m); background: var(--plate-2);
   padding: var(--sp-m) var(--sp-l) var(--sp-l); margin-block-end: 11px;
@@ -134,19 +117,15 @@
 .rw-app .setgroup > * { grid-column: 1 / -1; min-width: 0; }
 .rw-app .setgroup .gtitle { font-size: .84rem; font-weight: 650; letter-spacing: 0; color: var(--thread-text); margin-block-end: 9px; }
 .rw-app .setrow { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center; gap: var(--sp-m); padding-block: 4px; }
-/* every settings label (plain rows AND the range head) keeps the same air
-   between its text and the info "i" */
 .rw-app .slabel { display: inline-flex; align-items: center; gap: var(--sp-s); font-size: .8rem; color: var(--ink-2); }
 .rw-app .gtitle .info { margin-inline-start: 8px; }
 .rw-app .setrow .select, .rw-app .setrow .input { height: 34px; font-size: .85rem; }
 .rw-app .setchecks { display: flex; flex-direction: column; gap: var(--sp-s); padding-block-start: 4px; }
 .rw-app .setchecks .popt { font-size: .82rem; }
-/* settings About footer - version, license, third-party attribution */
 .rw-app .set-about .about-line { font-size: .78rem; color: var(--ink-3); }
 .rw-app .set-about .about-line + .about-line { margin-block-start: 5px; }
 .rw-app .set-about .about-line a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; }
-/* min(300px, 100%) so a sub-320px viewport doesn't force a 300px track and
-   overflow the dialog (the Codecs / RVZ groups clipped at 300px wide) */
+/* Avoid forcing a 300px track into narrower viewports. */
 .rw-app .setcols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: var(--sp-m); }
 .rw-app .setcols .setgroup { margin: 0; }
 .rw-app .srange { padding-block: 6px 2px; }
@@ -156,14 +135,9 @@
 .rw-app .srange-scale { display: flex; justify-content: space-between; font-size: .62rem; color: var(--ink-4); margin-block-start: 2px; }
 .rw-app .validation { margin-block-start: 4px; padding: var(--sp-s) var(--sp-m); border-radius: var(--r-s); font-size: .82rem; color: var(--fault); background: color-mix(in oklab, var(--fault) 9%, transparent); border: 1px solid color-mix(in oklab, var(--fault) 32%, var(--seam)); }
 
-/* cross-document navigations (reload, hash entry) crossfade instead of
-   flashing white - same-origin only, no-op in browsers without support */
+/* Crossfade same-origin navigations where supported. */
 @view-transition { navigation: auto; }
-/* theme change: the new theme clip-reveals as a circle expanding from the
-   toggle button. The wipe is a pure CSS keyframe - JS only sets the origin
-   custom properties (--wipe-x/y/r) and starts the transition. ONLY during the
-   wipe (vt-theme) is the default root crossfade replaced - every other view
-   transition keeps it, so scenario/mode changes crossfade instead of snapping. */
+/* JS supplies the theme-wipe origin; CSS owns the transition. */
 :root.vt-theme::view-transition-old(root) { animation: none; mix-blend-mode: normal; }
 :root.vt-theme::view-transition-new(root) {
   mix-blend-mode: normal;
@@ -175,28 +149,16 @@
 }
 ::view-transition-old(root) { z-index: 0; }
 ::view-transition-new(root) { z-index: 1; }
-/* State handoffs should register immediately: the view transition communicates
-   continuity, but never becomes another wait after the user's drop. */
 :root.vt-flat::view-transition-old(root), :root.vt-flat::view-transition-new(root) { animation-duration: .2s; }
-/* scenario morphs (vt-rom / vt-<pid> / vt-action) share one longer, softer
-   ease, and the snapshots STRETCH to the morphing box (height/width 100%)
-   instead of sliding past it - the stretch is what makes a button→panel or
-   reading-card→card morph read smooth rather than janky */
+/* Stretch snapshots to their morphing boxes. */
 ::view-transition-group(*) { animation-duration: .34s; animation-timing-function: cubic-bezier(.22, .9, .26, 1); }
 ::view-transition-old(*), ::view-transition-new(*) {
   height: 100%; width: 100%;
   animation-duration: .34s; animation-timing-function: cubic-bezier(.22, .9, .26, 1);
 }
-/* morph names are suppressed during the THEME wipe (they'd crossfade outside
-   the expanding circle) and during MODE switches (no real continuity between
-   panels - a flat crossfade reads cleaner than cards morphing across modes) */
+/* Suppress unrelated morphs during theme wipes and mode switches. */
 html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transition-name"] { view-transition-name: none !important; }
-/* the unified drop surface keeps continuity through the flat crossfade: the
-   empty-bench hero visibly shrinks into the compact add-row (and grows back)
-   instead of cutting. Stylesheet names, so vt-flat's inline-name suppression
-   leaves them alone; the theme wipe still flattens them. Names are unique per
-   form (apply + create stay mounted together) so no duplicate ever skips a
-   transition, and mode switches keep their intentional flat crossfade. */
+/* Unique names preserve each form's drop-surface transition. */
 .rw-app #rom-weaver-row-unified-drop { view-transition-name: vt-drop-apply; }
 .rw-app #patch-builder-row-unified-drop { view-transition-name: vt-drop-create; }
 .rw-app #trim-builder-row-unified-drop { view-transition-name: vt-drop-trim; }
@@ -207,16 +169,11 @@ html.vt-theme [style*="view-transition-name"], html.vt-flat [style*="view-transi
 .rw-app .unified-drop-step:has(#tools-input-picker) > .step-head { view-transition-name: vt-input-head-tools; }
 html.vt-theme .unified-drop-step .drop,
 html.vt-theme .unified-drop-step .step-head { view-transition-name: none !important; }
-/* mode (tab) switch: the two tabs' drop/head names differ, so keeping them
-   would fade each independently and out of step with the root crossfade. Null
-   them so the whole hero rides the single flat crossfade as one surface. The
-   empty→filled morph WITHIN a form keeps its names (no vt-mode class there). */
+/* Flatten mode switches into one root crossfade. */
 html.vt-mode .unified-drop-step .drop,
 html.vt-mode .unified-drop-step .step-head,
 html.vt-mode .drop:has(#tools-input-picker) { view-transition-name: none !important; }
-/* the drop morph must read as a deliberate snap, not lag: quicker box travel
-   than the ambient crossfade, and the old face cuts fast so the shrinking
-   snapshot text never smears through the ride */
+/* Keep drop morphs faster than the ambient crossfade. */
 ::view-transition-group(vt-drop-apply), ::view-transition-group(vt-drop-create),
 ::view-transition-group(vt-drop-trim), ::view-transition-group(vt-drop-tools) {
   animation-duration: .2s; animation-timing-function: cubic-bezier(.3, .8, .2, 1);
@@ -245,6 +202,5 @@ html.vt-mode .drop:has(#tools-input-picker) { view-transition-name: none !import
 @keyframes vt-drop-in { from { opacity: 0; } }
 @keyframes vt-input-head-out { 0%, 72% { opacity: 1; } to { opacity: 0; } }
 @keyframes vt-input-head-in { from { opacity: 0; } }
-/* while a scenario view transition runs, the morph IS the animation - suppress
-   the entry keyframes so cards/panels don't replay card-in underneath it */
+/* Avoid replaying entry animations beneath a view transition. */
 .vt-quiet .card:not(.pending-card), .vt-quiet .workflow-body, .vt-quiet .notice, .vt-quiet .result, .vt-quiet .prog-panel { animation: none !important; }

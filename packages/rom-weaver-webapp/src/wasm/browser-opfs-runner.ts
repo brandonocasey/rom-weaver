@@ -117,14 +117,9 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
       : null;
   const mountCache = createBrowserOpfsMountCache();
   const baseSyncAccessMode = resolveRunSyncAccessMode({ baseMode: options.syncAccessMode, threaded });
-  // The single OPFS-handle-owning proxy worker is spawned once for the runner's lifetime. Every mount -
-  // the runner thread and every spawned WASI compute thread - routes its OPFS I/O through it, which is
-  // the one model that respects WebKit's "one SyncAccessHandle per file" rule while letting spawned
-  // threads (which cannot path_open OPFS files themselves) perform real I/O.
-  // Only mount METADATA is posted; the proxy worker re-resolves its own directory handle (Safari/iOS
-  // cannot structured-clone a FileSystemDirectoryHandle to a nested worker). For each mount we compute
-  // the path from the OPFS root to its handle via `root.resolve(handle)` so the worker can navigate the
-  // same directory - empty for the app (the mount IS the root), or subdir segments for a nested handle.
+  // One lifetime proxy owns every OPFS handle for runner and compute threads,
+  // satisfying WebKit exclusivity. Safari cannot clone directory handles to a
+  // nested worker, so send root-relative mount paths for the proxy to resolve.
   const opfsRootForResolve = await navigator.storage.getDirectory();
   const proxyMounts: OpfsProxyMountBootstrap[] = [];
   for (const mountPath of runtimeMounts) {
@@ -140,9 +135,8 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
     workerUrl: options.opfsProxyWorkerUrl,
   });
   // The wasi thread pool pre-warms itself to `initialSize` after a short idle delay (see
-  // browser-wasi-thread-pool.ts). Runner init no longer waits on it: the page-load warmup and small
-  // non-threaded ops never need the shells, and threaded runs grow the pool on demand, so a runner
-  // becomes usable as soon as its wasm is instantiated instead of after ~all `initialSize` shells spawn.
+  // browser-wasi-thread-pool.ts). Runner init does not wait on it: warmup and small non-threaded ops
+  // never need the shells, and threaded runs grow the pool on demand.
 
   const runner = {
     async dispose() {
@@ -268,12 +262,8 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
         wasmMemory,
         wasmModule: module,
       });
-      // A run can fail before wasi.start (e.g. an OPFS fd-build error) after the thread-pool command
-      // has already selected and dispatched its shells. Those shells stay stamped with currentCommand
-      // until the command is shut down, so without a guaranteed teardown a failed run permanently
-      // wedges the pool and later runs throw "worker N is already busy". command.shutdown() (reached
-      // via waitForWorkers) is idempotent, so draining once here is safe even on the success path,
-      // which has already drained by the time this finally runs.
+      // Always drain dispatched shells: pre-WASI failures otherwise leave them permanently busy.
+      // Shutdown is idempotent, so the success path may drain twice safely.
       let threadSpawnerDrained = false;
       const drainThreadSpawnerOnce = async () => {
         if (threadSpawnerDrained) return;
@@ -393,19 +383,14 @@ export async function createRomWeaverBrowserOpfs(options: BrowserOpfsCreateOptio
         for (const file of proxyBlobInputs) opfsProxy.unregisterBlobSource(file.path);
         if (!runSucceeded || runOptions.invalidateMountCacheAfterRun) await mountCache.invalidateMounts(mounts);
         trace("[browser-opfs] cleanup done");
-        // Per-op latency breakdown. setup = dispatch→wasi.start (mount/fd build + instantiate + any
-        // thread-pool pre-warm wait); compute = wasi.start; teardown = drain/flush/cleanup after it.
         const runEndedAtMs = nowMs();
         const setupMs = setupDoneAtMs === null ? null : setupDoneAtMs - runStartedAtMs;
         const computeMs = setupDoneAtMs === null || computeDoneAtMs === null ? null : computeDoneAtMs - setupDoneAtMs;
         const teardownMs = computeDoneAtMs === null ? null : runEndedAtMs - computeDoneAtMs;
         const fmt = (value: number | null): string => (value === null ? "n/a" : value.toFixed(1));
-        // `command` says what ran; `threads` is the requested budget (1 = thread-gated, no pool
-        // pre-warm; >1 = the thread pool was engaged, which is what setupMs mostly measures on a cold
-        // runner); `exitCode`/`succeeded` are the outcome. setup = dispatch→wasi.start, compute =
-        // wasi.start, teardown = drain/flush/cleanup after it.
-        // stagingMs = how long this command's OPFS inputs took to copy in (preCommand, recorded on the
-        // main thread); 0 = already on OPFS, n/a = nothing referenced was staged (e.g. virtual-Blob input).
+        // `threads` is the requested budget (>1 = thread pool engaged, which is what setupMs mostly
+        // measures on a cold runner). stagingMs = OPFS input copy-in time (recorded on the main
+        // thread); 0 = already on OPFS, n/a = nothing staged (e.g. virtual-Blob input).
         const stagingMsFmt = typeof runOptions.stagingMs === "number" ? runOptions.stagingMs.toFixed(1) : "n/a";
         trace(
           `[perf] command timings command=${formatCommandForTrace(command)}` +

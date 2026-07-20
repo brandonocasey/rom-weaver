@@ -16,13 +16,8 @@ type SyncAccessCapableFileHandle = {
   createSyncAccessHandle(options?: { mode?: RomWeaverBrowserSyncAccessMode }): Promise<SyncAccessHandleLike>;
 };
 
-// OPFS permits only one open access handle (or writable stream) per file at a time. When a previous
-// holder is still mid-close - e.g. the staging worker just finished writing a freshly staged source,
-// or a sibling operation is tearing down - createSyncAccessHandle briefly rejects with "Access
-// Handles cannot be created if there is another open Access Handle or Writable stream associated with
-// the same file." The handle frees as soon as the other side closes, so the failure is transient.
-// This surfaced when re-uploading the same archive to pick a second entry: the second extract opened
-// the staged source while the first operation's handle was still releasing, failing the whole run.
+// OPFS rejects a second handle while the previous holder is still closing. Retry this transient
+// contention so immediate reuse of a staged source does not fail.
 const SYNC_ACCESS_CONTENTION_RETRY_DELAYS_MS = [4, 8, 16, 32, 64, 128];
 
 const isSyncAccessContentionError = (error: unknown): boolean => {
@@ -86,8 +81,7 @@ export async function openSyncAccessHandle({
 export function closeSyncFiles(files: Iterable<unknown>) {
   for (const file of files) {
     try {
-      // Best-effort close: entries without a callable close() throw and are ignored,
-      // matching the historical behavior for untyped file collections.
+      // Untyped collection: entries without a callable close() throw and are ignored below.
       (file as { close(): unknown }).close();
     } catch {
       // ignore best-effort close failures

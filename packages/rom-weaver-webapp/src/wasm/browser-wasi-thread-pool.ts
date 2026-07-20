@@ -292,12 +292,8 @@ export function createBrowserWasiThreadWorkerPool({
         ` online=${onlineCount()} batchSize=${SHELL_CREATE_BATCH_SIZE} maxReplacements=${maxReplacementCount}`,
     );
     let pass = 0;
-    // Bring shells online in bounded batches. Starting every missing shell at once fires a burst of
-    // simultaneous module-worker script loads; under a limited connection pool (notably the dev
-    // server) the loads past the first several fail their fetch - surfacing as an empty-message
-    // worker `error`, not a code crash - which previously aborted the whole run. Limiting how many
-    // loads are in flight at a time keeps each batch within what the host can serve, and the
-    // replacement budget below still bounds retries so a genuine failure can't loop forever.
+    // Bound concurrent worker-script loads for hosts with small connection pools; the replacement
+    // budget separately prevents endless retries on genuine failures.
     while (true) {
       pass += 1;
       const batch: ThreadPoolShell[] = [];

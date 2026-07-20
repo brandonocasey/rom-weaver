@@ -1,18 +1,8 @@
-//! Decode console cheat codes - Game Genie and Pro Action Replay / GameShark -
-//! into concrete ROM byte writes so a cheat can be baked permanently into a ROM
-//! image (the same idea as "Game Genie Good Guy", reimplemented from public
-//! format references).
+//! Decode Game Genie and Pro Action Replay/GameShark codes into ROM byte writes.
 //!
-//! The module is pure: it operates on in-memory ROM bytes plus a [`CheatSystem`]
-//! and never touches the filesystem. The app layer detects the system (reusing
-//! `rom-weaver-checksum`'s header detection) and drives apply/create.
-//!
-//! Pipeline: [`decode`] (or [`decode_auto`]) turns a textual code into a
-//! [`DecodedCode`] (CPU/bus address + value + optional compare byte), then
-//! [`resolve_writes`] maps that onto file offsets via a [`RomLayout`] derived
-//! from the ROM bytes - handling copier/iNES headers, SNES LoROM/HiROM mapping,
-//! bank/compare scans, and rejection of RAM-only codes that cannot live in a
-//! ROM file.
+//! [`decode`] produces an address/value pair; [`resolve_writes`] maps it through
+//! [`RomLayout`] to file offsets, accounting for headers, banking, compare bytes,
+//! and RAM-only addresses. The pure module never touches the filesystem.
 
 use rom_weaver_core::{Result, RomWeaverError, ValidationCodeError};
 

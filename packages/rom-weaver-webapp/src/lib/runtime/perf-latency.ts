@@ -1,32 +1,16 @@
-// Browser User Timing instrumentation that compares the *perceived* latency of
-// an operation (from the moment a file is dropped until its command replies)
-// against the *wasm-reported* command duration we already surface in the UI.
+// Compare perceived drop-to-reply latency with WASM-reported command time.
 //
-// All marks/measures are emitted on the MAIN THREAD. The wasm command runs in a
-// Dedicated Worker, and `performance.now()` is relative to a per-thread time
-// origin, so a single `measure` cannot span the main thread and the worker. We
-// therefore bracket only the main-thread arcs:
+// Worker clocks have a different time origin, so all measures use main-thread
+// timestamps:
 //   - romweaver:command:<type>     schedule() -> worker reply (round-trip wall)
-//   - romweaver:wasm:<type>        the wasm-reported elapsed, anchored to end at
-//                                  the reply so it nests inside the round-trip;
-//                                  the leading gap is JS/worker/OPFS overhead
+//   - romweaver:wasm:<type>        reported elapsed, anchored at the reply
 //   - romweaver:drop-to-done:<name>  file drop -> reply (what the user feels)
-//
-// These show up in the Chrome DevTools Performance panel ("Timings" track) and
-// are queryable via `performance.getEntriesByType("measure")`. The marks are
-// near-zero-cost, so this stays always-on. Every call is guarded so it is a
-// no-op in environments without the full User Timing API (e.g. unit-test DOM).
 
 const MARK_PREFIX = "romweaver";
 
-// Pending file drops in FIFO order. We correlate by *time*, not by name: input
-// staging sanitizes and collision-suffixes filenames (".rom.zip" -> "rom.zip",
-// then "rom-2.zip", "rom-3.zip" on re-stage), and an archive drop produces inner
-// files with entirely different names - so a dropped basename rarely equals the
-// name a command references. The oldest pending drop is the file the user is
-// waiting on; it is consumed by the first thread-capable command (the heavy
-// extract/checksum/apply/create), since the probe `list`s that may run first
-// are not the work the user dropped the file to do.
+// Correlate drops FIFO by time because staging renames files and archive members.
+// The first thread-capable command consumes the oldest pending drop; probe lists
+// are not the work the user is waiting on.
 const pendingDrops: { at: number; name: string }[] = [];
 // Bound the queue so drops that never get consumed (e.g. a load that only ever
 // runs non-thread-capable commands) cannot leak unboundedly.
@@ -63,11 +47,8 @@ const measureBetween = (name: string, startMs: number, endMs: number, detail?: u
   }
 };
 
-// Bracket one main-thread orchestration stage (e.g. an input-prep async hop) so
-// the JS-sequencing floor between probe-done and extract-dispatch becomes
-// visible per-stage in the same `romweaver:` measure stream. Returns a closer
-// that emits `romweaver:stage:<name>`; call it (idempotently) when the stage
-// settles. No-op when User Timing is unavailable, so it is safe in unit tests.
+// Return an idempotent closer for one main-thread orchestration stage. No-op
+// where User Timing is unavailable.
 export const startStageSpan = (name: string, detail?: unknown): (() => void) => {
   if (!canEmitUserTiming()) return () => undefined;
   const startMs = perfNow();

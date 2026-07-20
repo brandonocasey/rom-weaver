@@ -1,13 +1,8 @@
 //! Apply a `.dcp` patch against a GD-ROM data track's filesystem.
 //!
-//! This drives the per-file half of DCP apply: for each manifest operation it
-//! produces the resulting bytes - a delta applied to its source file, a
-//! verbatim new file, or a replacement IP.BIN - and hands them to a caller
-//! supplied sink. It deliberately performs no filesystem or OPFS I/O of its
-//! own so the same code runs natively and in the browser; the caller decides
-//! where each emitted file lands. Reassembling the full disc (carrying through
-//! the source files the patch does not touch, then rebuilding the ISO9660 /
-//! GD-ROM image) is a separate step and not done here.
+//! Produces delta-applied files, verbatim additions, and replacement IP.BIN
+//! bytes through a caller-supplied sink. It performs no filesystem I/O, keeping
+//! native and browser behavior shared; full-disc reassembly is separate.
 
 use std::io::{Read, Seek};
 

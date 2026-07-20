@@ -1,12 +1,9 @@
 //! Unit coverage for the CHD module internals.
 //!
-//! These exercise the `pub(super)` primitives that back CHD's byte-parity
-//! guarantees - the V5 compressed-map huffman/RLE/CRC machinery and the CD
-//! sector ECC math - plus the codec-routing edge branches that cannot be
-//! reached through the crate's public `*_for_tests` helpers (those are already
-//! covered end-to-end by `rom-weaver-containers`' handler tests). Keeping these
-//! isolated means a regression in, say, canonical huffman code assignment fails
-//! precisely here instead of surfacing as a deep round-trip parity mismatch.
+//! Exercises the `pub(super)` primitives behind CHD's byte-parity guarantees
+//! (V5 compressed-map huffman/RLE/CRC, CD sector ECC) plus codec-routing edge
+//! branches unreachable through the public `*_for_tests` helpers, so a
+//! regression fails here instead of as a deep round-trip parity mismatch.
 
 use super::*;
 

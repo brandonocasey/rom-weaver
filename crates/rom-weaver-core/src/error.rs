@@ -7,17 +7,12 @@ use ts_rs::TS;
 
 pub type Result<T> = std::result::Result<T, RomWeaverError>;
 
-/// Canonical, stable classification of a [`RomWeaverError`], generated into
-/// TypeScript so the webapp's worker-error layer can key off the same set of
-/// kinds the Rust side defines. The string spelling of each variant (snake_case
-/// via serde) is part of the JS contract - see
+/// Stable [`RomWeaverError`] classification generated into TypeScript for the
+/// worker-error layer. Snake-case variant names are part of the JS contract; see
 /// `packages/rom-weaver-webapp/src/wasm/workers/worker-error-utils.ts`.
 ///
-/// This is a coarse bucket, not a 1:1 mirror of every `RomWeaverError` variant:
-/// both `Validation` and `ValidationCode` map to `Validation`. The
-/// message-prefix ⇄ kind mapping is locked by the contract test at the bottom
-/// of this module; do not change a variant's `#[error("...")]` prefix or a
-/// `kind()` arm without updating both sides.
+/// Kinds are coarse (both validation variants map to `Validation`). Contract
+/// tests lock the message-prefix and kind mappings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 #[serde(rename_all = "snake_case")]
@@ -31,21 +26,10 @@ pub enum RomWeaverErrorKind {
 }
 
 impl RomWeaverErrorKind {
-    /// Classify a [`RomWeaverError`] `Display` string back into its kind by the
-    /// canonical message prefix. This is the single Rust source of truth for the
-    /// prefix ⇄ kind mapping: it populates the typed `error_kind` on a failed
-    /// `ProgressEvent` (see `OperationReport::into_event`) so the webapp keys off
-    /// the generated [`RomWeaverErrorKind`] rather than re-deriving the kind from
-    /// the message at runtime. The JS `inferCoreWorkerErrorKind` regex mirrors
-    /// these prefixes only as a *fallback*, for error messages that reach JS
-    /// without a typed kind (worker/panic strings, or messages wrapped in
-    /// additional context). Returns `None` for any message that is not a bare
-    /// `RomWeaverError` `Display` rendering.
-    ///
-    /// The `Display` ⇄ `classify_message` ⇄ [`RomWeaverError::kind`] round-trip
-    /// is locked for every variant by the contract test in this module, so a
-    /// `#[error("...")]` prefix cannot change without this classifier (and the
-    /// failing test) catching it.
+    /// Classify a bare [`RomWeaverError`] display string by its canonical prefix.
+    /// This populates typed progress-event errors; JS regexes are fallback-only
+    /// for untyped or wrapped errors. Contract tests lock the display/classifier/
+    /// [`RomWeaverError::kind`] round trip.
     pub fn classify_message(message: &str) -> Option<Self> {
         const PREFIXES: &[(&str, RomWeaverErrorKind)] = &[
             ("validation failed:", RomWeaverErrorKind::Validation),

@@ -1,16 +1,9 @@
 //! GD-ROM data-track filesystem: read the ISO9660 file tree out of a single
 //! data track, honoring the GD-ROM's absolute-LBA bias.
 //!
-//! On a GD-ROM the high-density data track does not begin at LBA 0; its
-//! ISO9660 volume records every extent location as an *absolute* disc LBA,
-//! biased by the track's start LBA (45000 for the standard high-density area -
-//! see [`GD_HIGH_DENSITY_START_LBA`]). The Primary Volume Descriptor still sits
-//! at volume sector 16 (i.e. `start_lba + 16`), so the bias is the track's
-//! start LBA: a file recorded at absolute LBA `L` lives at track-relative
-//! logical sector `L - start_lba`.
-//!
-//! [`GdRomFs`] opens such a track, parses the directory tree once, and lets the
-//! caller list files and read any file's bytes.
+//! GD-ROM records extents as absolute disc LBAs; [`GdRomFs`] subtracts the data
+//! track's start LBA, indexes the tree once, and exposes file reads. The standard
+//! high-density bias is [`GD_HIGH_DENSITY_START_LBA`].
 
 use std::collections::BTreeMap;
 use std::io::{Read, Seek};

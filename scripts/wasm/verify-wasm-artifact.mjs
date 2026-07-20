@@ -1,21 +1,10 @@
 #!/usr/bin/env node
-// Verify a built WASM artifact set before anything downstream consumes it.
+// Verify the production WASM artifact set before tests or deployment.
 //
-// Two failure modes this exists to catch early:
-//
-//   1. An incomplete artifact set - most likely a partial cache restore, which
-//      would otherwise surface as a confusing failure in the browser suite or
-//      a broken deploy.
-//   2. A module whose imported memory does not declare the 4 GiB ceiling. The
-//      --max-memory link-arg lives in .cargo/config.toml, and cargo's rustflags
-//      sources are mutually exclusive: any RUSTFLAGS override replaces that
-//      list wholesale and silently drops it. The result still compiles and
-//      still passes wasm-opt, then fails at instantiation with "memory import
-//      has a larger maximum size 65536 than the module's declared maximum".
-//
-// Node's WebAssembly.Module.imports() reports only {module, name, kind} - the
-// js-types reflection that would expose limits is not available - so the
-// import section is decoded directly.
+// Catches partial cache restores and missing 4 GiB imported-memory limits. A
+// RUSTFLAGS override can silently replace the configured --max-memory flag,
+// leaving a module that builds but fails to instantiate. Node does not expose
+// import limits, so this decodes the import section directly.
 //
 // Usage: node scripts/wasm/verify-wasm-artifact.mjs <wasm-dir> [--dev]
 

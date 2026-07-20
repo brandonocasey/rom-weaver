@@ -19,11 +19,10 @@ pub enum PatchChecksumValidation {
     Ignore,
 }
 
-/// Which of a patch's own embedded checks one chain step enforces. Strict
-/// validation enables everything and Ignore disables everything; a
-/// base-basis patch running mid-chain keeps patch-file integrity while
-/// skipping its base-relative source/target checks (they describe the
-/// original ROM, not the running intermediate).
+/// Which of a patch's own embedded checks one chain step enforces. Strict enables
+/// everything and Ignore disables everything; a base-basis patch mid-chain keeps
+/// patch-file integrity while skipping its base-relative source/target checks
+/// (they describe the original ROM, not the running intermediate).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PatchCheckScopes {
     /// The patch file's own integrity checksum (for example the BPS patch CRC32).
@@ -84,10 +83,7 @@ impl FromStr for XdeltaSecondaryMode {
 }
 
 /// The patch-only policy knobs of an [`OperationContext`], grouped so the
-/// container/thread plumbing and the patch-apply/validate-specific settings
-/// stay visibly separate. [`OperationContext`] keeps a getter and a `with_*`
-/// builder per field (so call sites read/set individual settings as before),
-/// and [`OperationContext::with_patch_policy`] swaps the whole group at once.
+/// container/thread plumbing and the patch-specific settings stay visibly separate.
 #[derive(Clone)]
 pub struct PatchPolicy {
     /// Checksum algorithms to compute when extracting (drives the extract
@@ -134,10 +130,9 @@ pub struct OperationContext {
     cancel: CancellationToken,
     patch_policy: PatchPolicy,
     /// One operation-scoped worker pool, sized to the full thread budget and reused by every
-    /// extract (the primary container and each nested archive). Building a fresh pool per extract
-    /// stacked worker threads across sequential/nested extracts and exhausted the browser's fixed
-    /// wasi worker pool, stalling with 30s spawn timeouts; reusing one pool keeps the live thread
-    /// count bounded while still giving each (serially processed) extract the whole pool.
+    /// extract. A fresh pool per extract stacked worker threads across sequential/nested extracts
+    /// and exhausted the browser's fixed wasi worker pool (30s spawn-timeout stalls); one reused
+    /// pool bounds the live thread count while each serial extract still gets the whole pool.
     operation_pool: Arc<Mutex<Option<(SharedThreadPool, ThreadExecution)>>>,
     /// Already-known checksums for input paths, keyed `path -> { algorithm -> hex }`. Seeded by the
     /// patch apply/validate commands from the host's `--assume-in` (the input CRC32 the webapp
@@ -347,17 +342,12 @@ impl OperationContext {
         Some(self.plan_threads(ThreadCapability::single_threaded()))
     }
 
-    /// Thread plan for the streaming checksum-variant engine: the full op thread budget with no
-    /// per-call cap. `StreamingVariantChecksums` then splits `effective_threads` across the active
-    /// variants (each capping internally at its algorithm count) so their crc32/md5/sha1 hash in
-    /// parallel and overlap the byte producer instead of serializing on it.
+    /// Give checksum variants the full operation budget; they divide it across
+    /// active variants and cap each at its algorithm count.
     ///
-    /// Both variant-hashing callers - the `checksum` command and the extract write path - negotiate
-    /// the budget through here so they hash with identical parallelism and cannot drift (the command
-    /// previously forced single-threaded while extract did not, making the command slower). The cap
-    /// must stay `None`: capping at the algorithm count here would collapse the per-variant split to
-    /// one thread each. `parallel(None)` is pure (it does not consume the budget) and resolves to a
-    /// single thread on the non-threaded wasm build.
+    /// Both checksum and extract use this path to stay aligned. Keep the cap
+    /// `None`; an outer algorithm-count cap would collapse each variant to one
+    /// thread. Non-threaded WASM still resolves to one.
     pub fn variant_hash_execution(&self) -> ThreadExecution {
         self.plan_threads(ThreadCapability::parallel(None))
     }

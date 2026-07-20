@@ -51,16 +51,7 @@ const createHostSelectionCandidates = (
     type: "file",
   }));
 
-/**
- * All three workflow forms stay mounted at once (webapp-root keeps every visited
- * tab alive), so a single module-global handler was last-mounted-wins: mid-command
- * prompts routed to whichever form mounted last, and cancelling that dialog
- * destroyed the wrong form's staged state. Instead each form registers its
- * `selectFile` under a stable id and the one installed host handler routes each
- * prompt to the active form (the visible tab set via `setActiveSelectionForm`),
- * falling back to the sole/last registered handler for single-form library embeds
- * that never publish an active form.
- */
+/** Routes host prompts to the active mounted form, with a last-registered fallback for embeds. */
 const selectionHandlers = new Map<string, SelectCandidateFile>();
 let activeSelectionFormId: string | undefined;
 let hostHandlerInstalled = false;

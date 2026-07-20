@@ -1,21 +1,9 @@
 //! Console/platform detection for ROM identification.
 //!
-//! The identify feature stores one hash→name database per platform, so the
-//! probe must name the platform of an input to pick the right database. Two
-//! detection paths:
-//!
-//! * **Cartridge** inputs reuse the header signatures in [`crate::rom_headers`]
-//!   (see [`platform_for_rom_header`]).
-//! * **Disc** images share extensions (`.iso`, `.chd`, `.cue`/`.bin`, …) across
-//!   wildly different consoles, so extension is useless. Instead every disc
-//!   carries a console signature either in its system area (sector 0) or its
-//!   ISO 9660 filesystem; [`detect_disc_platform`] reads those. The container
-//!   layer is responsible for decoding (CHD/RVZ) and de-framing CD 2352-byte
-//!   sectors down to 2048-byte user data before calling in via
-//!   [`DiscSectorSource`].
-//!
-//! Detection never guesses: when no signature matches it returns `None` so the
-//! probe emits no platform rather than a wrong one.
+//! Chooses the hash database used by identify. Cartridges reuse header
+//! signatures; discs use system-area or ISO9660 signatures because their
+//! extensions are ambiguous. The container layer supplies decoded 2048-byte
+//! sectors through [`DiscSectorSource`]. Unknown inputs return `None`.
 
 use std::io;
 

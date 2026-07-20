@@ -1,18 +1,7 @@
-//! Platform + medium detection for ROM/disc inputs, derived purely from a
-//! bounded in-memory prefix.
+//! Detects a ROM's platform and medium from a bounded in-memory prefix.
 //!
-//! This is intentionally *not* the identify feature: it never consults a
-//! hash→name database and never names the exact title. It answers only "what
-//! console is this, and what optical medium" from on-disc signatures
-//! ([`crate::platform_detection`]) and cartridge header magics
-//! ([`crate::rom_headers`]). Wrong guesses are impossible by construction -
-//! every signature is specific, and an unknown input yields `None`.
-//!
-//! The caller reads at most [`DETECT_PREFIX_BYTES`] from the start of the file
-//! (on the wasm main thread - see "Read-on-main" in `docs/ARCHITECTURE.md`) and
-//! hands the slice to [`detect_rom_identity`]. Detection runs over that buffer
-//! with no further I/O, so it adds no extra OPFS handles and cannot alter any
-//! output bytes.
+//! This does not identify titles or query a hash database. Detection performs
+//! no additional I/O, avoiding extra OPFS handles and output mutation.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -23,11 +12,8 @@ use tracing::{debug, trace};
 use crate::platform_detection::{self, DiscSectorSource, detect_disc_platform, platform};
 use crate::rom_headers::KnownRomHeader;
 
-/// Largest prefix [`detect_rom_identity`] needs. The strongest disc signatures
-/// (CD sync, Sega system area, GameCube/Wii magic) live in sector 0; the ISO
-/// 9660 path reads the PVD at LBA 16 plus the root directory and `SYSTEM.CNF`,
-/// which on real Sony discs sit within the first sectors of the data area. 2
-/// MiB covers all of them at both 2048- and 2352-byte framing with wide margin.
+/// Prefix covering sector-0 signatures and ISO 9660 metadata at both supported
+/// sector sizes.
 pub const DETECT_PREFIX_BYTES: usize = 2 * 1024 * 1024;
 
 /// 12-byte CD raw-sector sync pattern (`00 FF×10 00`) that marks 2352-byte
@@ -128,10 +114,9 @@ impl DiscSectorSource for PrefixDisc<'_> {
 /// input), where `total_len` is the full file length and `extension` is the
 /// source file extension (with leading dot) when known.
 ///
-/// Disc detection runs first because its signatures are specific and would
-/// otherwise be masked by weak cartridge heuristics (e.g. a zeroed prefix or a
-/// leading `"AB"`). Only when the input is clearly not a disc does cartridge
-/// header detection run.
+/// Disc detection runs first: its signatures are specific and would otherwise
+/// be masked by weak cartridge heuristics (e.g. a zeroed prefix or a leading
+/// `"AB"`).
 pub fn detect_rom_identity(prefix: &[u8], total_len: u64, extension: Option<&str>) -> RomIdentity {
     if let Some(identity) = detect_disc_identity(prefix, total_len) {
         trace!(
@@ -195,10 +180,8 @@ impl IdentityPrefix {
         detect_rom_identity(&self.buf, total_len, extension)
     }
 
-    /// Whether the bounded prefix has filled to [`DETECT_PREFIX_BYTES`] - i.e. enough bytes have
-    /// streamed through to detect every disc/cartridge signature without waiting for EOF. Lets a
-    /// streaming producer surface identity mid-extraction (once it is fully determinable) instead of
-    /// only at the end.
+    /// Whether the prefix has filled to [`DETECT_PREFIX_BYTES`] - enough streamed bytes to detect
+    /// every signature, letting a producer surface identity mid-extraction instead of at EOF.
     pub fn is_full(&self) -> bool {
         self.buf.len() >= DETECT_PREFIX_BYTES
     }
@@ -208,7 +191,6 @@ impl IdentityPrefix {
 ///
 /// Intended for callers holding a path to *decoded* bytes (an extracted ISO/BIN
 /// or a bare ROM) - not a compressed container, whose prefix is not disc data.
-/// Reads on the calling thread (keep it the wasm main thread for OPFS inputs).
 /// Any I/O error yields an empty identity rather than failing the operation.
 pub fn detect_rom_identity_for_path(path: &Path) -> RomIdentity {
     let mut file = match File::open(path) {

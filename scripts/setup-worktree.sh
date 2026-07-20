@@ -1,23 +1,12 @@
 #!/usr/bin/env bash
 # Prepare a fresh git worktree for development and browser tests.
 #
-# History: this script used to mirror the main checkout's node_modules into the
-# worktree (third-party deps symlinked, workspace deps copied as symlinks).
-# That mirror silently stalls vitest browser mode - the node-side module
-# runner never dispatches test files, with no error - so worktrees needed a
-# manual `npm ci` before browser tests anyway. With the wasm package merged
-# into rom-weaver-webapp there is a single package install, and npm's cache
-# makes a real `npm ci` take seconds, so the mirror is gone.
+# Installs package dependencies, copies built WASM artifacts, and links the
+# populated libarchive submodule from main. A real `npm ci` is required because
+# mirrored node_modules stalls Vitest browser mode.
 #
-# This script:
-#   - runs `npm ci` at the repo root and in packages/rom-weaver-webapp
-#   - copies the built wasm artifacts from the main checkout (if present) so
-#     browser tests and the dev server work without a local wasm build
-#   - links the vendor/libarchive submodule from the main checkout so the
-#     fork-tracked / cmake-built C deps need no re-init or rebuild
-#
-# The cargo target dir is NOT handled here - keep a worktree-local target;
-# sharing main's target breaks cmake-built wasm C deps like libarchive.
+# Keep Cargo target directories worktree-local; sharing them breaks CMake-built
+# WASM dependencies such as libarchive.
 #
 # Usage (from inside the worktree):  scripts/setup-worktree.sh
 # Re-runnable.
@@ -45,11 +34,8 @@ for artifact in rom-weaver-app.wasm rom-weaver-app.wasm.br; do
   fi
 done
 
-# vendor/* submodules are gitlinks: a fresh worktree leaves them empty. Building
-# it here is slow (libarchive is a cmake C build),
-# so mirror the already-populated copies from the main checkout via symlink.
-# Re-runnable: skip when already a symlink, and only link an empty worktree copy
-# against a populated main copy.
+# Fresh worktrees leave the libarchive gitlink empty; link the populated main
+# copy to avoid rebuilding it. Re-runs preserve existing data.
 echo "setup-worktree: link vendor submodules from main checkout"
 for submodule in libarchive; do
   worktree_vendor="$worktree_dir/vendor/$submodule"
@@ -68,11 +54,9 @@ for submodule in libarchive; do
   fi
 done
 
-# The vendor symlinks above make git report each submodule as a gitlink->symlink
-# typechange ("T"), which is phantom noise. Silence it PER WORKTREE (not in
-# .gitmodules) so the main checkout still surfaces real submodule pointer bumps
-# in `git status`. Git still requires `--force` to remove any worktree containing
-# submodules; use scripts/remove-worktree.sh for a dirty-worktree guard.
+# Hide expected gitlink-to-symlink typechanges only in this worktree; the main
+# checkout must still report real pointer changes. Use remove-worktree.sh
+# because Git requires force for worktrees containing submodules.
 echo "setup-worktree: silence vendor typechange noise (worktree-scoped)"
 git config extensions.worktreeConfig true
 for submodule in libarchive; do

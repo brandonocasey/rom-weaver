@@ -1,12 +1,7 @@
 import { ROM_WEAVER_DISC_IMAGE_POLICY } from "../../wasm/generated/rom-weaver-format-metadata.ts";
 
-// Single consumption point for the Rust-owned disc-image policy (the canonical sector sizes +
-// ambiguous-extension list surfaced via typegen). The webapp used to carry two copies of this
-// size heuristic (output-compression-manager + container-format-registry); both now read this.
-//
-// `.bin` doubles as a CD/DVD disc image (bin/cue) and a bare console ROM dump. An ambiguous-extension
-// source whose size is not a whole number of CD/DVD sectors is treated as a plain ROM, not a disc
-// image; an unknown/non-positive size keeps the extension-based resolution (returns `true`).
+// Shared consumer of Rust-owned disc-image policy. Ambiguous extensions such as `.bin` count as
+// disc images only when their known size aligns to a supported sector size.
 
 const AMBIGUOUS_DISC_IMAGE_EXTENSIONS: readonly string[] = ROM_WEAVER_DISC_IMAGE_POLICY.ambiguousDiscImageExtensions;
 const CD_SECTOR_SIZES: readonly number[] = ROM_WEAVER_DISC_IMAGE_POLICY.cdSectorSizes;

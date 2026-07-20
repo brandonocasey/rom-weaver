@@ -83,12 +83,8 @@ const createBrowserPublicOutputAdapter = (): RuntimePublicOutputAdapter => ({
   },
 });
 
-// Stage the dropped source into OPFS, ingest it (classify + nested-extract + checksum ROMs in one
-// pass; describe patches), and return the parsed result plus adopted `outputs`. Archive ROM leaves
-// land under the worker OPFS mount and are wrapped as path-backed PublicOutputs (carrying the ingest
-// checksums + disc structure) so the staging pipeline reuses its PublicOutput→PatchFileInstance
-// bridge; each output's cleanup removes its leaf. Only the staged source is cleaned up here - a bare
-// ROM is checksummed in place (`copiedInPlace`), so it produces no leaf/output.
+// Ingest a staged source and adopt extracted leaves as path-backed outputs. Bare ROMs are checksummed
+// in place and produce no output leaf.
 const createBrowserIngestRuntime = (workerIo: RuntimeWorkerIo): WorkflowRuntime["ingest"] => ({
   run: async ({
     source,

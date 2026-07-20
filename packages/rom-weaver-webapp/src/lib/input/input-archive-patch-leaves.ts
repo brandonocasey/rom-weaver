@@ -65,13 +65,8 @@ const matchPreferredPatchLeaf = <TLeaf extends { candidate: { fileName: string }
   return leaves.find((leaf) => stripExtension(getBaseFileName(leaf.candidate.fileName).toLowerCase()) === wantedStem);
 };
 
-/** Compute a leaf's archive-nesting breadcrumbs by stripping the extraction root (`/work`): a direct
- * patch yields `[]`, a nested patch yields its chain of containing nested-archive directories (named
- * after each archive, e.g. `["B_disc1"]`, `["C_set", "C_sub"]`). Stripping the fixed root (rather
- * than the prefix shared across leaves) keeps the nesting visible even when every patch sits under
- * the same nested archive. The per-operation output scratch dir (`operations/<uuid>`) ingest extracts
- * into is an internal path, not a real archive folder, so its two leading segments are stripped too -
- * otherwise every ingested leaf would surface a meaningless `operations › <uuid>` breadcrumb. */
+/** Derive archive breadcrumbs by removing `/work` and internal
+ * `operations/<uuid>` segments while preserving shared nested folders. */
 const derivePatchLeafBreadcrumbs = (path: string): string[] => {
   const dirSegments = String(path || "")
     .split("/")
@@ -84,13 +79,9 @@ const derivePatchLeafBreadcrumbs = (path: string): string[] => {
   return stripOperationScopeChain(dirSegments.slice(start), (segment) => segment);
 };
 
-/** Discover EVERY patch across all (nested) branches of a patch archive in one recursive `ingest`
- * call: ingest classifies + extracts all patch-filtered leaves (the facade adopts them as
- * `patchOutputs`) and describes each (`result.patches`), so the leaf's embedded source/target
- * requirements ride along the extraction and are stashed for the apply parse (no second probe). Each
- * valid leaf is cached by its unique extracted path so the re-entrant selection (and the multi-select
- * fan-out) reuses it without re-extracting. Every patch ingest identifies is surfaced (only an archive
- * leaf is excluded); the apply-time validate guards a genuinely bad one. */
+/** Discover and describe every nested patch in one recursive ingest. Cache
+ * materialized leaves by path so selection reuses them without extraction or
+ * probing again; apply-time validation rejects bad leaves. */
 const enumeratePatchLeaves = async (
   archiveFile: PatchFileInstance,
   options: InputPreparationOptions,

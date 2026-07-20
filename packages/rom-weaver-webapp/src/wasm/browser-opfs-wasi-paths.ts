@@ -38,8 +38,8 @@ export function findEntryInDirectory(contents: WasiDirectoryContents, pathStr: s
   return null;
 }
 
-// Inode subclasses store directory children on `contents`; duck-type the property instead of
-// using `instanceof Directory` so the runtime check matches the original behavior exactly.
+// Inode subclasses store directory children on `contents`; duck-typed rather than
+// `instanceof Directory` so wrapped/subclassed directory inodes still match.
 export function inodeMapContents(entry: wasiShim.Inode): WasiDirectoryContents | null {
   const contents = (entry as { contents?: unknown }).contents;
   return contents instanceof Map ? (contents as WasiDirectoryContents) : null;

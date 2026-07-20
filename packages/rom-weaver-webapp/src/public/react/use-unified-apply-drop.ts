@@ -8,15 +8,10 @@ import { classifyDroppedFiles, isArchiveFileName, isPatchFileName, isRomFileName
 /**
  * Drop orchestration for the Apply tab.
  *
- * Bare ROMs/patches route by extension. An archive is classified by its CONTENTS - a cheap entry
- * listing (no byte extraction), the same authoritative signal Rust uses (`is_rom = has_rom ||
- * !has_patch` over the entries; see `emit_probe_bundle`). A real ROM archive joins the ROM
- * bucket; a patch-only bundle goes straight to the patch bucket. Crucially, a patch-only archive
- * never enters the ROM input list: routing it there would re-stage (re-extract) any already staged
- * ROM and flash a ROM card before Rust's later probe-bundle reclassified it. That probe-bundle
- * reclassify (`reclassifyArchiveToPatch` in the session) remains as a safety net for the rare
- * misroute (e.g. a listing failure defaults to the ROM bucket). Both the in-tab dropzone and the
- * page-wide drop forwarder funnel through one `onDrop`.
+ * Bare files route by extension; archives route from a metadata-only entry
+ * listing using Rust's `is_rom = has_rom || !has_patch` rule. Keeping patch-only
+ * archives out of the ROM bucket avoids restaging the current ROM. Rust's later
+ * reclassification remains the fallback for listing failures.
  */
 
 const logger = createLogger("unified-apply-drop");
@@ -75,12 +70,8 @@ type DropRouteLifecycle = {
 const classifyArchiveBucket = (archive: File, names: string[]): "rom" | "patch" => {
   const hasRom = names.some(isRomFileName);
   const hasPatch = names.some(isPatchFileName);
-  // A container whose top-level entries are ONLY nested plain archives (no direct rom - rvz/chd/iso
-  // are rom names so a nested rom container sets hasRom - and no direct patch) is a nested patch
-  // bundle whose patches live a level down (e.g. B_bundle → B_discN.zip → patchBN.ips). Route it to
-  // the patch bucket so the patch-leaf enumeration fans the branches into one multi-select, instead
-  // of the ROM keep-one prompt that several sibling archives would otherwise trigger. Rust's is_rom
-  // reclassify still moves a genuinely-ROM misroute back.
+  // Archive-only roots usually wrap nested patch bundles; route them to patch
+  // enumeration instead of the ROM keep-one prompt. Rust corrects real ROMs.
   const hasNestedArchive = names.some(isArchiveFileName);
   const bucket = hasRom ? "rom" : hasPatch || hasNestedArchive ? "patch" : "rom";
   logger.trace("archive content classified", {

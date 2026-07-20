@@ -148,14 +148,7 @@ export class BrowserOpfsMount {
     this.trace = null;
   }
 
-  /**
-   * Close and forget every proxy adapter created during the run - preopened/created output files and
-   * lazily hydrated inputs - reverting ownedFiles to the persistent set built at mount creation. A
-   * cached mount reused across many ops would otherwise hold one open proxy handle per distinct
-   * output/hydrated-input file until dispose, exhausting the proxy handle table (EIO) after ~1020 files.
-   * The matching inodes are dropped from the in-memory tree so a later run recreates/rehydrates them
-   * instead of dereferencing a now-closed handle.
-   */
+  /** Closes per-run adapters and evicts their inodes so cached mounts cannot exhaust proxy handles. */
   pruneRunOwnedFiles() {
     if (this.ownedFiles.length <= this.persistentOwnedFileCount) return;
     const perRunFiles = this.ownedFiles.splice(this.persistentOwnedFileCount);

@@ -1,17 +1,12 @@
 import { createLogger } from "./logging.ts";
 
 /**
- * Workbench activity for the selvage status strip: which state the bench is
- * in (idle / staging / ready / running / failed / done) and an optional stage
- * line ("Apply - Track 1.bin"). Forms publish per workflow; the selvage
- * subscribes to the derived published state. A vanilla store so non-React
- * controllers can publish too.
+ * Vanilla store for the workbench status strip. Forms publish per-workflow
+ * state and optional stage text; React and non-React consumers share it.
  *
- * The three workflow forms stay mounted at once, so a single-slot store was
- * last-writer-wins: mounting another tab (busy=false) overwrote a live run's
- * `running` with `idle` and released the wake lock mid-operation. Keying by
- * workflow and publishing the highest-priority state across them keeps a live
- * run visible no matter what a sibling form publishes.
+ * Mounted sibling forms can publish idle during another workflow's run. Keying
+ * by workflow and choosing the highest-priority state preserves live status and
+ * the wake lock.
  */
 
 type WorkbenchActivityState = "done" | "failed" | "idle" | "ready" | "running" | "staging";

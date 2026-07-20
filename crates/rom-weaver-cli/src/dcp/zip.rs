@@ -1,14 +1,7 @@
 //! Minimal ZIP central-directory reader.
 //!
-//! A `.dcp` (Universal Dreamcast Patcher patch) is a plain ZIP archive. To
-//! describe its contents we only need each entry's name and sizes, which live
-//! in the central directory - no decompression and therefore no DEFLATE
-//! dependency. This reader scans the End Of Central Directory record and parses
-//! the central-directory file headers; entry payload extraction is a separate
-//! concern handled by the apply pipeline.
-//!
-//! Scope: standard (non-ZIP64) archives. ZIP64 is detected and reported rather
-//! than mis-parsed.
+//! Reads `.dcp` names and sizes from standard ZIP central directories without
+//! decompression. Payload extraction is separate; ZIP64 is rejected explicitly.
 
 use std::io::{Read, Seek, SeekFrom};
 

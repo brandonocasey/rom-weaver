@@ -17,14 +17,7 @@ import { markWasmFirstProgress } from "../perf/op-perf-marks.ts";
 
 type RomWeaverRunJsonResult = BaseRomWeaverRunJsonResult<RomWeaverRunJsonEvent, RuntimeValue>;
 
-/**
- * A `JSON.parse`d wire object for a generated Rust type `T`: every field of `T` present as an optional
- * `unknown` (the raw parsed value, before the coercion helpers below normalize it). Casting a parsed
- * record to `WireRecord<T>` ties each field read to `keyof T`, so renaming a Rust field - regenerated
- * into the `*.d.ts` - turns a now-stale reader into a tsc error instead of a silent `undefined`.
- * Values stay `unknown` (typegen carries `u64` as `bigint`/`number` and `JSON.parse` yields plain
- * `number`), so the per-field coercions remain the single source of runtime truth.
- */
+/** Keeps parsed field reads tied to generated Rust keys while leaving runtime values untrusted. */
 type WireRecord<T> = { [K in keyof T]?: unknown };
 
 type SimpleRuntimeProgress = {

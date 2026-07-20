@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
-# Shared build body for the `build-wasm` (dev) and `build-wasm-prod` (CI/release)
-# mise tasks. Both tasks set the release `-O3 -flto` CFLAGS in [env] and then
-# delegate here; prod adds the wasm-opt + brotli tail.
+# Shared body for the `build-wasm` and `build-wasm-prod` mise tasks; production
+# adds wasm-opt and Brotli.
 #
 # Mode is selected by the first argument (default: dev):
 #   build-app.sh        # dev: build + cp + strip + sync
 #   build-app.sh prod   # prod: build + cp + wasm-opt + strip + brotli + sync
 #
-# Reads MISE_PROJECT_ROOT and the WASI_* toolchain vars from the [env] block in
-# .mise.toml. Honors ROM_WEAVER_WASM_OUT_DIR (output dir) and, in prod mode,
-# BROTLI_QUALITY (defaults to 11) and ROM_WEAVER_WASM_NO_BROTLI.
+# Reads MISE_PROJECT_ROOT and WASI_* from .mise.toml. Honors
+# ROM_WEAVER_WASM_OUT_DIR and, in production, BROTLI_QUALITY and
+# ROM_WEAVER_WASM_NO_BROTLI.
 #
-# ROM_WEAVER_WASM_NO_BROTLI=1 keeps wasm-opt and strip but skips the `.br`
-# sibling. Set it wherever the host compresses on the fly: Cloudflare Pages has
-# no precompressed-sibling convention, so it re-compresses the raw wasm itself
-# and the quality-11 pass is ~15s of discarded work. The Docker image still
-# needs the sibling - `compression-static` in sws.toml serves it directly.
+# ROM_WEAVER_WASM_NO_BROTLI=1 skips the `.br` sibling for hosts such as
+# Cloudflare Pages that recompress the raw WASM. The Docker image still needs
+# the sibling for `compression-static`.
 set -euo pipefail
 
 mode="${1:-dev}"

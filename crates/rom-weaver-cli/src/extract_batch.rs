@@ -1,12 +1,8 @@
 //! Memory- and thread-aware concurrent extraction of several independent inputs in one process.
 //!
-//! Where `run_extract` handles a single container, this runs a *batch* and asks the shared planner
-//! (`extract_batch_plan::plan_extract_batch`) how to split it, given the thread budget and the
-//! platform's memory budget. Jobs that fit together run concurrently on scoped threads, each handed
-//! an even slice of the thread budget (so K concurrent extractions never oversubscribe the pool);
-//! jobs whose combined working set would exceed the memory ceiling are deferred to a later wave.
-//! Native reads each source's real size from the filesystem and runs the jobs on OS threads; the
-//! browser drives the same planner over its existing multi-worker pool (see `plan-extract-batch`).
+//! Uses the shared batch planner to group jobs by memory and split the thread
+//! budget evenly across each concurrent wave. Native runs those waves on scoped
+//! threads; the browser drives the same plan through its worker pool.
 
 use super::*;
 use crate::extract_batch_plan::plan_extract_batch;

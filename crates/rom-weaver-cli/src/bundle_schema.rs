@@ -19,15 +19,9 @@ pub const BUNDLE_JSON_SCHEMA: &str = include_str!("../rom-weaver-bundle.schema.j
 /// Published, resolvable location of [`BUNDLE_JSON_SCHEMA`] (matches its `$id`).
 pub const BUNDLE_JSON_SCHEMA_URL: &str = "https://rom-weaver.com/rom-weaver-bundle.schema.json";
 
-/// A distributable patching workflow definition (`rom-weaver-bundle.json`): ordered patches
-/// with an optional/required selection seed and expected input/output ROM
-/// checks, optionally the ROM itself, and default output settings. Every
-/// entry's source is either a download URL or a path relative to the bundle
-/// (an archive member when the bundle ships inside an archive). The rom
-/// entry's `checks` describe the chain's input; `output.checks` describe the
-/// final output; a patch only carries its own `inputChecks`/`outputChecks`
-/// when they differ from those endpoints (mid-chain steps). Defaults defined
-/// here are overridable by explicit CLI flags / webapp edits.
+/// A distributable ordered patch workflow with optional ROM, selection seed,
+/// endpoint checks, sources, and output defaults. Sources are URLs or
+/// bundle-relative paths; CLI flags and webapp edits override defaults.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript-types", derive(TS))]
 #[serde(deny_unknown_fields)]

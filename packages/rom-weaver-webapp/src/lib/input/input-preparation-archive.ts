@@ -182,13 +182,9 @@ const listCompressionEntries = async (
 };
 
 /**
- * List a dropped archive's entry file names (a pure read - no byte extraction) so the drop router
- * can decide its bucket (ROM source vs patch bundle) from the archive's CONTENTS before staging it.
- * Routing a patch-only archive into the ROM input list would re-stage (re-extract) the already
- * staged ROM and briefly flash a ROM card before Rust's probe-manifest reclassifies it. Cheap and
- * cached - the listing is shared with the later staging descent via the `_file` key - so a real ROM
- * archive only pays one list here, then extracts once. Returns [] on any failure so the caller
- * falls back to the default (ROM) bucket, where Rust's reclassify still corrects a misroute.
+ * List archive names without extraction so drop routing can separate ROMs from
+ * patch bundles before staging. The cached result is reused by descent. Failure
+ * returns [] and lets Rust correct the default ROM route later.
  */
 const listDroppedArchiveEntryNames = async (source: SourceRef): Promise<string[]> => {
   const file = await createPatchFile(source as Parameters<typeof createPatchFile>[0], "archive.bin");
@@ -198,14 +194,9 @@ const listDroppedArchiveEntryNames = async (source: SourceRef): Promise<string[]
     .filter((name) => !!name);
 };
 
-// Memoize entry listings per (source bytes, filter + overrides). One input load enumerates the same
-// archive several times - the drop-routing probe classifies it, then chd-split detection, disc-group
-// naming, and the limit preflight each re-list it - and every pass is a full worker round-trip that
-// returns identical entries (the archive is immutable). Key on the underlying File/Blob (`_file`) when
-// present so the probe's listing and the prep's descent share one result even though they wrap the
-// dropped file in different PatchFileInstances; fall back to the instance when there is no shared
-// blob. Parity-safe: listing is a pure read that never affects extracted bytes. A transient failure is
-// evicted so a retry re-lists.
+// Cache immutable entry listings across routing, CHD mode, naming, and preflight
+// passes. Key the underlying File/Blob when wrappers differ; evict failures so
+// retries re-list.
 const listEntryResultCache = new WeakMap<object, Map<string, ReturnType<typeof computeListCompressionEntryResult>>>();
 
 const getListEntryCacheKeyObject = (file: PatchFileInstance): object => (file as { _file?: object })._file ?? file;
@@ -474,13 +465,9 @@ const resolveArchiveInputAssetsByDescent = async (
     traceArchivePreparation(options, "input.archive.chd-mode", { chdMode, sourceIndex });
   }
   if (!outputs.length) {
-    // A patch-only bundle (no ROM payload, but the descent DID surface patch leaves) was routed to
-    // the ROM bucket - typically a NESTED patch archive whose top-level entries are just inner
-    // archives, so the drop-time content probe could not see the patches and defaulted to ROM.
-    // Surface the same `is_rom === false` verdict the host already reclassifies on, then abort this
-    // ROM staging so its session (and OPFS handles) release cleanly before the patch bucket re-stages
-    // the same file - completing here would leave the source claimed by the ROM stage and deadlock the
-    // patch extraction. The `reclassifiedToPatch` marker lets the host swallow this expected teardown.
+    // A nested patch-only bundle can default to the ROM bucket before descent
+    // reveals its leaves. Reclassify and abort ROM staging so it releases OPFS
+    // handles before the patch bucket stages the same file.
     if (patchOutputs.length) {
       options?.onProgress?.({ details: { probe_manifest: { is_rom: false } } } as never);
       traceArchivePreparation(options, "input.archive.descent.reclassify-patch-only", {
@@ -625,18 +612,12 @@ const resolveArchiveInputAssets = async (
 };
 
 /**
- * Checksum a bare (non-container) ROM via the `ingest` command and attach the resulting
- * checksums/variants/rom-type to the file as precomputed metadata, so the downstream input-checksum
- * step reuses them (the precomputed branch) and skips re-dispatching `ingest` itself.
+ * Attach bare-ROM ingest checksums, variants, and type as precomputed metadata
+ * so the downstream checksum step does not dispatch ingest again.
  *
- * `ingest` classifies the source first; a bare ROM has no container handler, so it is checksummed in
- * place - no extraction, no copy - by the SAME shared variant engine the archive path's inline
- * checksum drives, fed the full thread budget. So a bare ROM hashes as fast as one extracted from an
- * archive (where `romProbe` is likewise absent - `ingest` never produces it, only a `{ trim: {
- * detected: false } }` placeholder was ever emitted for these inputs).
- *
- * Best-effort: any failure, or a source `ingest` classifies as a patch / yields no ROM asset, leaves
- * the file untouched so the input-checksum step checksums it the usual way (a second `ingest` pass).
+ * Bare ROMs hash in place through the same full-budget variant engine as
+ * archive leaves. Best-effort failures leave the file untouched for the normal
+ * checksum pass.
  */
 const attachBareRomIngestMetadata = async (
   file: PatchFileInstance,

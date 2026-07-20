@@ -1,17 +1,8 @@
 //! Minimal ISO9660 (ECMA-119) primary-descriptor parsing.
 //!
-//! Enough of the standard to enumerate the files of a GD-ROM data track and
-//! locate each file's extent: the Primary Volume Descriptor and the directory
-//! record tree it roots. This is deliberately read-only and parses only the
-//! Primary descriptor (8.3 uppercase names) - that is the name set a `.dcp`
-//! addresses its per-file deltas by. Joliet supplementary descriptors and the
-//! path tables are intentionally not consulted here.
-//!
-//! All multi-byte numeric fields in ISO9660 are stored "both-endian" (a
-//! little-endian copy immediately followed by a big-endian copy); we read the
-//! little-endian copy. Recorded extent locations (LBAs) are *absolute* on a
-//! GD-ROM - biased by the data track's start LBA - and are returned here
-//! verbatim; converting them to track-relative sectors is the caller's job.
+//! Reads the Primary Volume Descriptor and 8.3 directory tree used by `.dcp`;
+//! Joliet and path tables are out of scope. Both-endian fields use their
+//! little-endian copy. GD-ROM extent LBAs remain absolute for callers to unbias.
 
 use rom_weaver_core::{Result, RomWeaverError};
 

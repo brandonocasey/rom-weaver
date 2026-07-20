@@ -3,16 +3,11 @@ import { msg } from "@lingui/core/macro";
 import type { MessageId } from "./catalog.ts";
 
 /**
- * English source-of-truth message descriptors keyed by stable MessageId. This
- * is the catalog devs edit to add/change UI text. `lingui extract` reads these
- * `msg(...)` calls via static analysis to build the en/es/de `.po` catalogs.
+ * English source messages keyed by stable MessageId. Lingui statically extracts
+ * these calls into translation catalogs.
  *
- * This module is intentionally NOT imported by app code - it carries the
- * `@lingui/core/macro` import, which only resolves under the Babel macro
- * transform. The runtime instead reads the `lingui compile`d output via
- * `MESSAGE_CATALOGS` in `./catalog.ts`. Plural ids carry an ICU
- * `{count, plural, ...}` message (the legacy `.one`/`.other` pairs collapsed
- * during migration); the runtime passes `{ count }`.
+ * App code must use compiled `MESSAGE_CATALOGS`; the macro import resolves only
+ * during Babel transforms. Plurals use ICU `{count, plural, ...}` messages.
  */
 const MESSAGES: Record<MessageId, MessageDescriptor> = {
   "candidate.warningCount": msg({ id: "candidate.warningCount", message: "{count} warning(s)" }),

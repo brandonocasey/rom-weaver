@@ -1,15 +1,7 @@
 name: CodeQL
 
-# Static analysis for the TypeScript webapp and the Rust workspace.
-#
-# Deliberately NOT wired into branch protection: CodeQL's Rust support is newer
-# than its JavaScript support, so a false positive or an extractor regression
-# should surface as an alert rather than block every merge. Treat the Security
-# tab as the signal, not the PR gate.
-#
-# build-mode: none analyses sources directly. The alternative for Rust would be
-# a full workspace build, which here means cmake-built C dependencies and the
-# WASI SDK - minutes of work that ci.yml already does.
+# Non-blocking TypeScript and Rust analysis. Source-only mode avoids rebuilding native C
+# dependencies and the WASI SDK already covered by CI.
 
 on:
   workflow_dispatch:

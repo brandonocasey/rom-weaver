@@ -1,16 +1,10 @@
 //! Universal Dreamcast Patcher (`.dcp`) patch-format support.
 //!
-//! A `.dcp` is a ZIP archive of per-file xdelta/VCDIFF deltas (and verbatim new
-//! files, and an optional replacement IP.BIN boot sector) applied inside a
-//! Dreamcast GD-ROM's ISO9660 filesystem. This module owns the format knowledge:
+//! A `.dcp` is a ZIP of per-file VCDIFF deltas, verbatim additions, and an
+//! optional replacement IP.BIN applied inside a Dreamcast ISO9660 filesystem.
 //!
-//! - [`zip`] - read the ZIP central directory (entry names + sizes).
-//! - [`manifest`] - classify entries into typed [`DcpOperation`]s per the DCP
-//!   naming convention.
-//!
-//! The orchestration that reads source files (via [`crate::gdrom`]), applies
-//! deltas (via `rom-weaver-patches`'s `xdelta` module), and rebuilds the disc lives in the app
-//! layer.
+//! [`zip`] reads metadata and [`manifest`] classifies [`DcpOperation`]s; app-layer
+//! orchestration reads source files, applies deltas, and rebuilds the disc.
 
 pub mod apply;
 pub mod manifest;

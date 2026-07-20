@@ -91,12 +91,8 @@ COPY . .
 # across local rebuilds. On ephemeral CI runners they are a no-op: BuildKit does
 # not export cache mounts to `type=gha`, so CI still pays a cold compile.
 #
-# There is deliberately no manifest-only `cargo fetch` prefetch layer ahead of
-# this COPY. Cargo refuses to parse a manifest whose targets are missing ("no
-# targets specified in the manifest"), so it would need a stubbed src/lib.rs or
-# src/main.rs per workspace member - 20 of them, silently wrong the moment a
-# crate's target layout changes. It would only save dependency download time on
-# a job that recompiles from scratch regardless.
+# No manifest-only prefetch: Cargo needs every workspace target, so preserving
+# that layer would require brittle stub source trees for little benefit.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/target,sharing=locked \
     bash scripts/wasm/build-app.sh prod \

@@ -120,14 +120,9 @@ const useBundleApplySession = ({
           }
           await new Promise<void>((resolve) => setTimeout(resolve, 20));
         }
-        // Per-patch header modes ride the normal option path (the same call the Options drawer's
-        // strip-header checkbox makes); `auto` entries stay with the engine's per-step decision.
-        // The input validation checksum seeds only the chain INPUT endpoint - the bundle's base-ROM
-        // expectation, session-level rather than per-patch: it verifies the ROM (card coloring +
-        // apply-time input validation) without being attributed to the patch's own check fields.
-        // The OUTPUT endpoint is NOT seeded here: the bundle's expected result describes the full
-        // chain only, so the form's reactive sync owns it - it engages the check while every bundle
-        // patch is enabled in bundle order and stands it down for partial/diverged chains.
+        // Seed header modes through normal options. The bundle's ROM checksum
+        // belongs only to the chain input; reactive sync owns the chain output
+        // because it applies only while the full bundle chain remains intact.
         for (const [index, entry] of session.entries.entries()) {
           const inputChecks = index === 0 ? session.chainEndpointChecks.input?.checksums : undefined;
           const validateInputChecksum = inputChecks?.sha1 || inputChecks?.md5 || inputChecks?.crc32;

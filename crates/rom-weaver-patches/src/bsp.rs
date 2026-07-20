@@ -68,17 +68,9 @@ impl BspPatchHandler {
         if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent)?;
         }
-        // The BSP VM edits its target file in place. Seed the output with the
-        // input and run the script directly against it, rather than working on a
-        // separate staged file and copying the result over. A logical rename is
-        // NOT free on OPFS (the bytes are still persisted under the output name
-        // on flush), so the old stage-then-copy path paid a full extra 128 MiB+
-        // copy in the browser. Working directly on the output removes it.
-        //
-        // `input == output` would let `fs::copy` truncate the source before
-        // reading it, so apply in place in that case and never delete it on
-        // failure. Otherwise the partial output is removed so callers never see a
-        // half-applied file (the VM can exit non-zero mid-run).
+        // The BSP VM edits in place, so seed and patch the final output to avoid
+        // an extra OPFS copy. Skip seeding when input == output to prevent
+        // truncation; otherwise remove partial output on failure.
         let in_place = request.input == request.output;
         trace!(
             format = self.descriptor.name,
