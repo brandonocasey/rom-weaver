@@ -14,6 +14,15 @@ also requires `Atomics.waitAsync` (the page main thread may not block).
 
 ---
 
+<!-- START doctoc -->
+## Table of contents
+
+- [1. WASI thread-start handshake (the "start barrier")](#1-wasi-thread-start-handshake-the-start-barrier)
+- [2. Virtual-file SharedArrayBuffer read channel](#2-virtual-file-sharedarraybuffer-read-channel)
+- [Known duplication (follow-ups, not yet shared)](#known-duplication-follow-ups-not-yet-shared)
+
+<!-- END doctoc -->
+
 ## 1. WASI thread-start handshake (the "start barrier")
 
 **Where:** the wire constants and Atomics leaf helpers (`allocateThreadId`,
