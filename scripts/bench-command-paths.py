@@ -40,6 +40,7 @@ TIME_BIN = Path("/usr/bin/time")
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parent.parent
 BENCH_DEFAULTS_PATH = REPO_ROOT / "scripts" / "bench-defaults.json"
+BROWSER_WASM_RUNNER = REPO_ROOT / "scripts" / "wasm" / "run-browser-cli.mjs"
 CACHE_SCHEMA_VERSION = 1
 
 
@@ -470,7 +471,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-build",
         action="store_true",
-        help="Skip automatic pre-benchmark native+wasm rebuilds (still requires an existing binary)",
+        help="Skip automatic pre-benchmark target rebuilds (still requires an existing native binary)",
     )
     parser.add_argument(
         "--keep-work-dir",
@@ -560,7 +561,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Archive benchmark tools to run for compress/extract "
             "(rom-weaver,rom-weaver-wasm,7zz,chdman,dolphin-tool). "
-            "Use 'auto' to benchmark all available tools (default: auto)"
+            "Use 'auto' to benchmark all available native tools (default: auto); "
+            "select rom-weaver-wasm explicitly for real-browser execution"
         ),
     )
     parser.add_argument(
@@ -597,16 +599,7 @@ def parse_args() -> argparse.Namespace:
         "--node-bin",
         type=Path,
         default=Path(shutil.which("node") or "node"),
-        help="Path to Node.js binary used when archive-tools includes rom-weaver-wasm (default: PATH lookup for node)",
-    )
-    parser.add_argument(
-        "--wasm-runner",
-        type=Path,
-        default=Path("scripts/wasm/run-wasi-cli.mjs"),
-        help=(
-            "Path to wasm runner wrapper script used for rom-weaver-wasm archive tool "
-            "(Node WASI default: scripts/wasm/run-wasi-cli.mjs; browser wasm option: scripts/wasm/run-browser-cli.mjs)"
-        ),
+        help="Path to Node.js used to launch the browser wasm wrapper (default: PATH lookup for node)",
     )
     parser.add_argument(
         "--wasm-module",
@@ -731,13 +724,15 @@ def ensure_binary(bin_path: Path, skip_build: bool) -> None:
     subprocess.run(cmd, check=True)
 
 
-def rebuild_release_and_wasm(skip_build: bool, needs_rom_weaver: bool) -> None:
-    if skip_build or not needs_rom_weaver:
+def rebuild_bench_targets(skip_build: bool, needs_rom_weaver: bool, needs_wasm: bool) -> None:
+    if skip_build:
         return
-    print("[bench] rebuild release binary", flush=True)
-    subprocess.run(["cargo", "build", "-p", "rom-weaver-cli", "--release"], check=True, cwd=REPO_ROOT)
-    print("[bench] rebuild wasm artifacts", flush=True)
-    subprocess.run(["mise", "run", "build-wasm"], check=True, cwd=REPO_ROOT)
+    if needs_rom_weaver:
+        print("[bench] rebuild release binary", flush=True)
+        subprocess.run(["cargo", "build", "-p", "rom-weaver-cli", "--release"], check=True, cwd=REPO_ROOT)
+    if needs_wasm:
+        print("[bench] rebuild wasm artifacts", flush=True)
+        subprocess.run(["mise", "run", "build-wasm"], check=True, cwd=REPO_ROOT)
 
 
 def resolve_external_binary(bin_path: Path, flag_name: str) -> Path:
@@ -1771,7 +1766,11 @@ def main() -> None:
     if args.threads <= 0 or args.warmups < 0 or args.iterations <= 0:
         raise SystemExit("--threads must be > 0, --warmups >= 0, and --iterations > 0")
 
-    requested_archive_tools = list(ARCHIVE_TOOLS) if archive_tool_mode == "auto" else list(explicit_archive_tools)
+    requested_archive_tools = (
+        [tool for tool in ARCHIVE_TOOLS if tool != "rom-weaver-wasm"]
+        if archive_tool_mode == "auto"
+        else list(explicit_archive_tools)
+    )
     needs_rom_weaver = (
         "rom-weaver" in requested_archive_tools
         or "rom-weaver-wasm" in requested_archive_tools
@@ -1780,7 +1779,11 @@ def main() -> None:
         or "patch-create" in selected_commands
         or "patch-apply" in selected_commands
     )
-    rebuild_release_and_wasm(args.skip_build, needs_rom_weaver)
+    rebuild_bench_targets(
+        args.skip_build,
+        needs_rom_weaver,
+        "rom-weaver-wasm" in requested_archive_tools,
+    )
     resolved_native_bin = args.bin.expanduser()
     if needs_rom_weaver:
         ensure_binary(args.bin, args.skip_build)
@@ -1797,17 +1800,6 @@ def main() -> None:
 
     if archive_tool_mode == "auto":
         selected_archive_tools = ["rom-weaver"]
-        node_candidate = try_resolve_external_binary(args.node_bin)
-        wasm_runner_candidate = args.wasm_runner.expanduser().resolve()
-        wasm_module_candidate = args.wasm_module.expanduser().resolve()
-        if node_candidate is not None and wasm_runner_candidate.exists() and wasm_module_candidate.exists():
-            node_bin = node_candidate
-            wasm_runner = wasm_runner_candidate
-            wasm_module = wasm_module_candidate
-            selected_archive_tools.append("rom-weaver-wasm")
-        else:
-            print("[bench] auto skip rom-weaver-wasm (missing node, wasm runner, or wasm module)", flush=True)
-
         sevenzip_bin = try_resolve_external_binary(args.sevenzip_bin)
         if sevenzip_bin is not None:
             selected_archive_tools.append("7zz")
@@ -1835,9 +1827,9 @@ def main() -> None:
             dolphin_tool_bin = resolve_external_binary(args.dolphin_tool_bin, "--dolphin-tool-bin")
         if "rom-weaver-wasm" in selected_archive_tools:
             node_bin = resolve_external_binary(args.node_bin, "--node-bin")
-            wasm_runner = args.wasm_runner.expanduser().resolve()
+            wasm_runner = BROWSER_WASM_RUNNER
             if not wasm_runner.exists():
-                raise SystemExit(f"--wasm-runner file not found: {wasm_runner}")
+                raise SystemExit(f"browser wasm runner file not found: {wasm_runner}")
             wasm_module = args.wasm_module.expanduser().resolve()
             if not wasm_module.exists():
                 raise SystemExit(f"--wasm-module file not found: {wasm_module}")
@@ -1928,7 +1920,6 @@ def main() -> None:
         and
         "rom-weaver-wasm" in selected_archive_tools
         and wasm_runner is not None
-        and wasm_runner.name == "run-browser-cli.mjs"
     )
     if browser_wasm_persistent_enabled:
         assert node_bin is not None

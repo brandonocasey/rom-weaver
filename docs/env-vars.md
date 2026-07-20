@@ -17,7 +17,6 @@ default.
 - [Runtime knobs](#runtime-knobs)
 - [Solid-patch metadata (`patch create --format solid`)](#solid-patch-metadata-patch-create---format-solid)
 - [Test / build-only knobs](#test--build-only-knobs)
-- [wasm CLI harness (`scripts/wasm/run-wasi-cli.mjs`)](#wasm-cli-harness-scriptswasmrun-wasi-climjs)
 - [Browser / PWA runtime config (`window.*` globals)](#browser--pwa-runtime-config-window-globals)
 - [Webapp build/test/bench tooling (`*.mjs`)](#webapp-buildtestbench-tooling-mjs)
 
@@ -52,19 +51,6 @@ Not for production use.
 | `ROM_WEAVER_TEST_THREAD_POOL_FAIL` | `rom-weaver-core/src/threads.rs` | Forces a thread-pool build failure to exercise the single-thread fallback. |
 | `ROM_WEAVER_TEST_TMPDIR` | container test harness | Overrides the temp dir used by container tests. |
 | `ROM_WEAVER_WASI_THREADS` | crate `build.rs` scripts | Forces the `rom_weaver_wasi_threads` cfg on (otherwise gated on the `wasm32-wasip1-threads` target). |
-
-## wasm CLI harness (`scripts/wasm/run-wasi-cli.mjs`)
-
-Process env vars read **only** by the Node-hosted WASI CLI harness that runs the
-threaded wasm module under `node` (the on-device/headless wasm test driver).
-They do **not** affect the native CLI or the browser runtime.
-
-| Variable | Type | Default | Purpose |
-| --- | --- | --- | --- |
-| `ROM_WEAVER_WASM_SHARED_MEMORY_INITIAL_PAGES` | positive int | harness default | Initial pages for the shared `WebAssembly.Memory`. |
-| `ROM_WEAVER_WASM_SHARED_MEMORY_MAX_PAGES` | positive int | harness default | Maximum pages for the shared `WebAssembly.Memory`; must be `>=` the initial pages or the harness throws. |
-| `ROM_WEAVER_WASI_THREAD_DEBUG` | bool | off | Enables `[wasi-thread]` debug logging from the harness. |
-| `ROM_WEAVER_WASI_THREAD_DEBUG_LOG_FILE` | path | unset | When `ROM_WEAVER_WASI_THREAD_DEBUG` is on, appends thread debug lines to this file instead of stderr. |
 
 ## Browser / PWA runtime config (`window.*` globals)
 

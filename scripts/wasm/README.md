@@ -1,21 +1,16 @@
 # rom-weaver WASM JavaScript APIs (Browser)
 
-This folder contains ESM wrappers for browser execution of `rom-weaver-app.wasm`.
+This folder contains build and browser-test tooling for `rom-weaver-app.wasm`.
 
 <!-- START doctoc -->
 ## Table of contents
 
-- [Files](#files)
 - [Runtime Requirements](#runtime-requirements)
 - [Quick Use (Dedicated Worker)](#quick-use-dedicated-worker)
 - [Notes](#notes)
 - [Browser Benchmark Wrapper](#browser-benchmark-wrapper)
 
 <!-- END doctoc -->
-
-## Files
-
-- `rom-weaver-runtime-utils.mjs`: shared WASM environment imports
 
 The browser OPFS + WASI `/work` runner and the WASI thread worker now live only as TypeScript
 in the webapp package's wasm layer (`packages/rom-weaver-webapp/src/wasm/rom-weaver-browser-opfs-api.ts`
@@ -63,7 +58,13 @@ console.log(result.exitCode, result.ok);
 
 ## Browser Benchmark Wrapper
 
-For smoke runs that need real browser wasm execution, use:
+Use the native Rust CLI for command-line work:
+
+```bash
+cargo run --release -p rom-weaver-cli -- --help
+```
+
+For smoke runs that specifically need real browser wasm execution, use:
 
 ```bash
 node scripts/wasm/run-browser-cli.mjs --wasm-module packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm -- checksum /path/to/input.bin --algo crc32 --no-extract
@@ -72,7 +73,7 @@ node scripts/wasm/run-browser-cli.mjs --wasm-module packages/rom-weaver-webapp/s
 `scripts/bench-command-paths.py` can route `rom-weaver-wasm` cases through this wrapper with:
 
 ```bash
-python3 scripts/bench-command-paths.py ... --archive-tools rom-weaver-wasm --wasm-runner scripts/wasm/run-browser-cli.mjs
+python3 scripts/bench-command-paths.py ... --archive-tools rom-weaver-wasm
 ```
 
 This wrapper starts Vite and Chromium per command, so it is not the parity timing harness. Use the Vitest browser benchmark suites for OPFS timings; they cache 128 MiB fixtures in OPFS and time only worker commands against `/work` guest paths.
