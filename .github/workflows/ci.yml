@@ -409,9 +409,30 @@ jobs:
       # produces many of them. Safe here (unlike the wasm job) because this
       # target has no configured link flags to clobber.
       RUSTFLAGS: -C linker=rust-lld
+      # The workspace (and target/) already lives on D:, the runner's local
+      # temp disk (~9-19k IOPS); C: is remote-backed managed storage (~4-6k
+      # IOPS and often worse). Move the remaining hot paths off C:: the crate
+      # registry + installed cargo binaries, the toolchain rustc/std read on
+      # every compile, and the temp dirs the test suite churns through
+      # (the step below points TMP/TEMP at RUNNER_TEMP, already on D:).
+      # rustup, taiki-e/install-action, and rust-cache all honor these.
+      CARGO_HOME: D:\cargo-home
+      RUSTUP_HOME: D:\rustup-home
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      # The default Windows temp dir lives on the slow OS disk; the test
+      # suite churns through temp fixtures, so point it at RUNNER_TEMP on the
+      # local disk instead. A step because the `runner` context is not
+      # available in job-level env.
+      - name: Move temp dirs off the OS disk
+        shell: bash
+        run: |
+          {
+            echo "TMP=$RUNNER_TEMP"
+            echo "TEMP=$RUNNER_TEMP"
+          } >> "$GITHUB_ENV"
 
       - name: Read pinned Rust version
         id: pin
