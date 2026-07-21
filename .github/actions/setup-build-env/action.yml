@@ -87,6 +87,15 @@ runs:
         # is worth most. The key already covers rustc + Cargo.lock, so a
         # cache written by a failed run is still valid for the next one.
         cache-on-failure: true
+        # Restore everywhere, save only on main. A branch run writes ~450 MB
+        # per Rust job into a branch-local scope that nothing else can ever
+        # read, and once the branch is gone it is pure ballast against the
+        # repository's 10 GiB budget - six closed dependabot PRs had 5.1 GB
+        # parked this way, evicting the main-branch caches that cold runs
+        # depend on. Branch runs give up nothing in practice: rust-cache has
+        # never reported better than `full match: false` here, so they were
+        # already restoring main's cache and rebuilding the delta.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     # Keyed on the pinned version + its checksum, so a version bump misses the
     # cache by construction and never serves a stale SDK.
@@ -119,23 +128,67 @@ runs:
         WASI_SDK_VERSION: ${{ inputs.wasi-sdk-version }}
       run: echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" >> "$GITHUB_ENV"
 
-    # Node comes from mise (.mise.toml [tools] node); cache npm downloads
-    # since we no longer use setup-node's built-in cache.
-    - name: Cache npm downloads
+    # Two exact pins, resolved once and used as cache keys below. node comes
+    # from mise (.mise.toml [tools] node) and decides what `npm ci` produces;
+    # playwright is pinned without a range in the webapp manifest and decides
+    # which browser builds `playwright install` would fetch.
+    - name: Resolve pinned tool versions
+      if: inputs.webapp-deps == 'true' || inputs.playwright == 'true'
+      id: versions
+      shell: bash
+      env:
+        BROWSERS: ${{ inputs.playwright-browsers }}
+      run: |
+        {
+          echo "node=$(node --version)"
+          echo "playwright=$(jq -r '.devDependencies.playwright' packages/rom-weaver-webapp/package.json)"
+          # The nightly matrix passes a space-separated list; GitHub expressions
+          # have no string replace, so the key slug is built here instead.
+          echo "browsers=$(tr ' ' '-' <<< "$BROWSERS")"
+        } >> "$GITHUB_OUTPUT"
+
+    # Cache the installed tree, not ~/.npm. The download cache only ever saved
+    # the fetch half - `npm ci` still wiped and repopulated node_modules on
+    # every run - while costing ~242 MB per lockfile revision, which made it
+    # the second-largest consumer of the 10 GiB budget after the Rust caches.
+    # The key covers exactly what determines the tree, so a hit means the
+    # install can be skipped outright rather than merely sped up.
+    - name: Cache webapp node_modules
       if: inputs.webapp-deps == 'true'
+      id: node-modules-cache
       uses: actions/cache@v6
       with:
-        path: ~/.npm
-        key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/rom-weaver-webapp/package-lock.json') }}
-        restore-keys: |
-          npm-${{ runner.os }}-
+        path: packages/rom-weaver-webapp/node_modules
+        key: node-modules-${{ runner.os }}-${{ steps.versions.outputs.node }}-${{ hashFiles('packages/rom-weaver-webapp/package-lock.json') }}
 
     - name: Install package dependencies
-      if: inputs.webapp-deps == 'true'
+      if: inputs.webapp-deps == 'true' && steps.node-modules-cache.outputs.cache-hit != 'true'
       shell: bash
       run: npm ci --prefix packages/rom-weaver-webapp
 
+    # Browser binaries were the one download in this action that nothing
+    # cached: every webapp, coverage, and nightly run re-fetched them. The
+    # browser list is part of the key because the nightly matrix adds WebKit.
+    - name: Cache Playwright browsers
+      if: inputs.playwright == 'true'
+      id: playwright-cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.versions.outputs.playwright }}-${{ steps.versions.outputs.browsers }}
+
+    # The binaries restore from the cache; the apt-level libraries they link
+    # against live outside it, so a hit still has to run `install-deps`.
     - name: Install browser test dependencies
       if: inputs.playwright == 'true'
       shell: bash
-      run: npm --prefix packages/rom-weaver-webapp exec playwright install --with-deps ${{ inputs.playwright-browsers }}
+      env:
+        BROWSERS: ${{ inputs.playwright-browsers }}
+        CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
+      run: |
+        read -ra browsers <<< "$BROWSERS"
+        if [ "$CACHED" = "true" ]; then
+          npm --prefix packages/rom-weaver-webapp exec playwright install-deps "${browsers[@]}"
+        else
+          npm --prefix packages/rom-weaver-webapp exec playwright install --with-deps "${browsers[@]}"
+        fi
