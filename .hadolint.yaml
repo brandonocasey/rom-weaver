@@ -1,0 +1,10 @@
+# Dockerfile lint policy. Run via `mise run hadolint` (pre-commit + CI).
+#
+# Suppressions carry a written reason, same as deny.toml advisory ignores and
+# the cargo-machete false positives.
+ignored:
+  # DL3008 wants `apt-get install pkg=<version>`. Debian expires superseded
+  # point versions from the bookworm repos, so a pin turns every upstream
+  # security update into a broken build instead of a reproducible one. The
+  # base image tag is what actually pins these packages.
+  - DL3008

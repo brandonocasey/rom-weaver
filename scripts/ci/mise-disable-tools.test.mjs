@@ -26,27 +26,27 @@ const runFails = (...wanted) => {
 const JOBS = {
   "wasm / release fallback": [
     ["node", "rust", "binaryen"],
-    "aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint",
+    "aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint,aqua:koalaman/shellcheck,aqua:hadolint/hadolint",
   ],
   "rust-host": [
     ["node", "rust", "ripgrep", "cargo-deny", "cargo-machete"],
-    "aqua:WebAssembly/binaryen,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint",
+    "aqua:WebAssembly/binaryen,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint,aqua:koalaman/shellcheck,aqua:hadolint/hadolint",
   ],
   security: [
     ["node", "rust", "cargo-deny"],
-    "aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint",
+    "aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint,aqua:koalaman/shellcheck,aqua:hadolint/hadolint",
   ],
   "wasm-check": [
     ["rust"],
-    "node,aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint",
+    "node,aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint,aqua:koalaman/shellcheck,aqua:hadolint/hadolint",
   ],
   "webapp / deploy / static-webapp": [
     ["node", "ripgrep"],
-    "rust,aqua:WebAssembly/binaryen,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint",
+    "rust,aqua:WebAssembly/binaryen,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint,aqua:koalaman/shellcheck,aqua:hadolint/hadolint",
   ],
   "coverage / parity / e2e-nightly": [
     ["node", "rust"],
-    "aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint",
+    "aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint,aqua:koalaman/shellcheck,aqua:hadolint/hadolint",
   ],
 };
 
@@ -66,6 +66,8 @@ test("wanting every pinned tool disables nothing", () => {
     "cargo-machete",
     "cargo-semver-checks",
     "actionlint",
+    "shellcheck",
+    "hadolint",
   ];
   assert.equal(run(...all), "");
 });

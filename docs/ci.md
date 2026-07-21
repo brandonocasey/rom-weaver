@@ -68,6 +68,12 @@ security ── advisories (warn only, always green)
 
 ### Jobs
 
+- **`repo-lint`** lints the repository's own plumbing: `actionlint` over the
+  workflows and composite actions, `shellcheck` over every tracked `.sh`, and
+  `hadolint` over the Dockerfiles. It installs no language toolchain and
+  compiles nothing, so it reports in well under a minute instead of hiding
+  behind a build job. `actionlint` shells out to `shellcheck` for `run:`
+  blocks, which is why both are in its `tools:` list.
 - **`wasm`** builds the production WASM module. This is the single most
   expensive step in the pipeline (~6.5 min) and it used to run twice, so it is
   built once here and shared with `webapp` and `deploy` as an artifact, and

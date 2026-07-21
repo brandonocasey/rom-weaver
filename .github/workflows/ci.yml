@@ -29,6 +29,35 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Static analysis of the repository's own plumbing - workflows, shell
+  # scripts, Dockerfiles. Compiles nothing and installs no language toolchain,
+  # so it finishes in well under a minute and reports independently of the
+  # build jobs instead of hiding behind them.
+  repo-lint:
+    name: Repo lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: github.ref_type != 'tag'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-build-env
+        with:
+          # actionlint shells out to shellcheck for `run:` blocks, so the two
+          # are wanted together even though only one of them is named a step.
+          tools: actionlint shellcheck hadolint
+          cargo-cache: "false"
+
+      - name: Workflows
+        run: mise run actionlint
+
+      - name: Shell scripts
+        run: mise run shellcheck
+
+      - name: Dockerfiles
+        run: mise run hadolint
+
   # Built once and shared. This is the single most expensive step in the
   # pipeline (~6.5 min), and it used to run identically in two jobs.
   wasm:

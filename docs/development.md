@@ -139,9 +139,10 @@ mise run ci
 ```
 
 That task covers Rust formatting, Clippy, generated types,
-threaded-WASM guards, license inventory, Rust tests, the production WASM build,
-frontend linting, unit tests, browser/WASM tests, full-browser tests, webapp E2E,
-and the production frontend build.
+threaded-WASM guards, license inventory, workflow/shell/Dockerfile linting,
+Rust tests, the production WASM build, frontend linting, unit tests,
+browser/WASM tests, full-browser tests, webapp E2E, and the production frontend
+build.
 
 Useful narrower checks:
 
@@ -150,6 +151,9 @@ mise run fmt
 mise run clippy
 mise run test-rust
 mise run typegen-check
+mise run actionlint    # GitHub Actions workflows and composite actions
+mise run shellcheck    # tracked shell scripts
+mise run hadolint      # Dockerfiles
 
 npm --prefix packages/rom-weaver-webapp run lint
 npm --prefix packages/rom-weaver-webapp run test:unit

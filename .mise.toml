@@ -23,6 +23,8 @@ rust = "1.95.0"
 "ubi:bnjbvr/cargo-machete" = "0.9.1"
 "ubi:obi1kenobi/cargo-semver-checks" = "0.46.0"
 "aqua:rhysd/actionlint" = "1.7.12"              # workflow linting (shellcheck-aware)
+"aqua:koalaman/shellcheck" = "0.11.0"           # shell script linting (also backs actionlint's `run:` checks)
+"aqua:hadolint/hadolint" = "2.14.0"             # Dockerfile linting
 
 [env]
 # WASI SDK discovery. detect-wasi-sdk.sh prints the SDK root, preferring an
@@ -224,10 +226,43 @@ cargo llvm-cov report --lcov --output-path "$out_dir/lcov.info"
 
 [tasks.actionlint]
 description = "Lint GitHub Actions workflows and composite actions"
-# Catches undefined action inputs, bad expressions, and (via shellcheck, when
-# present) issues in `run:` scripts. Workflow bugs otherwise only surface as a
-# failed run minutes after a push, so this belongs in the pre-commit hook.
+# Catches undefined action inputs, bad expressions, and (via the pinned
+# shellcheck above) issues in `run:` scripts. Workflow bugs otherwise only
+# surface as a failed run minutes after a push, so this belongs in the
+# pre-commit hook.
 run = "actionlint"
+
+[tasks.shellcheck]
+description = "Lint shell scripts"
+# git ls-files rather than a find walk: it skips the vendored submodule and
+# node_modules for free, and only tracked scripts are ours to fix.
+#
+# -x follows `source` directives so the wasm cc/cxx wrappers are checked
+# against the fragment they share; -P SCRIPTDIR resolves those relative paths
+# from each script's own directory, which is how the wrappers actually run.
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+cd "{{ config_root }}"
+if [ -z "$(git ls-files -- '*.sh')" ]; then
+  echo "shellcheck: no tracked shell scripts" >&2
+  exit 0
+fi
+git ls-files -z -- '*.sh' | xargs -0 shellcheck -x -P SCRIPTDIR
+'''
+
+[tasks.hadolint]
+description = "Lint Dockerfiles"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+cd "{{ config_root }}"
+if [ -z "$(git ls-files -- '*Dockerfile' '*Dockerfile.*')" ]; then
+  echo "hadolint: no tracked Dockerfiles" >&2
+  exit 0
+fi
+git ls-files -z -- '*Dockerfile' '*Dockerfile.*' | xargs -0 hadolint
+'''
 
 [tasks.thread-guards]
 description = "Fail on threaded-WASM suppression regressions"
@@ -255,7 +290,7 @@ run = "npm --prefix packages/rom-weaver-webapp run test:e2e:ios --"
 
 [tasks.ci]
 description = "Run the full local quality gate (mirrors CI)"
-depends = ["fmt", "clippy", "typegen-check", "wasm-check", "thread-guards", "licenses-check", "deny", "machete", "test-rust", "build-wasm-prod"]
+depends = ["fmt", "clippy", "typegen-check", "wasm-check", "thread-guards", "licenses-check", "deny", "machete", "actionlint", "shellcheck", "hadolint", "test-rust", "build-wasm-prod"]
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
