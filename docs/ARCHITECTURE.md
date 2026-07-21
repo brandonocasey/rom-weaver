@@ -29,7 +29,7 @@ the WASM build over a JSON event protocol.
 ## Table of contents
 
 - [Workspace layout](#workspace-layout)
-- [Core abstractions (`rom-weaver-core/src/registry.rs`)](#core-abstractions-rom-weaver-coresrcregistryrs)
+- [Core abstractions (`crates/rom-weaver-core/src/registry.rs`)](#core-abstractions-cratesrom-weaver-coresrcregistryrs)
 - [Threading model](#threading-model)
 - [Browser I/O paths](#browser-io-paths)
 - [Patch apply: ROM copier headers](#patch-apply-rom-copier-headers)
@@ -54,7 +54,7 @@ the WASM build over a JSON event protocol.
 | `crates/rom-weaver-cli/src/gdrom` | Dreamcast GD-ROM / CD data-track filesystem: read (`sector` cooking of `MODE1/2352`, `iso9660` parse, `GdRomFs` tree view with the +45000 LBA bias) and write (`iso_writer` authors a cooked ISO9660 image, `mode1` re-encodes EDC/ECC into raw `MODE1/2352`). Pure Rust, wasm-safe. |
 | `crates/rom-weaver-cli/src/dcp` | Universal Dreamcast Patcher (`.dcp`) format: ZIP central-directory reader + entry inflate (`zip`), entry classification (`manifest`), per-file apply (`apply`), and full data-track rebuild (`rebuild`). Builds on the app's `gdrom` module + `rom-weaver-patches`'s `xdelta` module. |
 | `crates/rom-weaver-cli` | The installable package: the `rom_weaver_app` command library, native `rom-weaver` CLI, `rom-weaver-app` WASM entrypoint, type generator, argument parsing, and reporters. |
-| `packages/rom-weaver-webapp/src/wasm` | Browser wasm layer (same npm package): OPFS WASI runner (`run`/`runJson`), mounts, thread pool, worker client, generated types. |
+| `packages/rom-weaver-webapp/src/wasm` | Browser WASM layer in the webapp package: OPFS WASI runner (`run`/`runJson`), mounts, thread pool, worker client, generated types. |
 | `packages/rom-weaver-webapp` | Webapp: workflow controllers, runtime adapters, React forms, workers, PWA shell. |
 | `vendor/` | `libarchive` source checkout for native builds; the nod Rust source is inlined under `rom-weaver-containers`. |
 | `scripts/` | Benches, worktree setup, and WASM toolchain helpers (`scripts/wasm/`); build orchestration moved to `.mise.toml` (`mise run build-wasm`). |
@@ -65,7 +65,7 @@ Crate dependency flow is one-directional: `core` ← format crates
 consumes its `gdrom` module (data-track filesystem) and `patches`' `xdelta`
 module (per-file VCDIFF apply).
 
-## Core abstractions (`rom-weaver-core/src/registry.rs`)
+## Core abstractions (`crates/rom-weaver-core/src/registry.rs`)
 
 Everything pluggable implements one of four traits, registered into a registry
 keyed by `FormatDescriptor` (name + aliases + extensions, used for both CLI
@@ -90,14 +90,14 @@ Registry entries are wrapped in tracing decorators
 every probe/extract/apply gets start/complete `trace!` spans for free.
 
 Errors are one `thiserror` enum, `RomWeaverError`
-(`rom-weaver-core/src/error.rs`), with `pub type Result<T>` alias. Validation
+(`crates/rom-weaver-core/src/error.rs`), with `pub type Result<T>` alias. Validation
 failures that need machine-readable codes use the structured
 `ValidationCodeError` variant; do not add per-crate error types.
 
 ## Threading model
 
 `ThreadCapability` (what a format *can* parallelize) and `ThreadExecution`
-(what a run *actually* used) live in `rom-weaver-core/src/threads.rs`. Formats
+(what a run *actually* used) live in `crates/rom-weaver-core/src/threads.rs`. Formats
 plan a parallelism level from input size and the requested budget, build a
 scoped pool, and report the outcome in `OperationReport.thread_execution`.
 
@@ -144,7 +144,8 @@ direct writes >=2 MiB bypass it) so per-sector decode output doesn't become
 round-trip-bound. Note the WASI contract gotcha: a `readAt` of **0 bytes is
 success**, which Rust `read_exact` surfaces as a generic "read error".
 
-**Input reads** - chosen per source in `workers/protocol/browser-opfs-source-ref.ts`:
+**Input reads** - chosen per source in
+`packages/rom-weaver-webapp/src/workers/protocol/browser-opfs-source-ref.ts`:
 
 | source | backend | notes |
 | --- | --- | --- |
@@ -164,23 +165,26 @@ input *staging* (copying a Blob into OPFS up front) is fully retired.
 **Output writes** - wasm-produced files (extracted ISO, created CHD/RVZ, patched
 ROM) write through `BrowserProxyRandomAccessFile.writeAt` (4 MiB write-back
 coalescing) -> `OpfsProxyClient.write` -> proxy server `SyncAccessHandle.write`.
-A separate storage worker (`workers/storage/browser-opfs-staging.worker.ts`,
+A separate storage worker
+(`packages/rom-weaver-webapp/src/workers/storage/browser-opfs-staging.worker.ts`,
 actions `write`/`truncate`/`cleanup`) backs the app-side large-file VFS and path
 cleanup, not the per-op wasm output.
 
-**Output -> user** - `storage/browser/browser-large-file-vfs.ts`
+**Output -> user** -
+`packages/rom-weaver-webapp/src/storage/browser/browser-large-file-vfs.ts`
 `createOutputRef()` exposes the OPFS result as a lazy `getFile()` plus `saveAs()`
 (browser download, or write into a user-picked `FileSystemFileHandle`) - the
 bytes stay OPFS-backed instead of round-tripping the JS heap.
 
 **OPFS proxy topology** - one **dedicated** proxy worker per runner
-(`wasm/browser-opfs-proxy-runtime.ts` spawns `wasm/workers/browser-opfs-proxy-worker.ts`).
+(`packages/rom-weaver-webapp/src/wasm/browser-opfs-proxy-runtime.ts` spawns
+`packages/rom-weaver-webapp/src/wasm/workers/browser-opfs-proxy-worker.ts`).
 It is the single owner of every `SyncAccessHandle` (and Blob input handle); its
 loop is async (`Atomics.waitAsync` doorbell) while **consumers block
 synchronously** (`Atomics.wait`) - that free event loop is what makes the
 Blob-handle reads deadlock-free. The SAB channel is forwarded into every spawned
 WASI thread so they share the one proxy; the mount
-(`wasm/browser-opfs-mount.ts`) builds proxy vs virtual inodes and caches inode
+(`packages/rom-weaver-webapp/src/wasm/browser-opfs-mount.ts`) builds proxy vs virtual inodes and caches inode
 trees across runs.
 
 **Native (CLI)** - plain `std::fs::File` + `BufReader`/`BufWriter`,
@@ -261,7 +265,7 @@ dedicated path that rebuilds a whole disc track.
   cooked image and raw track are never materialized, so peak memory scales with
   the largest single file's apply working set - not the disc or the patch.
 - **CLI wiring.** `patch apply` detects a `.dcp` patch and routes to
-  `rom-weaver-cli/src/patch_apply_dcp.rs`, which requires a disc-sheet
+  `crates/rom-weaver-cli/src/patch_apply_dcp.rs`, which requires a disc-sheet
   (`.cue`/`.gdi`) input, auto-selects the data track (largest track that opens
   as a `GdRomFs`), rebuilds it, then reuses the shared disc staging
   (`patch_apply_disc.rs`) to reassemble the full disc and compress to CHD by
@@ -293,7 +297,7 @@ checks validate it - the default shape for distributable patch bundles; the
 apply error for a sourceless bundle input and the webapp's ROM step both
 surface the expected name/checksums/size so the user knows which ROM to
 supply. Schema and the single shared parser live in
-`rom-weaver-cli/src/bundle_schema.rs` / `bundle_parse.rs`; validation
+`crates/rom-weaver-cli/src/bundle_schema.rs` / `bundle_parse.rs`; validation
 failures use stable `bundle.*` `ValidationCode`s. Bundle detection is
 filename-based: exactly `rom-weaver-bundle.json`, `rom-weaver-bundle.json.<gz|bz2|xz|zst>`, or a root-level
 `rom-weaver-bundle.json` archive member. Never name one `manifest.json` - the webapp service
@@ -369,7 +373,7 @@ entry checks-only. Create re-parses before writing, so it can never emit
   behaviorally identical.
 - **`ingest` - the mainline browser drop path.** The webapp routes every
   dropped input through the shared `ingest` command
-  (`rom-weaver-cli/src/ingest_command.rs`), one wasm call per source. It
+  (`crates/rom-weaver-cli/src/ingest_command.rs`), one wasm call per source. It
   classifies the source into a `rom` or `patch` bucket, does nested archive/
   codec extraction, checksums each ROM leaf (variants + platform identity), and
   describes any patches - replacing the webapp's older separate classify →
@@ -381,8 +385,8 @@ entry checks-only. Create re-parses before writing, so it can never emit
   cli_smoke family (`crates/rom-weaver-cli/tests/cli_smoke/ingest.rs`).
 - **Workers only.** The OPFS runtime requires a Dedicated Worker (sync OPFS
   access handles and SharedArrayBuffer are unavailable on the main thread).
-  `rom-weaver-webapp/src/workers/` hosts the worker entrypoints; the protocol
-  types live in `src/workers/protocol/`.
+  `packages/rom-weaver-webapp/src/workers/` hosts the worker entrypoints; the
+  protocol types live in its `protocol/` directory.
 
 ## Build graph
 
@@ -412,13 +416,17 @@ readouts, sage verification).
   `--ink-*`, …), component rules scoped under `.rw-app`, webapp-only
   adaptations (React modal framework, codec combobox, platform ergonomics) at
   the end of the file. No utility classes, no CSS-in-JS, no Tailwind.
-- **Shell.** `src/webapp/components/shell.tsx` (masthead, mode rail with the
+- **Shell.** `packages/rom-weaver-webapp/src/webapp/components/shell.tsx`
+  (masthead, mode rail with the
   sliding thumb, reveal banners, selvage status strip),
-  `components/log-dialog.tsx` (native `<dialog>` trace inspector over
-  `src/webapp/log-store.ts`, which chains a capturing sink onto the logger).
-  The selvage state comes from `src/lib/activity-store.ts`, which the workflow
+  `packages/rom-weaver-webapp/src/webapp/components/log-dialog.tsx` (native
+  `<dialog>` trace inspector over
+  `packages/rom-weaver-webapp/src/webapp/log-store.ts`, which chains a
+  capturing sink onto the logger). The selvage state comes from
+  `packages/rom-weaver-webapp/src/lib/activity-store.ts`, which the workflow
   forms publish to (idle/running/done/failed + the active stage line).
-- **Primitives.** `src/public/react/components/ds/` - the collapsible drawer
+- **Primitives.** `packages/rom-weaver-webapp/src/public/react/components/ds/`
+  - the collapsible drawer
   (`drawer.tsx`, the `.cks` grid-rows pattern; replaces `<details>`), file
   cards, checksum rows (the whole row is the copy control), the weave meter +
   recessed progress panels, the 0x01 INPUTS hero/add-row drop zone, and the
@@ -426,10 +434,12 @@ readouts, sage verification).
 - **Steps.** Every workflow renders numbered loom stages: `0x01 Inputs`,
   then per-mode sections (apply: ROM/Patches/Apply; create:
   Original/Modified/Patch; trim: ROM/Trim).
-- **Theming.** `<html data-theme>` via `src/webapp/theme.ts`; the toggle plays
+- **Theming.** `<html data-theme>` via
+  `packages/rom-weaver-webapp/src/webapp/theme.ts`; the toggle plays
   the circle-wipe view transition and updates `<meta name="theme-color">`.
 - **Localization.** UI chrome strings live in the `ui.*` namespace of
-  `src/presentation/localization/catalog.ts` (en/es/de) and are consumed via
+  `packages/rom-weaver-webapp/src/presentation/localization/catalog.ts`
+  (en/es/de) and are consumed via
   `useUiLocalizer()` (settings `language` → `createBrowserLocalizer`).
   Plural ids end in `.one`/`.other` and resolve via `Localizer.messageCount`.
 - **Test hooks.** Browser tests rely on the `rom-weaver-*` element ids and a
@@ -441,7 +451,7 @@ readouts, sage verification).
 
 | Layer | Where | What |
 | --- | --- | --- |
-| Rust unit | `crates/*/tests/unit/`, inline `#[test]` | Per-format parsers, registry, I/O, threads (~800 tests). |
+| Rust unit | `crates/*/tests/unit/`, inline `#[test]` | Per-format parsers, registry, I/O, and threads. |
 | CLI smoke | `crates/rom-weaver-cli/tests/cli_smoke/` | End-to-end CLI runs against synthesized fixtures, per command family. Shared helpers in `shared.rs`. |
 | React unit | `packages/rom-weaver-webapp/tests/unit/` | Patcher state layer plus the loom UI contract (DS primitives, shell, stores, apply-view markup) - vitest, node/happy-dom. |
 | WASM node | `packages/rom-weaver-webapp/tests/wasm/` | Worker client, OPFS protocols, format metadata (vitest, node). |

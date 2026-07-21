@@ -1,79 +1,41 @@
-# rom-weaver WASM JavaScript APIs (Browser)
+# WASM scripts
 
-This folder contains build and browser-test tooling for `rom-weaver-app.wasm`.
+This directory contains the scripts that build, check, compress, and exercise
+`rom-weaver-app.wasm`. Run the public tasks from the repository root:
+
+```bash
+mise run wasm-check
+mise run build-wasm
+mise run build-wasm-prod
+```
+
+Use `run-browser-cli.mjs` when a smoke test must run in a real browser. It is a
+developer tool, not a supported application API. Use the native Rust CLI for
+command-line work.
+
+The [development guide](../../docs/development.md#build-and-run-the-webapp)
+explains the toolchain and build flow. The
+[browser WASM runtime guide](../../packages/rom-weaver-webapp/src/wasm/README.md)
+documents the TypeScript worker and OPFS APIs. Keeping those API examples in
+one place prevents the build-script notes from drifting away from the runtime.
 
 <!-- START doctoc -->
 ## Table of contents
 
-- [Runtime Requirements](#runtime-requirements)
-- [Quick Use (Dedicated Worker)](#quick-use-dedicated-worker)
-- [Notes](#notes)
-- [Browser Benchmark Wrapper](#browser-benchmark-wrapper)
+- [Browser command wrapper](#browser-command-wrapper)
 
 <!-- END doctoc -->
 
-The browser OPFS + WASI `/work` runner and the WASI thread worker now live only as TypeScript
-in the webapp package's wasm layer (`packages/rom-weaver-webapp/src/wasm/rom-weaver-browser-opfs-api.ts`
-and `src/workers/browser-wasi-thread-worker.ts`); import them from the package rather than from
-forked `.mjs` copies.
+## Browser command wrapper
 
-## Runtime Requirements
-
-- Secure-context Dedicated Worker runtime
-- `rom-weaver-app.wasm` artifact from `mise run build-wasm`
-- Browser support for OPFS + `FileSystemSyncAccessHandle`
-- Cross-origin isolation and `SharedArrayBuffer` when using `rom-weaver-app.wasm`
-- `@bjorn3/browser_wasi_shim`
-
-## Quick Use (Dedicated Worker)
-
-```js
-import { createRomWeaverBrowserOpfs } from './src/wasm/rom-weaver-browser-opfs-api.ts';
-
-const runner = await createRomWeaverBrowserOpfs({
-  wasmUrl: '/wasm/rom-weaver-app.wasm',
-  opfsHandle: await navigator.storage.getDirectory(),
-  workGuestPath: '/work',
-});
-
-const result = await runner.runJson({
-  type: 'checksum',
-  args: {
-    source: '/work/game.bin',
-    algo: ['crc32'],
-    no_extract: true,
-  },
-});
-
-console.log(result.exitCode, result.ok);
-```
-
-## Notes
-
-- WASI sees one preopened directory: `/work`.
-- Browser picker handles/files should be copied into OPFS before calling `run()`.
-- Known output paths from typed commands are created in OPFS before `_start()` because WASI syscalls are synchronous.
-- Dynamic files created during a run are flushed back to OPFS after `_start()` returns; arbitrary async browser filesystem access is still unavailable during WASI execution.
-- Node.js, Electron, and Capacitor backends are intentionally out of scope for this browser wrapper.
-
-## Browser Benchmark Wrapper
-
-Use the native Rust CLI for command-line work:
+This example runs a checksum command through the real browser WASM runtime:
 
 ```bash
-cargo run --release -p rom-weaver-cli -- --help
+node scripts/wasm/run-browser-cli.mjs \
+  --wasm-module packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm \
+  -- checksum /path/to/input.bin --algo crc32 --no-extract
 ```
 
-For smoke runs that specifically need real browser wasm execution, use:
-
-```bash
-node scripts/wasm/run-browser-cli.mjs --wasm-module packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm -- checksum /path/to/input.bin --algo crc32 --no-extract
-```
-
-`scripts/bench-command-paths.py` can route `rom-weaver-wasm` cases through this wrapper with:
-
-```bash
-python3 scripts/bench-command-paths.py ... --archive-tools rom-weaver-wasm
-```
-
-This wrapper starts Vite and Chromium per command, so it is not the parity timing harness. Use the Vitest browser benchmark suites for OPFS timings; they cache 128 MiB fixtures in OPFS and time only worker commands against `/work` guest paths.
+The wrapper starts Vite and Chromium for each command, so it is useful for
+smoke tests but not performance measurements. Use the Vitest browser benchmark
+suites described in the browser WASM runtime guide for timing work.

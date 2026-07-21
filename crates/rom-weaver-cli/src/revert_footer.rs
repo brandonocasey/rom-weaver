@@ -96,7 +96,7 @@ impl CliApp {
     }
 
     /// CRC32 (IEEE) over a small buffer, used to validate the revert footer without pulling in a
-    /// dependency. Bitwise form is fine for the 24-byte footer body.
+    /// dependency. Bitwise form is fine for the 10-byte footer body.
     pub(super) fn revert_footer_crc32(bytes: &[u8]) -> u32 {
         let mut crc: u32 = 0xFFFF_FFFF;
         for &byte in bytes {

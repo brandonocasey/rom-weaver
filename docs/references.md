@@ -1,4 +1,4 @@
-# REFERENCES
+# References
 
 This file collects patch/container/compression references used by `rom-weaver`.
 
@@ -7,19 +7,19 @@ It is intentionally a living document. Some patch families do not have stable fo
 <!-- START doctoc -->
 ## Table of contents
 
-- [Patch Format Specs](#patch-format-specs)
-- [Patch Reference Implementations](#patch-reference-implementations)
-  - [Upstream / External](#upstream--external)
-  - [In-Repo (`rom-weaver`) Implementations](#in-repo-rom-weaver-implementations)
-- [Container / Compression Specs](#container--compression-specs)
-- [Quick Mapping For `rom-weaver` Patch Families](#quick-mapping-for-rom-weaver-patch-families)
-- [BPS Comparison: MultiPatch / Flips](#bps-comparison-multipatch--flips)
-- [PPF Comparison: MultiPatch / ApplyPPF](#ppf-comparison-multipatch--applyppf)
+- [Patch format specifications](#patch-format-specifications)
+- [Patch reference implementations](#patch-reference-implementations)
+  - [Upstream and external](#upstream-and-external)
+  - [In-repository (`rom-weaver`) implementations](#in-repository-rom-weaver-implementations)
+- [Container and compression specifications](#container-and-compression-specifications)
+- [Quick mapping for `rom-weaver` patch families](#quick-mapping-for-rom-weaver-patch-families)
+- [BPS comparison: MultiPatch and Flips](#bps-comparison-multipatch-and-flips)
+- [PPF comparison: MultiPatch and ApplyPPF](#ppf-comparison-multipatch-and-applyppf)
 - [Notes](#notes)
 
 <!-- END doctoc -->
 
-## Patch Format Specs
+## Patch format specifications
 
 - IPS: <https://zerosoft.zophar.net/ips.php>
 - BPS (Beat Patching System): <https://floating.muncher.se/byuu/bps/bps_spec.html>
@@ -34,9 +34,9 @@ It is intentionally a living document. Some patch families do not have stable fo
 - CD-ROM sector layout + EDC/ECC (ECMA-130, `MODE1/2352`):
   <https://www.ecma-international.org/wp-content/uploads/ECMA-130_2nd_edition_june_1996.pdf>
 
-## Patch Reference Implementations
+## Patch reference implementations
 
-### Upstream / External
+### Upstream and external
 
 - RomPatcher.js format modules (many ROM patch families):
   - <https://github.com/marcrobledo/RomPatcher.js/tree/master/rom-patcher-js/modules>
@@ -72,7 +72,7 @@ It is intentionally a living document. Some patch families do not have stable fo
   Reed-Solomon product code over GF(2⁸), primitive poly `0x11D`, EDC poly
   `0x8001801B`).
 
-### In-Repo (`rom-weaver`) Implementations
+### In-repository (`rom-weaver`) implementations
 
 - Patch registry: [`crates/rom-weaver-patches/src/lib.rs`](../crates/rom-weaver-patches/src/lib.rs)
 - Handlers directory: [`crates/rom-weaver-patches/src/`](../crates/rom-weaver-patches/src/)
@@ -80,7 +80,7 @@ It is intentionally a living document. Some patch families do not have stable fo
 - GD-ROM filesystem read/write: [`crates/rom-weaver-cli/src/gdrom/`](../crates/rom-weaver-cli/src/gdrom/) (sector, iso9660, gdrom, iso_writer, mode1)
 - DCP CLI path: [`crates/rom-weaver-cli/src/patch_apply_dcp.rs`](../crates/rom-weaver-cli/src/patch_apply_dcp.rs)
 
-## Container / Compression Specs
+## Container and compression specifications
 
 - ZIP APPNOTE (PKWARE): <https://support.pkware.com/pkzip/appnote>
 - zlib format: RFC 1950 <https://www.rfc-editor.org/rfc/rfc1950>
@@ -90,7 +90,7 @@ It is intentionally a living document. Some patch families do not have stable fo
 - Zstandard format: RFC 8878 <https://datatracker.ietf.org/doc/html/rfc8878>
 - CHD tooling/docs (`chdman`): <https://docs.mamedev.org/tools/chdman.html>
 
-## Quick Mapping For `rom-weaver` Patch Families
+## Quick mapping for `rom-weaver` patch families
 
 | `rom-weaver` format   | Primary reference(s)                                                      |
 | --------------------- | ------------------------------------------------------------------------- |
@@ -111,7 +111,7 @@ It is intentionally a living document. Some patch families do not have stable fo
 | `SOLID`               | `rom-weaver` SOLID implementation                                         |
 | `DCP` (Dreamcast)     | UniversalDreamcastPatcher (format oracle), DiscUtilsGD/buildgdi (GD-ROM layout), ECMA-130 (EDC/ECC), RFC 3284 (per-file deltas) |
 
-## BPS Comparison: MultiPatch / Flips
+## BPS comparison: MultiPatch and Flips
 
 Comparison target: MultiPatch `b047dd325f5d37fd3cc920433080e27af779cf47`, whose `flips`
 submodule is `Alcaro/Flips` `5a3d2012b8ea53ae777c24b8ac4edb9a6bdb9761`.
@@ -132,7 +132,7 @@ Use MultiPatch/Flips as a behavioral oracle for applying BPS patches and for cre
 heuristics, not as a byte-for-byte creation oracle. Different valid creators can emit
 different action streams for the same source/target pair.
 
-## PPF Comparison: MultiPatch / ApplyPPF
+## PPF comparison: MultiPatch and ApplyPPF
 
 Comparison target: MultiPatch `master`, whose PPF path wraps Icarus/Paradox
 `ApplyPPF3.c` and `MakePPF3.c`.

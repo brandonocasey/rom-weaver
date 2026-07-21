@@ -1,21 +1,21 @@
-# src/wasm (browser wasm runtime)
+# Browser WASM runtime
 
 JavaScript wrappers and WASM artifacts for browser `rom-weaver` execution,
-consumed within `rom-weaver-webapp` via relative imports.
+consumed within `@rom-weaver/webapp` through relative imports.
 
 <!-- START doctoc -->
 ## Table of contents
 
-- [What You Get](#what-you-get)
-- [Import Paths](#import-paths)
-- [Browser OPFS Runner Example](#browser-opfs-runner-example)
-- [Dedicated Browser Worker Client Example](#dedicated-browser-worker-client-example)
-- [Build And Package](#build-and-package)
-- [Browser Benchmarks](#browser-benchmarks)
+- [What you get](#what-you-get)
+- [Import paths](#import-paths)
+- [Browser OPFS runner example](#browser-opfs-runner-example)
+- [Dedicated browser worker client example](#dedicated-browser-worker-client-example)
+- [Build and package](#build-and-package)
+- [Browser benchmarks](#browser-benchmarks)
 
 <!-- END doctoc -->
 
-## What You Get
+## What you get
 
 - Browser OPFS runner (`createRomWeaverBrowserOpfs`) for Dedicated Workers
 - Browser WASI thread support for `rom-weaver-app.wasm` when cross-origin isolation enables `SharedArrayBuffer`
@@ -25,7 +25,7 @@ consumed within `rom-weaver-webapp` via relative imports.
 Node.js, Electron, and Capacitor filesystem backends are intentionally omitted from this directory.
 Use the native `rom-weaver` CLI directly for Node workflows.
 
-## Import Paths
+## Import paths
 
 Import the TypeScript sources directly with relative paths, for example:
 
@@ -35,7 +35,7 @@ Import the TypeScript sources directly with relative paths, for example:
 - `src/wasm/workers/browser-worker-client.ts`
 - `src/wasm/workers/worker-protocol.ts`
 
-## Browser OPFS Runner Example
+## Browser OPFS runner example
 
 `createRomWeaverBrowserOpfs` must run in a secure-context Dedicated Worker so it can use `FileSystemSyncAccessHandle`.
 It is not a main-thread API and will throw when called from `window`.
@@ -53,7 +53,7 @@ const result = await runner.runJson(
   {
     type: 'checksum',
     args: {
-      source: '/work/game.bin',
+      input: '/work/game.bin',
       algo: ['crc32'],
       no_extract: true,
     },
@@ -66,6 +66,7 @@ const result = await runner.runJson(
 );
 
 console.log(result.exitCode, result.ok);
+await runner.dispose();
 ```
 
 Runtime behavior:
@@ -77,7 +78,7 @@ Runtime behavior:
 - Known typed-command output paths are created in OPFS before `_start()` because WASI Preview 1 filesystem calls are synchronous.
 - Dynamic files created during a run are flushed back to OPFS after `_start()` returns.
 
-## Dedicated Browser Worker Client Example
+## Dedicated browser worker client example
 
 ```js
 import { createBrowserWorkerClient } from './workers/browser-worker-client.ts';
@@ -92,7 +93,7 @@ await worker.init({
 const result = await worker.runJson({
   type: 'checksum',
   args: {
-    source: '/work/game.bin',
+    input: '/work/game.bin',
     algo: ['crc32'],
   },
 }, {
@@ -105,7 +106,7 @@ console.log(result.exitCode, result.ok);
 worker.terminate();
 ```
 
-## Build And Package
+## Build and package
 
 The [development guide](../../../../docs/development.md#build-and-run-the-webapp)
 owns the WASM build and dev-server procedure. Build artifacts are written to
@@ -120,7 +121,7 @@ ARTIFACT_DIR="/path/to/wasm-artifacts"
 npm run prepare:dist -- "$ARTIFACT_DIR"
 ```
 
-## Browser Benchmarks
+## Browser benchmarks
 
 Run all browser-worker benchmarks with Vitest bench mode (from `packages/rom-weaver-webapp`):
 

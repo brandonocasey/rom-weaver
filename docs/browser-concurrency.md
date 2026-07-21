@@ -1,164 +1,149 @@
-# Browser Concurrency Protocols
+# Browser concurrency protocols
 
-rom-weaver runs the WASM engine on a dedicated worker thread (and that engine spawns
-its own pool of WASI threads for rayon-parallel work). Two hand-rolled
-`SharedArrayBuffer` + `Atomics` protocols hold this together. They are subtle, they
-have each been the source of hard-to-reproduce hangs, and their two halves usually
-live in different files (sometimes different packages). This document is the prose
-spec; the machine-readable constants live in
-`packages/rom-weaver-webapp/src/wasm/browser-virtual-file-protocol.ts`.
+rom-weaver runs its WASM engine in a dedicated worker. That engine can start
+more WASI workers for parallel work. Two `SharedArrayBuffer` protocols keep
+thread startup and browser file access safe.
 
-Everything here requires a cross-origin-isolated context (`crossOriginIsolated`),
-`SharedArrayBuffer`, and `Atomics`. The producer half of the virtual-file channel
-also requires `Atomics.waitAsync` (the page main thread may not block).
-
----
+Both protocols require a cross-origin-isolated page, `SharedArrayBuffer`, and
+`Atomics`. This page describes the contract. The TypeScript constants remain
+the source of truth.
 
 <!-- START doctoc -->
 ## Table of contents
 
-- [1. WASI thread-start handshake (the "start barrier")](#1-wasi-thread-start-handshake-the-start-barrier)
-- [2. Virtual-file SharedArrayBuffer read channel](#2-virtual-file-sharedarraybuffer-read-channel)
+- [WASI thread-start barrier](#wasi-thread-start-barrier)
+- [OPFS proxy channel](#opfs-proxy-channel)
+  - [Control words](#control-words)
+  - [States](#states)
+  - [Request flow](#request-flow)
+  - [Safety rules](#safety-rules)
+- [Browser file input paths](#browser-file-input-paths)
 
 <!-- END doctoc -->
 
-## 1. WASI thread-start handshake (the "start barrier")
+## WASI thread-start barrier
 
-**Where:** the wire constants and Atomics leaf helpers (`allocateThreadId`,
-`signalThreadStartState`, `waitForThreadStartAck`, …) live in
-`packages/rom-weaver-webapp/src/wasm/browser-wasi-thread-protocol.ts`. The requester glue
-(`spawn`, the worker pool) is in
-`packages/rom-weaver-webapp/src/wasm/rom-weaver-browser-opfs-api.ts`, and the worker that
-actually runs `wasi_thread_start` is
-`packages/rom-weaver-webapp/src/wasm/workers/browser-wasi-thread-worker.ts`.
+The wire constants and small `Atomics` helpers live in
+`packages/rom-weaver-webapp/src/wasm/browser-wasi-thread-protocol.ts`.
+`browser-wasi-thread-pool.ts` manages the worker pool, and
+`workers/browser-wasi-thread-worker.ts` runs `wasi_thread_start`.
 
-**Why it exists.** The threaded wasm module imports `wasi.thread-spawn`. When several
-threads start at once, each one allocates its stack, which triggers `memory.grow` on
-the shared `WebAssembly.Memory`. Concurrent `memory.grow` races V8's propagation of
-the new shared-buffer size to already-running threads, producing out-of-bounds
-access and a silent hang (8-thread browser decode). The fix is to make spawning
-**serialized and synchronous**: the requester publishes one spawn request and then
-*blocks until the new thread acknowledges it has started* before returning from
-`thread-spawn`. That blocking ack is the start barrier. See the memory notes
-"CHD browser decode grow-race root cause" and "Browser thread-count cap".
+The barrier serializes thread startup. Each new thread may grow shared WASM
+memory while allocating its stack. Starting several threads at once can race
+the browser's shared-memory update and cause an out-of-bounds hang. The caller
+therefore waits until one thread has started before it starts the next one.
 
-**Control word** - `Int32Array` over each pooled worker's `startControlBuffer`:
+Each worker has a four-word control buffer:
 
-| Index | Constant                      | Meaning                                  |
-|-------|-------------------------------|------------------------------------------|
-| 0     | `THREAD_SLOT_STATE_INDEX`     | state machine word (below)               |
-| 1     | `THREAD_SLOT_TID_INDEX`       | wasi thread id (requester → worker)      |
-| 2     | `THREAD_SLOT_START_ARG_INDEX` | `wasi_thread_start` arg (requester → worker) |
-| 3     | `THREAD_SLOT_ERROR_INDEX`     | error flag (worker → requester)          |
+| Index | Value | Direction |
+| --- | --- | --- |
+| 0 | state | both |
+| 1 | WASI thread ID | caller to worker |
+| 2 | `wasi_thread_start` argument | caller to worker |
+| 3 | error flag | worker to caller |
 
-`THREAD_SLOT_LENGTH = 4` words per slot.
+The state values are:
 
-**States** (value 4 is intentionally unused):
+| Value | State | Meaning |
+| --- | --- | --- |
+| 0 | `IDLE` | Ready for work, or finished. |
+| 1 | `REQUESTED` | The caller published a start request. |
+| 2 | `STARTING` | The worker is creating its WASI instance. |
+| 3 | `RUNNING` | The worker acknowledged startup. |
+| 5 | `FAILED` | Startup failed. |
+| 6 | `SHUTDOWN` | The pool is stopping. |
 
-| Value | State                        | Set by    |
-|-------|------------------------------|-----------|
-| 0     | `THREAD_SLOT_STATE_IDLE`     | worker (on completion) / initial |
-| 1     | `THREAD_SLOT_STATE_REQUESTED`| requester |
-| 2     | `THREAD_SLOT_STATE_STARTING` | worker    |
-| 3     | `THREAD_SLOT_STATE_RUNNING`  | worker    |
-| 5     | `THREAD_SLOT_STATE_FAILED`   | worker    |
-| 6     | `THREAD_SLOT_STATE_SHUTDOWN` | pool teardown |
+The caller writes the thread ID and argument, stores `REQUESTED`, and wakes the
+worker. It then blocks in 100 ms slices until the state changes to `RUNNING`,
+`IDLE`, or `FAILED`. Startup acknowledgement times out after 8 seconds. A worker
+shell has 5 seconds to report that it is ready. Waiting for a free pooled worker
+uses a 25 ms retry interval and a 30 second limit.
 
-**Transitions.**
+## OPFS proxy channel
 
-1. Requester (`spawn`, inside the wasm thread-spawn import): claims an idle pooled
-   worker, writes TID + START_ARG, clears ERROR, stores `REQUESTED`, `notify`s.
-2. Requester then calls `waitForThreadStartAck` and **blocks** (`Atomics.wait` in
-   100 ms slices) until the slot leaves `REQUESTED`/`STARTING`. This is the barrier:
-   the next spawn cannot begin until this thread is up.
-3. Worker picks up `REQUESTED`, stores `STARTING`, builds its WASI fds + instance,
-   stores `RUNNING` immediately before calling `wasi_thread_start`, which unblocks
-   the requester (`RUNNING` or `IDLE` → success).
-4. If the worker throws before acking, it stores `FAILED`; `waitForThreadStartAck`
-   returns the error and the requester reports `EAGAIN` to wasm.
-5. When the thread function returns, the worker stores `IDLE`; `waitForWorkers`
-   reaps `IDLE` (done) and `FAILED` (record + propagate first failure).
+One dedicated proxy worker owns all OPFS `FileSystemSyncAccessHandle` objects.
+The main WASM runner and every spawned WASI thread send synchronous filesystem
+requests to that worker. This design obeys WebKit's one-handle-per-file rule
+and lets spawned threads access files that they cannot open directly.
 
-**Timeouts:** `THREAD_START_ACK_TIMEOUT_MS = 8000`,
-`THREAD_WORKER_READY_TIMEOUT_MS = 5000` (worker shell `shell-ready` message),
-busy-retry `25 ms` interval / `30 s` ceiling when no pooled worker is free.
+The implementation is split across:
 
----
+- `browser-opfs-proxy-protocol.ts`: control layout, states, and operation codes
+- `browser-opfs-proxy-channel.ts`: shared-buffer allocation and global controls
+- `browser-opfs-proxy-client.ts`: synchronous client used by WASM threads
+- `browser-opfs-proxy-server.ts`: request loop and handle ownership
+- `workers/browser-opfs-proxy-worker.ts`: dedicated worker entry point
+- `browser-opfs-proxy-file.ts`: random-access file adapter
 
-## 2. Virtual-file SharedArrayBuffer read channel
+Each slot has a ten-word control buffer and a 2 MiB data buffer. Large reads
+and writes are split across several requests. The shared global control buffer
+contains a doorbell counter, a poison flag, a handle-ID allocator, and
+per-handle version counters.
 
-**Where:**
-- Producer (page main thread, owns the `File`/`Blob`):
-  `packages/rom-weaver-webapp/src/workers/protocol/browser-virtual-files.ts`
-- Consumer (wasm worker thread, `BrowserVirtualRandomAccessFile`):
-  `packages/rom-weaver-webapp/src/wasm/browser-opfs-io-adapters.ts`
-- Shared constants (the wire contract): **`browser-virtual-file-protocol.ts`** - both
-  files above import from it so they can never disagree on the layout or state values.
+### Control words
 
-**Why it exists.** A virtual file lets the wasm engine read a user-picked file's bytes
-*on demand* without first copying the whole file into OPFS. The bytes are owned by the
-main thread; the wasm consumer requests ranges over shared memory. Spawned worker
-threads that need OPFS-backed files instead go through the dedicated OPFS proxy worker,
-which owns the sole `SyncAccessHandle` per file and services every thread's reads (the
-old read-on-main gates are retired). Small `Blob`s skip the channel and are read
-directly; larger inputs use the proxy.
+| Index | Value | Direction |
+| --- | --- | --- |
+| 0 | state | both |
+| 1 | operation code | client to proxy |
+| 2 | handle ID | client to proxy |
+| 3 | offset, low 32 bits | client to proxy |
+| 4 | offset, high 32 bits | client to proxy |
+| 5 | path or payload length | both |
+| 6 | auxiliary value, low 32 bits | both |
+| 7 | auxiliary value, high 32 bits | both |
+| 8 | result | proxy to client |
+| 9 | WASI status code | proxy to client |
 
-**Slot** = one `controlBuffer` (`Int32Array` of `VIRTUAL_FILE_CONTROL_WORD_COUNT = 6`
-words) + one `dataBuffer` (`Uint8Array`, up to `maxChunkSize`). A proxy has 1–4 slots
-so the consumer can have a few reads in flight; total SAB per file is capped
-(`VIRTUAL_FILE_MAX_TOTAL_SAB_BYTES_PER_FILE`).
+The proxy supports open, read, positional read, write, truncate, flush, close,
+unlink, make-directory, and size operations. Operation code 9 was the removed
+rename operation and must not be reused.
 
-**Control word:**
+### States
 
-| Index | Constant                                | Direction            |
-|-------|-----------------------------------------|----------------------|
-| 0     | `VIRTUAL_FILE_CONTROL_STATE_INDEX`      | both (state machine) |
-| 1     | `VIRTUAL_FILE_CONTROL_OFFSET_LOW_INDEX` | consumer → producer  |
-| 2     | `VIRTUAL_FILE_CONTROL_OFFSET_HIGH_INDEX`| consumer → producer  |
-| 3     | `VIRTUAL_FILE_CONTROL_LENGTH_INDEX`     | consumer → producer  |
-| 4     | `VIRTUAL_FILE_CONTROL_BYTES_READ_INDEX` | producer → consumer  |
-| 5     | `VIRTUAL_FILE_CONTROL_STATUS_INDEX`     | producer → consumer  |
+| Value | State | Meaning |
+| --- | --- | --- |
+| 0 | `IDLE` | A client may claim the slot. |
+| 1 | `REQUESTED` | The request is ready for the proxy. |
+| 2 | `DONE` | The result and status are ready. |
+| 3 | `CONSUMER_LOCKED` | A client owns the slot while filling it. |
+| 4 | `PROXY_SERVICING` | The proxy owns the slot while running the operation. |
 
-The 64-bit read offset is split low/high so it survives files larger than 4 GiB.
-Status is `VIRTUAL_FILE_STATUS_OK` (0) / `VIRTUAL_FILE_STATUS_ERROR` (1).
+### Request flow
 
-**States:**
+1. A client changes one slot from `IDLE` to `CONSUMER_LOCKED` with a compare
+   and swap.
+2. It writes the request, changes the state to `REQUESTED`, increments the
+   global doorbell, and wakes the proxy.
+3. The proxy changes the slot from `REQUESTED` to `PROXY_SERVICING`, performs
+   the operation, and writes its result and status.
+4. The proxy changes the state to `DONE` and wakes the client.
+5. The client reads the response and returns the slot to `IDLE`.
 
-| Value | State                              | Owner / meaning                             |
-|-------|------------------------------------|---------------------------------------------|
-| 0     | `VIRTUAL_FILE_STATE_IDLE`          | free; consumer may claim                     |
-| 1     | `VIRTUAL_FILE_STATE_REQUESTED`     | consumer published a request                 |
-| 2     | `VIRTUAL_FILE_STATE_DONE`          | producer fulfilled; bytesRead/status valid   |
-| 3     | `VIRTUAL_FILE_STATE_CONSUMER_LOCKED` | consumer-private: claimed, not yet published |
-| 4     | `VIRTUAL_FILE_STATE_PRODUCER_READING`| producer-private: owns slot mid-read       |
+The proxy scans for work before waiting on the doorbell, so a request cannot be
+lost between a scan and a wait. It wakes at least every 250 ms even if no
+notification arrives.
 
-**Transitions.**
+### Safety rules
 
-1. Consumer `acquireProxySlot`: `CAS IDLE → CONSUMER_LOCKED` to claim a slot
-   (reclaiming any stale `DONE` slot first).
-2. Consumer writes offset/length, then `store REQUESTED` + `notify`.
-3. Producer pump waits (via `Atomics.waitAsync`) for `REQUESTED`, then
-   `CAS REQUESTED → PRODUCER_READING` to take ownership, and reads the source async.
-4. Producer, **only if the slot is still `PRODUCER_READING`**, copies bytes into the
-   data buffer, writes bytesRead + status, `store DONE` + `notify`.
-5. Consumer (blocking `Atomics.wait` in 100 ms slices) wakes on `DONE`, copies out,
-   and `releaseProxySlot` → `store IDLE` + `notify`.
+- Keep the two private states, `CONSUMER_LOCKED` and `PROXY_SERVICING`, distinct
+  from each other and from every shared state.
+- A client waits up to 30 seconds for a free slot and 60 seconds for an
+  operation. On an operation timeout it poisons the whole channel instead of
+  reusing a slot that the proxy may still own.
+- A crashed or poisoned proxy sets the global poison flag and wakes all
+  clients. Later operations fail with an I/O error instead of hanging.
+- `Atomics.store` on the state word is the publication boundary. Write all
+  request or result data before changing the state.
+- The proxy shares and reference-counts handles opened for the same path. It
+  closes the browser handle only after the last reference is released.
 
-**Invariants - do not break these:**
+## Browser file input paths
 
-- **The two private markers (`CONSUMER_LOCKED = 3`, `PRODUCER_READING = 4`) must never
-  share a value** with each other or with a shared state. They are defined together in
-  `browser-virtual-file-protocol.ts` precisely so this is enforced in one place rather
-  than by matching comments in two packages.
-- **Timeout poisoning.** If a consumer read exceeds `VIRTUAL_FILE_PROXY_READ_TIMEOUT_MS`,
-  the producer may still own the slot mid-read. The consumer therefore *abandons* that
-  slot (never recycles it) and sets `proxyFailed`, failing fast on subsequent reads, so a
-  late producer completion can never satisfy a newer request on a reused slot.
-- **Producer ownership check (the mirror).** Before publishing, the producer re-checks the
-  slot is still `PRODUCER_READING`. If the consumer abandoned the request, the slot is no
-  longer `PRODUCER_READING`, so the producer discards its bytes instead of writing stale
-  data into a buffer a later request might read.
+User-selected `File` and `Blob` inputs are not copied into OPFS before every
+run. Chrome, Firefox, and files smaller than 64 MiB on WebKit use a direct,
+per-thread `FileReaderSync` path. WebKit files of 64 MiB or more use the single
+proxy worker because WebKit serializes concurrent reads of the same file.
 
-**Timeouts / geometry:** `VIRTUAL_FILE_PROXY_READ_TIMEOUT_MS = 12000`,
-`VIRTUAL_FILE_PROXY_SLOT_ACQUIRE_TIMEOUT_MS = 8000`, atomics wait slice `100 ms`,
-chunk size clamped to `[256 KiB, 2 MiB]`.
+Files already stored in OPFS always use the OPFS proxy. This keeps one browser
+handle owner while allowing every WASI thread to read and write by guest path.

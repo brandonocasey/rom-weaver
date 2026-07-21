@@ -1,4 +1,4 @@
-# Mobile Safari Verification
+# Mobile Safari verification
 
 rom-weaver's browser runtime needs secure-context APIs, cross-origin isolation,
 `SharedArrayBuffer`, `Atomics.waitAsync`, workers, and OPFS. Docker and desktop
@@ -9,15 +9,15 @@ behavior.
 <!-- START doctoc -->
 ## Table of contents
 
-- [Automation Ladder](#automation-ladder)
-- [Real Device Setup](#real-device-setup)
-- [Worker Lifetime on Mobile](#worker-lifetime-on-mobile)
-- [Runtime Preflight](#runtime-preflight)
-- [Manual Scenarios](#manual-scenarios)
+- [Automation ladder](#automation-ladder)
+- [Real device setup](#real-device-setup)
+- [Worker lifetime on mobile](#worker-lifetime-on-mobile)
+- [Runtime preflight](#runtime-preflight)
+- [Manual scenarios](#manual-scenarios)
 
 <!-- END doctoc -->
 
-## Automation Ladder
+## Automation ladder
 
 Use these checks from cheapest to most faithful:
 
@@ -79,7 +79,7 @@ Cloud real-device providers are the CI option when a local device farm is not
 available. BrowserStack, Sauce Labs, and LambdaTest can run real iOS Safari; use
 a secure tunnel for local or staging builds.
 
-## Real Device Setup
+## Real device setup
 
 Generate the adversarial archive corpus and start the HTTPS dev server on the
 LAN:
@@ -132,7 +132,7 @@ The matrix requests a screen wake lock while a run is active, releases it when
 the run finishes, and reacquires it after the page returns to the foreground.
 iOS may still suspend the test if the browser is manually backgrounded.
 
-## Worker Lifetime on Mobile
+## Worker lifetime on mobile
 
 Each command uses a shared `WebAssembly.Memory`. On real iOS hardware, creating
 successive memories in one long-lived worker retained enough address-space
@@ -171,7 +171,7 @@ Enable inspection:
 - Connect the device to the Mac, then inspect the tab from Safari's Develop
   menu. Xcode Simulator Safari appears in the same Develop menu.
 
-## Runtime Preflight
+## Runtime preflight
 
 The webapp exposes a console helper for device captures:
 
@@ -198,7 +198,7 @@ For a healthy runtime, the important fields are:
 If these gates fail, fix HTTPS trust, COOP/COEP headers, service worker
 bootstrap, or OPFS availability before debugging workflow code.
 
-## Manual Scenarios
+## Manual scenarios
 
 Run these on real iOS Safari before considering a Mobile Safari issue fixed:
 

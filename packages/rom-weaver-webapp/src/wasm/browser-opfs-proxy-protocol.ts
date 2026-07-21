@@ -21,7 +21,7 @@
 // Memory ordering: the `Atomics.store(STATE, ...) + Atomics.notify` that flips a slot to REQUESTED
 // (consumer) or DONE (producer) is the release/acquire fence. All data-buffer and control-word writes
 // for a request happen-before that STATE flip, so the other side observes them once it sees the new
-// state. This is the same discipline as browser-virtual-file-protocol.ts.
+// state. This is the same discipline as the WASI thread-start protocol.
 
 // --- Control-word layout (indices into the Int32Array view of a slot's control buffer) -----------
 
