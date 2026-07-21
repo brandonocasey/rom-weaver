@@ -1,4 +1,29 @@
 use super::*;
+
+struct TrimBatchConfig<'a> {
+    explicit_output: Option<&'a Path>,
+    extension: &'a str,
+    in_place: bool,
+    dry_run: bool,
+    operation: TrimOperation,
+    revert_marker: bool,
+    context: &'a OperationContext,
+    thread_execution: &'a Option<ThreadExecution>,
+    source_count: usize,
+}
+
+#[derive(Default)]
+struct TrimBatchState {
+    trimmed_count: usize,
+    already_trimmed_count: usize,
+    failed_count: usize,
+    first_error: Option<String>,
+    mode_counts: BTreeMap<&'static str, usize>,
+    single_detail: Option<String>,
+    irreversible_xiso: bool,
+    irreversible_rvz_scrub: bool,
+}
+
 impl CliApp {
     pub(super) fn run_compress(&self, args: CompressCommand) -> AppRunOutcome {
         trace!(
@@ -319,186 +344,23 @@ impl CliApp {
             );
         }
 
-        let mut trimmed_count = 0usize;
-        let mut already_trimmed_count = 0usize;
-        let mut failed_count = 0usize;
-        let mut first_error = None;
-        let mut mode_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
-        let mut single_detail = None;
-        let mut irreversible_xiso = false;
-        let mut irreversible_rvz_scrub = false;
-
+        let config = TrimBatchConfig {
+            explicit_output: output.as_deref(),
+            extension: &extension,
+            in_place,
+            dry_run,
+            operation,
+            revert_marker,
+            context: &context,
+            thread_execution: &thread_execution,
+            source_count: trim_sources.len(),
+        };
+        let mut state = TrimBatchState::default();
         for trim_source in &trim_sources {
-            // For `--in-place` archive inputs, confirm before rewriting an archive that holds files
-            // beyond the ROM. Non-interactive runs fail; interactive runs prompt.
-            if let Some(repack_root) = trim_source.repack_root.as_ref() {
-                let archive = trim_source
-                    .archive_origin
-                    .as_ref()
-                    .expect("repack source carries its archive origin");
-                match self.confirm_archive_repack(
-                    archive,
-                    repack_root,
-                    &trim_source.path,
-                    trim_source.kind,
-                    dry_run,
-                ) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        let message = format!(
-                            "--in-place repack declined for `{}`; archive left unchanged",
-                            archive.display()
-                        );
-                        failed_count = failed_count.saturating_add(1);
-                        if first_error.is_none() {
-                            first_error = Some(message);
-                        }
-                        continue;
-                    }
-                    Err(error) => {
-                        failed_count = failed_count.saturating_add(1);
-                        if first_error.is_none() {
-                            first_error = Some(error.to_string());
-                        }
-                        self.emit_running(
-                            OperationLabel {
-                                command: "trim",
-                                family: OperationFamily::Command,
-                                format: Some(trim_source.kind.mode_label()),
-                            },
-                            operation.stage(),
-                            error.to_string(),
-                            None,
-                            thread_execution.clone(),
-                        );
-                        continue;
-                    }
-                }
-            }
-            let repack_root = trim_source.repack_root.as_ref();
-            let output_path = if repack_root.is_some() {
-                // Trim the extracted ROM in place inside the repack staging directory; the archive
-                // is rebuilt from that directory after the trim succeeds.
-                trim_source.path.clone()
-            } else if let Some(explicit_output) = output.as_ref() {
-                explicit_output.clone()
-            } else if in_place {
-                trim_source.path.clone()
-            } else if let Some(archive) = trim_source.archive_origin.as_ref() {
-                Self::archive_sidecar_trim_output_path(archive, trim_source, &extension)
-            } else {
-                Self::default_trim_output_path(trim_source, &extension)
-            };
-            let output_label = if let Some(archive) = trim_source
-                .archive_origin
-                .as_ref()
-                .filter(|_| repack_root.is_some())
-            {
-                format!("repack `{}`", archive.display())
-            } else if in_place {
-                "in-place".to_string()
-            } else {
-                output_path.display().to_string()
-            };
-            // Repack sources always trim the staged ROM in place regardless of the batch flag.
-            let trim_in_place = in_place || repack_root.is_some();
-
-            self.emit_running(
-                OperationLabel {
-                    command: "trim",
-                    family: OperationFamily::Command,
-                    format: Some(trim_source.kind.mode_label()),
-                },
-                operation.stage(),
-                format!(
-                    "{} `{}` -> `{output_label}`",
-                    operation.running_label(dry_run),
-                    trim_source.path.display()
-                ),
-                Some(0.0),
-                thread_execution.clone(),
-            );
-
-            let trim_result = self.trim_file(
-                &trim_source.path,
-                &output_path,
-                TrimRequest {
-                    in_place: trim_in_place,
-                    dry_run,
-                    operation,
-                    kind: trim_source.kind,
-                    revert_marker,
-                },
-                &context,
-            );
-            // Rebuild the archive over the original once the staged ROM is trimmed (skipped on a
-            // dry run, which only reports what would happen).
-            let trim_result = match (trim_result, repack_root) {
-                (Ok(outcome), Some(repack_root)) if !dry_run => {
-                    let archive = trim_source
-                        .archive_origin
-                        .as_ref()
-                        .expect("repack source carries its archive origin");
-                    self.repack_archive(archive, repack_root, &context)
-                        .map(|()| outcome)
-                }
-                (result, _) => result,
-            };
-            match trim_result {
-                Ok(outcome) => {
-                    let mode_count = mode_counts.entry(outcome.mode).or_insert(0);
-                    *mode_count = mode_count.saturating_add(1);
-                    if operation == TrimOperation::Trim && !outcome.revert_supported {
-                        if outcome.mode == TrimInputKind::Xiso.mode_label() {
-                            irreversible_xiso = true;
-                        }
-                        if outcome.mode == TrimInputKind::RvzScrub.mode_label() {
-                            irreversible_rvz_scrub = true;
-                        }
-                    }
-                    if outcome.already_target_size {
-                        already_trimmed_count = already_trimmed_count.saturating_add(1);
-                    } else {
-                        trimmed_count = trimmed_count.saturating_add(1);
-                    }
-                    if trim_sources.len() == 1 {
-                        let status = if outcome.already_target_size {
-                            if operation == TrimOperation::Trim {
-                                "already-trimmed"
-                            } else {
-                                "already-untrimmed"
-                            }
-                        } else if operation == TrimOperation::Trim {
-                            "trimmed"
-                        } else {
-                            "reverted"
-                        };
-                        let result_size_label = if operation == TrimOperation::Trim {
-                            "trimmed_size"
-                        } else {
-                            "reverted_size"
-                        };
-                        single_detail = Some(format!(
-                            "{status} mode={} original_size={} {result_size_label}={} preserved_download_play_cert={} revert_supported={} output={}",
-                            outcome.mode,
-                            outcome.original_size,
-                            outcome.result_size,
-                            outcome.preserved_download_play_cert,
-                            outcome.revert_supported,
-                            outcome.output_path.display()
-                        ));
-                    }
-                }
-                Err(error) => {
-                    failed_count = failed_count.saturating_add(1);
-                    if first_error.is_none() {
-                        first_error = Some(format!("{}: {error}", trim_source.path.display()));
-                    }
-                }
-            }
+            self.process_trim_source(trim_source, &config, &mut state);
         }
 
-        if failed_count > 0 {
+        if state.failed_count > 0 {
             Self::cleanup_temp_paths(&cleanup_paths);
             return self.finish(
                 "trim",
@@ -520,11 +382,11 @@ impl CliApp {
                             "trim revert"
                         },
                         trim_sources.len(),
-                        trimmed_count,
-                        already_trimmed_count,
-                        failed_count,
+                        state.trimmed_count,
+                        state.already_trimmed_count,
+                        state.failed_count,
                         skipped_unsupported,
-                        first_error.unwrap_or_else(|| "(none)".to_string()),
+                        state.first_error.unwrap_or_else(|| "(none)".to_string()),
                     ),
                     thread_execution.clone(),
                 ),
@@ -533,11 +395,11 @@ impl CliApp {
 
         let irreversible_warning = if operation != TrimOperation::Trim {
             ""
-        } else if irreversible_xiso && !irreversible_rvz_scrub {
+        } else if state.irreversible_xiso && !state.irreversible_rvz_scrub {
             "; warning=trimmed xiso output cannot be reverted to original padding; keep backup"
-        } else if irreversible_rvz_scrub && !irreversible_xiso {
+        } else if state.irreversible_rvz_scrub && !state.irreversible_xiso {
             "; warning=trimmed rvz-scrub output cannot be reverted to original source format; keep backup"
-        } else if irreversible_xiso && irreversible_rvz_scrub {
+        } else if state.irreversible_xiso && state.irreversible_rvz_scrub {
             "; warning=some trimmed outputs cannot be reverted to original source format; keep backups"
         } else {
             ""
@@ -550,29 +412,29 @@ impl CliApp {
                 OperationFamily::Command,
                 Some(report_format.clone()),
                 "trim",
-                match single_detail {
+                match state.single_detail {
                     Some(single_detail) => format!(
                         "{single_detail}; {}; processed={} trimmed={} already_trimmed={} changed={} already_target={} skipped_unsupported={} mode_counts={}{}",
                         operation.summary_label(dry_run),
                         trim_sources.len(),
-                        trimmed_count,
-                        already_trimmed_count,
-                        trimmed_count,
-                        already_trimmed_count,
+                        state.trimmed_count,
+                        state.already_trimmed_count,
+                        state.trimmed_count,
+                        state.already_trimmed_count,
                         skipped_unsupported,
-                        Self::format_mode_counts(&mode_counts),
+                        Self::format_mode_counts(&state.mode_counts),
                         irreversible_warning,
                     ),
                     None => format!(
                         "{}; processed={} trimmed={} already_trimmed={} changed={} already_target={} skipped_unsupported={} mode_counts={}{}",
                         operation.summary_label(dry_run),
                         trim_sources.len(),
-                        trimmed_count,
-                        already_trimmed_count,
-                        trimmed_count,
-                        already_trimmed_count,
+                        state.trimmed_count,
+                        state.already_trimmed_count,
+                        state.trimmed_count,
+                        state.already_trimmed_count,
                         skipped_unsupported,
-                        Self::format_mode_counts(&mode_counts),
+                        Self::format_mode_counts(&state.mode_counts),
                         irreversible_warning,
                     ),
                 },
@@ -580,6 +442,180 @@ impl CliApp {
                 thread_execution,
             ),
         )
+    }
+
+    fn process_trim_source(
+        &self,
+        trim_source: &TrimSource,
+        config: &TrimBatchConfig<'_>,
+        state: &mut TrimBatchState,
+    ) {
+        if !self.confirm_trim_source_repack(trim_source, config, state) {
+            return;
+        }
+        let repack_root = trim_source.repack_root.as_ref();
+        let output_path = if repack_root.is_some() {
+            trim_source.path.clone()
+        } else if let Some(explicit_output) = config.explicit_output {
+            explicit_output.to_path_buf()
+        } else if config.in_place {
+            trim_source.path.clone()
+        } else if let Some(archive) = trim_source.archive_origin.as_ref() {
+            Self::archive_sidecar_trim_output_path(archive, trim_source, config.extension)
+        } else {
+            Self::default_trim_output_path(trim_source, config.extension)
+        };
+        let output_label = if let Some(archive) = trim_source
+            .archive_origin
+            .as_ref()
+            .filter(|_| repack_root.is_some())
+        {
+            format!("repack `{}`", archive.display())
+        } else if config.in_place {
+            "in-place".to_string()
+        } else {
+            output_path.display().to_string()
+        };
+        self.emit_running(
+            OperationLabel {
+                command: "trim",
+                family: OperationFamily::Command,
+                format: Some(trim_source.kind.mode_label()),
+            },
+            config.operation.stage(),
+            format!(
+                "{} `{}` -> `{output_label}`",
+                config.operation.running_label(config.dry_run),
+                trim_source.path.display()
+            ),
+            Some(0.0),
+            config.thread_execution.clone(),
+        );
+
+        let trim_result = self.trim_file(
+            &trim_source.path,
+            &output_path,
+            TrimRequest {
+                in_place: config.in_place || repack_root.is_some(),
+                dry_run: config.dry_run,
+                operation: config.operation,
+                kind: trim_source.kind,
+                revert_marker: config.revert_marker,
+            },
+            config.context,
+        );
+        let trim_result = match (trim_result, repack_root) {
+            (Ok(outcome), Some(repack_root)) if !config.dry_run => {
+                let archive = trim_source
+                    .archive_origin
+                    .as_ref()
+                    .expect("repack source carries its archive origin");
+                self.repack_archive(archive, repack_root, config.context)
+                    .map(|()| outcome)
+            }
+            (result, _) => result,
+        };
+        match trim_result {
+            Ok(outcome) => Self::record_trim_outcome(outcome, config, state),
+            Err(error) => {
+                Self::record_trim_failure(state, format!("{}: {error}", trim_source.path.display()))
+            }
+        }
+    }
+
+    fn confirm_trim_source_repack(
+        &self,
+        trim_source: &TrimSource,
+        config: &TrimBatchConfig<'_>,
+        state: &mut TrimBatchState,
+    ) -> bool {
+        let Some(repack_root) = trim_source.repack_root.as_ref() else {
+            return true;
+        };
+        let archive = trim_source
+            .archive_origin
+            .as_ref()
+            .expect("repack source carries its archive origin");
+        match self.confirm_archive_repack(
+            archive,
+            repack_root,
+            &trim_source.path,
+            trim_source.kind,
+            config.dry_run,
+        ) {
+            Ok(true) => true,
+            Ok(false) => {
+                Self::record_trim_failure(
+                    state,
+                    format!(
+                        "--in-place repack declined for `{}`; archive left unchanged",
+                        archive.display()
+                    ),
+                );
+                false
+            }
+            Err(error) => {
+                Self::record_trim_failure(state, error.to_string());
+                self.emit_running(
+                    OperationLabel {
+                        command: "trim",
+                        family: OperationFamily::Command,
+                        format: Some(trim_source.kind.mode_label()),
+                    },
+                    config.operation.stage(),
+                    error.to_string(),
+                    None,
+                    config.thread_execution.clone(),
+                );
+                false
+            }
+        }
+    }
+
+    fn record_trim_failure(state: &mut TrimBatchState, message: String) {
+        state.failed_count = state.failed_count.saturating_add(1);
+        if state.first_error.is_none() {
+            state.first_error = Some(message);
+        }
+    }
+
+    fn record_trim_outcome(
+        outcome: NdsTrimOutcome,
+        config: &TrimBatchConfig<'_>,
+        state: &mut TrimBatchState,
+    ) {
+        let mode_count = state.mode_counts.entry(outcome.mode).or_insert(0);
+        *mode_count = mode_count.saturating_add(1);
+        if config.operation == TrimOperation::Trim && !outcome.revert_supported {
+            state.irreversible_xiso |= outcome.mode == TrimInputKind::Xiso.mode_label();
+            state.irreversible_rvz_scrub |= outcome.mode == TrimInputKind::RvzScrub.mode_label();
+        }
+        if outcome.already_target_size {
+            state.already_trimmed_count = state.already_trimmed_count.saturating_add(1);
+        } else {
+            state.trimmed_count = state.trimmed_count.saturating_add(1);
+        }
+        if config.source_count == 1 {
+            let status = match (outcome.already_target_size, config.operation) {
+                (true, TrimOperation::Trim) => "already-trimmed",
+                (true, TrimOperation::Revert) => "already-untrimmed",
+                (false, TrimOperation::Trim) => "trimmed",
+                (false, TrimOperation::Revert) => "reverted",
+            };
+            let result_size_label = match config.operation {
+                TrimOperation::Trim => "trimmed_size",
+                TrimOperation::Revert => "reverted_size",
+            };
+            state.single_detail = Some(format!(
+                "{status} mode={} original_size={} {result_size_label}={} preserved_download_play_cert={} revert_supported={} output={}",
+                outcome.mode,
+                outcome.original_size,
+                outcome.result_size,
+                outcome.preserved_download_play_cert,
+                outcome.revert_supported,
+                outcome.output_path.display()
+            ));
+        }
     }
 
     /// Report `format` for a trim run: the shared trim kind's label when every

@@ -978,51 +978,21 @@ impl CliApp {
             )
         };
 
-        let basis_modes = match crate::bundle_create::aligned_metadata(
-            &flags.basis,
-            patch_count,
-            "--patch-basis",
-        ) {
-            Ok(values) => values,
-            Err(error) => return fail(error.to_string()),
-        };
-        let input_check_flags = match crate::bundle_create::aligned_metadata(
-            &flags.input_checks,
-            patch_count,
-            "--patch-input-check",
-        ) {
-            Ok(values) => values,
-            Err(error) => return fail(error.to_string()),
-        };
-        let output_check_flags = match crate::bundle_create::aligned_metadata(
-            &flags.output_checks,
-            patch_count,
-            "--patch-output-check",
-        ) {
-            Ok(values) => values,
+        let PlanAlignedMetadata {
+            basis_modes,
+            input_check_flags,
+            output_check_flags,
+        } = match Self::align_plan_metadata(&flags, patch_count) {
+            Ok(metadata) => metadata,
             Err(error) => return fail(error.to_string()),
         };
 
         // Probe handlers; a failed probe (or a format without preflight support)
         // still plans, it just cannot contribute embedded checks or a preflight verdict.
-        let mut handlers: Vec<Option<Arc<dyn rom_weaver_core::PatchHandler>>> =
-            Vec::with_capacity(patch_count);
-        let mut probe_failures: Vec<Option<String>> = vec![None; patch_count];
-        for (index, (patch_path, resolved_patch_path)) in resolved_patches.iter().enumerate() {
-            match self.probe_patch_handler(
-                patch_path,
-                resolved_patch_path,
-                index,
-                patch_count,
-                probe_threads.clone(),
-            ) {
-                Ok(handler) => handlers.push(Some(handler)),
-                Err(report) => {
-                    probe_failures[index] = Some(report.label.clone());
-                    handlers.push(None);
-                }
-            }
-        }
+        let ProbedPlanHandlers {
+            handlers,
+            failures: probe_failures,
+        } = self.probe_plan_handlers(resolved_patches, patch_count, probe_threads.clone());
 
         // Assemble what is known about each patch.
         let mut plan_inputs: Vec<patch_plan::PlanPatchInput> = Vec::with_capacity(patch_count);
@@ -1241,6 +1211,58 @@ impl CliApp {
         report
     }
 
+    fn align_plan_metadata(
+        flags: &PlanFlagInputs,
+        patch_count: usize,
+    ) -> Result<PlanAlignedMetadata> {
+        Ok(PlanAlignedMetadata {
+            basis_modes: crate::bundle_create::aligned_metadata(
+                &flags.basis,
+                patch_count,
+                "--patch-basis",
+            )?,
+            input_check_flags: crate::bundle_create::aligned_metadata(
+                &flags.input_checks,
+                patch_count,
+                "--patch-input-check",
+            )?,
+            output_check_flags: crate::bundle_create::aligned_metadata(
+                &flags.output_checks,
+                patch_count,
+                "--patch-output-check",
+            )?,
+        })
+    }
+
+    fn probe_plan_handlers(
+        &self,
+        resolved_patches: &[(PathBuf, PathBuf)],
+        patch_count: usize,
+        probe_threads: Option<ThreadExecution>,
+    ) -> ProbedPlanHandlers {
+        let mut handlers = Vec::with_capacity(patch_count);
+        let mut probe_failures = vec![None; patch_count];
+        for (index, (patch_path, resolved_patch_path)) in resolved_patches.iter().enumerate() {
+            match self.probe_patch_handler(
+                patch_path,
+                resolved_patch_path,
+                index,
+                patch_count,
+                probe_threads.clone(),
+            ) {
+                Ok(handler) => handlers.push(Some(handler)),
+                Err(report) => {
+                    probe_failures[index] = Some(report.label.clone());
+                    handlers.push(None);
+                }
+            }
+        }
+        ProbedPlanHandlers {
+            handlers,
+            failures: probe_failures,
+        }
+    }
+
     /// Parse a comma-separable `ALGO=HEX` flag value.
     fn parse_plan_check_tokens(value: &str, flag: &str) -> Result<BTreeMap<String, String>> {
         let tokens: Vec<String> = value
@@ -1344,6 +1366,17 @@ struct PlanFlagInputs {
     input_checks: Vec<String>,
     output_checks: Vec<String>,
     cached_input_checksums: BTreeMap<String, String>,
+}
+
+struct PlanAlignedMetadata {
+    basis_modes: Vec<Option<PatchBasisMode>>,
+    input_check_flags: Vec<Option<String>>,
+    output_check_flags: Vec<Option<String>>,
+}
+
+struct ProbedPlanHandlers {
+    handlers: Vec<Option<Arc<dyn rom_weaver_core::PatchHandler>>>,
+    failures: Vec<Option<String>>,
 }
 
 /// Shared input-level context threaded into independent-mode validation: the

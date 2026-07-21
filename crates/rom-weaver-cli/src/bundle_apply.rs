@@ -36,6 +36,14 @@ enum BundleApplySource {
     InputArchive(Box<LoadedBundleSource>),
 }
 
+struct BundleApplySourceContext {
+    mode: BundleApplySourceKind,
+    loaded: Box<LoadedBundleSource>,
+    archive_source: PathBuf,
+    bundle_dir: PathBuf,
+    bundle_base_url: Option<String>,
+}
+
 impl CliApp {
     /// Route a `patch apply` through its bundle when one is present. Mutates
     /// `args` into a fully-resolved plain command (input/patches/output merged)
@@ -50,74 +58,14 @@ impl CliApp {
         let Some(source) = self.detect_bundle_apply_source(args)? else {
             return Ok(None);
         };
-        let source_mode = match &source {
-            BundleApplySource::Explicit(_) => BundleApplySourceKind::Explicit,
-            BundleApplySource::InputIsBundle => BundleApplySourceKind::InputIsBundle,
-            BundleApplySource::InputArchive(_) => BundleApplySourceKind::InputArchive,
-        };
-
-        // The base-url slot is only ever populated natively (URL bundles are
-        // rejected on wasm), so the annotation keeps the wasm build inferable.
-        let (loaded, archive_source, bundle_dir, bundle_base_url): (_, _, _, Option<String>) =
-            match source {
-                BundleApplySource::Explicit(path) => {
-                    if let Some(url) = bundle_ref_as_url(&path) {
-                        // Natively the bundle itself may be a URL; its base then
-                        // anchors relative url entries. The browser prefetches
-                        // instead, so wasm rejects URL bundles outright.
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            return Err(bundle_url_unsupported("--bundle", url));
-                        }
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            let base = super::bundle_download::bundle_url_base(url);
-                            let local = self.download_bundle_url(url, "--bundle", context)?;
-                            let dir = parent_dir(&local);
-                            (
-                                Box::new(self.load_bundle_source(&local)?),
-                                local,
-                                dir,
-                                Some(base),
-                            )
-                        }
-                    } else {
-                        if !path.exists() {
-                            return Err(RomWeaverError::Validation(format!(
-                                "bundle path does not exist: `{}`",
-                                path.display()
-                            )));
-                        }
-                        let dir = parent_dir(&path);
-                        (Box::new(self.load_bundle_source(&path)?), path, dir, None)
-                    }
-                }
-                BundleApplySource::InputIsBundle => {
-                    if !args.input.exists() {
-                        return Err(RomWeaverError::Validation(format!(
-                            "input path does not exist: `{}`",
-                            args.input.display()
-                        )));
-                    }
-                    let dir = parent_dir(&args.input);
-                    (
-                        Box::new(self.load_bundle_source(&args.input)?),
-                        args.input.clone(),
-                        dir,
-                        None,
-                    )
-                }
-                BundleApplySource::InputArchive(loaded) => {
-                    (loaded, args.input.clone(), parent_dir(&args.input), None)
-                }
-            };
-        let bundle = parse_bundle_bytes(&loaded.bytes)?;
-        for warning in &loaded.warnings {
-            warn!(bundle = %archive_source.display(), "{warning}");
+        let source = self.load_bundle_apply_source(source, args, context)?;
+        let bundle = parse_bundle_bytes(&source.loaded.bytes)?;
+        for warning in &source.loaded.warnings {
+            warn!(bundle = %source.archive_source.display(), "{warning}");
         }
         trace!(
-            bundle = %archive_source.display(),
-            kind = ?loaded.kind,
+            bundle = %source.archive_source.display(),
+            kind = ?source.loaded.kind,
             patches = bundle.patches.len(),
             has_rom = bundle.rom.is_some(),
             explicit_patches = args.patches.len(),
@@ -129,78 +77,14 @@ impl CliApp {
         let mut extract_root: Option<PathBuf> = None;
         let mut checks: Vec<(String, FilenameRequirements)> = Vec::new();
 
-        if let Some(rom) = &bundle.rom {
-            if let Some(rom_checks) = &rom.checks {
-                checks.push((
-                    "bundle rom.checks".to_string(),
-                    FilenameRequirements {
-                        checksums: rom_checks.checksums.clone(),
-                        size: rom_checks.size,
-                    },
-                ));
-            }
-            match source_mode {
-                // With --bundle the positional input is the ROM; the
-                // bundle's own rom source is informational only.
-                BundleApplySourceKind::Explicit => {
-                    trace!("bundle rom source ignored: the apply input supplies the ROM directly");
-                }
-                _ => {
-                    if rom.url.is_some() || rom.path.is_some() {
-                        let resolved = self.resolve_bundle_apply_entry(
-                            rom.url.as_deref(),
-                            rom.path.as_deref(),
-                            &loaded,
-                            &archive_source,
-                            &bundle_dir,
-                            bundle_base_url.as_deref(),
-                            &mut extract_root,
-                            context,
-                            "rom",
-                        )?;
-                        if let Some(resolved) = resolved {
-                            args.input = resolved;
-                        }
-                    } else {
-                        // A checks-only rom entry means the user supplies the
-                        // ROM; the input we have IS the bundle (or its
-                        // archive), so there is nothing to patch. Surface the
-                        // expected ROM so the user knows what to supply.
-                        let mut coded = ValidationCodeError::new("bundle.rom.missing")
-                            .with_message(
-                                "bundle rom entry provides no source; pass the ROM as the apply input and the bundle via --bundle",
-                            );
-                        if let Some(name) = rom
-                            .name
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|name| !name.is_empty())
-                        {
-                            coded.push_field("expected_name", name.to_owned());
-                        }
-                        if let Some(rom_checks) = &rom.checks {
-                            if !rom_checks.checksums.is_empty() {
-                                coded.push_field(
-                                    "expected_checksums",
-                                    format_bundle_checksums(&rom_checks.checksums),
-                                );
-                            }
-                            if let Some(size) = rom_checks.size {
-                                coded.push_field("expected_size", size);
-                            }
-                        }
-                        return Err(RomWeaverError::ValidationCode(coded));
-                    }
-                }
-            }
-        } else if matches!(source_mode, BundleApplySourceKind::InputIsBundle) {
-            return Err(RomWeaverError::ValidationCode(
-                ValidationCodeError::new("bundle.rom.missing")
-                    .with_message(
-                        "bundle defines no rom entry; pass the ROM as the apply input and the bundle via --bundle",
-                    ),
-            ));
-        }
+        self.merge_bundle_apply_rom(
+            args,
+            &bundle,
+            &source,
+            &mut extract_root,
+            context,
+            &mut checks,
+        )?;
 
         // Explicit --patch flags replace the bundle patch list wholesale;
         // the bundle still contributes rom checks and output defaults.
@@ -223,10 +107,10 @@ impl CliApp {
                     .resolve_bundle_apply_entry(
                         entry.url.as_deref(),
                         entry.path.as_deref(),
-                        &loaded,
-                        &archive_source,
-                        &bundle_dir,
-                        bundle_base_url.as_deref(),
+                        &source.loaded,
+                        &source.archive_source,
+                        &source.bundle_dir,
+                        source.bundle_base_url.as_deref(),
                         &mut extract_root,
                         context,
                         &entry_label,
@@ -373,6 +257,149 @@ impl CliApp {
             output_checks,
             step_verifications,
         }))
+    }
+
+    fn merge_bundle_apply_rom(
+        &self,
+        args: &mut PatchApplyCommand,
+        bundle: &RomWeaverBundle,
+        source: &BundleApplySourceContext,
+        extract_root: &mut Option<PathBuf>,
+        context: &OperationContext,
+        checks: &mut Vec<(String, FilenameRequirements)>,
+    ) -> Result<()> {
+        let Some(rom) = &bundle.rom else {
+            if matches!(source.mode, BundleApplySourceKind::InputIsBundle) {
+                return Err(RomWeaverError::ValidationCode(
+                    ValidationCodeError::new("bundle.rom.missing").with_message(
+                        "bundle defines no rom entry; pass the ROM as the apply input and the bundle via --bundle",
+                    ),
+                ));
+            }
+            return Ok(());
+        };
+        if let Some(rom_checks) = &rom.checks {
+            checks.push((
+                "bundle rom.checks".to_string(),
+                FilenameRequirements {
+                    checksums: rom_checks.checksums.clone(),
+                    size: rom_checks.size,
+                },
+            ));
+        }
+        if matches!(source.mode, BundleApplySourceKind::Explicit) {
+            trace!("bundle rom source ignored: the apply input supplies the ROM directly");
+            return Ok(());
+        }
+        if rom.url.is_some() || rom.path.is_some() {
+            if let Some(resolved) = self.resolve_bundle_apply_entry(
+                rom.url.as_deref(),
+                rom.path.as_deref(),
+                &source.loaded,
+                &source.archive_source,
+                &source.bundle_dir,
+                source.bundle_base_url.as_deref(),
+                extract_root,
+                context,
+                "rom",
+            )? {
+                args.input = resolved;
+            }
+            return Ok(());
+        }
+
+        let mut coded = ValidationCodeError::new("bundle.rom.missing").with_message(
+            "bundle rom entry provides no source; pass the ROM as the apply input and the bundle via --bundle",
+        );
+        if let Some(name) = rom
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            coded.push_field("expected_name", name.to_owned());
+        }
+        if let Some(rom_checks) = &rom.checks {
+            if !rom_checks.checksums.is_empty() {
+                coded.push_field(
+                    "expected_checksums",
+                    format_bundle_checksums(&rom_checks.checksums),
+                );
+            }
+            if let Some(size) = rom_checks.size {
+                coded.push_field("expected_size", size);
+            }
+        }
+        Err(RomWeaverError::ValidationCode(coded))
+    }
+
+    fn load_bundle_apply_source(
+        &self,
+        source: BundleApplySource,
+        args: &PatchApplyCommand,
+        context: &OperationContext,
+    ) -> Result<BundleApplySourceContext> {
+        let mode = match &source {
+            BundleApplySource::Explicit(_) => BundleApplySourceKind::Explicit,
+            BundleApplySource::InputIsBundle => BundleApplySourceKind::InputIsBundle,
+            BundleApplySource::InputArchive(_) => BundleApplySourceKind::InputArchive,
+        };
+        let (loaded, archive_source, bundle_dir, bundle_base_url) = match source {
+            BundleApplySource::Explicit(path) => {
+                if let Some(url) = bundle_ref_as_url(&path) {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        return Err(bundle_url_unsupported("--bundle", url));
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let base = super::bundle_download::bundle_url_base(url);
+                        let local = self.download_bundle_url(url, "--bundle", context)?;
+                        let dir = parent_dir(&local);
+                        (
+                            Box::new(self.load_bundle_source(&local)?),
+                            local,
+                            dir,
+                            Some(base),
+                        )
+                    }
+                } else {
+                    if !path.exists() {
+                        return Err(RomWeaverError::Validation(format!(
+                            "bundle path does not exist: `{}`",
+                            path.display()
+                        )));
+                    }
+                    let dir = parent_dir(&path);
+                    (Box::new(self.load_bundle_source(&path)?), path, dir, None)
+                }
+            }
+            BundleApplySource::InputIsBundle => {
+                if !args.input.exists() {
+                    return Err(RomWeaverError::Validation(format!(
+                        "input path does not exist: `{}`",
+                        args.input.display()
+                    )));
+                }
+                let dir = parent_dir(&args.input);
+                (
+                    Box::new(self.load_bundle_source(&args.input)?),
+                    args.input.clone(),
+                    dir,
+                    None,
+                )
+            }
+            BundleApplySource::InputArchive(loaded) => {
+                (loaded, args.input.clone(), parent_dir(&args.input), None)
+            }
+        };
+        Ok(BundleApplySourceContext {
+            mode,
+            loaded,
+            archive_source,
+            bundle_dir,
+            bundle_base_url,
+        })
     }
 
     fn detect_bundle_apply_source(

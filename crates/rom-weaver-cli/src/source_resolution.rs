@@ -273,175 +273,8 @@ impl CliApp {
                 "auto-extract archive extraction completed"
             );
 
-            let all_candidates = self.collect_checksum_extract_candidates(&out_dir)?;
-            trace!(
-                source = %current_source.display(),
-                candidate_count = all_candidates.len(),
-                "auto-extract collected extracted candidates"
-            );
-            if all_candidates.is_empty() {
-                trace!(
-                    source = %current_source.display(),
-                    "auto-extract failed: extracted archive produced no candidates"
-                );
-                return Err(RomWeaverError::Validation(format!(
-                    "{} payload extraction produced no files for `{}`",
-                    labels.source_label,
-                    current_source.display()
-                )));
-            }
-
-            let candidates = if options.no_ignore {
-                all_candidates.clone()
-            } else {
-                let non_ignored = all_candidates
-                    .iter()
-                    .filter(|candidate| !candidate.ignored)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                trace!(
-                    source = %current_source.display(),
-                    candidate_count = all_candidates.len(),
-                    non_ignored_count = non_ignored.len(),
-                    "auto-extract applied candidate ignore filters"
-                );
-                if non_ignored.is_empty() {
-                    if self.interactive_selection_enabled {
-                        if let Some(selected) = self.prompt_for_checksum_candidate(
-                            &current_source,
-                            &all_candidates,
-                            labels.source_label,
-                            true,
-                        )? {
-                            trace!(
-                                source = %current_source.display(),
-                                selected = %selected.display_name,
-                                selected_path = %selected.source.display(),
-                                "auto-extract continued with interactively selected ignored candidate"
-                            );
-                            current_source = selected.source;
-                            if options.mode == AutoExtractMode::SingleStep {
-                                break;
-                            }
-                            continue;
-                        }
-                        trace!(
-                            source = %current_source.display(),
-                            "auto-extract failed: interactive selection cancelled while all candidates were ignored"
-                        );
-                        return Err(RomWeaverError::Validation(format!(
-                            "interactive selection was cancelled for `{}`",
-                            current_source.display()
-                        )));
-                    }
-                    trace!(
-                        source = %current_source.display(),
-                        "auto-extract failed: all candidates ignored and no interactive selection"
-                    );
-                    return Err(RomWeaverError::Validation(format!(
-                        "all extracted {} candidates from `{}` were ignored by default filters; rerun with --no-ignore or pass --select <pattern>",
-                        labels.source_label,
-                        current_source.display()
-                    )));
-                }
-                non_ignored
-            };
-            let candidates = if options.kind_filter.enabled() {
-                let mut payload_matches = Vec::new();
-                let mut container_fallback_matches = Vec::new();
-                for candidate in &candidates {
-                    if options
-                        .kind_filter
-                        .matches_payload_name(&candidate.display_name)
-                    {
-                        payload_matches.push(candidate.clone());
-                    } else if options
-                        .kind_filter
-                        .matches_container_fallback_name(&candidate.display_name)
-                    {
-                        container_fallback_matches.push(candidate.clone());
-                    }
-                }
-                let filtered = if payload_matches.is_empty() {
-                    container_fallback_matches
-                } else {
-                    payload_matches
-                };
-                trace!(
-                    source = %current_source.display(),
-                    candidate_count = candidates.len(),
-                    filtered_count = filtered.len(),
-                    filter = %options.kind_filter.flag_label(),
-                    "auto-extract applied candidate kind filters"
-                );
-                if filtered.is_empty() {
-                    let choices = Self::render_checksum_candidate_choices(&candidates);
-                    return Err(RomWeaverError::Validation(format!(
-                        "no extracted {} candidates from `{}` matched {}; candidates: {choices}",
-                        labels.source_label,
-                        current_source.display(),
-                        options.kind_filter.flag_label()
-                    )));
-                }
-                filtered
-            } else {
-                candidates
-            };
-            if candidates.len() > 1 {
-                if self.interactive_selection_enabled {
-                    if let Some(selected) = self.prompt_for_checksum_candidate(
-                        &current_source,
-                        &candidates,
-                        labels.source_label,
-                        false,
-                    )? {
-                        trace!(
-                            source = %current_source.display(),
-                            selected = %selected.display_name,
-                            selected_path = %selected.source.display(),
-                            "auto-extract continued with interactively selected candidate"
-                        );
-                        current_source = selected.source;
-                        if options.mode == AutoExtractMode::SingleStep {
-                            break;
-                        }
-                        continue;
-                    }
-                    trace!(
-                        source = %current_source.display(),
-                        candidate_count = candidates.len(),
-                        "auto-extract failed: interactive ambiguous candidate selection cancelled"
-                    );
-                    return Err(RomWeaverError::Validation(format!(
-                        "interactive selection was cancelled for `{}`",
-                        current_source.display()
-                    )));
-                }
-                let choices = candidates
-                    .iter()
-                    .map(|candidate| format!("`{}`", candidate.display_name))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                trace!(
-                    source = %current_source.display(),
-                    candidate_count = candidates.len(),
-                    candidates = %choices,
-                    "auto-extract failed: ambiguous candidates without interactive selection"
-                );
-                return Err(RomWeaverError::Validation(format!(
-                    "{} payload resolution is ambiguous for `{}`; candidates: {choices}. Pass --select <pattern> to choose one payload",
-                    labels.source_label,
-                    current_source.display()
-                )));
-            }
-
-            let Some(selected_candidate) = candidates.into_iter().next() else {
-                return Err(RomWeaverError::Validation(format!(
-                    "internal validation error: {} payload candidate set was empty for `{}`",
-                    labels.source_label,
-                    current_source.display()
-                )));
-            };
+            let selected_candidate =
+                self.resolve_auto_extract_candidate(&current_source, &out_dir, labels, options)?;
             trace!(
                 source = %current_source.display(),
                 selected = %selected_candidate.display_name,
@@ -466,6 +299,202 @@ impl CliApp {
             extracted_archives,
             cleanup_paths,
         })
+    }
+
+    fn resolve_auto_extract_candidate(
+        &self,
+        current_source: &Path,
+        out_dir: &Path,
+        labels: AutoExtractResolutionLabels<'_>,
+        options: AutoExtractResolutionOptions,
+    ) -> Result<ChecksumExtractCandidate> {
+        let all_candidates = self.collect_checksum_extract_candidates(out_dir)?;
+        trace!(
+            source = %current_source.display(),
+            candidate_count = all_candidates.len(),
+            "auto-extract collected extracted candidates"
+        );
+        if all_candidates.is_empty() {
+            trace!(
+                source = %current_source.display(),
+                "auto-extract failed: extracted archive produced no candidates"
+            );
+            return Err(RomWeaverError::Validation(format!(
+                "{} payload extraction produced no files for `{}`",
+                labels.source_label,
+                current_source.display()
+            )));
+        }
+
+        let (candidates, ignored_candidate_selected) = self
+            .filter_ignored_auto_extract_candidates(
+                current_source,
+                all_candidates,
+                labels.source_label,
+                options.no_ignore,
+            )?;
+        let candidates = if ignored_candidate_selected {
+            candidates
+        } else {
+            Self::filter_kind_auto_extract_candidates(
+                current_source,
+                candidates,
+                labels.source_label,
+                options.kind_filter,
+            )?
+        };
+        self.select_auto_extract_candidate(current_source, candidates, labels.source_label)
+    }
+
+    fn filter_ignored_auto_extract_candidates(
+        &self,
+        current_source: &Path,
+        all_candidates: Vec<ChecksumExtractCandidate>,
+        source_label: &str,
+        no_ignore: bool,
+    ) -> Result<(Vec<ChecksumExtractCandidate>, bool)> {
+        if no_ignore {
+            return Ok((all_candidates, false));
+        }
+        let non_ignored = all_candidates
+            .iter()
+            .filter(|candidate| !candidate.ignored)
+            .cloned()
+            .collect::<Vec<_>>();
+        trace!(
+            source = %current_source.display(),
+            candidate_count = all_candidates.len(),
+            non_ignored_count = non_ignored.len(),
+            "auto-extract applied candidate ignore filters"
+        );
+        if !non_ignored.is_empty() {
+            return Ok((non_ignored, false));
+        }
+        if self.interactive_selection_enabled {
+            if let Some(selected) = self.prompt_for_checksum_candidate(
+                current_source,
+                &all_candidates,
+                source_label,
+                true,
+            )? {
+                trace!(
+                    source = %current_source.display(),
+                    selected = %selected.display_name,
+                    selected_path = %selected.source.display(),
+                    "auto-extract continued with interactively selected ignored candidate"
+                );
+                return Ok((vec![selected], true));
+            }
+            trace!(
+                source = %current_source.display(),
+                "auto-extract failed: interactive selection cancelled while all candidates were ignored"
+            );
+            return Err(RomWeaverError::Validation(format!(
+                "interactive selection was cancelled for `{}`",
+                current_source.display()
+            )));
+        }
+        trace!(
+            source = %current_source.display(),
+            "auto-extract failed: all candidates ignored and no interactive selection"
+        );
+        Err(RomWeaverError::Validation(format!(
+            "all extracted {source_label} candidates from `{}` were ignored by default filters; rerun with --no-ignore or pass --select <pattern>",
+            current_source.display()
+        )))
+    }
+
+    fn filter_kind_auto_extract_candidates(
+        current_source: &Path,
+        candidates: Vec<ChecksumExtractCandidate>,
+        source_label: &str,
+        kind_filter: ArchiveEntryKindFilter,
+    ) -> Result<Vec<ChecksumExtractCandidate>> {
+        if !kind_filter.enabled() {
+            return Ok(candidates);
+        }
+        let mut payload_matches = Vec::new();
+        let mut container_fallback_matches = Vec::new();
+        for candidate in &candidates {
+            if kind_filter.matches_payload_name(&candidate.display_name) {
+                payload_matches.push(candidate.clone());
+            } else if kind_filter.matches_container_fallback_name(&candidate.display_name) {
+                container_fallback_matches.push(candidate.clone());
+            }
+        }
+        let filtered = if payload_matches.is_empty() {
+            container_fallback_matches
+        } else {
+            payload_matches
+        };
+        trace!(
+            source = %current_source.display(),
+            candidate_count = candidates.len(),
+            filtered_count = filtered.len(),
+            filter = %kind_filter.flag_label(),
+            "auto-extract applied candidate kind filters"
+        );
+        if filtered.is_empty() {
+            let choices = Self::render_checksum_candidate_choices(&candidates);
+            return Err(RomWeaverError::Validation(format!(
+                "no extracted {source_label} candidates from `{}` matched {}; candidates: {choices}",
+                current_source.display(),
+                kind_filter.flag_label()
+            )));
+        }
+        Ok(filtered)
+    }
+
+    fn select_auto_extract_candidate(
+        &self,
+        current_source: &Path,
+        candidates: Vec<ChecksumExtractCandidate>,
+        source_label: &str,
+    ) -> Result<ChecksumExtractCandidate> {
+        if candidates.len() == 1 {
+            return candidates.into_iter().next().ok_or_else(|| {
+                RomWeaverError::Validation(format!(
+                    "internal validation error: {source_label} payload candidate set was empty for `{}`",
+                    current_source.display()
+                ))
+            });
+        }
+        if self.interactive_selection_enabled {
+            if let Some(selected) = self.prompt_for_checksum_candidate(
+                current_source,
+                &candidates,
+                source_label,
+                false,
+            )? {
+                trace!(
+                    source = %current_source.display(),
+                    selected = %selected.display_name,
+                    selected_path = %selected.source.display(),
+                    "auto-extract continued with interactively selected candidate"
+                );
+                return Ok(selected);
+            }
+            trace!(
+                source = %current_source.display(),
+                candidate_count = candidates.len(),
+                "auto-extract failed: interactive ambiguous candidate selection cancelled"
+            );
+            return Err(RomWeaverError::Validation(format!(
+                "interactive selection was cancelled for `{}`",
+                current_source.display()
+            )));
+        }
+        let choices = Self::render_checksum_candidate_choices(&candidates);
+        trace!(
+            source = %current_source.display(),
+            candidate_count = candidates.len(),
+            candidates = %choices,
+            "auto-extract failed: ambiguous candidates without interactive selection"
+        );
+        Err(RomWeaverError::Validation(format!(
+            "{source_label} payload resolution is ambiguous for `{}`; candidates: {choices}. Pass --select <pattern> to choose one payload",
+            current_source.display()
+        )))
     }
 
     /// Best-effort removal of staged temp files/dirs. Missing paths and removal

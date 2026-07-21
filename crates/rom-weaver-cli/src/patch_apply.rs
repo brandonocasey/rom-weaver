@@ -2,6 +2,7 @@ use super::*;
 
 use super::bundle_apply::BundleApplyResolution;
 use super::bundle_parse::bundle_validation;
+use super::patch_apply_disc::DiscContext;
 use super::patch_commands::{
     DiscoveredPatchApplySidecars, PatchApplyProgressSink, PatchApplyProgressTracker,
     patch_progress_segment_start,
@@ -54,6 +55,58 @@ struct EmitBundleInputs {
     bases: Vec<PatchBasisMode>,
     output: Option<PathBuf>,
     threads: ThreadBudget,
+}
+
+struct PatchApplyPrepareChainInputs<'a> {
+    resolved_patches: &'a [(PathBuf, PathBuf)],
+    resolved_input: &'a Path,
+    is_disc: bool,
+    has_codes: bool,
+    patch_header: &'a [PatchApplyHeaderMode],
+    auto_evidence_available: bool,
+    n64_byte_order: &'a [PatchN64ByteOrderMode],
+    expected_input_checksums: &'a BTreeMap<String, String>,
+    cached_input_checksums: &'a BTreeMap<String, String>,
+    expected_input_size: Option<u64>,
+    repair_checksum: bool,
+    context: &'a OperationContext,
+    temp_paths: &'a mut Vec<PathBuf>,
+}
+
+struct PatchApplyPreparedChain {
+    chain_header_modes: Vec<PatchApplyHeaderMode>,
+    chain_n64_modes: Vec<PatchN64ByteOrderMode>,
+    checksum_verification_labels: Vec<String>,
+    apply_input: PathBuf,
+    header_state: ChainHeaderState,
+    n64_order: Option<N64ByteOrderTransform>,
+}
+
+struct PatchApplyDiscInputs<'a> {
+    input: &'a Path,
+    target: Option<&'a str>,
+    patches: &'a [PathBuf],
+    ignore_checksum_validation: bool,
+    any_explicit_strip: bool,
+    output_header: Option<PatchApplyOutputHeaderMode>,
+    repair_checksum: bool,
+    any_explicit_n64_transform: bool,
+    has_expected_output_checksums: bool,
+    context: &'a OperationContext,
+}
+
+struct PatchApplyReportDecoration<'a> {
+    patch_count: usize,
+    applied_formats: &'a [&'static str],
+    header_state: &'a ChainHeaderState,
+    extension_swap_note: Option<&'a str>,
+    n64_order: Option<N64ByteOrderTransform>,
+    chain_n64_modes: &'a [PatchN64ByteOrderMode],
+    extracted_archives: usize,
+    extracted_patch_notes: &'a [String],
+    expected_output_checksums: &'a BTreeMap<String, String>,
+    raw_ready_output: &'a Path,
+    context: &'a OperationContext,
 }
 
 impl CliApp {
@@ -217,33 +270,12 @@ impl CliApp {
                 ),
             );
         };
-        let alias_message = if paths_refer_to_same_file(&original_input, output)
-            || paths_refer_to_same_file(&args.input, output)
-        {
-            Some(
-                "patch apply input and output resolve to the same file; choose a different --output path"
-                    .to_string(),
-            )
-        } else if let Some(patch) = args
-            .patches
-            .iter()
-            .find(|patch| paths_refer_to_same_file(patch, output))
-        {
-            Some(format!(
-                "patch apply output and patch file `{}` resolve to the same file; choose a different --output path",
-                patch.display()
-            ))
-        } else {
-            local_bundle
-                .as_deref()
-                .filter(|bundle| paths_refer_to_same_file(bundle, output))
-                .map(|bundle| {
-                    format!(
-                        "patch apply output and bundle source `{}` resolve to the same file; choose a different --output path",
-                        bundle.display()
-                    )
-                })
-        };
+        let alias_message = Self::patch_apply_output_alias_message(
+            &args,
+            &original_input,
+            local_bundle.as_deref(),
+            output,
+        );
         if let Some(message) = alias_message {
             let thread_execution = self.context(args.threads).single_thread_execution();
             return self.finish(
@@ -260,12 +292,7 @@ impl CliApp {
         // A `.dcp` (Universal Dreamcast Patcher) patch rebuilds a GD-ROM data
         // track's filesystem rather than patching bytes, so it follows a
         // dedicated path.
-        if args.patches.iter().any(|patch| {
-            patch
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("dcp"))
-        }) {
+        if args.patches.iter().any(|patch| Self::is_dcp_patch(patch)) {
             return self.run_dcp_apply(args);
         }
         let rom_filter = args.rom_filter();
@@ -332,26 +359,7 @@ impl CliApp {
         let any_explicit_n64_transform = n64_byte_order.iter().any(|mode| mode.target().is_some());
         let auto_evidence_available =
             !any_explicit_n64_transform && codes.is_empty() && !ignore_checksum_validation;
-        let patch_header_mode = |index: usize| -> PatchApplyHeaderMode {
-            let mode = patch_header
-                .get(index)
-                .or_else(|| patch_header.last())
-                .copied()
-                .unwrap_or_default();
-            if mode == PatchApplyHeaderMode::Auto && !auto_evidence_available {
-                PatchApplyHeaderMode::Keep
-            } else {
-                mode
-            }
-        };
         let any_explicit_strip = patch_header.contains(&PatchApplyHeaderMode::Strip);
-        let n64_byte_order_mode = |index: usize| -> PatchN64ByteOrderMode {
-            n64_byte_order
-                .get(index)
-                .or_else(|| n64_byte_order.last())
-                .copied()
-                .unwrap_or_default()
-        };
         let output_header_mode = output_header.unwrap_or_default();
         if !codes.is_empty() && (any_explicit_strip || any_explicit_n64_transform) {
             return self.finish(
@@ -390,62 +398,21 @@ impl CliApp {
         ) {
             return self.finish("patch-apply", report);
         }
-        // A `.cue`/`.gdi` input is a multi-track disc: patch one referenced
-        // track (chosen by `--target`) and reassemble the full disc. Plain
-        // inputs return `None` here and follow the single-file path unchanged.
-        let patch_source_crc32 = if ignore_checksum_validation {
-            None
-        } else {
-            patches
-                .first()
-                .and_then(|patch| self.patch_source_crc32_for_auto_target(patch, &context))
+        let disc_context = match self.resolve_patch_apply_disc(PatchApplyDiscInputs {
+            input: &input,
+            target: target.as_deref(),
+            patches: &patches,
+            ignore_checksum_validation,
+            any_explicit_strip,
+            output_header,
+            repair_checksum,
+            any_explicit_n64_transform,
+            has_expected_output_checksums: !expected_output_checksums.is_empty(),
+            context: &context,
+        }) {
+            Ok(disc) => disc,
+            Err(report) => return self.finish("patch-apply", *report),
         };
-        let disc_context = match self.build_disc_context(
-            &input,
-            target.as_deref(),
-            patch_source_crc32.as_deref(),
-            &context,
-        ) {
-            Ok(context) => context,
-            Err(error) => {
-                return self.finish("patch-apply", fail("prepare", error.to_string()));
-            }
-        };
-        if disc_context.is_none() && target.is_some() {
-            return self.finish(
-                "patch-apply",
-                fail(
-                    "validate",
-                    "--target requires a disc-sheet (.cue/.gdi) input".to_string(),
-                ),
-            );
-        }
-        if disc_context.is_some()
-            && (any_explicit_strip
-                || output_header.is_some()
-                || repair_checksum
-                || any_explicit_n64_transform)
-        {
-            return self.finish(
-                "patch-apply",
-                fail(
-                    "validate",
-                    "disc patch apply (.cue/.gdi input) cannot be combined with --patch-header strip, --output-header, --repair-checksum, or --n64-byte-order".to_string(),
-                ),
-            );
-        }
-        // A disc reassembles into multiple track files (or a CHD), not a single
-        // checksummable artifact, so --expect-out could never reflect the
-        // patched disc; reject rather than fail validate misleadingly.
-        if disc_context.is_some() && !expected_output_checksums.is_empty() {
-            return self.finish(
-                "patch-apply",
-                fail(
-                    "validate",
-                    "disc patch apply (.cue/.gdi input) cannot be combined with --expect-out; the reassembled disc is emitted as multiple track files (or a CHD), not a single checksummable output".to_string(),
-                ),
-            );
-        }
         let is_disc = disc_context.is_some();
         trace!(
             is_disc,
@@ -651,429 +618,241 @@ impl CliApp {
             }
         }
 
-        let report = (|| {
-            if resolved_patches.is_empty() {
-                return OperationReport::failed(
-                    OperationFamily::Patch,
-                    None,
-                    "validate",
-                    "at least one --patch value or --code is required",
-                    probe_threads.clone(),
-                );
-            }
-
-            // One resolved mode per resolved patch. Disc apply and cheat-code runs
-            // never transform headers (explicit strip is rejected above; auto has
-            // no evidence), so they pin every step to keep.
-            let chain_header_modes: Vec<PatchApplyHeaderMode> = if is_disc || !codes.is_empty() {
-                vec![PatchApplyHeaderMode::Keep; resolved_patches.len()]
-            } else {
-                (0..resolved_patches.len()).map(patch_header_mode).collect()
-            };
-            let chain_n64_modes = (0..resolved_patches.len())
-                .map(n64_byte_order_mode)
-                .collect::<Vec<_>>();
-            // Patch 0 sets the initial header state (the strip happens on the
-            // resolved input, before checksum validation). Later patches transition
-            // the state inside the apply loop on their own evidence.
-            let strip_header = match chain_header_modes.first().copied().unwrap_or_default() {
-                PatchApplyHeaderMode::Strip => true,
-                PatchApplyHeaderMode::Keep => false,
-                PatchApplyHeaderMode::Auto => self.auto_header_strip_decision(
-                    &resolved_input,
-                    resolved_patches
-                        .first()
-                        .map(|(_, resolved)| resolved.as_path()),
-                    &expected_input_checksums,
-                    &cached_input_checksums,
-                    &context,
-                ),
-            };
-
-            let mut checksum_verification_labels = Vec::new();
-            let PreparedApplyInput {
-                apply_input,
-                stripped_header,
-                stripped_header_match,
-                mut n64_order,
-            } = match self.prepare_patch_apply_input(
-                &resolved_input,
-                strip_header,
-                chain_n64_modes.first().copied().unwrap_or_default(),
-                resolved_patches
-                    .first()
-                    .map(|(_, resolved)| resolved.as_path()),
-                expected_input_checksums.get("crc32").map(String::as_str),
-                repair_checksum,
-                &context,
-                &mut temp_paths,
-            ) {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    return OperationReport::failed(
-                        OperationFamily::Patch,
-                        None,
-                        "compat",
-                        error.to_string(),
-                        context.single_thread_execution(),
+        let report = if resolved_patches.is_empty() {
+            OperationReport::failed(
+                OperationFamily::Patch,
+                None,
+                "validate",
+                "at least one --patch value or --code is required",
+                probe_threads.clone(),
+            )
+        } else {
+            (|| {
+                let PatchApplyPreparedChain {
+                    chain_header_modes,
+                    chain_n64_modes,
+                    mut checksum_verification_labels,
+                    apply_input,
+                    mut header_state,
+                    mut n64_order,
+                } = match self.prepare_patch_apply_chain(PatchApplyPrepareChainInputs {
+                    resolved_patches: &resolved_patches,
+                    resolved_input: &resolved_input,
+                    is_disc,
+                    has_codes: !codes.is_empty(),
+                    patch_header: &patch_header,
+                    auto_evidence_available,
+                    n64_byte_order: &n64_byte_order,
+                    expected_input_checksums: &expected_input_checksums,
+                    cached_input_checksums: &cached_input_checksums,
+                    expected_input_size,
+                    repair_checksum,
+                    context: &context,
+                    temp_paths: &mut temp_paths,
+                }) {
+                    Ok(prepared) => prepared,
+                    Err(report) => return *report,
+                };
+                let (mut add_header, mut strip_output_header) =
+                    Self::resolve_patch_apply_output_header(
+                        &header_state,
+                        output_header_mode,
+                        output_header,
+                        is_disc,
                     );
-                }
-            };
-            let transformed_checksum_hints = BTreeMap::new();
-            let effective_checksum_hints = if apply_input == resolved_input {
-                &cached_input_checksums
-            } else {
-                &transformed_checksum_hints
-            };
-            if let Some(expected_size) = expected_input_size {
-                match Self::validate_patch_input_size(&apply_input, Some(expected_size), None) {
-                    Ok(label) => checksum_verification_labels.push(label),
-                    Err(error) => {
-                        return OperationReport::failed(
-                            OperationFamily::Patch,
-                            None,
-                            "validate",
-                            error.to_string(),
-                            context.single_thread_execution(),
-                        );
-                    }
-                }
-            }
-            if !expected_input_checksums.is_empty() {
-                self.emit_running(
-                    OperationLabel {
-                        command: "patch-apply",
-                        family: OperationFamily::Patch,
-                        format: None,
-                    },
-                    "validate",
-                    format!(
-                        "validating {} requested input checksum(s)",
-                        expected_input_checksums.len()
-                    ),
-                    None,
-                    context.single_thread_execution(),
-                );
-                match Self::validate_patch_apply_expected_checksums(
-                    &apply_input,
-                    &expected_input_checksums,
-                    effective_checksum_hints,
-                    "input",
-                    &context,
-                ) {
-                    Ok(label) => checksum_verification_labels.push(label),
-                    Err(error) => {
-                        return OperationReport::failed(
-                            OperationFamily::Patch,
-                            None,
-                            "validate",
-                            error.to_string(),
-                            context.single_thread_execution(),
-                        );
-                    }
-                }
-            }
 
-            let mut header_state = ChainHeaderState {
-                headerless: stripped_header_match.is_some(),
-                stripped_header,
-                stripped_header_match,
-            };
-            // On a headerless final state `--output-header` decides whether the
-            // stripped header returns: auto re-adds emulator-required headers
-            // (iNES/fwNES/LNX/A78) and NSRT-signed copier headers (real dump
-            // metadata, matching RUP's normalization) but drops junk copier
-            // headers (SNES/PCE/Game Doctor). Explicit strip removes a
-            // still-present header during finalize. Chains re-evaluate after the
-            // loop; they always stage, so the staging decision below holds.
-            let resolve_output_header = |state: &ChainHeaderState| -> (bool, bool) {
-                let add_header = state.headerless
-                    && state
-                        .stripped_header_match
-                        .as_ref()
-                        .is_some_and(|header_match| {
-                            let nsrt_metadata = state
-                                .stripped_header
-                                .as_deref()
-                                .is_some_and(header_has_nsrt_metadata);
-                            let add = match output_header_mode {
-                                PatchApplyOutputHeaderMode::Keep => true,
-                                PatchApplyOutputHeaderMode::Strip => false,
-                                PatchApplyOutputHeaderMode::Auto => {
-                                    header_match.header.retained_on_output() || nsrt_metadata
-                                }
-                            };
-                            debug!(
-                                header = ?header_match.header,
-                                output_header = ?output_header_mode,
-                                nsrt_metadata,
-                                add_header = add,
-                                "output header resolved for stripped input"
-                            );
-                            add
-                        });
-                let strip_output_header = output_header == Some(PatchApplyOutputHeaderMode::Strip)
-                    && !state.headerless
-                    && !is_disc;
-                (add_header, strip_output_header)
-            };
-            let (mut add_header, mut strip_output_header) = resolve_output_header(&header_state);
-
-            let patch_count = resolved_patches.len();
-            // Single-patch runs know the final header state up front, so the
-            // extension swap lands before any writer chooses a path - no
-            // post-hoc rename, which the browser VFS cannot observe. Chains
-            // re-evaluate after the loop (they always stage).
-            let mut extension_swap_note: Option<String> = None;
-            if patch_count == 1
-                && !is_disc
-                && let Some((swapped_output, note)) = Self::resolve_header_extension_swap(
-                    &output,
-                    &header_state,
-                    add_header,
-                    strip_output_header,
-                    &resolved_input,
-                )
-            {
-                output = swapped_output;
-                extension_swap_note = Some(note);
-            }
-            // Disc inputs reject the header/N64 transforms and do their own
-            // reassembly, so they skip the standard compat finalize; they always
-            // stage the patched track before reassembling the full disc.
-            let requires_compat_finalize = !is_disc
-                && (add_header
-                    || strip_output_header
-                    || repair_checksum
-                    || n64_order.is_some_and(|order| order.from != order.to)
-                    || patch_count > 1);
-            let needs_staged_output =
-                is_disc || requires_compat_finalize || compression_options.enabled;
-            let staged_output = if needs_staged_output {
-                if compression_options.enabled {
-                    match Self::patch_apply_raw_output_path(
-                        &output,
-                        &resolved_input,
-                        &context,
-                        "patch-apply-output-staged",
-                        &mut temp_paths,
-                    ) {
-                        Ok(path) => path,
-                        Err(error) => {
-                            return OperationReport::failed(
-                                OperationFamily::Patch,
-                                None,
-                                "prepare",
-                                error.to_string(),
-                                context.single_thread_execution(),
-                            );
-                        }
-                    }
-                } else {
-                    let staged_path = context
-                        .temp_paths()
-                        .next_path("patch-apply-output-staged", Some("bin"));
-                    temp_paths.push(staged_path.clone());
-                    staged_path
-                }
-            } else {
-                output.clone()
-            };
-
-            // Resolve every step's input basis (CLI flag > bundle declaration >
-            // inference against the prepared input) and verify declared
-            // base-basis steps against the base once, before the chain runs.
-            let step_verifications = match self.resolve_apply_step_verifications(
-                &resolved_patches,
-                usize::from(!codes.is_empty()),
-                bundle_resolution
-                    .as_ref()
-                    .map(|resolution| resolution.step_verifications.clone())
-                    .unwrap_or_default(),
-                &patch_basis,
-                &apply_input,
-                &context,
-            ) {
-                Ok(steps) => steps,
-                Err(error) => {
-                    return OperationReport::failed(
-                        OperationFamily::Patch,
-                        None,
-                        "validate",
-                        error.to_string(),
-                        context.single_thread_execution(),
-                    );
-                }
-            };
-
-            let PatchApplyLoopOutcome {
-                mut report,
-                applied_formats,
-            } = match self.run_patch_apply_loop(
-                &resolved_patches,
-                apply_input,
-                &staged_output,
-                &chain_header_modes,
-                &step_verifications,
-                &mut header_state,
-                &chain_n64_modes,
-                &mut n64_order,
-                &probe_threads,
-                &context,
-                &mut temp_paths,
-            ) {
-                Ok(outcome) => outcome,
-                Err(report) => return *report,
-            };
-
-            // Mid-chain transitions may have changed the header state; chains always
-            // stage (patch_count > 1 forces the compat finalize), so re-resolving the
-            // output-header decision and the extension swap here still lands before
-            // the finalize copy chooses its destination.
-            if patch_count > 1 {
-                (add_header, strip_output_header) = resolve_output_header(&header_state);
-                if report.status == OperationStatus::Succeeded
+                let patch_count = resolved_patches.len();
+                // Single-patch runs know the final header state up front, so the
+                // extension swap lands before any writer chooses a path - no
+                // post-hoc rename, which the browser VFS cannot observe. Chains
+                // re-evaluate after the loop (they always stage).
+                let mut extension_swap_note: Option<String> = None;
+                if patch_count == 1
                     && !is_disc
                     && let Some((swapped_output, note)) = Self::resolve_header_extension_swap(
                         &output,
                         &header_state,
                         add_header,
                         strip_output_header,
-                        &staged_output,
+                        &resolved_input,
                     )
                 {
                     output = swapped_output;
                     extension_swap_note = Some(note);
                 }
-            }
-            let mut terminal_output_path = output.clone();
-
-            let mut raw_ready_output = staged_output.clone();
-            let mut disc_track_overrides: Vec<CreateInputOverride> = Vec::new();
-            if report.status == OperationStatus::Succeeded && requires_compat_finalize {
-                self.emit_running(
-                    OperationLabel {
-                        command: "patch-apply",
-                        family: OperationFamily::Patch,
-                        format: applied_formats.last().copied(),
-                    },
-                    "compat",
-                    if add_header || repair_checksum {
-                        "finalizing compatibility output transforms"
-                    } else {
-                        "finalizing multi-patch output"
-                    },
-                    None,
-                    context.single_thread_execution(),
-                );
-                let finalized_output_path = if compression_options.enabled {
-                    match Self::patch_apply_raw_output_path(
-                        &output,
-                        &resolved_input,
-                        &context,
-                        "patch-apply-output-raw-final",
-                        &mut temp_paths,
-                    ) {
-                        Ok(path) => path,
-                        Err(error) => {
-                            return OperationReport::failed(
-                                OperationFamily::Patch,
-                                report.format.clone(),
-                                "prepare",
-                                error.to_string(),
-                                context.single_thread_execution(),
-                            );
-                        }
-                    }
-                } else {
-                    output.clone()
-                };
-                match Self::finalize_patch_apply_output(
-                    &staged_output,
-                    &finalized_output_path,
-                    add_header,
-                    header_state.stripped_header.as_deref(),
-                    strip_output_header,
-                    repair_checksum,
-                    Some(&resolved_input),
-                    n64_order.filter(|order| order.from != order.to),
+                // Disc inputs reject the header/N64 transforms and do their own
+                // reassembly, so they skip the standard compat finalize; they always
+                // stage the patched track before reassembling the full disc.
+                let requires_compat_finalize = !is_disc
+                    && (add_header
+                        || strip_output_header
+                        || repair_checksum
+                        || n64_order.is_some_and(|order| order.from != order.to)
+                        || patch_count > 1);
+                let needs_staged_output =
+                    is_disc || requires_compat_finalize || compression_options.enabled;
+                let staged_output = match Self::patch_apply_staged_output(
+                    &output,
+                    &resolved_input,
+                    needs_staged_output,
+                    compression_options.enabled,
+                    &context,
+                    &mut temp_paths,
                 ) {
-                    Ok(finalized) => {
-                        raw_ready_output = finalized_output_path;
-                        if finalized.repaired_profiles.len() == 1 {
-                            report.label = format!(
-                                "{}; repaired checksum ({})",
-                                report.label, finalized.repaired_profiles[0]
-                            );
-                        } else if !finalized.repaired_profiles.is_empty() {
-                            report.label = format!(
-                                "{}; repaired headers ({})",
-                                report.label,
-                                finalized.repaired_profiles.join(", ")
-                            );
-                        }
-                        if let Some(repair_warning) = finalized.repair_warning {
-                            report.label = format!("{}; warning={repair_warning}", report.label);
-                        }
-                    }
+                    Ok(path) => path,
                     Err(error) => {
                         return OperationReport::failed(
                             OperationFamily::Patch,
-                            report.format.clone(),
-                            "compat",
+                            None,
+                            "prepare",
                             error.to_string(),
                             context.single_thread_execution(),
                         );
                     }
-                }
-            }
+                };
 
-            // Reassemble the full disc from the patched track. When compressing,
-            // only the patched track is redirected via a create override
-            // (untouched tracks read in place; no whole-disc scratch copy) and
-            // the original sheet feeds the compressor below. With --no-compress
-            // the disc is staged and written beside `output` directly.
-            if is_disc && report.status == OperationStatus::Succeeded {
-                let disc = disc_context
-                    .as_ref()
-                    .expect("disc context present for disc input");
-                for warning in &disc.warnings {
-                    report.label = format!("{}; {}", report.label, warning);
-                }
-                if compression_options.enabled {
-                    match self.disc_target_track_override(disc, &staged_output, &mut temp_paths) {
-                        Ok(track_override) => disc_track_overrides.push(track_override),
-                        Err(error) => {
-                            return OperationReport::failed(
-                                OperationFamily::Patch,
-                                report.format.clone(),
-                                "prepare",
-                                error.to_string(),
-                                context.single_thread_execution(),
-                            );
-                        }
+                // Resolve every step's input basis (CLI flag > bundle declaration >
+                // inference against the prepared input) and verify declared
+                // base-basis steps against the base once, before the chain runs.
+                let step_verifications = match self.resolve_apply_step_verifications(
+                    &resolved_patches,
+                    usize::from(!codes.is_empty()),
+                    bundle_resolution
+                        .as_ref()
+                        .map(|resolution| resolution.step_verifications.clone())
+                        .unwrap_or_default(),
+                    &patch_basis,
+                    &apply_input,
+                    &context,
+                ) {
+                    Ok(steps) => steps,
+                    Err(error) => {
+                        return OperationReport::failed(
+                            OperationFamily::Patch,
+                            None,
+                            "validate",
+                            error.to_string(),
+                            context.single_thread_execution(),
+                        );
                     }
-                    raw_ready_output = self.primary_disc_sheet(disc).to_path_buf();
-                } else {
-                    let staged_sheet = match self.stage_disc_directory(
-                        disc,
-                        &staged_output,
-                        &context,
-                        &mut temp_paths,
-                    ) {
-                        Ok(path) => path,
-                        Err(error) => {
-                            return OperationReport::failed(
-                                OperationFamily::Patch,
-                                report.format.clone(),
-                                "prepare",
-                                error.to_string(),
-                                context.single_thread_execution(),
-                            );
+                };
+
+                let PatchApplyLoopOutcome {
+                    mut report,
+                    applied_formats,
+                } = match self.run_patch_apply_loop(
+                    &resolved_patches,
+                    apply_input,
+                    &staged_output,
+                    &chain_header_modes,
+                    &step_verifications,
+                    &mut header_state,
+                    &chain_n64_modes,
+                    &mut n64_order,
+                    &probe_threads,
+                    &context,
+                    &mut temp_paths,
+                ) {
+                    Ok(outcome) => outcome,
+                    Err(report) => return *report,
+                };
+
+                // Mid-chain transitions may have changed the header state; chains always
+                // stage (patch_count > 1 forces the compat finalize), so re-resolving the
+                // output-header decision and the extension swap here still lands before
+                // the finalize copy chooses its destination.
+                if patch_count > 1 {
+                    (add_header, strip_output_header) = Self::resolve_patch_apply_output_header(
+                        &header_state,
+                        output_header_mode,
+                        output_header,
+                        is_disc,
+                    );
+                    if report.status == OperationStatus::Succeeded
+                        && !is_disc
+                        && let Some((swapped_output, note)) = Self::resolve_header_extension_swap(
+                            &output,
+                            &header_state,
+                            add_header,
+                            strip_output_header,
+                            &staged_output,
+                        )
+                    {
+                        output = swapped_output;
+                        extension_swap_note = Some(note);
+                    }
+                }
+                let mut terminal_output_path = output.clone();
+
+                let mut raw_ready_output = staged_output.clone();
+                let mut disc_track_overrides: Vec<CreateInputOverride> = Vec::new();
+                if report.status == OperationStatus::Succeeded && requires_compat_finalize {
+                    self.emit_running(
+                        OperationLabel {
+                            command: "patch-apply",
+                            family: OperationFamily::Patch,
+                            format: applied_formats.last().copied(),
+                        },
+                        "compat",
+                        if add_header || repair_checksum {
+                            "finalizing compatibility output transforms"
+                        } else {
+                            "finalizing multi-patch output"
+                        },
+                        None,
+                        context.single_thread_execution(),
+                    );
+                    let finalized_output_path = if compression_options.enabled {
+                        match Self::patch_apply_raw_output_path(
+                            &output,
+                            &resolved_input,
+                            &context,
+                            "patch-apply-output-raw-final",
+                            &mut temp_paths,
+                        ) {
+                            Ok(path) => path,
+                            Err(error) => {
+                                return OperationReport::failed(
+                                    OperationFamily::Patch,
+                                    report.format.clone(),
+                                    "prepare",
+                                    error.to_string(),
+                                    context.single_thread_execution(),
+                                );
+                            }
                         }
+                    } else {
+                        output.clone()
                     };
-                    match self.write_disc_output(disc, &staged_sheet, &output) {
-                        Ok(note) => report.label = format!("{}; {}", report.label, note),
+                    match Self::finalize_patch_apply_output(
+                        &staged_output,
+                        &finalized_output_path,
+                        add_header,
+                        header_state.stripped_header.as_deref(),
+                        strip_output_header,
+                        repair_checksum,
+                        Some(&resolved_input),
+                        n64_order.filter(|order| order.from != order.to),
+                    ) {
+                        Ok(finalized) => {
+                            raw_ready_output = finalized_output_path;
+                            if finalized.repaired_profiles.len() == 1 {
+                                report.label = format!(
+                                    "{}; repaired checksum ({})",
+                                    report.label, finalized.repaired_profiles[0]
+                                );
+                            } else if !finalized.repaired_profiles.is_empty() {
+                                report.label = format!(
+                                    "{}; repaired headers ({})",
+                                    report.label,
+                                    finalized.repaired_profiles.join(", ")
+                                );
+                            }
+                            if let Some(repair_warning) = finalized.repair_warning {
+                                report.label =
+                                    format!("{}; warning={repair_warning}", report.label);
+                            }
+                        }
                         Err(error) => {
                             return OperationReport::failed(
                                 OperationFamily::Patch,
@@ -1084,118 +863,96 @@ impl CliApp {
                             );
                         }
                     }
-                    raw_ready_output = staged_sheet;
                 }
-            }
 
-            if patch_count > 1 {
-                report.label = format!(
-                    "applied {patch_count} patches sequentially ({}); {}",
-                    applied_formats.join(" -> "),
-                    report.label
-                );
-            }
-            if let Some(header_match) = header_state.stripped_header_match.as_ref() {
-                report.label = format!(
-                    "{}; input header stripped ({} bytes, {})",
-                    report.label,
-                    header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES),
-                    header_match.profile_name()
-                );
-            }
-            if let Some(note) = extension_swap_note.as_deref() {
-                report.label = format!("{}; {note}", report.label);
-            }
-            if n64_order.is_some() {
-                let modes = chain_n64_modes
-                    .iter()
-                    .map(|mode| mode.id())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                report.label = format!("{}; n64_byte_order={modes}", report.label);
-            }
-            if extracted_archives > 0 {
-                report.label = format!(
-                    "{}; patch apply input source resolved via {extracted_archives} container extract step(s)",
-                    report.label
-                );
-            }
-            if !extracted_patch_notes.is_empty() {
-                report.label = format!("{}; {}", report.label, extracted_patch_notes.join("; "));
-            }
-            if report.status == OperationStatus::Succeeded && !expected_output_checksums.is_empty()
-            {
-                self.emit_running(
-                    OperationLabel {
-                        command: "patch-apply",
-                        family: OperationFamily::Patch,
-                        format: report.format.as_deref(),
+                // Reassemble the full disc from the patched track. When compressing,
+                // only the patched track is redirected via a create override
+                // (untouched tracks read in place; no whole-disc scratch copy) and
+                // the original sheet feeds the compressor below. With --no-compress
+                // the disc is staged and written beside `output` directly.
+                if is_disc && report.status == OperationStatus::Succeeded {
+                    let disc = disc_context
+                        .as_ref()
+                        .expect("disc context present for disc input");
+                    for warning in &disc.warnings {
+                        report.label = format!("{}; {}", report.label, warning);
+                    }
+                    if compression_options.enabled {
+                        match self.disc_target_track_override(disc, &staged_output, &mut temp_paths)
+                        {
+                            Ok(track_override) => disc_track_overrides.push(track_override),
+                            Err(error) => {
+                                return OperationReport::failed(
+                                    OperationFamily::Patch,
+                                    report.format.clone(),
+                                    "prepare",
+                                    error.to_string(),
+                                    context.single_thread_execution(),
+                                );
+                            }
+                        }
+                        raw_ready_output = self.primary_disc_sheet(disc).to_path_buf();
+                    } else {
+                        let staged_sheet = match self.stage_disc_directory(
+                            disc,
+                            &staged_output,
+                            &context,
+                            &mut temp_paths,
+                        ) {
+                            Ok(path) => path,
+                            Err(error) => {
+                                return OperationReport::failed(
+                                    OperationFamily::Patch,
+                                    report.format.clone(),
+                                    "prepare",
+                                    error.to_string(),
+                                    context.single_thread_execution(),
+                                );
+                            }
+                        };
+                        match self.write_disc_output(disc, &staged_sheet, &output) {
+                            Ok(note) => report.label = format!("{}; {}", report.label, note),
+                            Err(error) => {
+                                return OperationReport::failed(
+                                    OperationFamily::Patch,
+                                    report.format.clone(),
+                                    "compat",
+                                    error.to_string(),
+                                    context.single_thread_execution(),
+                                );
+                            }
+                        }
+                        raw_ready_output = staged_sheet;
+                    }
+                }
+
+                if let Err(error_report) = self.decorate_patch_apply_report(
+                    &mut report,
+                    &mut checksum_verification_labels,
+                    PatchApplyReportDecoration {
+                        patch_count,
+                        applied_formats: &applied_formats,
+                        header_state: &header_state,
+                        extension_swap_note: extension_swap_note.as_deref(),
+                        n64_order,
+                        chain_n64_modes: &chain_n64_modes,
+                        extracted_archives,
+                        extracted_patch_notes: &extracted_patch_notes,
+                        expected_output_checksums: &expected_output_checksums,
+                        raw_ready_output: &raw_ready_output,
+                        context: &context,
                     },
-                    "validate",
-                    format!(
-                        "validating {} requested output checksum(s)",
-                        expected_output_checksums.len()
-                    ),
-                    None,
-                    context.single_thread_execution(),
-                );
-                match Self::validate_patch_apply_expected_checksums(
-                    &raw_ready_output,
-                    &expected_output_checksums,
-                    &BTreeMap::new(),
-                    "output",
-                    &context,
                 ) {
-                    Ok(label) => checksum_verification_labels.push(label),
-                    Err(error) => {
-                        return OperationReport::failed(
-                            OperationFamily::Patch,
-                            report.format.clone(),
-                            "validate",
-                            error.to_string(),
-                            context.single_thread_execution(),
-                        );
-                    }
+                    return *error_report;
                 }
-            }
 
-            if !checksum_verification_labels.is_empty() {
-                report.label = format!(
-                    "{}; {}",
-                    report.label,
-                    checksum_verification_labels.join("; ")
-                );
-            }
-
-            if report.status == OperationStatus::Succeeded && compression_options.enabled {
-                let compression_plan = match self.resolve_patch_apply_compression_plan(
-                    &output,
-                    &resolved_input,
-                    &compression_options,
-                ) {
-                    Ok(plan) => plan,
-                    Err(error) => {
-                        return OperationReport::failed(
-                            OperationFamily::Patch,
-                            report.format.clone(),
-                            "compress",
-                            error.to_string(),
-                            context.single_thread_execution(),
-                        );
-                    }
-                };
-                // Disc: feed the original sheet to the compressor; the patched
-                // track is redirected via `disc_track_overrides`. Plain inputs
-                // stage the payload under an archive-appropriate entry name.
-                let archive_input = if is_disc {
-                    raw_ready_output.clone()
-                } else {
-                    match Self::stage_patch_apply_archive_input(
-                        &raw_ready_output,
+                if report.status == OperationStatus::Succeeded && compression_options.enabled {
+                    let compression_plan = match self.resolve_patch_apply_compression_plan(
                         &output,
                         &resolved_input,
+                        &compression_options,
                     ) {
-                        Ok(path) => path,
+                        Ok(plan) => plan,
                         Err(error) => {
                             return OperationReport::failed(
                                 OperationFamily::Patch,
@@ -1205,79 +962,102 @@ impl CliApp {
                                 context.single_thread_execution(),
                             );
                         }
-                    }
-                };
-                let running_label = format!(
-                    "compressing patched output as {} (codec={})",
-                    compression_plan.format,
-                    compression_plan.codec.as_deref().unwrap_or("default")
-                );
-                let (compress_report, codec_label) = match self.run_patch_apply_compression(
-                    &compression_plan,
-                    vec![archive_input],
-                    &disc_track_overrides,
-                    running_label,
-                    &context,
-                ) {
-                    Ok(result) => result,
-                    Err(error) => {
+                    };
+                    // Disc: feed the original sheet to the compressor; the patched
+                    // track is redirected via `disc_track_overrides`. Plain inputs
+                    // stage the payload under an archive-appropriate entry name.
+                    let archive_input = if is_disc {
+                        raw_ready_output.clone()
+                    } else {
+                        match Self::stage_patch_apply_archive_input(
+                            &raw_ready_output,
+                            &output,
+                            &resolved_input,
+                        ) {
+                            Ok(path) => path,
+                            Err(error) => {
+                                return OperationReport::failed(
+                                    OperationFamily::Patch,
+                                    report.format.clone(),
+                                    "compress",
+                                    error.to_string(),
+                                    context.single_thread_execution(),
+                                );
+                            }
+                        }
+                    };
+                    let running_label = format!(
+                        "compressing patched output as {} (codec={})",
+                        compression_plan.format,
+                        compression_plan.codec.as_deref().unwrap_or("default")
+                    );
+                    let (compress_report, codec_label) = match self.run_patch_apply_compression(
+                        &compression_plan,
+                        vec![archive_input],
+                        &disc_track_overrides,
+                        running_label,
+                        &context,
+                    ) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            return OperationReport::failed(
+                                OperationFamily::Patch,
+                                report.format.clone(),
+                                "compress",
+                                error.to_string(),
+                                context.single_thread_execution(),
+                            );
+                        }
+                    };
+                    if compress_report.status != OperationStatus::Succeeded {
                         return OperationReport::failed(
                             OperationFamily::Patch,
                             report.format.clone(),
                             "compress",
-                            error.to_string(),
-                            context.single_thread_execution(),
+                            format!("patch output compression failed: {}", compress_report.label),
+                            compress_report.thread_execution,
                         );
                     }
-                };
-                if compress_report.status != OperationStatus::Succeeded {
-                    return OperationReport::failed(
-                        OperationFamily::Patch,
-                        report.format.clone(),
-                        "compress",
-                        format!("patch output compression failed: {}", compress_report.label),
-                        compress_report.thread_execution,
+                    let extension_note = if compression_plan.extension_appended {
+                        "; output extension appended to match container format"
+                    } else {
+                        ""
+                    };
+                    let warning_note = compression_plan
+                        .warning
+                        .as_deref()
+                        .map(|warning| format!("; warning: {warning}"))
+                        .unwrap_or_default();
+                    report.stage = "compress".to_string();
+                    report.label = format!(
+                        "{}; patch output compressed as {} (codec={}, path=`{}`; {}){}{}",
+                        report.label,
+                        compression_plan.format,
+                        codec_label,
+                        compression_plan.output_path.display(),
+                        compression_plan.note,
+                        extension_note,
+                        warning_note
+                    );
+                    terminal_output_path = compression_plan.output_path;
+                }
+
+                if report.status == OperationStatus::Succeeded {
+                    let kind_hint = if compression_options.enabled {
+                        Some("archive")
+                    } else {
+                        None
+                    };
+                    report = Self::attach_emitted_files_details(
+                        report,
+                        vec![terminal_output_path],
+                        kind_hint,
                     );
                 }
-                let extension_note = if compression_plan.extension_appended {
-                    "; output extension appended to match container format"
-                } else {
-                    ""
-                };
-                let warning_note = compression_plan
-                    .warning
-                    .as_deref()
-                    .map(|warning| format!("; warning: {warning}"))
-                    .unwrap_or_default();
-                report.stage = "compress".to_string();
-                report.label = format!(
-                    "{}; patch output compressed as {} (codec={}, path=`{}`; {}){}{}",
-                    report.label,
-                    compression_plan.format,
-                    codec_label,
-                    compression_plan.output_path.display(),
-                    compression_plan.note,
-                    extension_note,
-                    warning_note
-                );
-                terminal_output_path = compression_plan.output_path;
-            }
 
-            if report.status == OperationStatus::Succeeded {
-                let kind_hint = if compression_options.enabled {
-                    Some("archive")
-                } else {
-                    None
-                };
-                report = Self::attach_emitted_files_details(
-                    report,
-                    vec![terminal_output_path],
-                    kind_hint,
-                );
-            }
-
-            report
-        })();
+                report
+            })()
+        };
 
         let mut report = report;
         if report.status == OperationStatus::Succeeded
@@ -1288,6 +1068,430 @@ impl CliApp {
 
         Self::cleanup_temp_paths(&temp_paths);
         self.finish("patch-apply", report)
+    }
+
+    fn patch_apply_output_alias_message(
+        args: &PatchApplyCommand,
+        original_input: &Path,
+        local_bundle: Option<&Path>,
+        output: &Path,
+    ) -> Option<String> {
+        if paths_refer_to_same_file(original_input, output)
+            || paths_refer_to_same_file(&args.input, output)
+        {
+            return Some(
+                "patch apply input and output resolve to the same file; choose a different --output path"
+                    .to_string(),
+            );
+        }
+        if let Some(patch) = args
+            .patches
+            .iter()
+            .find(|patch| paths_refer_to_same_file(patch, output))
+        {
+            return Some(format!(
+                "patch apply output and patch file `{}` resolve to the same file; choose a different --output path",
+                patch.display()
+            ));
+        }
+        local_bundle
+            .filter(|bundle| paths_refer_to_same_file(bundle, output))
+            .map(|bundle| {
+                format!(
+                    "patch apply output and bundle source `{}` resolve to the same file; choose a different --output path",
+                    bundle.display()
+                )
+            })
+    }
+
+    fn prepare_patch_apply_chain(
+        &self,
+        inputs: PatchApplyPrepareChainInputs<'_>,
+    ) -> std::result::Result<PatchApplyPreparedChain, Box<OperationReport>> {
+        let PatchApplyPrepareChainInputs {
+            resolved_patches,
+            resolved_input,
+            is_disc,
+            has_codes,
+            patch_header,
+            auto_evidence_available,
+            n64_byte_order,
+            expected_input_checksums,
+            cached_input_checksums,
+            expected_input_size,
+            repair_checksum,
+            context,
+            temp_paths,
+        } = inputs;
+        let chain_header_modes = if is_disc || has_codes {
+            vec![PatchApplyHeaderMode::Keep; resolved_patches.len()]
+        } else {
+            (0..resolved_patches.len())
+                .map(|index| {
+                    let mode = patch_header
+                        .get(index)
+                        .or_else(|| patch_header.last())
+                        .copied()
+                        .unwrap_or_default();
+                    if mode == PatchApplyHeaderMode::Auto && !auto_evidence_available {
+                        PatchApplyHeaderMode::Keep
+                    } else {
+                        mode
+                    }
+                })
+                .collect()
+        };
+        let chain_n64_modes = (0..resolved_patches.len())
+            .map(|index| {
+                n64_byte_order
+                    .get(index)
+                    .or_else(|| n64_byte_order.last())
+                    .copied()
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        let first_patch = resolved_patches
+            .first()
+            .map(|(_, resolved)| resolved.as_path());
+        let strip_header = match chain_header_modes.first().copied().unwrap_or_default() {
+            PatchApplyHeaderMode::Strip => true,
+            PatchApplyHeaderMode::Keep => false,
+            PatchApplyHeaderMode::Auto => self.auto_header_strip_decision(
+                resolved_input,
+                first_patch,
+                expected_input_checksums,
+                cached_input_checksums,
+                context,
+            ),
+        };
+        let PreparedApplyInput {
+            apply_input,
+            stripped_header,
+            stripped_header_match,
+            n64_order,
+        } = self
+            .prepare_patch_apply_input(
+                resolved_input,
+                strip_header,
+                chain_n64_modes.first().copied().unwrap_or_default(),
+                first_patch,
+                expected_input_checksums.get("crc32").map(String::as_str),
+                repair_checksum,
+                context,
+                temp_paths,
+            )
+            .map_err(|error| {
+                Box::new(OperationReport::failed(
+                    OperationFamily::Patch,
+                    None,
+                    "compat",
+                    error.to_string(),
+                    context.single_thread_execution(),
+                ))
+            })?;
+
+        let mut checksum_verification_labels = Vec::new();
+        if let Some(expected_size) = expected_input_size {
+            let label = Self::validate_patch_input_size(&apply_input, Some(expected_size), None)
+                .map_err(|error| {
+                    Box::new(OperationReport::failed(
+                        OperationFamily::Patch,
+                        None,
+                        "validate",
+                        error.to_string(),
+                        context.single_thread_execution(),
+                    ))
+                })?;
+            checksum_verification_labels.push(label);
+        }
+        if !expected_input_checksums.is_empty() {
+            self.emit_running(
+                OperationLabel {
+                    command: "patch-apply",
+                    family: OperationFamily::Patch,
+                    format: None,
+                },
+                "validate",
+                format!(
+                    "validating {} requested input checksum(s)",
+                    expected_input_checksums.len()
+                ),
+                None,
+                context.single_thread_execution(),
+            );
+            let transformed_checksum_hints = BTreeMap::new();
+            let effective_checksum_hints = if apply_input == resolved_input {
+                cached_input_checksums
+            } else {
+                &transformed_checksum_hints
+            };
+            let label = Self::validate_patch_apply_expected_checksums(
+                &apply_input,
+                expected_input_checksums,
+                effective_checksum_hints,
+                "input",
+                context,
+            )
+            .map_err(|error| {
+                Box::new(OperationReport::failed(
+                    OperationFamily::Patch,
+                    None,
+                    "validate",
+                    error.to_string(),
+                    context.single_thread_execution(),
+                ))
+            })?;
+            checksum_verification_labels.push(label);
+        }
+
+        let header_state = ChainHeaderState {
+            headerless: stripped_header_match.is_some(),
+            stripped_header,
+            stripped_header_match,
+        };
+        Ok(PatchApplyPreparedChain {
+            chain_header_modes,
+            chain_n64_modes,
+            checksum_verification_labels,
+            apply_input,
+            header_state,
+            n64_order,
+        })
+    }
+
+    fn resolve_patch_apply_disc(
+        &self,
+        inputs: PatchApplyDiscInputs<'_>,
+    ) -> std::result::Result<Option<DiscContext>, Box<OperationReport>> {
+        let patch_source_crc32 = if inputs.ignore_checksum_validation {
+            None
+        } else {
+            inputs
+                .patches
+                .first()
+                .and_then(|patch| self.patch_source_crc32_for_auto_target(patch, inputs.context))
+        };
+        let disc = self
+            .build_disc_context(
+                inputs.input,
+                inputs.target,
+                patch_source_crc32.as_deref(),
+                inputs.context,
+            )
+            .map_err(|error| {
+                Box::new(OperationReport::failed(
+                    OperationFamily::Patch,
+                    None,
+                    "prepare",
+                    error.to_string(),
+                    inputs.context.single_thread_execution(),
+                ))
+            })?;
+        if disc.is_none() && inputs.target.is_some() {
+            return Err(Box::new(OperationReport::failed(
+                OperationFamily::Patch,
+                None,
+                "validate",
+                "--target requires a disc-sheet (.cue/.gdi) input",
+                inputs.context.single_thread_execution(),
+            )));
+        }
+        if disc.is_some()
+            && (inputs.any_explicit_strip
+                || inputs.output_header.is_some()
+                || inputs.repair_checksum
+                || inputs.any_explicit_n64_transform)
+        {
+            return Err(Box::new(OperationReport::failed(
+                OperationFamily::Patch,
+                None,
+                "validate",
+                "disc patch apply (.cue/.gdi input) cannot be combined with --patch-header strip, --output-header, --repair-checksum, or --n64-byte-order",
+                inputs.context.single_thread_execution(),
+            )));
+        }
+        // A disc reassembles into multiple track files (or a CHD), not a single
+        // checksummable artifact, so --expect-out could never reflect the
+        // patched disc; reject rather than fail validate misleadingly.
+        if disc.is_some() && inputs.has_expected_output_checksums {
+            return Err(Box::new(OperationReport::failed(
+                OperationFamily::Patch,
+                None,
+                "validate",
+                "disc patch apply (.cue/.gdi input) cannot be combined with --expect-out; the reassembled disc is emitted as multiple track files (or a CHD), not a single checksummable output",
+                inputs.context.single_thread_execution(),
+            )));
+        }
+        Ok(disc)
+    }
+
+    fn resolve_patch_apply_output_header(
+        state: &ChainHeaderState,
+        output_header_mode: PatchApplyOutputHeaderMode,
+        output_header: Option<PatchApplyOutputHeaderMode>,
+        is_disc: bool,
+    ) -> (bool, bool) {
+        // On a headerless final state `--output-header` decides whether the
+        // stripped header returns: auto re-adds emulator-required headers
+        // (iNES/fwNES/LNX/A78) and NSRT-signed copier headers (real dump
+        // metadata, matching RUP's normalization) but drops junk copier
+        // headers (SNES/PCE/Game Doctor). Explicit strip removes a
+        // still-present header during finalize. Chains re-evaluate after the
+        // loop; they always stage, so the staging decision below holds.
+        let add_header = state.headerless
+            && state
+                .stripped_header_match
+                .as_ref()
+                .is_some_and(|header_match| {
+                    let nsrt_metadata = state
+                        .stripped_header
+                        .as_deref()
+                        .is_some_and(header_has_nsrt_metadata);
+                    let add = match output_header_mode {
+                        PatchApplyOutputHeaderMode::Keep => true,
+                        PatchApplyOutputHeaderMode::Strip => false,
+                        PatchApplyOutputHeaderMode::Auto => {
+                            header_match.header.retained_on_output() || nsrt_metadata
+                        }
+                    };
+                    debug!(
+                        header = ?header_match.header,
+                        output_header = ?output_header_mode,
+                        nsrt_metadata,
+                        add_header = add,
+                        "output header resolved for stripped input"
+                    );
+                    add
+                });
+        let strip_output_header = output_header == Some(PatchApplyOutputHeaderMode::Strip)
+            && !state.headerless
+            && !is_disc;
+        (add_header, strip_output_header)
+    }
+
+    fn decorate_patch_apply_report(
+        &self,
+        report: &mut OperationReport,
+        checksum_verification_labels: &mut Vec<String>,
+        decoration: PatchApplyReportDecoration<'_>,
+    ) -> std::result::Result<(), Box<OperationReport>> {
+        if decoration.patch_count > 1 {
+            report.label = format!(
+                "applied {} patches sequentially ({}); {}",
+                decoration.patch_count,
+                decoration.applied_formats.join(" -> "),
+                report.label
+            );
+        }
+        if let Some(header_match) = decoration.header_state.stripped_header_match.as_ref() {
+            report.label = format!(
+                "{}; input header stripped ({} bytes, {})",
+                report.label,
+                header_match.stripped_bytes().unwrap_or(ROM_HEADER_BYTES),
+                header_match.profile_name()
+            );
+        }
+        if let Some(note) = decoration.extension_swap_note {
+            report.label = format!("{}; {note}", report.label);
+        }
+        if decoration.n64_order.is_some() {
+            let modes = decoration
+                .chain_n64_modes
+                .iter()
+                .map(|mode| mode.id())
+                .collect::<Vec<_>>()
+                .join(",");
+            report.label = format!("{}; n64_byte_order={modes}", report.label);
+        }
+        if decoration.extracted_archives > 0 {
+            report.label = format!(
+                "{}; patch apply input source resolved via {} container extract step(s)",
+                report.label, decoration.extracted_archives
+            );
+        }
+        if !decoration.extracted_patch_notes.is_empty() {
+            report.label = format!(
+                "{}; {}",
+                report.label,
+                decoration.extracted_patch_notes.join("; ")
+            );
+        }
+        if report.status == OperationStatus::Succeeded
+            && !decoration.expected_output_checksums.is_empty()
+        {
+            self.emit_running(
+                OperationLabel {
+                    command: "patch-apply",
+                    family: OperationFamily::Patch,
+                    format: report.format.as_deref(),
+                },
+                "validate",
+                format!(
+                    "validating {} requested output checksum(s)",
+                    decoration.expected_output_checksums.len()
+                ),
+                None,
+                decoration.context.single_thread_execution(),
+            );
+            let label = Self::validate_patch_apply_expected_checksums(
+                decoration.raw_ready_output,
+                decoration.expected_output_checksums,
+                &BTreeMap::new(),
+                "output",
+                decoration.context,
+            )
+            .map_err(|error| {
+                Box::new(OperationReport::failed(
+                    OperationFamily::Patch,
+                    report.format.clone(),
+                    "validate",
+                    error.to_string(),
+                    decoration.context.single_thread_execution(),
+                ))
+            })?;
+            checksum_verification_labels.push(label);
+        }
+        if !checksum_verification_labels.is_empty() {
+            report.label = format!(
+                "{}; {}",
+                report.label,
+                checksum_verification_labels.join("; ")
+            );
+        }
+        Ok(())
+    }
+
+    fn patch_apply_staged_output(
+        output: &Path,
+        resolved_input: &Path,
+        needs_staged_output: bool,
+        compression_enabled: bool,
+        context: &OperationContext,
+        temp_paths: &mut Vec<PathBuf>,
+    ) -> Result<PathBuf> {
+        if !needs_staged_output {
+            return Ok(output.to_path_buf());
+        }
+        if compression_enabled {
+            return Self::patch_apply_raw_output_path(
+                output,
+                resolved_input,
+                context,
+                "patch-apply-output-staged",
+                temp_paths,
+            );
+        }
+        let staged_path = context
+            .temp_paths()
+            .next_path("patch-apply-output-staged", Some("bin"));
+        temp_paths.push(staged_path.clone());
+        Ok(staged_path)
+    }
+
+    fn is_dcp_patch(path: &Path) -> bool {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("dcp"))
     }
 
     /// Decide `--patch-header auto` for the FIRST patch: strip the detected
