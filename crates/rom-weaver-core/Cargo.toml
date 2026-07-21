@@ -1,12 +1,12 @@
 [package]
 name = "rom-weaver-core"
 authors.workspace = true
-description.workspace = true
+description = "Foundation crate for rom-weaver: format registry traits, the shared RomWeaverError type, I/O and thread-planning helpers, and standalone codec helpers."
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 publish.workspace = true
-readme.workspace = true
+readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true

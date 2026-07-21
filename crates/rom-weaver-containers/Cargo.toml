@@ -1,12 +1,12 @@
 [package]
 name = "rom-weaver-containers"
 authors.workspace = true
-description.workspace = true
+description = "Archive and disc-image handlers for rom-weaver: probe, list, and extract ZIP, 7z, RAR, tar, CHD, RVZ, Z3DS, CSO, PBP, GCZ, WIA, WBFS, XISO and more; create ZIP, 7z, CHD, RVZ, and Z3DS."
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 publish.workspace = true
-readme.workspace = true
+readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
