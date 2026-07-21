@@ -53,7 +53,9 @@ test("manual output name is used for patchless apply download", async () => {
     const applyState = await waitForApplyOutcome();
     expect(applyState).not.toBeNull();
     expect(applyState?.kind, applyState && "errorText" in applyState ? applyState.errorText : "").toBe("download");
-    expect(downloadNames.at(-1)).toBe("custom-output.bin");
+    // The outcome state flips before the download anchor is clicked, so poll
+    // rather than assuming the click has already been recorded.
+    await expect.poll(() => downloadNames.at(-1)).toBe("custom-output.bin");
   } finally {
     HTMLAnchorElement.prototype.click = originalAnchorClick;
   }
@@ -188,7 +190,7 @@ test("editing output name after download is ready keeps the prepared output", as
 
     await clickApplyButton();
 
-    expect(downloadNames.at(-1)).toBe("renamed-output.bin");
+    await expect.poll(() => downloadNames.at(-1)).toBe("renamed-output.bin");
     expect(downloadBlobTypes.at(-1)).toBe("application/octet-stream");
     expect(applyCompleteCount).toBe(1);
   } finally {

@@ -126,7 +126,9 @@ test("direct CUE plus BIN upload can output CHD from the CUE source", async () =
     const applyState = await waitForApplyOutcome();
     expect(applyState).not.toBeNull();
     expect(applyState?.kind, applyState && "errorText" in applyState ? applyState.errorText : "").toBe("download");
-    expect(downloadNames.at(-1)).toBe("direct-disc.chd");
+    // The outcome state flips before the download anchor is clicked, so poll
+    // rather than assuming the click has already been recorded.
+    await expect.poll(() => downloadNames.at(-1)).toBe("direct-disc.chd");
   } finally {
     HTMLAnchorElement.prototype.click = originalAnchorClick;
   }
