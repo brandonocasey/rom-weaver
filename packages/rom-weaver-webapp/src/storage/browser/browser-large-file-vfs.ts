@@ -36,6 +36,13 @@ const getDestinationFileHandle = (destination: unknown) => {
   return null;
 };
 
+// OPFS refuses `removeEntry` with NoModificationAllowedError while any SyncAccessHandle is still
+// open on the entry. The proxy closes a run's handles asynchronously once the run reports done, so
+// cleanup that fires immediately after a run can land inside that window - observed closing within
+// ~500ms. Retry across it rather than leaking the entry; the first attempt succeeds in the common
+// case, so this costs nothing when nothing holds the file.
+const REMOVE_BUSY_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800];
+
 const createBrowserLargeFileVfs = (options: BrowserLargeFileVfsOptions = {}): LargeFileVfs => {
   const rootPath = normalizeVfsRoot(options.rootPath);
   const navigatorObject = options.navigatorObject || globalThis.navigator;
@@ -198,9 +205,21 @@ const createBrowserLargeFileVfs = (options: BrowserLargeFileVfsOptions = {}): La
       try {
         for (const segment of segments)
           currentDirectory = await currentDirectory.getDirectoryHandle(segment, { create: false });
-        await currentDirectory.removeEntry(fileName, { recursive: true });
       } catch {
-        /* ignore cleanup errors */
+        return; // A missing parent directory means there is nothing left to remove.
+      }
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await currentDirectory.removeEntry(fileName, { recursive: true });
+          return;
+        } catch (error) {
+          // Only "a handle is still open" is worth waiting on. Anything else (already gone, denied)
+          // is not going to change on retry, so keep the historical ignore-cleanup-errors behavior.
+          const busy = (error as { name?: string } | null)?.name === "NoModificationAllowedError";
+          const delay = REMOVE_BUSY_RETRY_DELAYS_MS[attempt];
+          if (!(busy && delay !== undefined)) return;
+          await wait(delay);
+        }
       }
     },
     rootPath,
