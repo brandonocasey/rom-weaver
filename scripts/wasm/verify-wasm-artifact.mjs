@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Verify a built production WASM artifact set before anything downstream
-// consumes it.
+// Verify a built WASM artifact set before anything downstream consumes it.
 //
 // Two failure modes this exists to catch early:
 //
@@ -18,23 +17,22 @@
 // js-types reflection that would expose limits is not available - so the
 // import section is decoded directly.
 //
-// Usage: node scripts/wasm/verify-wasm-artifact.mjs <wasm-dir>
+// Usage: node scripts/wasm/verify-wasm-artifact.mjs <wasm-dir> [--dev]
 
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const EXPECTED_MAX_PAGES = 65536; // 4 GiB / 64 KiB
-const REQUIRED_FILES = [
-  "rom-weaver-app.wasm",
-  "rom-weaver-app.wasm.br",
-  "NOTICE",
-  "THIRD_PARTY_LICENSES.md",
-];
+const BASE_REQUIRED_FILES = ["rom-weaver-app.wasm", "NOTICE", "THIRD_PARTY_LICENSES.md"];
 const REQUIRED_DIRS = ["third_party/licenses"];
 
 const EXTERNAL_KIND = { func: 0, table: 1, memory: 2, global: 3 };
 const LIMITS_HAS_MAX = 0x01;
 const LIMITS_SHARED = 0x02;
+
+export function getRequiredArtifactFiles({ dev = false } = {}) {
+  return dev ? BASE_REQUIRED_FILES : [...BASE_REQUIRED_FILES, "rom-weaver-app.wasm.br"];
+}
 
 class Reader {
   constructor(buf) {
@@ -129,12 +127,13 @@ function fail(message) {
 function main() {
   const dir = process.argv[2];
   if (!dir) {
-    console.error("usage: verify-wasm-artifact.mjs <wasm-dir>");
+    console.error("usage: verify-wasm-artifact.mjs <wasm-dir> [--dev]");
     process.exit(2);
   }
+  const dev = process.argv[3] === "--dev";
 
   let ok = true;
-  for (const name of REQUIRED_FILES) {
+  for (const name of getRequiredArtifactFiles({ dev })) {
     const file = path.join(dir, name);
     let size = 0;
     try {

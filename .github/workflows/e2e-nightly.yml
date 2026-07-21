@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
+      MISE_DISABLE_TOOLS: >-
+        aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -23,10 +25,36 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      # This is a scheduled run with no concurrent CI run to borrow an artifact
-      # from, and `run-e2e.mjs` drives the *dev* wasm build (no wasm-opt/brotli)
-      # rather than the production module CI publishes - so it keeps building
-      # its own. Only the setup boilerplate is shared.
+      # The nightly suite uses a dev wasm module (no wasm-opt/brotli), so it
+      # cannot consume CI's production artifact. Cache the exact dev build
+      # separately; unchanged scheduled runs skip its ~6.5 minute compile.
+      - name: Compute dev wasm cache key
+        id: wasm-key
+        env:
+          CACHE_EPOCH: "1"
+        run: |
+          basis=$(git ls-tree HEAD -- \
+            crates vendor/libarchive Cargo.lock Cargo.toml .cargo scripts/wasm \
+            scripts/gen-third-party-licenses.mjs .mise.toml \
+            .github/actions/setup-build-env)
+          if [ -z "$basis" ]; then
+            echo "::error::wasm cache basis resolved to nothing - refusing to key a cache on an empty tree"
+            exit 1
+          fi
+          hash=$(printf '%s\n' "$basis" | sha256sum | cut -d' ' -f1)
+          echo "key=wasm-dev-${{ runner.os }}-e${CACHE_EPOCH}-${hash}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore development WASM module
+        id: wasm-cache
+        uses: actions/cache@v6
+        with:
+          key: ${{ steps.wasm-key.outputs.key }}
+          path: |
+            packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm
+            packages/rom-weaver-webapp/src/wasm/NOTICE
+            packages/rom-weaver-webapp/src/wasm/THIRD_PARTY_LICENSES.md
+            packages/rom-weaver-webapp/src/wasm/third_party
+
       - uses: ./.github/actions/setup-build-env
         with:
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
@@ -36,7 +64,13 @@ jobs:
           playwright: "true"
           playwright-browsers: chromium webkit
 
+      - name: Verify cached development WASM artifact
+        if: steps.wasm-cache.outputs.cache-hit == 'true'
+        run: node scripts/wasm/verify-wasm-artifact.mjs packages/rom-weaver-webapp/src/wasm --dev
+
       - name: Run exhaustive E2E matrix
+        env:
+          ROM_WEAVER_E2E_SKIP_WASM_BUILD: ${{ steps.wasm-cache.outputs.cache-hit == 'true' && '1' || '0' }}
         run: mise run test-e2e-nightly
 
       - name: Verify production service worker and offline isolation

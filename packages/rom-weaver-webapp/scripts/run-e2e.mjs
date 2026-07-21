@@ -42,8 +42,10 @@ const main = async () => {
   const profile = PROFILES[process.argv[2]];
   if (!profile) throw new Error(`unknown E2E profile: ${process.argv[2] ?? "(missing)"}`);
 
-  const build = await run(profile.buildName, "mise", ["run", "build-wasm"], REPO_ROOT);
-  if (build.code !== 0) process.exit(build.code);
+  if (process.env.ROM_WEAVER_E2E_SKIP_WASM_BUILD !== "1") {
+    const build = await run(profile.buildName, "mise", ["run", "build-wasm"], REPO_ROOT);
+    if (build.code !== 0) process.exit(build.code);
+  }
 
   const startedAt = Date.now();
   const results = await Promise.all(profile.suites.map(([name, command, args, cwd]) => run(name, command, args, cwd)));
