@@ -116,6 +116,23 @@ const normalizeThreadCount = (value: ThreadCountInput, options?: ThreadCountOpti
   return Math.max(1, Math.min(options.max ?? 64, parsed));
 };
 
+const validateCodecValue = (codecValue: string, options: CodecListOptions) => {
+  const parsed = parseCompressionCodecEntry(codecValue, { allowLevel: options.allowLevels === true });
+  if (!parsed) {
+    throwCodecError(codecValue, options);
+    return;
+  }
+  const codec = parsed.codec;
+  if (typeof options.isValidCodec === "function" && !options.isValidCodec(codec)) throwCodecError(codec, options);
+  if (!parsed.hasLevel) return;
+  const level = parsed.level ?? Number.NaN;
+  const invalidLevel =
+    !Number.isFinite(level) || (typeof options.isValidLevel === "function" && !options.isValidLevel(codec, level));
+  if (!invalidLevel) return;
+  if (typeof options.getLevelErrorMessage === "function") throw new Error(options.getLevelErrorMessage(codec, level));
+  throw new Error(options.failureMessage || `Unsupported ${options.label || "codec"} level: ${codecValue}`);
+};
+
 const normalizeCodecList = (codecs: CodecLevelInput, options?: CodecListOptions): string => {
   options = options || {};
   if (codecs === undefined || codecs === null || codecs === "") return "";
@@ -131,24 +148,7 @@ const normalizeCodecList = (codecs: CodecLevelInput, options?: CodecListOptions)
 
   for (const item of normalized) {
     const codecValue = item || "";
-    const parsed = parseCompressionCodecEntry(codecValue, { allowLevel: options.allowLevels === true });
-    if (parsed) {
-      const codec = parsed.codec;
-      if (typeof options.isValidCodec === "function" && !options.isValidCodec(codec)) throwCodecError(codec, options);
-      if (parsed.hasLevel) {
-        const level = parsed.level ?? Number.NaN;
-        if (
-          !Number.isFinite(level) ||
-          (typeof options.isValidLevel === "function" && !options.isValidLevel(codec, level))
-        ) {
-          if (typeof options.getLevelErrorMessage === "function")
-            throw new Error(options.getLevelErrorMessage(codec, level));
-          throw new Error(options.failureMessage || `Unsupported ${options.label || "codec"} level: ${codecValue}`);
-        }
-      }
-    } else {
-      throwCodecError(codecValue, options);
-    }
+    validateCodecValue(codecValue, options);
   }
   return normalized.join(",");
 };
@@ -167,33 +167,38 @@ const normalizeCodecListWithFallback = (
   }
 };
 
+const throwInvalidInteger = (options: IntegerRangeOptions, value: IntegerInput): never => {
+  throw new Error(options.failureMessage || `Invalid value: ${value}`);
+};
+
+const getEmptyIntegerValue = (value: IntegerInput, options: IntegerRangeOptions): number | null => {
+  if (options.allowEmpty) return null;
+  if (options.fallback !== undefined) return typeof options.fallback === "number" ? options.fallback : null;
+  return throwInvalidInteger(options, value);
+};
+
 const parseIntegerInRange = (value: IntegerInput, options: IntegerRangeOptions): number | null => {
   const raw = String(value ?? "").trim();
-  if (!raw) {
-    if (options.allowEmpty) return null;
-    if (options.fallback !== undefined) return typeof options.fallback === "number" ? options.fallback : null;
-    throw new Error(options.failureMessage || `Invalid value: ${value}`);
-  }
-  if (!INTEGER_STRING_REGEX.test(raw)) throw new Error(options.failureMessage || `Invalid value: ${value}`);
+  if (!raw) return getEmptyIntegerValue(value, options);
+  if (!INTEGER_STRING_REGEX.test(raw)) return throwInvalidInteger(options, value);
   const parsed = parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) throw new Error(options.failureMessage || `Invalid value: ${value}`);
-  if (options.requireExactString && String(parsed) !== raw)
-    throw new Error(options.failureMessage || `Invalid value: ${value}`);
-  if (parsed < options.min || parsed > options.max)
-    throw new Error(options.failureMessage || `Invalid value: ${value}`);
+  if (
+    !Number.isFinite(parsed) ||
+    (options.requireExactString && String(parsed) !== raw) ||
+    parsed < options.min ||
+    parsed > options.max
+  )
+    return throwInvalidInteger(options, value);
   return parsed;
 };
 
 const normalizeIntegerInRange = (value: IntegerInput, options: IntegerRangeOptions): number | "" | null => {
   const raw = String(value ?? "").trim();
-  if (!raw) {
-    if (options.allowEmpty) return options.fallback === undefined ? null : options.fallback;
-    return options.fallback === undefined ? null : options.fallback;
-  }
+  const fallback = options.fallback === undefined ? null : options.fallback;
+  if (!raw) return fallback;
   const parsed = parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return options.fallback === undefined ? null : options.fallback;
-  if (options.requireExactString && String(parsed) !== raw)
-    return options.fallback === undefined ? null : options.fallback;
+  if (options.requireExactString && String(parsed) !== raw) return fallback;
   return Math.max(options.min, Math.min(options.max, parsed));
 };
 

@@ -79,6 +79,27 @@ const getCompressionCodecLevelMin = (fieldKey: string, codec: string): number | 
   return getCompressionCodecOptions(fieldKey).find((option) => option.value === normalizedCodec)?.minLevel ?? null;
 };
 
+const validateCompressionCodecEntry = (
+  rawEntry: string,
+  options: readonly CompressionCodecOption[],
+  validValues: string[],
+  label: string,
+): CompressionCodecValidation | null => {
+  const entry = rawEntry.trim();
+  if (!entry) return null;
+  const parsed = parseCompressionCodecEntry(entry);
+  if (!parsed) return { message: `${label} must be a codec or codec:level.`, valid: false };
+  const option = options.find((candidate) => candidate.value === parsed.codec);
+  if (!option) return { message: `${label} valid values: ${validValues.join(", ")}.`, valid: false };
+  if (!parsed.hasLevel) return null;
+  if (option.maxLevel === null) return { message: `${parsed.codec} does not use a level.`, valid: false };
+  const minLevel = option.minLevel ?? 0;
+  const level = parsed.level ?? Number.NaN;
+  return Number.isFinite(level) && level >= minLevel && level <= option.maxLevel
+    ? null
+    : { message: `${parsed.codec} level must be ${minLevel}-${option.maxLevel}.`, valid: false };
+};
+
 const validateCompressionCodecValue = (
   value: string | null | undefined,
   options: readonly CompressionCodecOption[],
@@ -103,29 +124,8 @@ const validateCompressionCodecValue = (
   }
 
   for (const rawEntry of entries) {
-    const entry = rawEntry.trim();
-    if (!entry) continue;
-
-    const parsed = parseCompressionCodecEntry(entry);
-    if (!parsed) {
-      return { message: `${label} must be a codec or codec:level.`, valid: false };
-    }
-
-    const codec = parsed.codec;
-    const option = validOptions.find((candidate) => candidate.value === codec);
-    if (!option) {
-      return { message: `${label} valid values: ${validValues.join(", ")}.`, valid: false };
-    }
-
-    if (!parsed.hasLevel) continue;
-    if (option.maxLevel === null) {
-      return { message: `${codec} does not use a level.`, valid: false };
-    }
-    const minLevel = option.minLevel ?? 0;
-    const level = parsed.level ?? Number.NaN;
-    if (!Number.isFinite(level) || level < minLevel || level > option.maxLevel) {
-      return { message: `${codec} level must be ${minLevel}-${option.maxLevel}.`, valid: false };
-    }
+    const error = validateCompressionCodecEntry(rawEntry, validOptions, validValues, label);
+    if (error) return error;
   }
 
   return { valid: true };

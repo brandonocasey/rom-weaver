@@ -82,6 +82,15 @@ const isFileSystemFileHandleLike = (value: unknown): value is FileSystemFileHand
 
 const decodeUtf8 = (data: Uint8Array) => new TextDecoder().decode(data);
 
+const isSupportedPatchFileSource = (value: unknown): value is DirectSource =>
+  (typeof value === "string" && !!value.trim()) ||
+  (typeof Blob !== "undefined" && value instanceof Blob) ||
+  isFileSystemFileHandleLike(value) ||
+  isVfsFileRef(value);
+
+const normalizeSourceSize = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : undefined;
+
 const normalizePatchFileSourceRef = (
   sourceRef: PatchFileSourceRef | null | undefined,
   fallbackFileName?: string,
@@ -89,26 +98,13 @@ const normalizePatchFileSourceRef = (
 ): PatchFileSourceRef | null => {
   if (!(sourceRef && typeof sourceRef === "object")) return null;
   const directSource = sourceRef.source;
-  if (
-    !(
-      (typeof directSource === "string" && directSource.trim()) ||
-      (typeof Blob !== "undefined" && directSource instanceof Blob) ||
-      isFileSystemFileHandleLike(directSource) ||
-      isVfsFileRef(directSource)
-    )
-  )
-    return null;
+  if (!isSupportedPatchFileSource(directSource)) return null;
   const fileName =
     (typeof sourceRef.fileName === "string" && sourceRef.fileName) ||
     (typeof fallbackFileName === "string" && fallbackFileName) ||
     "";
   if (!fileName) return null;
-  const size =
-    typeof sourceRef.size === "number" && Number.isFinite(sourceRef.size)
-      ? Math.max(0, Math.floor(sourceRef.size))
-      : typeof fallbackSize === "number" && Number.isFinite(fallbackSize)
-        ? Math.max(0, Math.floor(fallbackSize))
-        : undefined;
+  const size = normalizeSourceSize(sourceRef.size) ?? normalizeSourceSize(fallbackSize);
   return {
     ...(size === undefined ? {} : { size }),
     fileName,
@@ -199,6 +195,36 @@ const createPatchFileSourceRef = (fileName: string, source: DirectSource, size?:
   source,
 });
 
+const getExternalPatchFileSource = ({
+  blob,
+  directSource,
+  fileHandle,
+  fileName,
+  filePath,
+  options,
+  size,
+  sourceRef,
+}: {
+  blob?: Blob | null;
+  directSource?: DirectSource | null;
+  fileHandle?: FileSystemFileHandle | null;
+  fileName: string;
+  filePath?: string | null;
+  options: ExternalSourceOptions;
+  size?: number;
+  sourceRef?: PatchFileSourceRef | null;
+}): PatchFileSourceRef | null => {
+  if (options.preferDirectBrowserSource && fileHandle) return createPatchFileSourceRef(fileName, fileHandle, size);
+  if (blob && options.preferDirectBrowserSource)
+    return createPatchFileSourceRef(fileName, toNamedBlobSource(blob, fileName), size);
+  if (sourceRef) return sourceRef;
+  if (directSource) return createPatchFileSourceRef(fileName, directSource, size);
+  if (blob) return createPatchFileSourceRef(fileName, toNamedBlobSource(blob, fileName), size);
+  if (fileHandle) return createPatchFileSourceRef(fileName, fileHandle, size);
+  if (filePath) return createPatchFileSourceRef(fileName, filePath, size);
+  return null;
+};
+
 const createPatchFileSourceAccess = ({
   blob,
   directSource,
@@ -219,17 +245,8 @@ const createPatchFileSourceAccess = ({
   ...(size === undefined ? {} : { size }),
   fileName,
   getBlob: () => (typeof Blob !== "undefined" && blob instanceof Blob ? blob : null),
-  getExternalSource: (options: ExternalSourceOptions = {}) => {
-    if (options.preferDirectBrowserSource && fileHandle) return createPatchFileSourceRef(fileName, fileHandle, size);
-    if (blob && options.preferDirectBrowserSource)
-      return createPatchFileSourceRef(fileName, toNamedBlobSource(blob, fileName), size);
-    if (sourceRef) return sourceRef;
-    if (directSource) return createPatchFileSourceRef(fileName, directSource, size);
-    if (blob) return createPatchFileSourceRef(fileName, toNamedBlobSource(blob, fileName), size);
-    if (fileHandle) return createPatchFileSourceRef(fileName, fileHandle, size);
-    if (filePath) return createPatchFileSourceRef(fileName, filePath, size);
-    return null;
-  },
+  getExternalSource: (options = {}) =>
+    getExternalPatchFileSource({ blob, directSource, fileHandle, fileName, filePath, options, size, sourceRef }),
   getFileHandle: () => fileHandle || null,
   getFilePath: () => (filePath ? filePath : null),
 });
@@ -238,16 +255,11 @@ const createSourceAccessFromSource = (source: SourceRef, fallbackFileName?: stri
   const fileName =
     getNamedSourceFileName(source, { fallback: fallbackFileName || "source.bin" }) || fallbackFileName || "source.bin";
   const sizeValue = getNamedSourceSize(source);
-  const size =
-    typeof sizeValue === "number" && Number.isFinite(sizeValue) ? Math.max(0, Math.floor(sizeValue)) : undefined;
+  const size = normalizeSourceSize(sizeValue);
   const directSource = getNamedSource(source as Parameters<typeof getNamedSource>[0]) as RuntimeValue;
   const sourceRef = normalizePatchFileSourceRef(
-    directSource &&
-      ((typeof directSource === "string" && directSource.trim()) ||
-        (typeof Blob !== "undefined" && directSource instanceof Blob) ||
-        isFileSystemFileHandleLike(directSource) ||
-        isVfsFileRef(directSource))
-      ? { fileName, ...(size === undefined ? {} : { size }), source: directSource as DirectSource }
+    isSupportedPatchFileSource(directSource)
+      ? { fileName, ...(size === undefined ? {} : { size }), source: directSource }
       : null,
     fileName,
     size,

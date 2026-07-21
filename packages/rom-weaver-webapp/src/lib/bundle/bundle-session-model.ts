@@ -124,6 +124,26 @@ const toOutputDefaults = (parsed: ParsedBundleParseResult): BundleOutputDefaults
   return defaults;
 };
 
+const toBundlePlanEntry = (
+  patch: ParsedBundleParseResult["bundle"]["patches"][number],
+  source: ParsedBundleSourceRef,
+  bundleUrl: string,
+  index: number,
+): BundlePlanEntry => ({
+  acquisition: toAcquisition(source, bundleUrl, `patch ${index + 1}`),
+  ...(patch.id ? { id: patch.id } : {}),
+  ...(patch.version ? { version: patch.version } : {}),
+  ...(patch.author ? { author: patch.author } : {}),
+  ...(patch.name ? { name: patch.name } : {}),
+  ...(patch.description ? { description: patch.description } : {}),
+  ...(patch.label ? { label: patch.label } : {}),
+  optional: patch.optional === true,
+  ...(patch.inputChecks ? { inputChecks: patch.inputChecks } : {}),
+  ...(patch.outputChecks ? { outputChecks: patch.outputChecks } : {}),
+  ...(patch.header ? { header: patch.header } : {}),
+  ...(patch.basis ? { basis: patch.basis } : {}),
+});
+
 /**
  * Build the acquisition + session plan from a `bundle parse` result. Every patch is acquired and
  * remains toggleable; `optional` only seeds its initial on/off state.
@@ -133,20 +153,7 @@ const buildBundleApplySessionPlan = (parsed: ParsedBundleParseResult, bundleUrl:
   parsed.bundle.patches.forEach((patch, index) => {
     const patchSource = parsed.patchSources[index];
     if (!patchSource) throw new Error(`Bundle patch ${index + 1} has no resolved source`);
-    entries.push({
-      acquisition: toAcquisition(patchSource.source, bundleUrl, `patch ${index + 1}`),
-      ...(patch.id ? { id: patch.id } : {}),
-      ...(patch.version ? { version: patch.version } : {}),
-      ...(patch.author ? { author: patch.author } : {}),
-      ...(patch.name ? { name: patch.name } : {}),
-      ...(patch.description ? { description: patch.description } : {}),
-      ...(patch.label ? { label: patch.label } : {}),
-      optional: patch.optional === true,
-      ...(patch.inputChecks ? { inputChecks: patch.inputChecks } : {}),
-      ...(patch.outputChecks ? { outputChecks: patch.outputChecks } : {}),
-      ...(patch.header ? { header: patch.header } : {}),
-      ...(patch.basis ? { basis: patch.basis } : {}),
-    });
+    entries.push(toBundlePlanEntry(patch, patchSource.source, bundleUrl, index));
   });
   const name = bundleSessionDisplayName(parsed.bundle);
   const romExpectation = parsed.romSource ? undefined : bundleRomExpectation(parsed.bundle);

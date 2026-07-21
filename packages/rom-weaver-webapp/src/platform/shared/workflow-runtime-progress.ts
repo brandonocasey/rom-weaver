@@ -38,6 +38,26 @@ const forwardCreatePatchProgress =
     });
   };
 
+const getProgressLabel = (stage: "input" | "output", label: string | undefined, fallbackLabel: string | undefined) =>
+  contextualizeRuntimeLabel(label, fallbackLabel) ||
+  (stage === "input" ? "Extracting disc image..." : "Creating disc image...");
+
+const getArchiveProgressDetails = (progress: RuntimeProgress) =>
+  isRecord(progress.details)
+    ? {
+        ...progress.details,
+        ...(progress.stage ? { runtimeStage: progress.stage } : {}),
+      }
+    : progress.details;
+
+const getArchivePercent = (percent: number | null | undefined, sawIntermediate: boolean) => {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) return { percent: null, sawIntermediate };
+  const normalized = Math.max(0, Math.min(100, percent));
+  const nextSawIntermediate = sawIntermediate || (normalized > 0 && normalized < 100);
+  const hiddenBoundary = (normalized >= 100 || normalized <= 0) && !sawIntermediate;
+  return { percent: hiddenBoundary ? null : normalized, sawIntermediate: nextSawIntermediate };
+};
+
 const forwardRomSpecificProgress = (
   stage: "input" | "output",
   onProgress?: (progress: ProgressEvent) => void,
@@ -46,19 +66,11 @@ const forwardRomSpecificProgress = (
 ) => {
   if (!onProgress) return undefined;
   return (progress: RuntimeProgress) => {
-    const label =
-      contextualizeRuntimeLabel(progress.label, fallbackLabel) ||
-      (stage === "input" ? "Extracting disc image..." : "Creating disc image...");
-    if (typeof progress.percent !== "number" || !Number.isFinite(progress.percent)) {
-      onProgress({
-        ...progress,
-        label,
-        percent: null,
-        stage,
-      });
-      return;
-    }
-    const percent = Math.max(0, Math.min(100, progress.percent));
+    const label = getProgressLabel(stage, progress.label, fallbackLabel);
+    const percent =
+      typeof progress.percent === "number" && Number.isFinite(progress.percent)
+        ? Math.max(0, Math.min(100, progress.percent))
+        : null;
     onProgress({
       ...progress,
       label,
@@ -79,12 +91,7 @@ const forwardArchiveProgress = (
     const label =
       contextualizeRuntimeLabel(progress.label, fallbackLabel) ||
       (stage === "input" ? "Extracting archive entry..." : "Creating archive...");
-    const details = isRecord(progress.details)
-      ? {
-          ...progress.details,
-          ...(progress.stage ? { runtimeStage: progress.stage } : {}),
-        }
-      : progress.details;
+    const details = getArchiveProgressDetails(progress);
     const emit = (percent: number | null) => {
       onProgress?.({
         ...progress,
@@ -94,21 +101,9 @@ const forwardArchiveProgress = (
         stage,
       });
     };
-    if (typeof progress.percent !== "number" || !Number.isFinite(progress.percent)) {
-      emit(null);
-      return;
-    }
-    const percent = Math.max(0, Math.min(100, progress.percent));
-    if (percent > 0 && percent < 100) sawIntermediate = true;
-    if (percent >= 100 && !sawIntermediate) {
-      emit(null);
-      return;
-    }
-    if (percent <= 0 && !sawIntermediate) {
-      emit(null);
-      return;
-    }
-    emit(percent);
+    const next = getArchivePercent(progress.percent, sawIntermediate);
+    sawIntermediate = next.sawIntermediate;
+    emit(next.percent);
   };
 };
 

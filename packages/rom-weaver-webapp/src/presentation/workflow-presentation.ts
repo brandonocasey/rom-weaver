@@ -205,6 +205,14 @@ const getProgressEventThroughput = (progress: WorkflowValue | object | null | un
   return rate ? `${sizePart} · ${formatByteSize(rate)}/s` : sizePart;
 };
 
+const getProgressTimingText = (timing: ProgressViewModelOptions["timing"], timingText?: WorkflowScalar) =>
+  typeof timingText === "string" && timingText ? timingText : timing ? formatTiming(normalizeTimingInput(timing)) : "";
+
+const getProgressKey = (hasProgress: boolean, percent: number | null) => {
+  if (!hasProgress) return "status";
+  return percent === null ? "indeterminate" : String(Math.floor(percent / 10) * 10);
+};
+
 const createProgressViewModel = ({
   stage,
   label,
@@ -227,19 +235,8 @@ const createProgressViewModel = ({
   const normalizedVisualPercent = hasProgress ? clampProgressPercent(percentSource) : null;
   const normalizedLabel = String(label || fallbackLabel || "");
   const normalizedSeparator = typeof separator === "string" ? separator : " ";
-  const resolvedTimingText =
-    typeof timingText === "string" && timingText
-      ? timingText
-      : (() => {
-          if (timing) {
-            return formatTiming(normalizeTimingInput(timing));
-          }
-          return "";
-        })();
-  let percentKey = "status";
-  if (hasProgress) {
-    percentKey = normalizedPercent === null ? "indeterminate" : String(Math.floor(normalizedPercent / 10) * 10);
-  }
+  const resolvedTimingText = getProgressTimingText(timing, timingText);
+  const percentKey = getProgressKey(hasProgress, normalizedPercent);
   return {
     dedupeKey: `${typeof stage === "string" ? stage : "progress"}:${normalizedLabel}:${percentKey}`,
     indeterminate: hasProgress && normalizedPercent === null,

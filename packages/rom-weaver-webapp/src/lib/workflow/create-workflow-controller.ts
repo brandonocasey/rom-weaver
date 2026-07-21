@@ -5,7 +5,7 @@ import type { SelectionCandidate } from "../../types/selection.ts";
 import type { CreateSettings, PatchFormat } from "../../types/settings.ts";
 import type { WorkflowOptions, WorkflowWarning } from "../../types/workflow-controller.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
-import type { CreatePatchInput, CreateWorkflowOptions } from "../../types/workflow-runtime-types.ts";
+import type { CreatePatchInput, CreateWorkflowOptions, ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import { ROM_WEAVER_CREATE_PATCH_FORMAT_POLICY } from "../../wasm/generated/rom-weaver-format-metadata.ts";
 import { CREATE_ARCHIVE_COMPRESSION_FORMATS } from "../compression/container-format-registry.ts";
 import { getCreatePatchFormatsForSizes, normalizeCreatePatchFormat } from "../create/patch-format-limits.ts";
@@ -51,6 +51,19 @@ type InternalSourceState = {
   wasDecompressed?: boolean;
   warnings: WorkflowWarning[];
   role: SourceRole;
+};
+
+const getCreateProgressStage = (progress: ProgressEvent) => {
+  if (progress.stage === "output") return "compress";
+  if (progress.stage === "create") return "create";
+  return getPreparationProgressStage(progress);
+};
+
+const getCreateProgressLabel = (progress: ProgressEvent, stage: string) => {
+  if (progress.label) return progress.label;
+  if (stage === "compress") return "Compressing output...";
+  if (stage === "create") return "Creating patch...";
+  return "Preparing input...";
 };
 type StagedSource<TSource> = SharedRomStagedSource<TSource, InternalSourceState>;
 type SourceSession<TSource> = SharedRomSourceSession<TSource, InternalSourceState>;
@@ -182,14 +195,7 @@ class CreateWorkflowController<TSource, TDestination> extends BaseWorkflowContro
 
   async run(): Promise<CreateResult<TDestination>> {
     return this.mutate("run", async () => {
-      const original = this.getSelectedSourceOwner(this.originalSession);
-      const modified = this.getSelectedSourceOwner(this.modifiedSession);
-      if (!(original && modified))
-        throw new RomWeaverError("INVALID_INPUT", "Original and modified sources are required");
-      if (original.state.status !== "ready" || !original.state.selectedCandidateId)
-        throw new RomWeaverError("AMBIGUOUS_SELECTION", "Original source requires candidate selection");
-      if (modified.state.status !== "ready" || !modified.state.selectedCandidateId)
-        throw new RomWeaverError("AMBIGUOUS_SELECTION", "Modified source requires candidate selection");
+      const [original, modified] = this.getRunSourcesReady();
       const patchType = this.getPatchType();
       if (!SUPPORTED_CREATE_PATCH_TYPES.has(patchType))
         throw new RomWeaverError("UNSUPPORTED_FORMAT", `Unsupported patch type: ${patchType}`);
@@ -422,17 +428,12 @@ class CreateWorkflowController<TSource, TDestination> extends BaseWorkflowContro
       options: {
         ...this.createExecutionOptions(),
         onProgress: (progress) => {
-          let stage = getPreparationProgressStage(progress);
-          if (progress.stage === "output") stage = "compress";
-          else if (progress.stage === "create") stage = "create";
-          let fallbackLabel = "Preparing input...";
-          if (stage === "compress") fallbackLabel = "Compressing output...";
-          else if (stage === "create") fallbackLabel = "Creating patch...";
+          const stage = getCreateProgressStage(progress);
           this.emitProgress({
             details: isRecord(progress.details) ? progress.details : undefined,
             hasProgress: progress.hasProgress,
             id: `${this.id}:worker:${stage}`,
-            label: progress.label || fallbackLabel,
+            label: getCreateProgressLabel(progress, stage),
             percent:
               typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
             role: progress.stage === "output" ? "output" : "worker",
@@ -446,6 +447,18 @@ class CreateWorkflowController<TSource, TDestination> extends BaseWorkflowContro
       selectedModifiedEntryName: preparedModified ? undefined : modified.selectedArchiveEntry,
       selectedOriginalEntryName: preparedOriginal ? undefined : original.selectedArchiveEntry,
     };
+  }
+
+  private getRunSourcesReady(): [StagedSource<TSource>, StagedSource<TSource>] {
+    const original = this.getSelectedSourceOwner(this.originalSession);
+    const modified = this.getSelectedSourceOwner(this.modifiedSession);
+    if (!(original && modified))
+      throw new RomWeaverError("INVALID_INPUT", "Original and modified sources are required");
+    if (original.state.status !== "ready" || !original.state.selectedCandidateId)
+      throw new RomWeaverError("AMBIGUOUS_SELECTION", "Original source requires candidate selection");
+    if (modified.state.status !== "ready" || !modified.state.selectedCandidateId)
+      throw new RomWeaverError("AMBIGUOUS_SELECTION", "Modified source requires candidate selection");
+    return [original, modified];
   }
 }
 

@@ -120,30 +120,34 @@ const toOptionalInt = (value: unknown): number | undefined => {
   return normalized === null ? undefined : normalized;
 };
 
-const normalizePatchValidationChecksumEntries = (value: unknown): string[] => {
-  const entries: string[] = [];
-  const push = (algorithm: string, checksum: unknown) => {
+const appendChecksumRecord = (entries: string[], record: Record<string, unknown>) => {
+  for (const [algorithm, checksum] of Object.entries(record)) {
     const normalizedAlgorithm = String(algorithm || "")
       .trim()
       .toLowerCase();
     const normalizedChecksum = toOptionalChecksumHex(checksum);
     if (normalizedAlgorithm && normalizedChecksum) entries.push(`${normalizedAlgorithm}=${normalizedChecksum}`);
-  };
+  }
+};
+
+const appendChecksumEntry = (entries: string[], entry: unknown) => {
+  if (typeof entry === "string" && entry.trim()) {
+    entries.push(entry.trim());
+    return;
+  }
+  const record = asRecord(entry);
+  if (record) appendChecksumRecord(entries, record);
+};
+
+const normalizePatchValidationChecksumEntries = (value: unknown): string[] => {
+  const entries: string[] = [];
   if (Array.isArray(value)) {
-    for (const entry of value) {
-      if (typeof entry === "string" && entry.trim()) entries.push(entry.trim());
-      else {
-        const record = asRecord(entry);
-        if (record) {
-          for (const [algorithm, checksum] of Object.entries(record)) push(algorithm, checksum);
-        }
-      }
-    }
+    for (const entry of value) appendChecksumEntry(entries, entry);
     return entries;
   }
   const record = asRecord(value);
   if (!record) return entries;
-  for (const [algorithm, checksum] of Object.entries(record)) push(algorithm, checksum);
+  appendChecksumRecord(entries, record);
   return entries;
 };
 
@@ -173,6 +177,30 @@ const getPatchApplyOutputFileName = (input: RuntimePatchApplyWorkerInput) => {
   return `${stem}${suffix}${normalizedOutputExtension || ".bin"}`;
 };
 
+const getPatchCreateDefaultFormat = (
+  candidates: Record<string, unknown> | null,
+  terminal: ReturnType<typeof getTerminalEvent>,
+  formats: string[],
+) =>
+  (typeof candidates?.default === "string" ? candidates.default.trim().toLowerCase() : "") ||
+  (terminal
+    ? String(getRomWeaverRunEventFormat(terminal) || "")
+        .trim()
+        .toLowerCase()
+    : "") ||
+  formats[0] ||
+  "bps";
+
+const getPatchCreateLimits = (value: unknown): Record<string, number> => {
+  const record = asRecord(value);
+  if (!record) return {};
+  const limits: Record<string, number> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (typeof entry === "number" && Number.isFinite(entry)) limits[key] = entry;
+  }
+  return limits;
+};
+
 const readPatchCreateFormatCandidates = (result: RomWeaverRunJsonResult): RuntimePatchCreateFormatCandidates => {
   const terminal = getTerminalEvent(result);
   const details = asRecord(terminal ? getRomWeaverRunEventDetails(terminal) : null);
@@ -181,22 +209,8 @@ const readPatchCreateFormatCandidates = (result: RomWeaverRunJsonResult): Runtim
   const formats = rawFormats
     .map((value) => (typeof value === "string" ? value.trim().toLowerCase() : ""))
     .filter((value) => !!value);
-  const defaultFormat =
-    (typeof candidates?.default === "string" ? candidates.default.trim().toLowerCase() : "") ||
-    (terminal
-      ? String(getRomWeaverRunEventFormat(terminal) || "")
-          .trim()
-          .toLowerCase()
-      : "") ||
-    formats[0] ||
-    "bps";
-  const rawLimits = asRecord(candidates?.limits);
-  const limits: Record<string, number> = {};
-  if (rawLimits) {
-    for (const [key, value] of Object.entries(rawLimits)) {
-      if (typeof value === "number" && Number.isFinite(value)) limits[key] = value;
-    }
-  }
+  const defaultFormat = getPatchCreateDefaultFormat(candidates, terminal, formats);
+  const limits = getPatchCreateLimits(candidates?.limits);
   return {
     defaultFormat,
     formats: formats.length ? formats : [defaultFormat],

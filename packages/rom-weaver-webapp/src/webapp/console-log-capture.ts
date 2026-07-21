@@ -72,6 +72,25 @@ const summarizeBinaryValue = (value: unknown): string | null => {
   return null;
 };
 
+const serializeArrayValue = (value: unknown[], depth: number, seen: WeakSet<object>) => {
+  const output = value.slice(0, MAX_ARRAY_ITEMS).map((item) => serializeLogValue(item, depth + 1, seen));
+  if (value.length > MAX_ARRAY_ITEMS) output.push(`[${value.length - MAX_ARRAY_ITEMS} more items]`);
+  return output;
+};
+
+const serializeEventValue = (value: Event) => ({
+  target: value.target instanceof Element ? value.target.tagName.toLowerCase() : null,
+  type: value.type,
+});
+
+const serializeRecordValue = (value: Record<string, unknown>, depth: number, seen: WeakSet<object>) => {
+  const entries = Object.entries(value).slice(0, MAX_OBJECT_KEYS);
+  const output: Record<string, unknown> = {};
+  for (const [key, childValue] of entries) output[key] = serializeLogValue(childValue, depth + 1, seen);
+  if (Object.keys(value).length > MAX_OBJECT_KEYS) output.__truncatedKeys = Object.keys(value).length - MAX_OBJECT_KEYS;
+  return output;
+};
+
 const serializeLogValue = (value: unknown, depth = 0, seen = new WeakSet<object>()): unknown => {
   const binarySummary = summarizeBinaryValue(value);
   if (binarySummary) return binarySummary;
@@ -85,23 +104,10 @@ const serializeLogValue = (value: unknown, depth = 0, seen = new WeakSet<object>
   if (typeof value !== "object") return String(value);
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
-  if (Array.isArray(value)) {
-    const output = value.slice(0, MAX_ARRAY_ITEMS).map((item) => serializeLogValue(item, depth + 1, seen));
-    if (value.length > MAX_ARRAY_ITEMS) output.push(`[${value.length - MAX_ARRAY_ITEMS} more items]`);
-    return output;
-  }
-  if (value instanceof Event) {
-    return {
-      target: value.target instanceof Element ? value.target.tagName.toLowerCase() : null,
-      type: value.type,
-    };
-  }
+  if (Array.isArray(value)) return serializeArrayValue(value, depth, seen);
+  if (value instanceof Event) return serializeEventValue(value);
   if (!isRecord(value)) return String(value);
-  const entries = Object.entries(value).slice(0, MAX_OBJECT_KEYS);
-  const output: Record<string, unknown> = {};
-  for (const [key, childValue] of entries) output[key] = serializeLogValue(childValue, depth + 1, seen);
-  if (Object.keys(value).length > MAX_OBJECT_KEYS) output.__truncatedKeys = Object.keys(value).length - MAX_OBJECT_KEYS;
-  return output;
+  return serializeRecordValue(value, depth, seen);
 };
 
 const recordListeners = new Set<(record: ConsoleLogRecord) => void>();
@@ -146,34 +152,40 @@ const installConsoleHooks = () => {
 const getConsoleForInternalLog = (level: ConsoleLogLevel) =>
   originalConsole.get(level) || console[level] || console.log;
 
+const getReportApp = (): ConsoleLogReport["app"] => ({
+  branch: typeof __GIT_BRANCH__ === "undefined" ? undefined : __GIT_BRANCH__,
+  commit: typeof __COMMIT_HASH__ === "undefined" ? undefined : __COMMIT_HASH__,
+  dirty: typeof __DIRTY_HASH__ === "undefined" ? undefined : __DIRTY_HASH__,
+  version: typeof __APP_VERSION__ === "undefined" ? undefined : __APP_VERSION__,
+});
+
+const getReportPage = (): ConsoleLogReport["page"] => ({
+  href: typeof location === "undefined" ? "" : location.href,
+  referrer: typeof document === "undefined" ? "" : document.referrer,
+  title: typeof document === "undefined" ? "" : document.title,
+});
+
+const getReportRuntime = (): ConsoleLogReport["runtime"] => ({
+  atomicsWaitAsync: typeof Atomics === "undefined" ? "undefined" : typeof Atomics.waitAsync,
+  crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
+  isSecureContext: typeof isSecureContext === "boolean" ? isSecureContext : false,
+  language: typeof navigator === "undefined" ? "" : navigator.language,
+  logCount: records.length,
+  platform: typeof navigator === "undefined" ? "" : navigator.platform,
+  sharedArrayBuffer: typeof SharedArrayBuffer,
+  userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
+  viewport: {
+    devicePixelRatio: typeof devicePixelRatio === "number" ? devicePixelRatio : 1,
+    height: typeof innerHeight === "number" ? innerHeight : 0,
+    width: typeof innerWidth === "number" ? innerWidth : 0,
+  },
+});
+
 const getReport = (): ConsoleLogReport => ({
-  app: {
-    branch: typeof __GIT_BRANCH__ === "undefined" ? undefined : __GIT_BRANCH__,
-    commit: typeof __COMMIT_HASH__ === "undefined" ? undefined : __COMMIT_HASH__,
-    dirty: typeof __DIRTY_HASH__ === "undefined" ? undefined : __DIRTY_HASH__,
-    version: typeof __APP_VERSION__ === "undefined" ? undefined : __APP_VERSION__,
-  },
+  app: getReportApp(),
   logs: records.slice(),
-  page: {
-    href: typeof location === "undefined" ? "" : location.href,
-    referrer: typeof document === "undefined" ? "" : document.referrer,
-    title: typeof document === "undefined" ? "" : document.title,
-  },
-  runtime: {
-    atomicsWaitAsync: typeof Atomics === "undefined" ? "undefined" : typeof Atomics.waitAsync,
-    crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
-    isSecureContext: typeof isSecureContext === "boolean" ? isSecureContext : false,
-    language: typeof navigator === "undefined" ? "" : navigator.language,
-    logCount: records.length,
-    platform: typeof navigator === "undefined" ? "" : navigator.platform,
-    sharedArrayBuffer: typeof SharedArrayBuffer,
-    userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
-    viewport: {
-      devicePixelRatio: typeof devicePixelRatio === "number" ? devicePixelRatio : 1,
-      height: typeof innerHeight === "number" ? innerHeight : 0,
-      width: typeof innerWidth === "number" ? innerWidth : 0,
-    },
-  },
+  page: getReportPage(),
+  runtime: getReportRuntime(),
 });
 
 const getReportMetadata = (): ConsoleLogReportMetadata => {

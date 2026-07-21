@@ -31,6 +31,53 @@ type LoadedBundleUrlSession = {
   session: BundleApplySession;
 };
 
+const acquireBundleFiles = async (
+  plan: ReturnType<typeof buildBundleApplySessionPlan>,
+  extractedFiles: Map<string, File>,
+  onProgress: LoadBundleUrlSessionHooks["onProgress"],
+  signal?: AbortSignal,
+) => {
+  const materializeExtracted = (extractedPath: string, label: string): File => {
+    const file = extractedFiles.get(extractedPath);
+    if (!file) throw new Error(`Bundle ${label} was not extracted: ${extractedPath}`);
+    return file;
+  };
+  const fetchEntries: RemoteFetchEntry[] = [];
+  const fetchSlots: Array<{ assign: (file: File) => void }> = [];
+  let romFile: File | null = null;
+  if (plan.romAcquisition?.kind === "extracted") {
+    romFile = materializeExtracted(plan.romAcquisition.extractedPath, "ROM");
+  } else if (plan.romAcquisition) {
+    fetchEntries.push({
+      onProgress: (progress) => onProgress?.("rom", progress),
+      url: plan.romAcquisition.url,
+    });
+    fetchSlots.push({ assign: (file) => (romFile = file) });
+  }
+  const patchFiles: Array<File | null> = plan.entries.map((entry, index) => {
+    if (entry.acquisition.kind === "extracted")
+      return materializeExtracted(entry.acquisition.extractedPath, `patch ${index + 1}`);
+    fetchEntries.push({
+      onProgress: (progress) => onProgress?.(`patch-${index}`, progress),
+      url: entry.acquisition.url,
+    });
+    fetchSlots.push({ assign: (file) => (patchFiles[index] = file) });
+    return null;
+  });
+  const remoteSourceFetches = fetchEntries.length ? await fetchRemoteFiles(fetchEntries, signal) : [];
+  remoteSourceFetches.forEach((entry, index) => {
+    fetchSlots[index]?.assign(entry.file);
+  });
+  const acquiredPatchFiles: File[] = [];
+  const entries: BundleApplySessionEntry[] = plan.entries.map((entry, index) => {
+    const file = patchFiles[index];
+    if (!file) throw new Error(`Bundle patch ${index + 1} was not acquired`);
+    acquiredPatchFiles.push(file);
+    return { ...entry, fileName: file.name };
+  });
+  return { acquiredPatchFiles, entries, remoteSourceFetches, romFile };
+};
+
 const loadBundleUrlSession = async (
   bundleUrl: string,
   hooks: LoadBundleUrlSessionHooks = {},
@@ -74,62 +121,10 @@ const loadBundleUrlSession = async (
     const plan = buildBundleApplySessionPlan(result, bundleFetch.finalUrl || bundleUrl);
     onBundleName?.(plan.name || "");
     for (const warning of plan.warnings) logger.warn(`bundle warning: ${warning}`);
-
-    const materializeExtracted = (extractedPath: string, label: string): File => {
-      const file = extractedFiles.get(extractedPath);
-      if (!file) throw new Error(`Bundle ${label} was not extracted: ${extractedPath}`);
-      return file;
-    };
-    // One concurrent fetch pass over every URL source (ROM + patches); extracted sources are already
-    // materialized. Slots keep the acquired Files index-aligned with the plan.
-    const fetchEntries: RemoteFetchEntry[] = [];
-    const fetchSlots: Array<{ assign: (file: File) => void }> = [];
-    let romFile: File | null = null;
-    if (plan.romAcquisition) {
-      if (plan.romAcquisition.kind === "extracted") {
-        romFile = materializeExtracted(plan.romAcquisition.extractedPath, "ROM");
-      } else {
-        fetchEntries.push({
-          onProgress: (progress) => onProgress?.("rom", progress),
-          url: plan.romAcquisition.url,
-        });
-        fetchSlots.push({
-          assign: (file) => {
-            romFile = file;
-          },
-        });
-      }
-    }
-    const patchFiles: Array<File | null> = plan.entries.map((entry, index) => {
-      if (entry.acquisition.kind === "extracted") {
-        return materializeExtracted(entry.acquisition.extractedPath, `patch ${index + 1}`);
-      }
-      fetchEntries.push({
-        onProgress: (progress) => onProgress?.(`patch-${index}`, progress),
-        url: entry.acquisition.url,
-      });
-      fetchSlots.push({
-        assign: (file) => {
-          patchFiles[index] = file;
-        },
-      });
-      return null;
-    });
-    if (fetchEntries.length) {
-      remoteSourceFetches = await fetchRemoteFiles(fetchEntries, signal);
-      remoteSourceFetches.forEach((entry, index) => {
-        fetchSlots[index]?.assign(entry.file);
-      });
-    }
-
-    const acquiredPatchFiles: File[] = [];
-    const entries: BundleApplySessionEntry[] = plan.entries.map((entry, index) => {
-      const file = patchFiles[index];
-      if (!file) throw new Error(`Bundle patch ${index + 1} was not acquired`);
-      acquiredPatchFiles.push(file);
-      return { ...entry, fileName: file.name };
-    });
-    const acquiredRomFile: File | null = romFile;
+    const acquisition = await acquireBundleFiles(plan, extractedFiles, onProgress, signal);
+    remoteSourceFetches = acquisition.remoteSourceFetches;
+    const { acquiredPatchFiles, entries } = acquisition;
+    const acquiredRomFile = acquisition.romFile;
     const session: BundleApplySession = {
       chainEndpointChecks: plan.chainEndpointChecks,
       entries,

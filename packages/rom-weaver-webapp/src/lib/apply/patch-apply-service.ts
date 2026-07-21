@@ -267,6 +267,27 @@ const hasChecksumMatch = async (asset: InputAsset, patch: ParsedPatchLike | Patc
   return false;
 };
 
+const resolvePatchTarget = async (
+  index: number,
+  patch: ParsedPatchLike | undefined,
+  patchableAssets: InputAsset[],
+  manualTarget: string | undefined,
+): Promise<InputAsset> => {
+  if (manualTarget && manualTarget !== "auto") {
+    const selected = patchableAssets.find((asset) => asset.id === manualTarget || asset.fileName === manualTarget);
+    if (!selected) throw new Error(`Patch ${index + 1} target was not found: ${manualTarget}`);
+    return selected;
+  }
+  if (patchableAssets.length === 1) return patchableAssets[0] as InputAsset;
+  const matches: InputAsset[] = [];
+  for (const asset of patchableAssets) {
+    if (patch && (await hasChecksumMatch(asset, patch))) matches.push(asset);
+  }
+  if (matches.length === 1) return matches[0] as InputAsset;
+  if (matches.length > 1) throw new Error(`Patch ${index + 1} matches multiple inputs; pass patchTargets[${index}]`);
+  throw new Error(`Patch ${index + 1} does not match exactly one input; pass patchTargets[${index}]`);
+};
+
 const resolvePatchTargets = async (
   assets: InputAsset[],
   patches: ParsedPatchLike[],
@@ -277,29 +298,7 @@ const resolvePatchTargets = async (
 
   const targets: InputAsset[] = [];
   for (let index = 0; index < patches.length; index++) {
-    const manualTarget = patchTargets?.[index];
-    if (manualTarget && manualTarget !== "auto") {
-      const selected = patchableAssets.find((asset) => asset.id === manualTarget || asset.fileName === manualTarget);
-      if (!selected) throw new Error(`Patch ${index + 1} target was not found: ${manualTarget}`);
-      targets.push(selected);
-      continue;
-    }
-    if (patchableAssets.length === 1) {
-      targets.push(patchableAssets[0] as InputAsset);
-      continue;
-    }
-
-    const matches: InputAsset[] = [];
-    for (const asset of patchableAssets) {
-      const patch = patches[index];
-      if (patch && (await hasChecksumMatch(asset, patch))) matches.push(asset);
-    }
-    if (matches.length === 1) {
-      targets.push(matches[0] as InputAsset);
-      continue;
-    }
-    if (matches.length > 1) throw new Error(`Patch ${index + 1} matches multiple inputs; pass patchTargets[${index}]`);
-    throw new Error(`Patch ${index + 1} does not match exactly one input; pass patchTargets[${index}]`);
+    targets.push(await resolvePatchTarget(index, patches[index], patchableAssets, patchTargets?.[index]));
   }
   return targets;
 };

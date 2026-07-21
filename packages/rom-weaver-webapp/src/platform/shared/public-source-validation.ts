@@ -23,55 +23,60 @@ const isVfsFileRef = (source: unknown) =>
 const getReceivedType = (source: unknown) => source?.constructor?.name || typeof source;
 const getWrappedSource = (source: { data?: unknown; source?: unknown }) => source.source ?? source.data;
 
+const throwUnsupportedSource = (message: string, source: unknown): never => {
+  throw new RomWeaverError("SOURCE_UNSUPPORTED", message, { details: { received: getReceivedType(source) } });
+};
+
+const assertRawByteSource = (source: unknown, environmentLabel: string) => {
+  if (isUnsupportedByteSource(source))
+    throwUnsupportedSource(`Raw byte sources are not public ${environmentLabel} inputs`, source);
+  if (isSourceWrapper(source) && isUnsupportedByteSource(getWrappedSource(source)))
+    throwUnsupportedSource(
+      `Raw byte source wrappers are not public ${environmentLabel} inputs`,
+      getWrappedSource(source),
+    );
+};
+
+const assertPathSource = (source: unknown, environmentLabel: string) => {
+  if (isUnsupportedPathSource(source))
+    throwUnsupportedSource(`Path strings are not public ${environmentLabel} inputs`, source);
+  if (isSourceWrapper(source) && isUnsupportedPathSource(getWrappedSource(source)))
+    throwUnsupportedSource(`Path source wrappers are not public ${environmentLabel} inputs`, getWrappedSource(source));
+};
+
+const assertVfsSource = (source: unknown, environmentLabel: string) => {
+  if (isVfsFileRef(source)) throwUnsupportedSource(`VFS path refs are not public ${environmentLabel} inputs`, source);
+  if (isSourceWrapper(source) && isVfsFileRef(getWrappedSource(source)))
+    throwUnsupportedSource(`VFS path ref wrappers are not public ${environmentLabel} inputs`, getWrappedSource(source));
+};
+
+const assertSupportedSourceKind = (source: unknown, environmentLabel: string) => {
+  assertRawByteSource(source, environmentLabel);
+  assertPathSource(source, environmentLabel);
+  assertVfsSource(source, environmentLabel);
+};
+
+const assertSupportedSourceShape = (source: unknown, environmentLabel: string) => {
+  if (
+    source &&
+    typeof source === "object" &&
+    !isBlob(source) &&
+    !isFileSystemFileHandleLike(source) &&
+    !isSourceWrapper(source)
+  ) {
+    throw new RomWeaverError(
+      "INVALID_INPUT",
+      `${environmentLabel} public sources must be Blob values, file handles, or source wrappers`,
+      { details: { received: source.constructor.name } },
+    );
+  }
+};
+
 const createPublicSourceValidator =
   ({ environmentLabel }: PublicSourceValidationOptions) =>
   (source: unknown) => {
-    if (isUnsupportedByteSource(source))
-      throw new RomWeaverError("SOURCE_UNSUPPORTED", `Raw byte sources are not public ${environmentLabel} inputs`, {
-        details: { received: getReceivedType(source) },
-      });
-    if (isSourceWrapper(source) && isUnsupportedByteSource(source.source ?? source.data))
-      throw new RomWeaverError(
-        "SOURCE_UNSUPPORTED",
-        `Raw byte source wrappers are not public ${environmentLabel} inputs`,
-        {
-          details: { received: getReceivedType(source.source ?? source.data) },
-        },
-      );
-    if (isUnsupportedPathSource(source))
-      throw new RomWeaverError("SOURCE_UNSUPPORTED", `Path strings are not public ${environmentLabel} inputs`, {
-        details: { received: getReceivedType(source) },
-      });
-    if (isSourceWrapper(source) && isUnsupportedPathSource(getWrappedSource(source)))
-      throw new RomWeaverError("SOURCE_UNSUPPORTED", `Path source wrappers are not public ${environmentLabel} inputs`, {
-        details: { received: getReceivedType(getWrappedSource(source)) },
-      });
-    if (isVfsFileRef(source))
-      throw new RomWeaverError("SOURCE_UNSUPPORTED", `VFS path refs are not public ${environmentLabel} inputs`, {
-        details: { received: getReceivedType(source) },
-      });
-    if (isSourceWrapper(source) && isVfsFileRef(getWrappedSource(source)))
-      throw new RomWeaverError(
-        "SOURCE_UNSUPPORTED",
-        `VFS path ref wrappers are not public ${environmentLabel} inputs`,
-        {
-          details: { received: getReceivedType(getWrappedSource(source)) },
-        },
-      );
-    if (
-      source &&
-      typeof source === "object" &&
-      !isBlob(source) &&
-      !isFileSystemFileHandleLike(source) &&
-      !isSourceWrapper(source)
-    )
-      throw new RomWeaverError(
-        "INVALID_INPUT",
-        `${environmentLabel} public sources must be Blob values, file handles, or source wrappers`,
-        {
-          details: { received: source.constructor.name },
-        },
-      );
+    assertSupportedSourceKind(source, environmentLabel);
+    assertSupportedSourceShape(source, environmentLabel);
   };
 
 const createPublicSourcesValidator =

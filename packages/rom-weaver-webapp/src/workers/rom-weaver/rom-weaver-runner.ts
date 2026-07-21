@@ -760,21 +760,27 @@ type RomWeaverBatchPlan = { waves: RomWeaverBatchPlanWave[] };
 const asPlanRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 
+const parseRomWeaverBatchPlanWave = (value: unknown): RomWeaverBatchPlanWave | null => {
+  const wave = asPlanRecord(value);
+  if (!wave) return null;
+  const jobs: number[] = [];
+  for (const jobValue of Array.isArray(wave.jobs) ? wave.jobs : []) {
+    const job = Number(jobValue);
+    if (Number.isInteger(job) && job >= 0) jobs.push(job);
+  }
+  return {
+    jobs,
+    threadsPerJob: Math.max(1, Math.floor(Number(wave.threads_per_job)) || 1),
+  };
+};
+
 const parseRomWeaverBatchPlan = (details: unknown): RomWeaverBatchPlan | undefined => {
   const plan = asPlanRecord(asPlanRecord(details)?.extract_batch_plan);
   if (!plan) return undefined;
-  const waves: RomWeaverBatchPlanWave[] = [];
-  for (const waveValue of Array.isArray(plan.waves) ? plan.waves : []) {
-    const wave = asPlanRecord(waveValue);
-    if (!wave) continue;
-    const jobs: number[] = [];
-    for (const jobValue of Array.isArray(wave.jobs) ? wave.jobs : []) {
-      const job = Number(jobValue);
-      if (Number.isInteger(job) && job >= 0) jobs.push(job);
-    }
-    const threadsPerJob = Math.max(1, Math.floor(Number(wave.threads_per_job)) || 1);
-    waves.push({ jobs, threadsPerJob });
-  }
+  const waves = (Array.isArray(plan.waves) ? plan.waves : []).flatMap((value) => {
+    const wave = parseRomWeaverBatchPlanWave(value);
+    return wave ? [wave] : [];
+  });
   return { waves };
 };
 
@@ -884,31 +890,31 @@ const getResourceName = (urlLike: string) => {
   }
 };
 
+const getRecordErrorMessage = (record: { message?: unknown; kind?: unknown }) =>
+  typeof record.message === "string" && record.message.trim()
+    ? record.message.trim()
+    : typeof record.kind === "string" && record.kind.trim()
+      ? `rom-weaver error (${record.kind.trim()})`
+      : "";
+
+const getErrorContextSuffix = (context: unknown) => {
+  if (!(context && typeof context === "object")) return "";
+  const record = context as { command?: unknown; stage?: unknown };
+  const command = typeof record.command === "string" ? record.command.trim() : "";
+  const stage = typeof record.stage === "string" ? record.stage.trim() : "";
+  if (!(command || stage)) return "";
+  return ` (${[command ? `command=${command}` : "", stage ? `stage=${stage}` : ""].filter(Boolean).join(", ")})`;
+};
+
 const getErrorMessage = (value: unknown) => {
   if (!value) return "";
   if (typeof value === "string") return value.trim();
   if (value instanceof Error) return String(value.message || "").trim();
   if (typeof value === "object") {
     const record = value as { message?: unknown; kind?: unknown; context?: unknown };
-    const message =
-      typeof record.message === "string" && record.message.trim()
-        ? record.message.trim()
-        : typeof record.kind === "string" && record.kind.trim()
-          ? `rom-weaver error (${record.kind.trim()})`
-          : "";
+    const message = getRecordErrorMessage(record);
     if (!message) return "";
-    if (!(record.context && typeof record.context === "object")) return message;
-    const command =
-      "command" in record.context && typeof (record.context as { command?: unknown }).command === "string"
-        ? (record.context as { command: string }).command.trim()
-        : "";
-    const stage =
-      "stage" in record.context && typeof (record.context as { stage?: unknown }).stage === "string"
-        ? (record.context as { stage: string }).stage.trim()
-        : "";
-    if (!(command || stage)) return message;
-    const contextParts = [command ? `command=${command}` : "", stage ? `stage=${stage}` : ""].filter((part) => !!part);
-    return `${message} (${contextParts.join(", ")})`;
+    return `${message}${getErrorContextSuffix(record.context)}`;
   }
   return "";
 };

@@ -9,7 +9,7 @@ import type {
 } from "../../types/trim-workflow.ts";
 import type { WorkflowOptions, WorkflowWarning } from "../../types/workflow-controller.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
-import type { CreateWorkflowOptions, TrimInput } from "../../types/workflow-runtime-types.ts";
+import type { CreateWorkflowOptions, ProgressEvent, TrimInput } from "../../types/workflow-runtime-types.ts";
 import { getCompressionOutputExtension, isCompressionFormat } from "../compression/container-format-registry.ts";
 import { RomWeaverError, withAbortSignal } from "../errors.ts";
 import { getFileNameWithoutExtension } from "../input/path-utils.ts";
@@ -84,6 +84,19 @@ type TrimWorkflowSnapshot = BaseWorkflowSnapshot & {
   outputName: string;
   outputFormat: CompressionFormat;
   manualOutputName: boolean;
+};
+
+const getTrimProgressStage = (progress: ProgressEvent) => {
+  if (progress.stage === "output") return "compress";
+  if (progress.stage === "apply") return "trim";
+  return getPreparationProgressStage(progress);
+};
+
+const getTrimProgressLabel = (progress: ProgressEvent, stage: string) => {
+  if (progress.label) return progress.label;
+  if (stage === "compress") return "Compressing output...";
+  if (stage === "trim") return "Trimming...";
+  return "Preparing input...";
 };
 
 class TrimWorkflowController<TSource, TDestination> extends BaseWorkflowController<
@@ -299,17 +312,12 @@ class TrimWorkflowController<TSource, TDestination> extends BaseWorkflowControll
       options: {
         ...this.createExecutionOptions(),
         onProgress: (progress) => {
-          let stageName = getPreparationProgressStage(progress);
-          if (progress.stage === "output") stageName = "compress";
-          else if (progress.stage === "apply") stageName = "trim";
-          let fallbackLabel = "Preparing input...";
-          if (stageName === "compress") fallbackLabel = "Compressing output...";
-          else if (stageName === "trim") fallbackLabel = "Trimming...";
+          const stageName = getTrimProgressStage(progress);
           this.emitProgress({
             details: isRecord(progress.details) ? progress.details : undefined,
             hasProgress: progress.hasProgress,
             id: `${this.id}:worker:${stageName}`,
-            label: progress.label || fallbackLabel,
+            label: getTrimProgressLabel(progress, stageName),
             percent:
               typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
             role: progress.stage === "output" ? "output" : "worker",

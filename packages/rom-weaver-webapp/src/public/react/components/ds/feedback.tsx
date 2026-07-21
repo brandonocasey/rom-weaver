@@ -175,6 +175,26 @@ type DownloadMeta = {
   total?: string;
 };
 
+const RunButtonDownloadSummary = ({ download }: { download: DownloadMeta }) => (
+  <>
+    <span className="sr-only">Download </span>
+    {download.format ? <span className="dl-kind mono dl-fmt">{download.format}</span> : null}
+    {download.name ? <span className="dl-delta mono dl-name">{download.name}</span> : null}
+    {download.size ? (
+      <span className="dl-size mono dl-sz">
+        {download.size}
+        {download.savedSize ? <> &middot; saved {download.savedSize}</> : null}
+        {download.ratio ? <> &middot; {download.ratio}</> : null}
+      </span>
+    ) : null}
+    {download.total ? (
+      <span className="dl-total mono">
+        <b>{download.total}</b>
+      </span>
+    ) : null}
+  </>
+);
+
 /**
  * The primary action button. Renders the uppercase action by default, or the
  * download summary (kind · size · detail) when `download` is provided.
@@ -208,27 +228,7 @@ const RunButton = ({
     type={type}
   >
     {icon}
-    {download ? (
-      <>
-        <span className="sr-only">Download </span>
-        {download.format ? <span className="dl-kind mono dl-fmt">{download.format}</span> : null}
-        {download.name ? <span className="dl-delta mono dl-name">{download.name}</span> : null}
-        {download.size ? (
-          <span className="dl-size mono dl-sz">
-            {download.size}
-            {download.savedSize ? <> &middot; saved {download.savedSize}</> : null}
-            {download.ratio ? <> &middot; {download.ratio}</> : null}
-          </span>
-        ) : null}
-        {download.total ? (
-          <span className="dl-total mono">
-            <b>{download.total}</b>
-          </span>
-        ) : null}
-      </>
-    ) : (
-      children
-    )}
+    {download ? <RunButtonDownloadSummary download={download} /> : children}
   </button>
 );
 

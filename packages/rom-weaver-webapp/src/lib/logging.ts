@@ -101,6 +101,14 @@ const isPathDetailKey = (key: string): boolean => {
   );
 };
 
+const sanitizeLogEntry = (key: string, value: unknown, depth: number): unknown => {
+  if (isPathDetailKey(key)) {
+    return Array.isArray(value) ? value.slice(0, 20).map(sanitizePathValue) : sanitizePathValue(value);
+  }
+  if (isBinaryDetailKey(key)) return summarizeBinaryValue(value) || (value ? `[${typeof value}]` : value);
+  return sanitizeLogValue(value, depth + 1);
+};
+
 const sanitizeLogValue = (value: unknown, depth = 0): unknown => {
   const binarySummary = summarizeBinaryValue(value);
   if (binarySummary) return binarySummary;
@@ -109,19 +117,8 @@ const sanitizeLogValue = (value: unknown, depth = 0): unknown => {
   if (depth >= 3) return "[Object]";
   if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeLogValue(item, depth + 1));
   const output: LogDetails = {};
-  for (const [key, childValue] of Object.entries(value as Record<string, unknown>)) {
-    if (isPathDetailKey(key)) {
-      output[key] = Array.isArray(childValue)
-        ? childValue.slice(0, 20).map(sanitizePathValue)
-        : sanitizePathValue(childValue);
-      continue;
-    }
-    if (isBinaryDetailKey(key)) {
-      output[key] = summarizeBinaryValue(childValue) || (childValue ? `[${typeof childValue}]` : childValue);
-      continue;
-    }
-    output[key] = sanitizeLogValue(childValue, depth + 1);
-  }
+  for (const [key, childValue] of Object.entries(value as Record<string, unknown>))
+    output[key] = sanitizeLogEntry(key, childValue, depth);
   return output;
 };
 

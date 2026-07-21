@@ -64,17 +64,24 @@ const CROSS_ORIGIN_ISOLATION_HEADERS = {
   "Cross-Origin-Resource-Policy": "same-origin",
 };
 
+const markInvalidArgument = (options) => {
+  options.help = true;
+  options.invalid = true;
+};
+
+const markInvalidHostArgument = (args, options) => {
+  if (args[0] && !args[0].startsWith("-")) args.shift();
+  markInvalidArgument(options);
+};
+
 const parseArgument = (arg, args, options) => {
   if (arg === "--") return;
   if (arg === "--host") {
-    if (args[0] && !args[0].startsWith("-")) args.shift();
-    options.help = true;
-    options.invalid = true;
+    markInvalidHostArgument(args, options);
     return;
   }
   if (arg.startsWith("--host=") || arg === "-H") {
-    options.help = true;
-    options.invalid = true;
+    markInvalidArgument(options);
     return;
   }
   if (arg === "--port" || arg === "-p") {
@@ -104,8 +111,7 @@ const parseArgument = (arg, args, options) => {
     options.help = true;
     return;
   }
-  options.help = true;
-  options.invalid = true;
+  markInvalidArgument(options);
 };
 
 const parseArguments = (argv) => {
@@ -157,6 +163,54 @@ const send = (res, status, headers, body, securityOptions) => {
   res.end(body);
 };
 
+const getAllowedCorpusFilePath = (corpusDir, relativePath) => {
+  if (relativePath !== "manifest.json" && !relativePath.startsWith("files/")) return null;
+  const root = path.resolve(corpusDir);
+  const filePath = path.resolve(root, relativePath);
+  const allowedRoot = relativePath === "manifest.json" ? root : path.join(root, "files");
+  const allowedFile =
+    relativePath === "manifest.json"
+      ? filePath === path.join(root, "manifest.json")
+      : filePath.startsWith(`${allowedRoot}${path.sep}`);
+  return allowedFile ? { filePath, root } : null;
+};
+
+const getCorpusManifestError = (root, relativePath) => {
+  if (!relativePath.startsWith("files/")) return null;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+    const listedPaths = new Set(
+      (Array.isArray(manifest.cases) ? manifest.cases : []).map((entry) =>
+        decodeURIComponent(String(entry?.url || "").replace(E2E_CORPUS_PREFIX, "")),
+      ),
+    );
+    return listedPaths.has(relativePath) ? null : 404;
+  } catch {
+    return 500;
+  }
+};
+
+const serveCorpusFile = (req, res, securityOptions, relativePath, filePath) => {
+  fs.stat(filePath, (error, stat) => {
+    if (error || !stat.isFile()) {
+      send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found", securityOptions);
+      return;
+    }
+    setSecurityHeaders(res, securityOptions);
+    res.writeHead(200, {
+      "Content-Length": stat.size,
+      "Content-Type": relativePath.endsWith(".json") ? "application/json; charset=utf-8" : "application/octet-stream",
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", () => res.destroy());
+    stream.pipe(res);
+  });
+};
+
 const handleE2eCorpusRequest = (req, res, securityOptions) => {
   const corpusDir = process.env.ROM_WEAVER_E2E_CORPUS_DIR;
   const requestPath = String(req.url || "/").split("?")[0];
@@ -176,52 +230,21 @@ const handleE2eCorpusRequest = (req, res, securityOptions) => {
     send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found", securityOptions);
     return true;
   }
-  const root = path.resolve(corpusDir);
-  const filePath = path.resolve(root, relativePath);
-  const allowedRoot = relativePath === "manifest.json" ? root : path.join(root, "files");
-  const allowedFile =
-    relativePath === "manifest.json"
-      ? filePath === path.join(root, "manifest.json")
-      : filePath.startsWith(`${allowedRoot}${path.sep}`);
-  if (!allowedFile) {
+  const corpusFile = getAllowedCorpusFilePath(corpusDir, relativePath);
+  if (!corpusFile) {
     send(res, 403, { "Content-Type": "text/plain; charset=utf-8" }, "Forbidden", securityOptions);
     return true;
   }
-  if (relativePath.startsWith("files/")) {
-    try {
-      const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-      const listedPaths = new Set(
-        (Array.isArray(manifest.cases) ? manifest.cases : []).map((entry) =>
-          decodeURIComponent(String(entry?.url || "").replace(E2E_CORPUS_PREFIX, "")),
-        ),
-      );
-      if (!listedPaths.has(relativePath)) {
-        send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found", securityOptions);
-        return true;
-      }
-    } catch {
-      send(res, 500, { "Content-Type": "text/plain; charset=utf-8" }, "Invalid corpus manifest", securityOptions);
-      return true;
-    }
+  const manifestError = getCorpusManifestError(corpusFile.root, relativePath);
+  if (manifestError === 404) {
+    send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found", securityOptions);
+    return true;
   }
-  fs.stat(filePath, (error, stat) => {
-    if (error || !stat.isFile()) {
-      send(res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not Found", securityOptions);
-      return;
-    }
-    setSecurityHeaders(res, securityOptions);
-    res.writeHead(200, {
-      "Content-Length": stat.size,
-      "Content-Type": relativePath.endsWith(".json") ? "application/json; charset=utf-8" : "application/octet-stream",
-    });
-    if (req.method === "HEAD") {
-      res.end();
-      return;
-    }
-    const stream = fs.createReadStream(filePath);
-    stream.on("error", () => res.destroy());
-    stream.pipe(res);
-  });
+  if (manifestError === 500) {
+    send(res, 500, { "Content-Type": "text/plain; charset=utf-8" }, "Invalid corpus manifest", securityOptions);
+    return true;
+  }
+  serveCorpusFile(req, res, securityOptions, relativePath, corpusFile.filePath);
   return true;
 };
 

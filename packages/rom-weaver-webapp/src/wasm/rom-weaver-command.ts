@@ -529,9 +529,7 @@ function clampRomWeaverBrowserThreadBudget(value: unknown, options: RomWeaverBro
   return Math.min(parsed, maxThreads);
 }
 
-function parseRomWeaverThreadBudgetCount(value: unknown, options: RomWeaverBrowserThreadRequestOptions): number | null {
-  const maxThreads = normalizePositiveIntegerOption(options.maxThreads, 64);
-  if (value === undefined || value === null) return null;
+function parseNumericThreadBudget(value: unknown, maxThreads: number): number | null | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
     const parsed = Math.floor(value);
     return parsed > 0 ? Math.min(parsed, maxThreads) : null;
@@ -541,6 +539,14 @@ function parseRomWeaverThreadBudgetCount(value: unknown, options: RomWeaverBrows
     const max = BigInt(maxThreads);
     return Number(value > max ? max : value);
   }
+  return undefined;
+}
+
+function parseRomWeaverThreadBudgetCount(value: unknown, options: RomWeaverBrowserThreadRequestOptions): number | null {
+  const maxThreads = normalizePositiveIntegerOption(options.maxThreads, 64);
+  if (value === undefined || value === null) return null;
+  const numeric = parseNumericThreadBudget(value, maxThreads);
+  if (numeric !== undefined) return numeric;
   if (typeof value !== "string") return null;
   const raw = value.trim();
   if (!raw) return null;

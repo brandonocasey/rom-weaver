@@ -126,6 +126,55 @@ const enumeratePatchLeaves = async (
  * dropped patch archive) and the ROM-staging descent (which harvests the sidecar patches its single
  * ingest already extracted, so no second pass is needed). Every patch ingest identified is surfaced
  * (only an archive leaf is excluded); the apply-time validate guards a genuinely bad one. */
+const buildPatchArchiveLeaf = async (
+  archiveFile: PatchFileInstance,
+  descriptor: ParsedPatchDescriptor,
+  index: number,
+  patchOutputs: PublicOutput[],
+  extractElapsedMs: number | undefined,
+  cache: Map<string, PatchFileInstance>,
+  sourceIndex: number,
+): Promise<PatchArchiveLeaf | null> => {
+  const displayPath = descriptor.leafPath;
+  const output = patchOutputs.find((candidate) => candidate.path === displayPath);
+  if (!output) return null;
+  const fileName = getBaseFileName(descriptor.fileName || `patch-${index + 1}.bin`);
+  let file = cache.get(displayPath);
+  if (!file) {
+    file = await createPatchFileFromPublicOutput(output, fileName, { materializeBlob: true });
+    file.fileName = fileName;
+  }
+  if (isCompressionFile(file)) {
+    if (!cache.has(displayPath)) await Promise.resolve(getPatchFileCleanup(file)?.()).catch(() => undefined);
+    return null;
+  }
+  attachIngestPatchRequirements(file, patchProbeRequirementsFromDescriptor(descriptor));
+  const breadcrumbs = [archiveFile.fileName || "archive", ...derivePatchLeafBreadcrumbs(displayPath)];
+  const parentCompressions: InputParentCompression[] = breadcrumbs.map((entryName, depth) => ({
+    depth,
+    fileName: entryName,
+    kind: "archive",
+    ...(depth === 0 && extractElapsedMs !== undefined ? { decompressionTimeMs: extractElapsedMs } : {}),
+  }));
+  ensureValidatedPatchArchiveEntryCleanup(archiveFile);
+  cache.set(displayPath, file);
+  return {
+    candidate: {
+      ...(breadcrumbs.length ? { breadcrumbs } : {}),
+      fileName,
+      id: makeInputId(sourceIndex, displayPath || fileName, normalizeArchiveEntryName),
+      kind: "patch",
+      path: displayPath || fileName,
+      selectable: true,
+      size: descriptor.sizeBytes,
+      type: "file",
+    },
+    file,
+    parentCompressions,
+    ...(typeof descriptor.sidecarOrder === "number" ? { sidecarOrder: descriptor.sidecarOrder } : {}),
+  };
+};
+
 const buildPatchArchiveLeaves = async (
   archiveFile: PatchFileInstance,
   patches: ParsedPatchDescriptor[],
@@ -139,57 +188,16 @@ const buildPatchArchiveLeaves = async (
   for (let index = 0; index < patches.length; index += 1) {
     const descriptor = patches[index];
     if (!descriptor) continue;
-    const displayPath = descriptor.leafPath;
-    // Archive leaves are adopted 1:1 into patchOutputs (a bare patch - never an archive - yields none).
-    const output = patchOutputs.find((candidate) => candidate.path === displayPath);
-    if (!output) continue;
-    const fileName = getBaseFileName(descriptor.fileName || `patch-${index + 1}.bin`);
-    let file = cache.get(displayPath);
-    if (!file) {
-      file = await createPatchFileFromPublicOutput(output, fileName, { materializeBlob: true });
-      file.fileName = fileName;
-    }
-    // Trust ingest's name-based patch identification (the Rust set) and surface ALL of its leaves -
-    // only an archive leaf is excluded. The TS magic-byte re-check used to drop name-valid patches the
-    // header probe mis-read, hiding real choices; ingest already classified these as patches and the
-    // apply-time validate still guards a genuinely bad one.
-    if (isCompressionFile(file)) {
-      if (!cache.has(displayPath)) await Promise.resolve(getPatchFileCleanup(file)?.()).catch(() => undefined);
-      continue;
-    }
-    // Stash the descriptor's embedded source/target requirements so the apply parse reuses them
-    // instead of re-ingesting the leaf.
-    attachIngestPatchRequirements(file, patchProbeRequirementsFromDescriptor(descriptor));
-    ensureValidatedPatchArchiveEntryCleanup(archiveFile);
-    cache.set(displayPath, file);
-    // Full archive-nesting path: the source archive, then each nested archive/folder it descends
-    // through (the leaf file name is shown separately as the candidate's primary label).
-    const breadcrumbs = [archiveFile.fileName || "archive", ...derivePatchLeafBreadcrumbs(displayPath)];
-    // Surface the same chain as parentCompressions so a fanned-out patch keeps its "extract section"
-    // (the archive › nested-archive path) in the patch stack row. Attach the elapsed time to the root
-    // entry but leave parent sizes unset - synthesizing the whole-archive size as a single leaf's
-    // parent would compute a nonsensical compression ratio (archive ÷ leaf).
-    const parentCompressions: InputParentCompression[] = breadcrumbs.map((entryName, depth) => ({
-      depth,
-      fileName: entryName,
-      kind: "archive",
-      ...(depth === 0 && extractElapsedMs !== undefined ? { decompressionTimeMs: extractElapsedMs } : {}),
-    }));
-    leaves.push({
-      candidate: {
-        ...(breadcrumbs.length ? { breadcrumbs } : {}),
-        fileName,
-        id: makeInputId(sourceIndex, displayPath || fileName, normalizeArchiveEntryName),
-        kind: "patch",
-        path: displayPath || fileName,
-        selectable: true,
-        size: descriptor.sizeBytes,
-        type: "file",
-      },
-      file,
-      parentCompressions,
-      ...(typeof descriptor.sidecarOrder === "number" ? { sidecarOrder: descriptor.sidecarOrder } : {}),
-    });
+    const leaf = await buildPatchArchiveLeaf(
+      archiveFile,
+      descriptor,
+      index,
+      patchOutputs,
+      extractElapsedMs,
+      cache,
+      sourceIndex,
+    );
+    if (leaf) leaves.push(leaf);
   }
   traceArchivePreparation(options, "input.archive.patch.enumerate.finish", {
     file: describeArchiveFileForTrace(archiveFile),
@@ -205,33 +213,12 @@ const buildPatchArchiveLeaves = async (
  * for an explicit selection, auto-picks a lone leaf, prompts (flat multi-select across all branches)
  * when several exist, and returns `null` when no valid patch is discovered so the caller can fall
  * back to the generic single-payload descent. */
-const resolvePatchArchiveLeaf = async (
+const requestPatchArchiveLeafSelection = (
   archiveFile: PatchFileInstance,
+  leaves: PatchArchiveLeaf[],
   options: InputPreparationOptions,
-  runtime: InputPreparationRuntimeLike,
-  selectedArchiveEntry: string | undefined,
   sourceIndex: number,
-): Promise<PatchFileInstance | null> => {
-  const cache = getValidatedPatchArchiveEntryCache(archiveFile);
-  if (selectedArchiveEntry) {
-    const cached = cache.get(selectedArchiveEntry);
-    if (cached) return cached;
-  }
-  const leaves = await enumeratePatchLeaves(archiveFile, options, runtime, sourceIndex);
-  if (selectedArchiveEntry) {
-    const leaf = leaves.find((entry) => entry.candidate.path === selectedArchiveEntry);
-    if (leaf) return leaf.file;
-    throw new RomWeaverError(
-      "SELECTION_NOT_FOUND",
-      `${archiveFile.fileName || "Patch archive"} has no patch entry "${selectedArchiveEntry}"`,
-    );
-  }
-  if (leaves.length === 0) return null;
-  if (leaves.length === 1) return leaves[0]?.file ?? null;
-  if (typeof options?.onCandidatesFound !== "function") return leaves[0]?.file ?? null;
-  // A "replace from archive" pick never auto-swaps: it always prompts. When the archive carries a
-  // same-named leaf (the patch being replaced), surface it first and PRE-SELECT it in the picker so
-  // confirming is one click - but the user still owns the choice and can pick a different one.
+): never => {
   const replacement = options?.patchLeafPreference;
   const preferred = replacement ? matchPreferredPatchLeaf(leaves, replacement.preferredName) : undefined;
   const orderedLeaves = preferred ? [preferred, ...leaves.filter((entry) => entry !== preferred)] : leaves;
@@ -267,10 +254,37 @@ const resolvePatchArchiveLeaf = async (
     preselected: preferred?.candidate.id,
     sourceName: request.sourceName,
   });
-  options.onCandidatesFound(request);
+  options?.onCandidatesFound?.(request);
   throw new RomWeaverError("AMBIGUOUS_SELECTION", `${request.sourceName} requires patch selection`, {
     details: { request },
   });
+};
+
+const resolvePatchArchiveLeaf = async (
+  archiveFile: PatchFileInstance,
+  options: InputPreparationOptions,
+  runtime: InputPreparationRuntimeLike,
+  selectedArchiveEntry: string | undefined,
+  sourceIndex: number,
+): Promise<PatchFileInstance | null> => {
+  const cache = getValidatedPatchArchiveEntryCache(archiveFile);
+  if (selectedArchiveEntry) {
+    const cached = cache.get(selectedArchiveEntry);
+    if (cached) return cached;
+  }
+  const leaves = await enumeratePatchLeaves(archiveFile, options, runtime, sourceIndex);
+  if (selectedArchiveEntry) {
+    const leaf = leaves.find((entry) => entry.candidate.path === selectedArchiveEntry);
+    if (leaf) return leaf.file;
+    throw new RomWeaverError(
+      "SELECTION_NOT_FOUND",
+      `${archiveFile.fileName || "Patch archive"} has no patch entry "${selectedArchiveEntry}"`,
+    );
+  }
+  if (leaves.length === 0) return null;
+  if (leaves.length === 1) return leaves[0]?.file ?? null;
+  if (typeof options?.onCandidatesFound !== "function") return leaves[0]?.file ?? null;
+  return requestPatchArchiveLeafSelection(archiveFile, leaves, options, sourceIndex);
 };
 
 /** Retrieve the already-extracted leaf patch file for a candidate of an emitted patch-selection

@@ -131,32 +131,21 @@ const createBrowserRuntimeVfsIo = ({
     const mountPrefix = `${mountPoint}|`;
     return `${mountPrefix}${getObjectIdentityKey(candidate)}`;
   };
-  const releaseSources: RuntimeWorkerIo["releaseSources"] = async (sources) => {
-    const cleanups: Array<Promise<void>> = [];
-    for (const source of sources) {
-      const key = getStagedSourceCacheKey(source);
-      if (!key) continue;
-      const cached = stagedSourceCache.get(key);
-      if (!cached) {
-        // Not yet cached: only mark the release when a stage is actually in flight, tied to that stage's
-        // token (consumed in cacheStagedSource). Without the in-flight guard a release could re-add a
-        // mark that a concurrent re-stage just cleared, and without the token a re-stage that starts
-        // later would be destroyed by this stale release. No in-flight stage means nothing to release.
-        const pending = pendingStages.get(key);
-        if (pending) releasedStagingSources.set(key, pending.token);
-        continue;
-      }
-      cached.cleanupWhenIdle = true;
-      // Release means the session no longer references this source. A live cross-drop reader (an idle
-      // entry a re-stage just picked up) still needs the copy: defer to its wrapper cleanup via
-      // cleanupWhenIdle instead of yanking it out from under the in-flight command. Only force-clean a
-      // truly-dead holder - a leaked ref from a cancelled pass that never returned it (never reused while
-      // idle), which cleanupWhenIdle alone would pin forever; per-wrapper released flags keep late
-      // cleanup() calls harmless.
-      if (cached.refCount > 0 && cached.reusedWhileIdle) continue;
-      cleanups.push(cleanupCachedStagedSource(key, cached));
+  const releaseStagedSource = (source: unknown): Promise<void> | undefined => {
+    const key = getStagedSourceCacheKey(source);
+    if (!key) return undefined;
+    const cached = stagedSourceCache.get(key);
+    if (!cached) {
+      const pending = pendingStages.get(key);
+      if (pending) releasedStagingSources.set(key, pending.token);
+      return undefined;
     }
-    await Promise.all(cleanups);
+    cached.cleanupWhenIdle = true;
+    if (cached.refCount > 0 && cached.reusedWhileIdle) return undefined;
+    return cleanupCachedStagedSource(key, cached);
+  };
+  const releaseSources: RuntimeWorkerIo["releaseSources"] = async (sources) => {
+    await Promise.all(sources.map(releaseStagedSource));
   };
   const releaseOwnedSources: RuntimeWorkerIo["releaseOwnedSources"] = async (sources) => {
     await Promise.all(

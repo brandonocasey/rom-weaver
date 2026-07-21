@@ -54,6 +54,9 @@ const settingsDraftHasChanges = (webappState?: WebappState | null): boolean => {
   return !areSettingsEqual(webappState.settings, webappState.draftSettings);
 };
 
+const creatorMetadataHasChanges = (metadataValues?: UnknownRecord | null): boolean =>
+  !!metadataValues && Object.values(metadataValues).some((value) => String(value || "").trim());
+
 const creatorHasPendingChanges = (creatorState: CreatorState): boolean => {
   if (!creatorState) return false;
   if (
@@ -66,12 +69,7 @@ const creatorHasPendingChanges = (creatorState: CreatorState): boolean => {
   if (String(creatorState.outputName || "").trim()) return true;
   if (creatorState.settingsEdited) return true;
   if (creatorState.patchType && creatorState.patchType !== "bps") return true;
-  if (creatorState.metadataValues && typeof creatorState.metadataValues === "object") {
-    for (const value of Object.values(creatorState.metadataValues)) {
-      if (String(value || "").trim()) return true;
-    }
-  }
-  return false;
+  return creatorMetadataHasChanges(creatorState.metadataValues);
 };
 
 const trimHasPendingChanges = (trimState: TrimState): boolean => {

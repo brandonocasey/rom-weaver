@@ -24,6 +24,32 @@ type ParsedCueFile = {
   hasIndex00: boolean;
 };
 
+const parseCueLine = (trimmed: string, currentFile: ChdCueFileEntry | null, result: ParsedCueFile) => {
+  const fileMatch = trimmed.match(CUE_FILE_LINE_REGEX);
+  if (fileMatch) {
+    const nextFile = {
+      name: fileMatch[1] || "",
+      type: (fileMatch[2] || "").toUpperCase(),
+    };
+    result.files.push(nextFile);
+    return nextFile;
+  }
+
+  const trackMatch = trimmed.match(CUE_TRACK_LINE_REGEX);
+  if (trackMatch) {
+    result.tracks.push({
+      file: currentFile,
+      mode: (trackMatch[2] || "").toUpperCase(),
+      number: parseInt(trackMatch[1] || "0", 10),
+    });
+    return currentFile;
+  }
+
+  if (CUE_PREGAP_LINE_REGEX.test(trimmed)) result.hasPregap = true;
+  else if (CUE_INDEX_00_LINE_REGEX.test(trimmed)) result.hasIndex00 = true;
+  return currentFile;
+};
+
 const parseCueFile = (cueText: string): ParsedCueFile => {
   const result: ParsedCueFile = {
     files: [],
@@ -36,29 +62,7 @@ const parseCueFile = (cueText: string): ParsedCueFile => {
   for (const line of String(cueText || "").split(LINE_BREAK_REGEX)) {
     const trimmed = line.trim();
     if (!trimmed || CUE_REM_LINE_REGEX.test(trimmed)) continue;
-
-    const fileMatch = trimmed.match(CUE_FILE_LINE_REGEX);
-    if (fileMatch) {
-      currentFile = {
-        name: fileMatch[1] || "",
-        type: (fileMatch[2] || "").toUpperCase(),
-      };
-      result.files.push(currentFile);
-      continue;
-    }
-
-    const trackMatch = trimmed.match(CUE_TRACK_LINE_REGEX);
-    if (trackMatch) {
-      result.tracks.push({
-        file: currentFile,
-        mode: (trackMatch[2] || "").toUpperCase(),
-        number: parseInt(trackMatch[1] || "0", 10),
-      });
-      continue;
-    }
-
-    if (CUE_PREGAP_LINE_REGEX.test(trimmed)) result.hasPregap = true;
-    else if (CUE_INDEX_00_LINE_REGEX.test(trimmed)) result.hasIndex00 = true;
+    currentFile = parseCueLine(trimmed, currentFile, result);
   }
 
   return result;

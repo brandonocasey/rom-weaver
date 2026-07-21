@@ -93,6 +93,13 @@ const getResolvedInputArchiveName = (
   return originalName && resolved.fileName && originalName !== resolved.fileName ? originalName : "-";
 };
 
+const getStagedInputField = <TValue>(
+  source: CreateWorkflowSourceState | ApplyWorkflowInputState,
+  key: keyof CreateWorkflowSourceState,
+): TValue | undefined => {
+  return key in source ? (source[key as keyof typeof source] as TValue | undefined) : undefined;
+};
+
 const toStagedInputInfo = (
   source: CreateWorkflowSourceState | ApplyWorkflowInputState | undefined | null,
   originalName: string,
@@ -105,14 +112,12 @@ const toStagedInputInfo = (
     archiveName: resolved
       ? getResolvedInputArchiveName(resolved, originalName)
       : getWorkflowArchiveName(source, originalName),
-    chdMode: resolved?.chdMode || ("chdMode" in source ? source.chdMode : undefined),
-    checksums: checksums || resolved?.checksums || ("checksums" in source ? source.checksums : undefined),
-    checksumVariants:
-      resolved?.checksumVariants || ("checksumVariants" in source ? source.checksumVariants : undefined),
+    chdMode: resolved?.chdMode || getStagedInputField(source, "chdMode"),
+    checksums: checksums || resolved?.checksums || getStagedInputField(source, "checksums"),
+    checksumVariants: resolved?.checksumVariants || getStagedInputField(source, "checksumVariants"),
     decompressionTimeMs: resolved?.decompressionTimeMs ?? source.decompressionTimeMs,
     fileName,
-    parentCompressions:
-      resolved?.parentCompressions || ("parentCompressions" in source ? source.parentCompressions : undefined),
+    parentCompressions: resolved?.parentCompressions || getStagedInputField(source, "parentCompressions"),
     size: resolved?.size ?? source.size,
     sourceSize: resolved?.sourceSize ?? source.sourceSize,
     wasDecompressed: resolved?.wasDecompressed ?? source.wasDecompressed,

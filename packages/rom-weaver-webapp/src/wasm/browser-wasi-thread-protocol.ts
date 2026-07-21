@@ -97,6 +97,25 @@ export function createWaitDeadline(timeoutMs: unknown): number {
   return Date.now() + Math.max(0, Number(timeoutMs) || 0);
 }
 
+const waitForAtomicsStateChangeUntil = (
+  control: ThreadStartControl,
+  index: number,
+  expectedState: number,
+  deadline: number,
+  slice: number,
+  shouldAbort?: () => boolean,
+): AtomicsWaitResult => {
+  while (true) {
+    if (shouldAbort?.()) return "aborted";
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return "timed-out";
+    const result = Atomics.wait(control, index, expectedState, Math.min(remainingMs, slice));
+    if (result !== "timed-out") return result;
+    if (shouldAbort?.()) return "aborted";
+    if (remainingMs <= slice) return "timed-out";
+  }
+};
+
 /**
  * Blocks on Atomics.wait until control[index] leaves expectedState. With a deadline it polls in
  * sliceMs slices and returns 'timed-out' when the deadline passes; without one it does a single
@@ -110,17 +129,8 @@ export function waitForAtomicsStateChange(
 ): AtomicsWaitResult {
   const { deadline, sliceMs = ATOMICS_WAIT_SLICE_MS, shouldAbort } = options;
   const slice = Math.max(1, Number(sliceMs) || ATOMICS_WAIT_SLICE_MS);
-  if (typeof deadline === "number") {
-    while (true) {
-      if (shouldAbort?.()) return "aborted";
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) return "timed-out";
-      const result = Atomics.wait(control, index, expectedState, Math.min(remainingMs, slice));
-      if (result !== "timed-out") return result;
-      if (shouldAbort?.()) return "aborted";
-      if (remainingMs <= slice) return "timed-out";
-    }
-  }
+  if (typeof deadline === "number")
+    return waitForAtomicsStateChangeUntil(control, index, expectedState, deadline, slice, shouldAbort);
   return Atomics.wait(control, index, expectedState, slice);
 }
 
@@ -129,34 +139,31 @@ export function waitForAtomicsStateChange(
  * once the worker reaches RUNNING (or IDLE, if it already completed), or an Error if it FAILED, was
  * SHUTDOWN, entered an unexpected state, or did not ack within THREAD_START_ACK_TIMEOUT_MS.
  */
+const getThreadStartStateError = (state: number, tid: unknown): Error | null => {
+  if (state === THREAD_SLOT_STATE_FAILED) return new Error(`wasi thread ${tid} failed before start acknowledgement`);
+  if (state === THREAD_SLOT_STATE_SHUTDOWN)
+    return new Error(`wasi thread ${tid} was shut down before start acknowledgement`);
+  if (state !== THREAD_SLOT_STATE_REQUESTED && state !== THREAD_SLOT_STATE_STARTING)
+    return new Error(`wasi thread ${tid} entered unexpected start state ${state}`);
+  return null;
+};
+
+const waitForThreadStartTransition = (control: ThreadStartControl, state: number, deadline: number) =>
+  waitForAtomicsStateChange(control, THREAD_SLOT_STATE_INDEX, state, { deadline });
+
 export function waitForThreadStartAck(control: ThreadStartControl, tid: unknown): Error | null {
   const deadline = createWaitDeadline(THREAD_START_ACK_TIMEOUT_MS);
   while (true) {
     const state = Atomics.load(control, THREAD_SLOT_STATE_INDEX);
     if (state === THREAD_SLOT_STATE_RUNNING || state === THREAD_SLOT_STATE_IDLE) return null;
-    if (state === THREAD_SLOT_STATE_FAILED) {
-      return new Error(`wasi thread ${tid} failed before start acknowledgement`);
-    }
-    if (state === THREAD_SLOT_STATE_SHUTDOWN) {
-      return new Error(`wasi thread ${tid} was shut down before start acknowledgement`);
-    }
     if (state === THREAD_SLOT_STATE_STARTING) {
-      const waitResult = waitForAtomicsStateChange(control, THREAD_SLOT_STATE_INDEX, THREAD_SLOT_STATE_STARTING, {
-        deadline,
-      });
-      if (waitResult === "timed-out") {
-        return new Error(`wasi thread ${tid} start acknowledgement timed out`);
-      }
+      const waitResult = waitForThreadStartTransition(control, state, deadline);
+      if (waitResult === "timed-out") return new Error(`wasi thread ${tid} start acknowledgement timed out`);
       continue;
     }
-    if (state !== THREAD_SLOT_STATE_REQUESTED) {
-      return new Error(`wasi thread ${tid} entered unexpected start state ${state}`);
-    }
-    const waitResult = waitForAtomicsStateChange(control, THREAD_SLOT_STATE_INDEX, THREAD_SLOT_STATE_REQUESTED, {
-      deadline,
-    });
-    if (waitResult === "timed-out") {
-      return new Error(`wasi thread ${tid} start acknowledgement timed out`);
-    }
+    const stateError = getThreadStartStateError(state, tid);
+    if (stateError) return stateError;
+    const waitResult = waitForThreadStartTransition(control, state, deadline);
+    if (waitResult === "timed-out") return new Error(`wasi thread ${tid} start acknowledgement timed out`);
   }
 }

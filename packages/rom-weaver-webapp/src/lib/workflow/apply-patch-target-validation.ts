@@ -118,6 +118,33 @@ type PreparedValidation<TSource> = {
   validationKey: string;
 };
 
+const isCachedValidation = (
+  validation: PatchTargetValidationEntry<unknown>["stage"]["state"]["patchValidation"],
+  key: string,
+) => validation?.validationKey === key && ["valid", "invalid", "deferred"].includes(validation.status);
+
+const markValidationUnavailable = <TSource>(
+  entry: PatchTargetValidationEntry<TSource>,
+  validationKey: string,
+  startedAt: number,
+  reason: "missing-source" | "unavailable",
+) => {
+  const { stage, target, preflight } = entry;
+  const failedPreflight = preflight.status === "invalid";
+  if (reason === "missing-source" && !failedPreflight) {
+    stage.state.patchValidation = undefined;
+    stage.state.checksumTimeMs = Date.now() - startedAt;
+    return;
+  }
+  stage.state.patchValidation = {
+    message: failedPreflight ? "Patch source requirements failed" : "Patch validation is unavailable for this source",
+    status: failedPreflight ? "invalid" : "unknown",
+    targetInputId: target.id,
+    validationKey,
+  };
+  stage.state.checksumTimeMs = Date.now() - startedAt;
+};
+
 const prepareValidation = <TSource>(
   entry: PatchTargetValidationEntry<TSource>,
   adapters: PatchTargetValidationAdapters,
@@ -127,40 +154,23 @@ const prepareValidation = <TSource>(
     entry.chainFingerprint ? `|chain:${entry.chainFingerprint}` : ""
   }`;
   const existingValidation = stage.state.patchValidation;
-  const cached =
-    existingValidation?.validationKey === validationKey &&
-    (existingValidation.status === "valid" ||
-      existingValidation.status === "invalid" ||
-      existingValidation.status === "deferred");
+  const cached = isCachedValidation(existingValidation, validationKey);
   const startedAt = Date.now();
   const validatePatch = adapters.runtime.patch.validatePatch;
   const patchFile = stage.preparedPatchFile;
   if (!(validatePatch && patchFile && stage.parsedPatch)) {
-    stage.state.patchValidation =
-      preflight.status === "invalid"
-        ? {
-            message: "Patch source requirements failed",
-            status: "invalid",
-            targetInputId: target.id,
-            validationKey,
-          }
-        : undefined;
-    stage.state.checksumTimeMs = Date.now() - startedAt;
+    markValidationUnavailable(
+      entry,
+      validationKey,
+      startedAt,
+      preflight.status === "invalid" ? "unavailable" : "missing-source",
+    );
     return null;
   }
   const patchSource = getPatchFileExternalSource(patchFile, patchFile.fileName || stage.state.fileName || "patch.bin");
   const inputSource = getPatchFileExternalSource(target.file, target.fileName || "input.bin");
   if (!(patchSource && inputSource)) {
-    stage.state.patchValidation = {
-      message:
-        preflight.status === "invalid"
-          ? "Patch source requirements failed"
-          : "Patch validation is unavailable for this source",
-      status: preflight.status === "invalid" ? "invalid" : "unknown",
-      targetInputId: target.id,
-      validationKey,
-    };
-    stage.state.checksumTimeMs = Date.now() - startedAt;
+    markValidationUnavailable(entry, validationKey, startedAt, "unavailable");
     return null;
   }
   if (!cached) {

@@ -11,7 +11,7 @@ import type { SourceRef } from "../../types/source.ts";
 import type { WorkflowOptions } from "../../types/workflow-controller.ts";
 import type { WorkflowRuntime } from "../../types/workflow-runtime-adapter.ts";
 import type { PatchValidationPlan } from "../../wasm/index.ts";
-import type { ApplyWorkflowOptions, PatchInput } from "../../types/workflow-runtime-types.ts";
+import type { ApplyWorkflowOptions, PatchInput, ProgressEvent } from "../../types/workflow-runtime-types.ts";
 import type { ParsedPatchLike, PatchFileInstance } from "../../workers/protocol/patch-engine.ts";
 import { getPatchProbeRequirements } from "../apply/patch-apply-service.ts";
 import { patchWorkflowDeps, runApplyWorkflow } from "../apply/workflow.ts";
@@ -781,23 +781,7 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
       if (!outputName) throw new RomWeaverError("INVALID_SETTINGS", "Output name is required");
       const result = await withAbortSignal(
         runApplyWorkflow(
-          this.createPatchInput((progress) => {
-            const stage = progress.stage === "output" ? "compress" : "apply";
-            const role = progress.stage === "output" ? "output" : "worker";
-            this.emitProgress({
-              details: {
-                ...(isRecord(progress.details) ? progress.details : {}),
-              },
-              hasProgress: progress.hasProgress,
-              id: `${this.id}:${role}:${stage}`,
-              label: progress.label || (stage === "compress" ? "Compressing output..." : "Weaving patch..."),
-              percent:
-                typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
-              role,
-              stage,
-              workflow: "apply",
-            });
-          }),
+          this.createPatchInput((progress) => this.emitApplyWorkerProgress(progress)),
           this.runtime,
           patchWorkflowDeps as never,
         ),
@@ -814,6 +798,23 @@ class ApplyWorkflowController<TSource, TDestination> extends BaseWorkflowControl
         sizeSummary: result.sizeSummary,
       };
       return publicResult;
+    });
+  }
+
+  private emitApplyWorkerProgress(progress: ProgressEvent): void {
+    const stage = progress.stage === "output" ? "compress" : "apply";
+    const role = progress.stage === "output" ? "output" : "worker";
+    this.emitProgress({
+      details: {
+        ...(isRecord(progress.details) ? progress.details : {}),
+      },
+      hasProgress: progress.hasProgress,
+      id: `${this.id}:${role}:${stage}`,
+      label: progress.label || (stage === "compress" ? "Compressing output..." : "Weaving patch..."),
+      percent: typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
+      role,
+      stage,
+      workflow: "apply",
     });
   }
 

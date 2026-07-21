@@ -198,33 +198,44 @@ const romTypeFromEmittedFile = (
   };
 };
 
+const getOptionalStringField = (record: Record<string, unknown>, key: string): string | undefined => {
+  const value = record[key];
+  return typeof value === "string" && value ? value : undefined;
+};
+
+const getOptionalTrimmedStringField = (record: Record<string, unknown>, key: string): string | undefined => {
+  const value = record[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
+const getOptionalFiniteNumberField = (record: Record<string, unknown>, key: string): number | undefined => {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+};
+
 const parseEmittedFile = (value: unknown): RomWeaverEmittedFile | null => {
   const entry = asRecord(value);
   if (!entry) return null;
   const path = typeof entry.path === "string" ? entry.path : "";
   if (!path) return null;
-  const fileName =
-    typeof entry.file_name === "string" && entry.file_name ? entry.file_name : getPathBaseName(path, "output.bin");
+  const fileName = getOptionalStringField(entry, "file_name") || getPathBaseName(path, "output.bin");
   return {
     checksums: normalizeEmittedFileChecksums(entry.checksums),
     checksumVariants: parseChecksumVariants(entry),
-    cueText: typeof entry.cue_text === "string" && entry.cue_text ? entry.cue_text : undefined,
-    discFormat:
-      typeof entry.disc_format === "string" && entry.disc_format.trim() ? entry.disc_format.trim() : undefined,
-    discGroupId: typeof entry.disc_group_id === "string" && entry.disc_group_id ? entry.disc_group_id : undefined,
-    extractTimeMs:
-      typeof entry.extract_time_ms === "number" && Number.isFinite(entry.extract_time_ms)
-        ? entry.extract_time_ms
-        : undefined,
+    cueText: getOptionalStringField(entry, "cue_text"),
+    discFormat: getOptionalTrimmedStringField(entry, "disc_format"),
+    discGroupId: getOptionalStringField(entry, "disc_group_id"),
+    extractTimeMs: getOptionalFiniteNumberField(entry, "extract_time_ms"),
     extractTiming: normalizeExtractTiming(entry.timing),
     fileName,
-    gdiText: typeof entry.gdi_text === "string" && entry.gdi_text ? entry.gdi_text : undefined,
-    kind: typeof entry.kind === "string" && entry.kind ? entry.kind : undefined,
+    gdiText: getOptionalStringField(entry, "gdi_text"),
+    kind: getOptionalStringField(entry, "kind"),
     path,
-    platform: typeof entry.platform === "string" && entry.platform.trim() ? entry.platform.trim() : undefined,
-    sizeBytes: typeof entry.size_bytes === "number" && Number.isFinite(entry.size_bytes) ? entry.size_bytes : undefined,
-    trackNumber:
-      typeof entry.track_number === "number" && Number.isFinite(entry.track_number) ? entry.track_number : undefined,
+    platform: getOptionalTrimmedStringField(entry, "platform"),
+    sizeBytes: getOptionalFiniteNumberField(entry, "size_bytes"),
+    trackNumber: getOptionalFiniteNumberField(entry, "track_number"),
   };
 };
 
@@ -240,42 +251,42 @@ const getEmittedFiles = (result: RomWeaverRunJsonResult): RomWeaverEmittedFile[]
   return output;
 };
 
+const parseContainerEntry = (entry: unknown): CompressionProbeResult["entries"][number] | null => {
+  if (typeof entry === "string") {
+    const normalized = entry.trim();
+    return normalized
+      ? {
+          fileName: normalized,
+          filename: normalized,
+          name: getPathBaseName(normalized, normalized),
+        }
+      : null;
+  }
+  const record = asRecord(entry);
+  if (!record) return null;
+  const typed = record as WireRecord<ExtractedFileEntry>;
+  const fileName = String(typed.file_name || record.fileName || record.filename || record.name || "").trim();
+  if (!fileName) return null;
+  const sizeValue = typed.size_bytes ?? record.size;
+  const size = typeof sizeValue === "number" && Number.isFinite(sizeValue) ? sizeValue : undefined;
+  return {
+    fileName,
+    filename: fileName,
+    name: getPathBaseName(fileName, fileName),
+    size,
+  };
+};
+
 const getContainerEntriesFromProbe = (result: RomWeaverRunJsonResult): CompressionProbeResult["entries"] => {
   const terminal = getTerminalEvent(result);
   const details = asRecord(terminal ? getRomWeaverRunEventDetails(terminal) : null);
   const container = asRecord(details?.container);
   const entryRecords = Array.isArray(container?.entry_records) ? container.entry_records : [];
   const entries = entryRecords.length ? entryRecords : Array.isArray(container?.entries) ? container.entries : [];
-  const output: CompressionProbeResult["entries"] = [];
-  for (const entry of entries) {
-    if (typeof entry === "string") {
-      const normalized = entry.trim();
-      if (!normalized) continue;
-      output.push({
-        fileName: normalized,
-        filename: normalized,
-        name: getPathBaseName(normalized, normalized),
-      });
-      continue;
-    }
-    const record = asRecord(entry);
-    if (!record) continue;
-    // Canonical container-entry fields (`file_name`/`size_bytes`) are read through the generated
-    // `ExtractedFileEntry` so a Rust rename breaks the build; the camelCase fallbacks below cover
-    // legacy/alternate emitters that this command may still receive and have no generated contract.
-    const typed = record as WireRecord<ExtractedFileEntry>;
-    const fileName = String(typed.file_name || record.fileName || record.filename || record.name || "").trim();
-    if (!fileName) continue;
-    const sizeValue = typed.size_bytes ?? record.size;
-    const size = typeof sizeValue === "number" && Number.isFinite(sizeValue) ? sizeValue : undefined;
-    output.push({
-      fileName,
-      filename: fileName,
-      name: getPathBaseName(fileName, fileName),
-      size,
-    });
-  }
-  return output;
+  return entries.flatMap((entry) => {
+    const parsed = parseContainerEntry(entry);
+    return parsed ? [parsed] : [];
+  });
 };
 
 // The Rust ProgressEvent carries effective_threads as a sibling of `details`.

@@ -183,7 +183,7 @@ async function loadLocalBundleSession(
         { decompressionTimeMs: parseElapsedMs, depth: 0, fileName: bundleFile.name, kind: "archive" },
       ];
     });
-    const entries: BundleApplySessionEntry[] = result.bundle.patches.map((patch, index) => {
+    const toEntry = (patch: (typeof result.bundle.patches)[number], index: number): BundleApplySessionEntry => {
       const file = patchFiles[index];
       if (!file) throw new Error(`Bundle patch ${index + 1} was not acquired`);
       return {
@@ -199,7 +199,8 @@ async function loadLocalBundleSession(
         ...(patch.inputChecks ? { inputChecks: patch.inputChecks } : {}),
         ...(patch.outputChecks ? { outputChecks: patch.outputChecks } : {}),
       };
-    });
+    };
+    const entries: BundleApplySessionEntry[] = result.bundle.patches.map(toEntry);
     const output = result.bundle.output;
     const name = bundleSessionDisplayName(result.bundle);
     const romExpectation = romFile ? undefined : bundleRomExpectation(result.bundle);

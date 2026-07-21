@@ -87,16 +87,21 @@ const getNamedSourcePath = (source: SourceValue): string => {
   return "";
 };
 
+const getRecordFileName = (source: RuntimeValue, keys: string[]): string | undefined => {
+  if (!isRecord(source)) return undefined;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+};
+
 const getNamedSourceFileName = (source: SourceValue, options?: NamedSourceOptions): string => {
   const fallback = options?.fallback || "";
-  if (isRecord(source)) {
-    const nameKeys =
-      Array.isArray(options?.nameKeys) && options.nameKeys.length ? options.nameKeys : ["fileName", "name"];
-    for (const key of nameKeys) {
-      const value = source[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-  }
+  const nameKeys =
+    Array.isArray(options?.nameKeys) && options.nameKeys.length ? options.nameKeys : ["fileName", "name"];
+  const sourceFileName = getRecordFileName(source, nameKeys);
+  if (sourceFileName) return sourceFileName;
 
   const directSource = getNamedSource(source, options);
   if (typeof directSource === "string") {

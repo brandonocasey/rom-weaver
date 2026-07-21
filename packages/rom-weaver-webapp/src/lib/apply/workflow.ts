@@ -92,31 +92,43 @@ const getParsedPatchFormatHint = (patch: ParsedPatchLike): string | undefined =>
   return constructorFormat || undefined;
 };
 
+type PreparedInputMetrics = {
+  inputDecompressionTimeMs: number;
+  inputSourceSize: number;
+  hasInputSourceSize: boolean;
+  wasDecompressed: boolean;
+};
+
+const addPreparedInputMetrics = (asset: InputAsset, metrics: PreparedInputMetrics): void => {
+  const preparation = getInputPreparationMetrics([asset]);
+  if (!preparation) return;
+  if (typeof preparation.sourceSize === "number" && Number.isFinite(preparation.sourceSize)) {
+    metrics.inputSourceSize += preparation.sourceSize;
+    metrics.hasInputSourceSize = true;
+  }
+  if (!preparation.wasDecompressed) return;
+  metrics.wasDecompressed = true;
+  if (typeof preparation.decompressionTimeMs === "number" && Number.isFinite(preparation.decompressionTimeMs))
+    metrics.inputDecompressionTimeMs += preparation.decompressionTimeMs;
+};
+
 const summarizePreparedInputMetrics = (assets: InputAsset[]) => {
   const seen = new Set<string>();
-  let inputSourceSize = 0;
-  let inputDecompressionTimeMs = 0;
-  let hasInputSourceSize = false;
-  let wasDecompressed = false;
+  const metrics: PreparedInputMetrics = {
+    hasInputSourceSize: false,
+    inputDecompressionTimeMs: 0,
+    inputSourceSize: 0,
+    wasDecompressed: false,
+  };
   for (const asset of assets) {
     const key = asset.groupId || asset.id;
     if (seen.has(key)) continue;
     seen.add(key);
-    const metrics = getInputPreparationMetrics([asset]);
-    if (!metrics) continue;
-    if (typeof metrics.sourceSize === "number" && Number.isFinite(metrics.sourceSize)) {
-      inputSourceSize += metrics.sourceSize;
-      hasInputSourceSize = true;
-    }
-    if (metrics.wasDecompressed) {
-      wasDecompressed = true;
-      if (typeof metrics.decompressionTimeMs === "number" && Number.isFinite(metrics.decompressionTimeMs))
-        inputDecompressionTimeMs += metrics.decompressionTimeMs;
-    }
+    addPreparedInputMetrics(asset, metrics);
   }
   return {
-    inputDecompressionTimeMs: wasDecompressed ? inputDecompressionTimeMs : undefined,
-    inputSourceSize: hasInputSourceSize ? inputSourceSize : undefined,
+    inputDecompressionTimeMs: metrics.wasDecompressed ? metrics.inputDecompressionTimeMs : undefined,
+    inputSourceSize: metrics.hasInputSourceSize ? metrics.inputSourceSize : undefined,
   };
 };
 
@@ -390,6 +402,215 @@ const prepareApplyPatches = async ({
   return { patches, patchFiles };
 };
 
+type ApplyPatchOptions = NonNullable<PatchInput["options"]>;
+type ApplyPatchWorker = NonNullable<NonNullable<WorkflowRuntime["patch"]>["applyPatch"]>;
+
+const groupPatchesByTarget = (targets: InputAsset[], patches: ParsedPatchLike[]) => {
+  const patchesByTarget = new Map<string, ParsedPatchLike[]>();
+  for (let index = 0; index < patches.length; index += 1) {
+    const target = targets[index];
+    if (!target) throw new Error(`Patch ${index + 1} target was not resolved`);
+    const patch = patches[index];
+    if (!patch) throw new Error(`Patch ${index + 1} was not parsed`);
+    const targetPatches = patchesByTarget.get(target.id) || [];
+    targetPatches.push(patch);
+    patchesByTarget.set(target.id, targetPatches);
+  }
+  return patchesByTarget;
+};
+
+const getSelectedPatchInputs = (
+  assetPatches: ParsedPatchLike[],
+  patches: ParsedPatchLike[],
+  patchFiles: PatchFileInstance[],
+) =>
+  assetPatches.map((patch) => {
+    const patchIndex = patches.indexOf(patch);
+    const patchFile = patchFiles[patchIndex];
+    if (!patchFile) throw new Error("Patch worker source was not found");
+    return {
+      patchFile: toWorkerSourceRef(patchFile, `patch-${patchIndex + 1}.bin`),
+      patchFileName: patchFile.fileName || `patch-${patchIndex + 1}.bin`,
+      patchFormat: getParsedPatchFormatHint(patch),
+    };
+  });
+
+const getPatchHeaderModes = (patchIndices: number[], patchOptions: PatchInput["patchOptions"]) =>
+  patchIndices.map((patchIndex, position) => {
+    const header = patchOptions?.[patchIndex]?.header;
+    if (header === "strip" || header === "keep") return header;
+    return position === 0 ? ("keep" as const) : ("auto" as const);
+  });
+
+const getPatchN64ByteOrders = (patchIndices: number[], patchOptions: PatchInput["patchOptions"]) =>
+  patchIndices.map((patchIndex, position) => {
+    const patchOption = patchOptions?.[patchIndex];
+    if (patchOption?.n64ByteOrder) return patchOption.n64ByteOrder;
+    return position === 0 ? patchOption?.resolvedN64ByteOrder || ("keep" as const) : ("auto" as const);
+  });
+
+const canReuseWorkerOutputPath = (output: PublicOutputWithApplySummary) =>
+  !!(
+    output &&
+    typeof output === "object" &&
+    "path" in output &&
+    typeof output.path === "string" &&
+    output.path &&
+    "vfs" in output &&
+    output.vfs
+  );
+
+const applyPatchesToAsset = async ({
+  applyPatchInRuntime,
+  asset,
+  assetPatches,
+  deps,
+  options,
+  patchOptions,
+  patchFiles,
+  patches,
+  workerOutputName,
+}: {
+  applyPatchInRuntime: ApplyPatchWorker;
+  asset: InputAsset;
+  assetPatches: ParsedPatchLike[];
+  deps: PatchWorkflowDeps;
+  options: ApplyPatchOptions;
+  patchOptions: PatchInput["patchOptions"];
+  patchFiles: PatchFileInstance[];
+  patches: ParsedPatchLike[];
+  workerOutputName?: string;
+}) => {
+  const patchIndices = assetPatches.map((patch) => patches.indexOf(patch));
+  const selectedPatches = getSelectedPatchInputs(assetPatches, patches, patchFiles);
+  const patchNames = selectedPatches.map((entry) => entry.patchFileName).filter(Boolean);
+  const patchLabel =
+    patchNames.length === 1 ? patchNames[0] || "patch" : `${patchNames.length || assetPatches.length} patches`;
+  const applyLabel = `Weaving ${patchLabel} into ${asset.fileName || "ROM"}`;
+  const workerOutput = (await applyPatchInRuntime({
+    input: toWorkerSourceRef(asset.file, asset.fileName || "input.bin"),
+    logLevel: getApplyLogLevel(options),
+    onLog: options.onLog,
+    onProgress: (progress) =>
+      deps.reportProgress(options, {
+        label: applyLabel,
+        percent: typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
+        stage: "apply",
+      }),
+    options: {
+      ...createWorkerApplyOptions(options, workerOutputName),
+      headerModes: getPatchHeaderModes(patchIndices, patchOptions),
+      n64ByteOrders: getPatchN64ByteOrders(patchIndices, patchOptions),
+      outputHeader: options.output?.header || ("auto" as const),
+    },
+    patches: selectedPatches,
+    signal: options.signal,
+  })) as PublicOutputWithApplySummary;
+  const applyTimeMs = roundElapsedMs(workerOutput._applySummary?.timing);
+  const file = await createPatchFileFromPublicOutput(
+    workerOutput as unknown as Parameters<typeof createPatchFile>[0],
+    workerOutput.fileName || asset.fileName || "patched.bin",
+    canReuseWorkerOutputPath(workerOutput) ? { materializeBlob: false, preferExternalFilePath: true } : undefined,
+  );
+  return { applyTimeMs, file };
+};
+
+const applyPreparedPatches = async ({
+  assetCount,
+  assets,
+  deps,
+  inputAssets,
+  options,
+  patchOptions,
+  patchFiles,
+  patches,
+  patchTargets,
+  runtime,
+}: {
+  assetCount: number;
+  assets: InputAsset[];
+  deps: PatchWorkflowDeps;
+  inputAssets: InputAsset[];
+  options: ApplyPatchOptions;
+  patchOptions: PatchInput["patchOptions"];
+  patchFiles: PatchFileInstance[];
+  patches: ParsedPatchLike[];
+  patchTargets: Array<"auto" | string> | undefined;
+  runtime: WorkflowRuntime;
+}) => {
+  const targets: InputAsset[] = [];
+  const patchedById = new Map<string, PatchFileInstance>();
+  let applyTimeMs = 0;
+  let hasApplyTimeMs = false;
+  if (!patches.length) {
+    traceWorkflowStage(options, "stage.skip", "patch.target.resolve", "patch", {
+      inputCount: inputAssets.length,
+      reason: "no patches provided",
+    });
+    traceWorkflowStage(options, "stage.skip", "apply", "output", {
+      inputCount: inputAssets.length,
+      reason: "no patches provided",
+    });
+    return { applyTimeMs, hasApplyTimeMs, patchedById, targets };
+  }
+  deps.reportProgress(options, { label: "Weaving patch...", percent: null, stage: "apply" });
+  targets.push(
+    ...(await traceWorkflowStageBlock(
+      options,
+      "patch.target.resolve",
+      "patch",
+      () => deps.resolvePatchTargets(inputAssets, patches, patchTargets),
+      () => ({
+        inputCount: inputAssets.length,
+        patchCount: patches.length,
+        strategy: patchTargets?.length ? "explicit" : "auto",
+      }),
+    )),
+  );
+  const patchesByTarget = groupPatchesByTarget(targets, patches);
+  const applyPatchInRuntime = runtime.patch?.applyPatch;
+  if (!applyPatchInRuntime) throw new Error("Patch worker support is required for weave workflows");
+  for (const asset of assets) {
+    const assetPatches = patchesByTarget.get(asset.id);
+    if (!assetPatches?.length) continue;
+    const workerOutputName = resolveWorkerApplyOutputName(options, asset);
+    const patched = await traceWorkflowStageBlock(
+      options,
+      "apply",
+      "output",
+      () =>
+        applyPatchesToAsset({
+          applyPatchInRuntime,
+          asset,
+          assetPatches,
+          deps,
+          options,
+          patchOptions,
+          patchFiles,
+          patches,
+          workerOutputName,
+        }),
+      () => ({
+        patchCount: assetPatches.length,
+        patchFormats: assetPatches.map((patch) => patch.constructor?.name || "patch"),
+        requestedOutputName: options.output?.outputName,
+        sourceExtension: getInputAssetExtension(asset),
+        sourceName: asset.fileName,
+        sourceSize: asset.size,
+        workerOutputName,
+        workerReason: "worker apply required",
+      }),
+    );
+    if (patched.applyTimeMs !== undefined) {
+      applyTimeMs += patched.applyTimeMs;
+      hasApplyTimeMs = true;
+    }
+    if (assetCount > 1) patched.file.fileName = asset.fileName;
+    patchedById.set(asset.id, patched.file);
+  }
+  return { applyTimeMs, hasApplyTimeMs, patchedById, targets };
+};
+
 const runApplyWorkflow = async (
   input: PatchInput,
   runtime: WorkflowRuntime,
@@ -423,160 +644,18 @@ const runApplyWorkflow = async (
   const patchSize = patchFiles.reduce((total, patchFile) => total + patchFile.fileSize, 0);
 
   const patchTargets = input.patchTargets || getApplyPatchTargets(options);
-  const targets: InputAsset[] = [];
-  const patchedById = new Map<string, PatchFileInstance>();
-  let applyTimeMs = 0;
-  let hasApplyTimeMs = false;
-  if (patches.length) {
-    deps.reportProgress(options, {
-      label: "Weaving patch...",
-      percent: null,
-      stage: "apply",
-    });
-    const resolvedTargets = await traceWorkflowStageBlock(
-      options,
-      "patch.target.resolve",
-      "patch",
-      () => deps.resolvePatchTargets(inputAssets, patches, patchTargets),
-      () => ({
-        inputCount: inputAssets.length,
-        patchCount: patches.length,
-        strategy: patchTargets?.length ? "explicit" : "auto",
-      }),
-    );
-    targets.push(...resolvedTargets);
-    const patchesByTarget = new Map<string, ParsedPatchLike[]>();
-    for (let index = 0; index < patches.length; index++) {
-      const target = targets[index];
-      if (!target) throw new Error(`Patch ${index + 1} target was not resolved`);
-      const targetPatches = patchesByTarget.get(target.id) || [];
-      const patch = patches[index];
-      if (!patch) throw new Error(`Patch ${index + 1} was not parsed`);
-      targetPatches.push(patch);
-      patchesByTarget.set(target.id, targetPatches);
-    }
-    const applyPatchInRuntime = runtime.patch.applyPatch;
-    if (!applyPatchInRuntime) throw new Error("Patch worker support is required for weave workflows");
-    for (const asset of inputAssets) {
-      const assetPatches = patchesByTarget.get(asset.id);
-      if (!assetPatches?.length) continue;
-      const workerOutputName = resolveWorkerApplyOutputName(options, asset);
-      const patched = await traceWorkflowStageBlock(
-        options,
-        "apply",
-        "output",
-        async () =>
-          await (async () => {
-            const patchIndices = assetPatches.map((patch) => patches.indexOf(patch));
-            const selectedPatches = assetPatches.map((patch, localIndex) => {
-              const patchIndex = patchIndices[localIndex] ?? patches.indexOf(patch);
-              const patchFile = patchFiles[patchIndex];
-              if (!patchFile) throw new Error("Patch worker source was not found");
-              return {
-                patchFile: toWorkerSourceRef(patchFile, `patch-${patchIndex + 1}.bin`),
-                patchFileName: patchFile.fileName || `patch-${patchIndex + 1}.bin`,
-                patchFormat: getParsedPatchFormatHint(patch),
-              };
-            });
-            // Per-patch user options for this target's chain drive the header modes below.
-            // The pasted / bundle-seeded input/output checksums are deliberately NOT
-            // forwarded to the engine: in the browser they verify reactively (ROM/patch
-            // card coloring) and a mismatch never blocks or fails the run - the CLI keeps
-            // hard enforcement.
-            const patchOptions = Array.isArray(input.patchOptions) ? input.patchOptions : [];
-            // One header mode per patch. The first patch's mode is concrete - the
-            // browser resolved it against the staged checksum variants, so the engine
-            // never re-hashes the OPFS input. Later patches send their explicit
-            // choice/decided mode, or "auto" so the engine decides per step from its
-            // own chain intermediates. Whether a stripped header returns on the
-            // output is the output-header policy (the output card's "ROM header"
-            // select; auto = engine decides by header kind).
-            const headerModesForChain = patchIndices.map((patchIndex, position) => {
-              const header = patchOptions[patchIndex]?.header;
-              if (header === "strip" || header === "keep") return header;
-              return position === 0 ? ("keep" as const) : ("auto" as const);
-            });
-            const n64ByteOrdersForChain = patchIndices.map((patchIndex, position) => {
-              const patchOption = patchOptions[patchIndex];
-              if (patchOption?.n64ByteOrder) return patchOption.n64ByteOrder;
-              return position === 0 ? patchOption?.resolvedN64ByteOrder || ("keep" as const) : ("auto" as const);
-            });
-            const outputHeaderForChain = options?.output?.header || ("auto" as const);
-            // Descriptive "Weaving <patch> into <rom>" label (vs the worker's generic one).
-            const targetName = asset.fileName || "ROM";
-            const patchNames = selectedPatches.map((entry) => entry.patchFileName).filter(Boolean);
-            const patchLabel =
-              patchNames.length === 1 ? patchNames[0] : `${patchNames.length || assetPatches.length} patches`;
-            const applyLabel = `Weaving ${patchLabel} into ${targetName}`;
-            const workerOutput = (await applyPatchInRuntime({
-              input: toWorkerSourceRef(asset.file, asset.fileName || "input.bin"),
-              logLevel: getApplyLogLevel(options),
-              onLog: options.onLog,
-              onProgress: (progress) =>
-                deps.reportProgress(options, {
-                  label: applyLabel,
-                  percent:
-                    typeof progress.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null,
-                  stage: "apply",
-                }),
-              options: {
-                ...createWorkerApplyOptions(options, workerOutputName),
-                headerModes: headerModesForChain,
-                n64ByteOrders: n64ByteOrdersForChain,
-                outputHeader: outputHeaderForChain,
-              },
-              patches: selectedPatches,
-              signal: options.signal,
-            })) as PublicOutputWithApplySummary;
-            const workerApplyTimeMs = roundElapsedMs(workerOutput._applySummary?.timing);
-            if (workerApplyTimeMs !== undefined) {
-              applyTimeMs += workerApplyTimeMs;
-              hasApplyTimeMs = true;
-            }
-            const canReuseWorkerOutputPath = !!(
-              workerOutput &&
-              typeof workerOutput === "object" &&
-              "path" in workerOutput &&
-              typeof workerOutput.path === "string" &&
-              workerOutput.path &&
-              "vfs" in workerOutput &&
-              workerOutput.vfs
-            );
-            return createPatchFileFromPublicOutput(
-              workerOutput as unknown as Parameters<typeof createPatchFile>[0],
-              workerOutput.fileName || asset.fileName || "patched.bin",
-              canReuseWorkerOutputPath
-                ? {
-                    materializeBlob: false,
-                    preferExternalFilePath: true,
-                  }
-                : undefined,
-            );
-          })(),
-        () => ({
-          patchCount: assetPatches.length,
-          patchFormats: assetPatches.map((patch) => patch.constructor?.name || "patch"),
-          requestedOutputName: options.output?.outputName,
-          sourceExtension: getInputAssetExtension(asset),
-          sourceName: asset.fileName,
-          sourceSize: asset.size,
-          workerOutputName,
-          workerReason: "worker apply required",
-        }),
-      );
-      if (inputAssets.length > 1) patched.fileName = asset.fileName;
-      patchedById.set(asset.id, patched);
-    }
-  } else {
-    traceWorkflowStage(options, "stage.skip", "patch.target.resolve", "patch", {
-      inputCount: inputAssets.length,
-      reason: "no patches provided",
-    });
-    traceWorkflowStage(options, "stage.skip", "apply", "output", {
-      inputCount: inputAssets.length,
-      reason: "no patches provided",
-    });
-  }
+  const { applyTimeMs, hasApplyTimeMs, patchedById, targets } = await applyPreparedPatches({
+    assetCount: inputAssets.length,
+    assets: inputAssets,
+    deps,
+    inputAssets,
+    options,
+    patchOptions: input.patchOptions,
+    patchFiles,
+    patches,
+    patchTargets,
+    runtime,
+  });
 
   const {
     compressionTimeMs,

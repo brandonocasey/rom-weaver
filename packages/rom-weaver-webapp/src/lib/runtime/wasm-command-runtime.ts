@@ -296,6 +296,20 @@ const normalizeN64ByteOrder = (
 // Read the independent-mode per-patch verdicts from a patch-validate terminal event's
 // `details.patch_validation.per_patch`. The chained (default) path emits no such array, so the
 // result is empty and the caller falls back to its single whole-call verdict.
+const parsePatchValidatePerPatchEntry = (raw: unknown): PatchValidatePerPatchVerdict | null => {
+  const record = asRecord(raw);
+  if (!record) return null;
+  const index = Number(record.index);
+  if (!Number.isInteger(index) || index < 0) return null;
+  return {
+    index,
+    ...(typeof record.format === "string" ? { format: record.format } : {}),
+    ...(typeof record.message === "string" ? { message: record.message } : {}),
+    ...(typeof record.patch === "string" ? { patch: record.patch } : {}),
+    status: record.status === "failed" ? "failed" : "passed",
+  };
+};
+
 const parsePatchValidatePerPatch = (terminal: ReturnType<typeof getTerminalEvent>): PatchValidatePerPatchVerdict[] => {
   const details = asRecord(terminal ? getRomWeaverRunEventDetails(terminal) : null);
   const validation = asRecord(details?.patch_validation);
@@ -303,17 +317,8 @@ const parsePatchValidatePerPatch = (terminal: ReturnType<typeof getTerminalEvent
   if (!Array.isArray(rawPerPatch)) return [];
   const verdicts: PatchValidatePerPatchVerdict[] = [];
   for (const raw of rawPerPatch) {
-    const record = asRecord(raw);
-    if (!record) continue;
-    const index = Number(record.index);
-    if (!Number.isInteger(index) || index < 0) continue;
-    verdicts.push({
-      index,
-      ...(typeof record.format === "string" ? { format: record.format } : {}),
-      ...(typeof record.message === "string" ? { message: record.message } : {}),
-      ...(typeof record.patch === "string" ? { patch: record.patch } : {}),
-      status: record.status === "failed" ? "failed" : "passed",
-    });
+    const verdict = parsePatchValidatePerPatchEntry(raw);
+    if (verdict) verdicts.push(verdict);
   }
   return verdicts;
 };
@@ -460,35 +465,41 @@ const invokeRomWeaverPatchValidateWorker = async (
   };
 };
 
+const getPatchApplyN64ByteOrders = (options: Record<string, unknown> | null) => {
+  if (Array.isArray(options?.n64ByteOrders)) return options.n64ByteOrders;
+  if (Array.isArray(options?.n64_byte_order)) return options.n64_byte_order;
+  return options?.n64ByteOrder ? [options.n64ByteOrder] : [];
+};
+
+const normalizePatchApplyHeaderMode = (mode: unknown, index: number): "keep" | "strip" | "auto" =>
+  mode === "keep" || mode === "strip" || mode === "auto" ? mode : index === 0 ? "keep" : "auto";
+
+const getPatchApplyHeaderModes = (options: Record<string, unknown> | null, removeHeader: boolean) => {
+  if (removeHeader) return ["strip"] as ("keep" | "strip" | "auto")[];
+  const rawModes = Array.isArray(options?.headerModes) ? options.headerModes : [];
+  return rawModes.map(normalizePatchApplyHeaderMode);
+};
+
+const getPatchApplyOutputHeader = (
+  options: Record<string, unknown> | null,
+  removeHeader: boolean,
+  addHeader: boolean,
+): "keep" | "strip" | "auto" => {
+  if (removeHeader) return addHeader ? "keep" : "strip";
+  const outputHeader = options?.outputHeader ?? options?.output_header;
+  return outputHeader === "keep" || outputHeader === "strip" ? outputHeader : "auto";
+};
+
 const getPatchApplyCommandOptions = (input: RuntimePatchApplyWorkerInput) => {
   const options = asRecord(input.options);
   const removeHeader = Boolean((input.options as { removeHeader?: unknown } | undefined)?.removeHeader);
   const addHeader = Boolean((input.options as { addHeader?: unknown } | undefined)?.addHeader);
-  const rawN64ByteOrders = Array.isArray(options?.n64ByteOrders)
-    ? options.n64ByteOrders
-    : Array.isArray(options?.n64_byte_order)
-      ? options.n64_byte_order
-      : options?.n64ByteOrder
-        ? [options.n64ByteOrder]
-        : [];
-  const rawHeaderModes = Array.isArray(options?.headerModes) ? options.headerModes : [];
-  const outputHeaderRaw = options?.outputHeader ?? options?.output_header;
   return {
-    headerModes: removeHeader
-      ? (["strip"] as ("keep" | "strip" | "auto")[])
-      : rawHeaderModes.map((mode, index) =>
-          mode === "keep" || mode === "strip" || mode === "auto" ? mode : index === 0 ? "keep" : "auto",
-        ),
+    headerModes: getPatchApplyHeaderModes(options, removeHeader),
     ignoreChecksumValidation:
       (input.options as { requireInputChecksumMatch?: unknown } | undefined)?.requireInputChecksumMatch !== true,
-    n64ByteOrders: rawN64ByteOrders.map((mode) => normalizeN64ByteOrder(mode) || "auto"),
-    outputHeader: removeHeader
-      ? addHeader
-        ? ("keep" as const)
-        : ("strip" as const)
-      : outputHeaderRaw === "keep" || outputHeaderRaw === "strip"
-        ? outputHeaderRaw
-        : ("auto" as const),
+    n64ByteOrders: getPatchApplyN64ByteOrders(options).map((mode) => normalizeN64ByteOrder(mode) || "auto"),
+    outputHeader: getPatchApplyOutputHeader(options, removeHeader, addHeader),
     repairChecksum: Boolean((input.options as { fixChecksum?: unknown } | undefined)?.fixChecksum),
     requestedThreadArg: toThreadBudget((input.options as { threads?: unknown } | undefined)?.threads),
     validateWithChecksums: normalizePatchValidationChecksumEntries(
@@ -544,6 +555,142 @@ const throwPatchApplyFailure = async ({
   throw withRomWeaverFailureKind(new Error(`${failureMessage}${traceContext}`), result);
 };
 
+const getPatchApplyExecution = (input: RuntimePatchApplyWorkerInput, outputPath: string) => {
+  const commandOptions = getPatchApplyCommandOptions(input);
+  const threadOptions = resolvePatchApplyThreadArg(
+    commandOptions.requestedThreadArg,
+    input.patchFiles,
+    input.inputSize,
+  );
+  const disableDefaultThreadArgInjection =
+    threadOptions.singleThreadNoPool || (threadOptions.hasBpsPatch && !threadOptions.threadArg);
+  const syncAccessMode = threadOptions.hasBpsPatch ? "readwrite-unsafe" : undefined;
+  const command = createRomWeaverCommand("patch-apply", {
+    ...(commandOptions.headerModes.length ? { patch_header: commandOptions.headerModes } : {}),
+    ignore_checksum_validation: commandOptions.ignoreChecksumValidation,
+    input: input.romFilePath,
+    output_header: commandOptions.outputHeader,
+    ...(commandOptions.n64ByteOrders.length ? { n64_byte_order: commandOptions.n64ByteOrders } : {}),
+    no_compress: true,
+    output: outputPath,
+    filter: ["rom", "patch"],
+    patches: input.patchFiles.map((patch) => patch.patchFilePath),
+    repair_checksum: commandOptions.repairChecksum,
+    ...(threadOptions.threadArg ? { threads: threadOptions.threadArg } : {}),
+    ...(commandOptions.validateWithChecksums.length ? { expect_in: commandOptions.validateWithChecksums } : {}),
+    ...(commandOptions.validateWithOutputChecksums.length
+      ? { expect_out: commandOptions.validateWithOutputChecksums }
+      : {}),
+  });
+  return {
+    ...threadOptions,
+    command,
+    disableDefaultThreadArgInjection,
+    syncAccessMode,
+    virtualOnlyMounts: threadOptions.hasBpsPatch,
+    outputPath,
+    ...commandOptions,
+  };
+};
+
+const runPatchApplyCommand = async (
+  input: RuntimePatchApplyWorkerInput,
+  execution: ReturnType<typeof getPatchApplyExecution>,
+  onProgress?: (progress: RuntimePatchWorkerProgress) => void,
+  onLog?: (log: WorkflowRuntimeLog) => void,
+) => {
+  const {
+    command,
+    disableDefaultThreadArgInjection,
+    forceSingleThreadReason,
+    forcedSingleThread,
+    hasBpsPatch,
+    hasXdeltaPatch,
+    n64ByteOrders,
+    outputPath,
+    requestedThreadArg,
+    singleThreadNoPool,
+    syncAccessMode,
+    threadArg,
+    virtualOnlyMounts,
+  } = execution;
+  emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson patch-apply dispatch", {
+    command,
+    disableDefaultThreadArgInjection,
+    forcedSingleThread,
+    forceSingleThreadReason,
+    hasBpsPatch,
+    hasXdeltaPatch,
+    n64ByteOrders,
+    outputPath,
+    patchCount: input.patchFiles.length,
+    requestedThreadArg,
+    romFilePath: input.romFilePath,
+    singleThreadNoPool,
+    syncAccessMode: syncAccessMode || "",
+    threadArg,
+    virtualOnlyMounts,
+  });
+  if (isTraceEnabled(input.logLevel)) {
+    emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "browser storage before patch-apply", {
+      storage: await getBrowserStorageEstimateState(),
+    });
+  }
+  const result = await runRomWeaverJson(
+    command,
+    toRomWeaverOptions({
+      defaultThreads: disableDefaultThreadArgInjection ? 0 : undefined,
+      invalidateMountCacheBeforeRun: true,
+      logLevel: input.logLevel,
+      onEvent: relaySimpleProgress(onProgress),
+      onLog,
+      signal: input.signal,
+      syncAccessMode,
+      virtualOnlyMounts,
+    }),
+  );
+  if (!(result.ok && result.exitCode === 0)) {
+    await throwPatchApplyFailure({
+      forceSingleThreadReason,
+      forcedSingleThread,
+      hasBpsPatch,
+      hasXdeltaPatch,
+      input,
+      result,
+      threadArg,
+    });
+  }
+  return result;
+};
+
+const createPatchApplyResult = (
+  input: RuntimePatchApplyWorkerInput,
+  outputFileName: string,
+  outputPath: string,
+  result: RomWeaverJsonResult,
+) => {
+  const emitted = getEmittedFileDetails(result);
+  const lastEvent = getLastEvent(result);
+  const patchFormat = lastEvent ? getRomWeaverRunEventFormat(lastEvent) || "PATCH" : "PATCH";
+  return {
+    applySummary: {
+      outputSize: emitted?.sizeBytes,
+      patches: input.patchFiles.map((patch) => ({
+        fileName: patch.patchFileName || getPathBaseName(patch.patchFilePath, "patch.bin"),
+        format: String(patchFormat),
+      })),
+      rom: {
+        fileName: input.romFileName || getPathBaseName(input.romFilePath, "input.bin"),
+      },
+      timing: getRunResultTiming(result),
+    },
+    fileName: emitted?.path ? getPathBaseName(emitted.path, outputFileName) : outputFileName,
+    filePath: emitted?.path || outputPath,
+    size: emitted?.sizeBytes,
+    timing: getRunResultTiming(result),
+  };
+};
+
 const invokeRomWeaverPatchApplyWorker = async (
   input: RuntimePatchApplyWorkerInput,
   onProgress?: (progress: RuntimePatchWorkerProgress) => void,
@@ -555,112 +702,9 @@ const invokeRomWeaverPatchApplyWorker = async (
     outputFileName,
     input.patchFiles.map((patch) => patch.patchFilePath),
     async (outputPath) => {
-      // The browser resolves the first header mode to avoid rehashing OPFS input; the engine may
-      // resolve later `auto` steps from local intermediates. Legacy booleans map to these enums.
-      const {
-        headerModes,
-        ignoreChecksumValidation,
-        n64ByteOrders,
-        outputHeader,
-        repairChecksum,
-        requestedThreadArg,
-        validateWithChecksums,
-        validateWithOutputChecksums,
-      } = getPatchApplyCommandOptions(input);
-      const {
-        forceSingleThreadReason,
-        forcedSingleThread,
-        hasBpsPatch,
-        hasXdeltaPatch,
-        singleThreadNoPool,
-        threadArg,
-      } = resolvePatchApplyThreadArg(requestedThreadArg, input.patchFiles, input.inputSize);
-      const disableDefaultThreadArgInjection = singleThreadNoPool || (hasBpsPatch && !threadArg);
-      const virtualOnlyMounts = hasBpsPatch;
-      const syncAccessMode = hasBpsPatch ? "readwrite-unsafe" : undefined;
-      const command = createRomWeaverCommand("patch-apply", {
-        ...(headerModes.length ? { patch_header: headerModes } : {}),
-        ignore_checksum_validation: ignoreChecksumValidation,
-        input: input.romFilePath,
-        output_header: outputHeader,
-        ...(n64ByteOrders.length ? { n64_byte_order: n64ByteOrders } : {}),
-        no_compress: true,
-        output: outputPath,
-        filter: ["rom", "patch"],
-        patches: input.patchFiles.map((patch) => patch.patchFilePath),
-        repair_checksum: repairChecksum,
-        ...(threadArg ? { threads: threadArg } : {}),
-        ...(validateWithChecksums.length ? { expect_in: validateWithChecksums } : {}),
-        ...(validateWithOutputChecksums.length ? { expect_out: validateWithOutputChecksums } : {}),
-      });
-      emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "runJson patch-apply dispatch", {
-        command,
-        disableDefaultThreadArgInjection,
-        forcedSingleThread,
-        forceSingleThreadReason,
-        hasBpsPatch,
-        hasXdeltaPatch,
-        n64ByteOrders,
-        outputPath,
-        patchCount: input.patchFiles.length,
-        requestedThreadArg,
-        romFilePath: input.romFilePath,
-        singleThreadNoPool,
-        syncAccessMode: syncAccessMode || "",
-        threadArg,
-        virtualOnlyMounts,
-      });
-      if (isTraceEnabled(input.logLevel)) {
-        emitRuntimeTrace({ logLevel: input.logLevel, onLog }, "browser storage before patch-apply", {
-          storage: await getBrowserStorageEstimateState(),
-        });
-      }
-      const result = await runRomWeaverJson(
-        command,
-        toRomWeaverOptions({
-          defaultThreads: disableDefaultThreadArgInjection ? 0 : undefined,
-          invalidateMountCacheBeforeRun: true,
-          logLevel: input.logLevel,
-          onEvent: relaySimpleProgress(onProgress),
-          onLog,
-          signal: input.signal,
-          syncAccessMode,
-          virtualOnlyMounts,
-        }),
-      );
-      if (!(result.ok && result.exitCode === 0))
-        await throwPatchApplyFailure({
-          forceSingleThreadReason,
-          forcedSingleThread,
-          hasBpsPatch,
-          hasXdeltaPatch,
-          input,
-          result,
-          threadArg,
-        });
-
-      const emitted = getEmittedFileDetails(result);
-      const lastEvent = getLastEvent(result);
-      const patchFormat = lastEvent ? getRomWeaverRunEventFormat(lastEvent) || "PATCH" : "PATCH";
-      return {
-        applySummary: {
-          outputSize: emitted?.sizeBytes,
-          patches: input.patchFiles.map((patch) => ({
-            fileName: patch.patchFileName || getPathBaseName(patch.patchFilePath, "patch.bin"),
-            format: String(patchFormat),
-          })),
-          rom: {
-            fileName: input.romFileName || getPathBaseName(input.romFilePath, "input.bin"),
-          },
-          timing: getRunResultTiming(result),
-        },
-        // Follow the engine's emitted name: it adjusts the extension when the final
-        // header state changes the ROM's conventional extension (.smc vs .sfc).
-        fileName: emitted?.path ? getPathBaseName(emitted.path, outputFileName) : outputFileName,
-        filePath: emitted?.path || outputPath,
-        size: emitted?.sizeBytes,
-        timing: getRunResultTiming(result),
-      };
+      const execution = getPatchApplyExecution(input, outputPath);
+      const result = await runPatchApplyCommand(input, execution, onProgress, onLog);
+      return createPatchApplyResult(input, outputFileName, outputPath, result);
     },
   );
 };

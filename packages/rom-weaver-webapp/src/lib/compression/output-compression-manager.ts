@@ -252,6 +252,16 @@ const OutputCompressionManager = (() => {
     if (recommended === OUTPUT_COMPRESSION.Z3DS) return OUTPUT_COMPRESSION.Z3DS;
     return null;
   };
+  const _resolveAutomaticOutputCompression = (source: CompressionSource | null | undefined) => {
+    const engineRecommended = _engineRecommendedRomSpecific(source);
+    if (engineRecommended) return engineRecommended;
+    if (_hasChdSourceMetadata(source)) return OUTPUT_COMPRESSION.CHD;
+    if (_isUnambiguousZ3dsCompressionInput(source) || _isZ3dsSource(source)) return OUTPUT_COMPRESSION.Z3DS;
+    if ((_isUnambiguousChdCompressionInput(source) || _isChdSource(source)) && _isLikelyDiscImageSource(source))
+      return OUTPUT_COMPRESSION.CHD;
+    if (_isUnambiguousRvzCompressionInput(source) || _isRvzSource(source)) return OUTPUT_COMPRESSION.RVZ;
+    return OUTPUT_COMPRESSION.SEVEN_ZIP;
+  };
   const _resolveOutputCompression = (
     source: CompressionSource | null | undefined,
     options?: OutputCompressionOptions,
@@ -261,16 +271,7 @@ const OutputCompressionManager = (() => {
     if (selected !== OUTPUT_COMPRESSION.AUTO) return selected;
     // Engine content verdict first: a GameCube/Wii disc reports disc_format=DVD (which would otherwise
     // trip the CHD disc-metadata heuristic below), but Rust ingest correctly recommends rvz for it.
-    const engineRecommended = _engineRecommendedRomSpecific(source);
-    if (engineRecommended) return engineRecommended;
-    if (_hasChdSourceMetadata(source)) return OUTPUT_COMPRESSION.CHD;
-    if (_isUnambiguousZ3dsCompressionInput(source)) return OUTPUT_COMPRESSION.Z3DS;
-    if (_isZ3dsSource(source)) return OUTPUT_COMPRESSION.Z3DS;
-    if (_isUnambiguousChdCompressionInput(source) && _isLikelyDiscImageSource(source)) return OUTPUT_COMPRESSION.CHD;
-    if (_isChdSource(source) && _isLikelyDiscImageSource(source)) return OUTPUT_COMPRESSION.CHD;
-    if (_isUnambiguousRvzCompressionInput(source)) return OUTPUT_COMPRESSION.RVZ;
-    if (_isRvzSource(source)) return OUTPUT_COMPRESSION.RVZ;
-    return OUTPUT_COMPRESSION.SEVEN_ZIP;
+    return _resolveAutomaticOutputCompression(source);
   };
   const _supportsOutputCompression = (source: CompressionSourceInput, compression: CompressionChoiceInput) => {
     const selected = _normalizeOutputCompression(compression);
@@ -434,20 +435,20 @@ const OutputCompressionManager = (() => {
     return null;
   };
 
+  const _formatArchiveWriterOptions = (codec: string | null, level: string | number | null, threads: number | null) =>
+    threads === null
+      ? `compression=${codec},compression-level=${level}`
+      : `compression=${codec},compression-level=${level},threads=${threads}`;
+
   const _getArchiveWriterOptions = (compression: CompressionChoiceInput, options?: OutputCompressionOptions) => {
     const selected = _normalizeOutputCompression(compression);
     const codec = _getArchiveCodec(compression, options);
     const level = _getArchiveLevelOption(compression, options);
     const threads = _getArchiveThreadsOption(options);
-    if (selected === OUTPUT_COMPRESSION.SEVEN_ZIP)
-      return threads === null
-        ? `compression=${codec},compression-level=${level}`
-        : `compression=${codec},compression-level=${level},threads=${threads}`;
+    if (selected === OUTPUT_COMPRESSION.SEVEN_ZIP) return _formatArchiveWriterOptions(codec, level, threads);
     if (selected === OUTPUT_COMPRESSION.ZIP) {
       if (codec === "store") return threads === null ? "compression=store" : `compression=store,threads=${threads}`;
-      return threads === null
-        ? `compression=${codec},compression-level=${level}`
-        : `compression=${codec},compression-level=${level},threads=${threads}`;
+      return _formatArchiveWriterOptions(codec, level, threads);
     }
     return "";
   };

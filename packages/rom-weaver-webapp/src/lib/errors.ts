@@ -65,6 +65,26 @@ const WORKFLOW_ERROR_CODES = new Set<RomWeaverErrorCode>([
   "WORKER_UNAVAILABLE",
 ]);
 
+const getSimpleErrorCode = (lower: string): RomWeaverErrorCode | undefined => {
+  if (lower.includes("abort") || lower.includes("cancel")) return "CANCELLED";
+  if (lower.includes("archive nesting") || lower.includes("archive depth")) return "ARCHIVE_DEPTH_EXCEEDED";
+  if (lower.includes("multiple") && lower.includes("candidate")) return "AMBIGUOUS_SELECTION";
+  if (lower.includes("target was not found")) return "PATCH_TARGET_MISMATCH";
+  return undefined;
+};
+
+const getPatternErrorCode = (lower: string, message: string): RomWeaverErrorCode => {
+  if (MODULE_IMPORT_FAILURE_MESSAGE_REGEX.test(message)) return "WORKER_FAILED";
+  if (lower.includes("checksum")) return "CHECKSUM_MISMATCH";
+  if (lower.includes("multi-file output")) return "INVALID_INPUT";
+  if (OUT_OF_MEMORY_MESSAGE_REGEX.test(message))
+    return COMPRESSION_FAILURE_MESSAGE_REGEX.test(message) ? "COMPRESSION_FAILED" : "WORKER_FAILED";
+  if (OUTPUT_WRITE_FAILURE_MESSAGE_REGEX.test(message)) return "OUTPUT_WRITE_FAILED";
+  if (COMPRESSION_FAILURE_MESSAGE_REGEX.test(message)) return "COMPRESSION_FAILED";
+  if (lower.includes("no input") || lower.includes("no patch")) return "INVALID_INPUT";
+  return "INVALID_INPUT";
+};
+
 const getWorkflowErrorCode = (error: unknown): RomWeaverErrorCode | null => {
   const code = error instanceof Error ? (error as CodedErrorLike).code : undefined;
   return typeof code === "string" && WORKFLOW_ERROR_CODES.has(code as RomWeaverErrorCode)
@@ -87,33 +107,8 @@ const toRomWeaverError = (error: unknown): RomWeaverError => {
           : undefined,
     });
   const lower = message.toLowerCase();
-  if (lower.includes("abort") || lower.includes("cancel"))
-    return new RomWeaverError("CANCELLED", message, { cause: error });
-  if (lower.includes("archive nesting") || lower.includes("archive depth"))
-    return new RomWeaverError("ARCHIVE_DEPTH_EXCEEDED", message, { cause: error });
-  if (lower.includes("multiple") && lower.includes("candidate"))
-    return new RomWeaverError("AMBIGUOUS_SELECTION", message, { cause: error });
-  if (lower.includes("target was not found"))
-    return new RomWeaverError("PATCH_TARGET_MISMATCH", message, {
-      cause: error,
-    });
-  if (MODULE_IMPORT_FAILURE_MESSAGE_REGEX.test(message))
-    return new RomWeaverError("WORKER_FAILED", message, { cause: error });
-  if (lower.includes("checksum")) return new RomWeaverError("CHECKSUM_MISMATCH", message, { cause: error });
-  if (lower.includes("multi-file output")) return new RomWeaverError("INVALID_INPUT", message, { cause: error });
-  if (OUT_OF_MEMORY_MESSAGE_REGEX.test(message))
-    return new RomWeaverError(
-      COMPRESSION_FAILURE_MESSAGE_REGEX.test(message) ? "COMPRESSION_FAILED" : "WORKER_FAILED",
-      message,
-      { cause: error },
-    );
-  if (OUTPUT_WRITE_FAILURE_MESSAGE_REGEX.test(message))
-    return new RomWeaverError("OUTPUT_WRITE_FAILED", message, { cause: error });
-  if (COMPRESSION_FAILURE_MESSAGE_REGEX.test(message))
-    return new RomWeaverError("COMPRESSION_FAILED", message, { cause: error });
-  if (lower.includes("no input") || lower.includes("no patch"))
-    return new RomWeaverError("INVALID_INPUT", message, { cause: error });
-  return new RomWeaverError("INVALID_INPUT", message, { cause: error });
+  const code = getSimpleErrorCode(lower) || getPatternErrorCode(lower, message);
+  return new RomWeaverError(code, message, { cause: error });
 };
 
 const throwIfAborted = (signal?: AbortSignal) => {

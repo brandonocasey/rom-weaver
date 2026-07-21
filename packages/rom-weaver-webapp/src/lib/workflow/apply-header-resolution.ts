@@ -41,6 +41,35 @@ type ApplyN64Resolution = {
   checksums?: Record<string, string>;
 };
 
+const getN64SourceOrder = (variant: ChecksumVariant | undefined): ApplyN64Resolution["sourceOrder"] | undefined => {
+  const transform = variant?.transforms?.n64ByteOrder;
+  if (!(transform && typeof transform === "object")) return undefined;
+  const sourceOrder = (transform as { sourceOrder?: unknown }).sourceOrder;
+  return sourceOrder === "big-endian" || sourceOrder === "little-endian" || sourceOrder === "byte-swapped"
+    ? sourceOrder
+    : undefined;
+};
+
+const getN64Match = (
+  variants: ChecksumVariant[],
+  requiredCrc32: string,
+  sourceOrder: ApplyN64Resolution["sourceOrder"],
+): ApplyN64Resolution => {
+  const matches = variants.filter((variant) => toNormalizedCrc32(variant.checksums?.crc32) === requiredCrc32);
+  if (matches.length !== 1) return { decided: false, mode: "keep", sourceOrder };
+  const mode = String(
+    matches[0]?.applyCompatibility?.n64ByteOrder || matches[0]?.applyCompatibility?.n64_byte_order || "",
+  );
+  if (mode !== "big-endian" && mode !== "little-endian" && mode !== "byte-swapped")
+    return { decided: false, mode: "keep", sourceOrder };
+  return {
+    checksums: matches[0]?.checksums ? { ...matches[0].checksums } : undefined,
+    decided: true,
+    mode,
+    sourceOrder,
+  };
+};
+
 const toNormalizedCrc32 = (value: unknown): string | undefined => {
   if (typeof value === "number" && Number.isFinite(value)) return (value >>> 0).toString(16).padStart(8, "0");
   if (typeof value !== "string") return undefined;
@@ -124,11 +153,8 @@ const resolveApplyN64ByteOrder = (
   const variants = (target.checksumVariants || []).filter((variant) =>
     String(variant.applyCompatibility?.n64ByteOrder || variant.applyCompatibility?.n64_byte_order || "").trim(),
   );
-  const firstTransform = variants[0]?.transforms?.n64ByteOrder;
-  if (!(firstTransform && typeof firstTransform === "object")) return undefined;
-  const sourceOrder = (firstTransform as { sourceOrder?: unknown }).sourceOrder;
-  if (sourceOrder !== "big-endian" && sourceOrder !== "little-endian" && sourceOrder !== "byte-swapped")
-    return undefined;
+  const sourceOrder = getN64SourceOrder(variants[0]);
+  if (!sourceOrder) return undefined;
   const requiredCrc32 = toNormalizedCrc32(requirements?.sourceCrc32) ?? toNormalizedCrc32(requirements?.filenameCrc32);
   const rawCrc32 = toNormalizedCrc32(target.checksums?.crc32);
   if (!(requiredCrc32 && rawCrc32) || rawCrc32 === requiredCrc32) {
@@ -139,19 +165,7 @@ const resolveApplyN64ByteOrder = (
       sourceOrder,
     };
   }
-  const matches = variants.filter((variant) => toNormalizedCrc32(variant.checksums?.crc32) === requiredCrc32);
-  if (matches.length !== 1) return { decided: false, mode: "keep", sourceOrder };
-  const mode = String(
-    matches[0]?.applyCompatibility?.n64ByteOrder || matches[0]?.applyCompatibility?.n64_byte_order || "",
-  );
-  if (mode !== "big-endian" && mode !== "little-endian" && mode !== "byte-swapped")
-    return { decided: false, mode: "keep", sourceOrder };
-  return {
-    checksums: matches[0]?.checksums ? { ...matches[0].checksums } : undefined,
-    decided: true,
-    mode,
-    sourceOrder,
-  };
+  return getN64Match(variants, requiredCrc32, sourceOrder);
 };
 
 export { resolveApplyHeaderMode, resolveApplyN64ByteOrder, toNormalizedCrc32 };
