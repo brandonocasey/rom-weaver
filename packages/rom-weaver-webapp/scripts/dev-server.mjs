@@ -17,6 +17,7 @@ const WILDCARD_HOST_REGEX = /^0\.0\.0\.0(?::\d+)?$/;
 const PARENT_DIRECTORY_PREFIX_REGEX = /^(\.\.[/\\])+/;
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const REPO_ROOT = path.resolve(ROOT_DIR, "..", "..");
 const BIND_HOST = "0.0.0.0";
 const DEFAULT_DEV_PORT = 5173;
 const DEFAULT_PREVIEW_PORT = 4173;
@@ -42,6 +43,15 @@ const MIME_TYPES = {
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".webp": "image/webp",
 };
+const WASM_WATCH_PATHS = [
+  path.join(REPO_ROOT, ".cargo"),
+  path.join(REPO_ROOT, ".mise.toml"),
+  path.join(REPO_ROOT, "Cargo.lock"),
+  path.join(REPO_ROOT, "Cargo.toml"),
+  path.join(REPO_ROOT, "crates"),
+  path.join(REPO_ROOT, "scripts", "wasm"),
+  path.join(REPO_ROOT, "vendor", "libarchive"),
+];
 
 const BASE_SECURITY_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -396,12 +406,13 @@ const formatStartupError = (error, options) => {
   ].join("\n");
 };
 
-const installShutdown = (servers, viteServer) => {
+const installShutdown = (servers, viteServer, cleanup) => {
   let closing = false;
   const close = async (signal) => {
     if (closing) return;
     closing = true;
     try {
+      cleanup?.();
       if (viteServer) await viteServer.close();
       await Promise.all(servers.map(closeNodeServer));
     } finally {
@@ -411,6 +422,70 @@ const installShutdown = (servers, viteServer) => {
 
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
+};
+
+const startWasmBuildWatcher = (viteServer) => {
+  let build = null;
+  let debounce = null;
+  let pending = false;
+  let stopped = false;
+
+  const rebuild = () => {
+    if (stopped) return;
+    if (build) {
+      pending = true;
+      return;
+    }
+    console.log("WASM source changed; rebuilding...");
+    build = childProcess.spawn("mise", ["run", "build-wasm"], {
+      cwd: REPO_ROOT,
+      env: process.env,
+      stdio: "inherit",
+    });
+    build.once("error", (error) => console.error(`Unable to rebuild WASM: ${error.message}`));
+    build.once("close", (code) => {
+      build = null;
+      if (stopped) return;
+      if (code === 0) {
+        console.log("WASM rebuild complete; notifying browser.");
+        viteServer.ws.send({
+          data: { label: "WASM rebuilt", source: "wasm" },
+          event: "rom-weaver:reload-available",
+          type: "custom",
+        });
+      } else {
+        console.error(`WASM rebuild failed with exit code ${code}.`);
+      }
+      if (pending) {
+        pending = false;
+        rebuild();
+      }
+    });
+  };
+  const scheduleRebuild = () => {
+    if (stopped) return;
+    clearTimeout(debounce);
+    debounce = setTimeout(rebuild, 100);
+  };
+
+  viteServer.watcher.add(WASM_WATCH_PATHS);
+  viteServer.watcher.on("all", (event, file) => {
+    if (event !== "add" && event !== "change" && event !== "unlink") return;
+    const resolvedFile = path.resolve(file);
+    if (
+      !WASM_WATCH_PATHS.some(
+        (watchedPath) => resolvedFile === watchedPath || resolvedFile.startsWith(`${watchedPath}${path.sep}`),
+      )
+    )
+      return;
+    scheduleRebuild();
+  });
+
+  return () => {
+    stopped = true;
+    clearTimeout(debounce);
+    build?.kill();
+  };
 };
 
 const getLocalUrl = (port) => `https://localhost:${port}/`;
@@ -493,7 +568,8 @@ const startDevServer = async (options) => {
     await closeNodeServer(portMuxServer);
     throw err;
   }
-  installShutdown([portMuxServer, httpsServer, httpRedirectServer], viteServer);
+  const stopWasmBuildWatcher = startWasmBuildWatcher(viteServer);
+  installShutdown([portMuxServer, httpsServer, httpRedirectServer], viteServer, stopWasmBuildWatcher);
   printUrls("RomWeaver React Vite dev server:", options.port, lanAddresses, certificate.paths.cert, securityOptions);
   if (process.env.ROM_WEAVER_E2E_CORPUS_DIR) {
     for (const address of lanAddresses) {
