@@ -402,13 +402,6 @@ jobs:
       - name: Build webapp
         run: npm --prefix packages/rom-weaver-webapp run build
 
-      # Publish the bundle JSON Schema next to the site so its $id URL
-      # (https://rom-weaver.com/rom-weaver-bundle.schema.json) resolves for editors.
-      # Only production owns that URL; the other channels are not canonical.
-      - name: Publish bundle JSON Schema
-        if: steps.channel.outputs.channel == 'prod'
-        run: cp docs/rom-weaver-bundle.schema.json packages/rom-weaver-webapp/dist/rom-weaver-bundle.schema.json
-
       # Idempotent, so the first run on a channel bootstraps its own project and
       # no local wrangler auth is ever needed.
       #

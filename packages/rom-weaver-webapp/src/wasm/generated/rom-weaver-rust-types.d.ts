@@ -355,7 +355,7 @@ id?: string,
  */
 version?: string,
 /**
- * Patch author credit. (v3)
+ * Patch author credit.
  */
 author?: string, name?: string, description?: string,
 /**
@@ -398,7 +398,7 @@ header?: PatchApplyHeaderMode,
  * `basis: "base"` with omitted `inputChecks` is the canonical compact
  * form - the entry relies on `rom.checks`; declaring it WITH
  * `inputChecks` pins a specific variant. The escape hatch for
- * checksumless formats (IPS) whose basis cannot be inferred. (v2)
+ * checksumless formats (IPS) whose basis cannot be inferred.
  */
 basis?: PatchInputBasis, };
 

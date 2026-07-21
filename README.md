@@ -45,7 +45,7 @@
   variants.
 - **Trim and restore.** Reversible trimming for NDS, GBA, 3DS, and XISO with
   an opt-in revert footer that restores the original file byte-for-byte.
-- **Share workflows.** Distributable [`rom-weaver-bundle.json`](docs/rom-weaver-bundle.schema.json)
+- **Share workflows.** Distributable [`rom-weaver-bundle.json`](docs/rom-weaver-bundle-v1.schema.json)
   bundles pin patch order, checksums, and output naming so others can replay
   the exact workflow.
 - **Local-first and private.** Everything runs on your machine. The webapp is

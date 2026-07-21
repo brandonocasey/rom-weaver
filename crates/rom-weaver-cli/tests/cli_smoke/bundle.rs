@@ -1218,7 +1218,7 @@ fn bundle_apply_enforces_mid_chain_declared_input_checks() {
     fs::write(
         bundle.path(),
         r#"{
-            "version": 2,
+            "version": 1,
             "rom": { "path": "game.bin" },
             "patches": [
                 { "path": "main.ips" },
@@ -1269,7 +1269,7 @@ fn bundle_apply_base_basis_verifies_declared_checks_against_the_rom() {
             temp.child("rom-weaver-bundle.json").path(),
             format!(
                 r#"{{
-                    "version": 2,
+                    "version": 1,
                     "rom": {{ "path": "game.bin" }},
                     "patches": [
                         {{ "path": "main.ips" }},

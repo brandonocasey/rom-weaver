@@ -144,7 +144,7 @@ test("export bundle bundles the session from main-page options with a checks-onl
   // than intercepting the browser download.
   const result = await waitForState(() => exported, 60000);
   expect(result).not.toBeNull();
-  expect(result.bundle.version).toBe(3);
+  expect(result.bundle.version).toBe(1);
   // Bundles carry no display name; the export name feeds output naming only.
   expect(result.bundle.name).toBeUndefined();
   expect(result.bundle.output?.name).toBe("Exported Hack");

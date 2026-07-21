@@ -166,14 +166,13 @@ The webapp builds with a relative base (`base: "./"` in `vite.config.mjs`), so
 it works unchanged at an apex domain, a project subpath, or the Forgejo mirror.
 
 One value is **not** relative: the bundle schema's `$id` in
-`docs/rom-weaver-bundle.schema.json`, mirrored by `BUNDLE_JSON_SCHEMA_URL` in
+`docs/rom-weaver-bundle-v1.schema.json`, mirrored by `BUNDLE_JSON_SCHEMA_URL` in
 `crates/rom-weaver-cli/src/bundle_schema.rs` (a unit test asserts they match).
-It points at `rom-weaver.com`, and `ci.yml` copies the schema to the site
-root **on the production channel only** - beta and nightly are not canonical and
-must not claim that URL. Treat any future edit as a change of the schema's
-identity rather than a URL update: `$schema` values are carried through bundles
-verbatim and never matched against this constant, so older bundles keep parsing,
-but they continue pointing at the previous host.
+It points at the public GitHub raw-content URL. The published schema revision and
+bundle version are both v1; other bundle versions are rejected. Treat any future
+edit as a change of the schema's identity rather than a URL update: `$schema`
+values are carried through bundles verbatim and never matched against this
+constant.
 
 The service worker in
 `packages/rom-weaver-webapp/src/webapp/cache-service-worker.ts` injects the

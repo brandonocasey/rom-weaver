@@ -289,14 +289,14 @@ aborting the batch on a single failure.
 A `rom-weaver-bundle.json` bundle describes a distributable patching
 workflow: ordered patches, expected input and output checksums, and output
 naming. The machine-readable schema is
-[`rom-weaver-bundle.schema.json`](rom-weaver-bundle.schema.json); its `$id`
-resolves to
-`https://rom-weaver.com/rom-weaver-bundle.schema.json`.
+[`rom-weaver-bundle-v1.schema.json`](rom-weaver-bundle-v1.schema.json); its `$id`
+resolves to the public GitHub copy at
+`https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json`.
 Print the current schema to stdout with `bundle schema`, then redirect it to a
 file or point an editor at it:
 
 ```bash
-rom-weaver bundle schema > rom-weaver-bundle.schema.json
+rom-weaver bundle schema > rom-weaver-bundle-v1.schema.json
 ```
 
 Create a bundle from local files; the checks are computed from the real
@@ -334,8 +334,8 @@ and bake the canonical checksummed bundle:
 
 ```json
 {
-  "$schema": "https://rom-weaver.com/rom-weaver-bundle.schema.json",
-  "version": 3,
+  "$schema": "https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json",
+  "version": 1,
   "rom": { "path": "original.sfc" },
   "patches": [
     { "path": "translation.bps", "name": "English translation" },

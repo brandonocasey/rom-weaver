@@ -1,23 +1,18 @@
 use super::*;
 
-/// Version of the `rom-weaver-bundle.json` bundle schema this build writes.
-/// Version 2 added the per-patch `basis` field; version 3 added stable
-/// patch identities and the author-controlled `version`/`author` fields.
-/// Readers accept
-/// [`BUNDLE_MIN_VERSION`]..=[`BUNDLE_VERSION`].
-pub const BUNDLE_VERSION: u32 = 3;
-/// Oldest bundle schema version this build still reads.
-pub const BUNDLE_MIN_VERSION: u32 = 1;
+/// Version of the public `rom-weaver-bundle.json` bundle schema this build
+/// writes and reads.
+pub const BUNDLE_VERSION: u32 = 1;
 
 /// The JSON Schema for `rom-weaver-bundle.json`, embedded from the copy shipped
 /// with this crate. A workspace test below keeps it byte-for-byte aligned with
 /// the canonical docs copy.
 /// Editors can bind it via a `$schema` key (accepted on read) or the published
 /// URL in its `$id`.
-pub const BUNDLE_JSON_SCHEMA: &str = include_str!("../rom-weaver-bundle.schema.json");
+pub const BUNDLE_JSON_SCHEMA: &str = include_str!("../rom-weaver-bundle-v1.schema.json");
 
 /// Published, resolvable location of [`BUNDLE_JSON_SCHEMA`] (matches its `$id`).
-pub const BUNDLE_JSON_SCHEMA_URL: &str = "https://rom-weaver.com/rom-weaver-bundle.schema.json";
+pub const BUNDLE_JSON_SCHEMA_URL: &str = "https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json";
 
 /// A distributable ordered patch workflow with optional ROM, selection seed,
 /// endpoint checks, sources, and output defaults. Sources are URLs or
@@ -82,7 +77,7 @@ pub struct BundlePatchEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub version: Option<String>,
-    /// Patch author credit. (v3)
+    /// Patch author credit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub author: Option<String>,
@@ -139,7 +134,7 @@ pub struct BundlePatchEntry {
     /// `basis: "base"` with omitted `inputChecks` is the canonical compact
     /// form - the entry relies on `rom.checks`; declaring it WITH
     /// `inputChecks` pins a specific variant. The escape hatch for
-    /// checksumless formats (IPS) whose basis cannot be inferred. (v2)
+    /// checksumless formats (IPS) whose basis cannot be inferred.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "typescript-types", ts(optional))]
     pub basis: Option<PatchInputBasis>,
@@ -190,8 +185,8 @@ mod schema_tests {
     // compare against it only when running from the workspace checkout.
     #[test]
     fn embedded_schema_matches_canonical_docs_copy() {
-        let docs_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/rom-weaver-bundle.schema.json");
+        let docs_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/rom-weaver-bundle-v1.schema.json");
         if docs_path.exists() {
             let canonical =
                 std::fs::read_to_string(docs_path).expect("read canonical docs bundle schema");
@@ -222,6 +217,14 @@ mod schema_tests {
                 "schema is missing top-level property `{key}`"
             );
         }
+        assert_eq!(
+            properties
+                .get("version")
+                .and_then(|version| version.get("const"))
+                .and_then(serde_json::Value::as_u64),
+            Some(BUNDLE_VERSION.into()),
+            "published bundle schema must describe the writer's version"
+        );
     }
 
     // The `$schema` key must be accepted on read despite deny_unknown_fields,

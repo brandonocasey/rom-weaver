@@ -72,7 +72,7 @@ pub(crate) fn parse_bundle_bytes(bytes: &[u8]) -> Result<RomWeaverBundle> {
 }
 
 fn validate_bundle(bundle: &mut RomWeaverBundle) -> Result<()> {
-    if !(BUNDLE_MIN_VERSION..=BUNDLE_VERSION).contains(&bundle.version) {
+    if bundle.version != BUNDLE_VERSION {
         return Err(RomWeaverError::ValidationCode(
             ValidationCodeError::new("bundle.version.unsupported")
                 .with_message("unsupported bundle version")
@@ -227,11 +227,11 @@ mod tests {
 
     #[test]
     fn parses_minimal_bundle() {
-        // A version-1 bundle (pre-`basis`) still reads.
+        // Version 1 is the only public bundle version.
         let bundle =
             parse_bundle_bytes(br#"{ "version": 1, "patches": [ { "path": "patches/x.bps" } ] }"#)
                 .expect("minimal bundle parses");
-        assert_eq!(bundle.version, BUNDLE_MIN_VERSION);
+        assert_eq!(bundle.version, BUNDLE_VERSION);
         assert_eq!(bundle.patches.len(), 1);
         assert!(!bundle.patches[0].optional);
         assert_eq!(bundle.patches[0].header, None);
@@ -240,27 +240,27 @@ mod tests {
     }
 
     #[test]
-    fn parses_v2_version_with_basis() {
+    fn parses_v1_version_with_basis() {
         let bundle = parse_bundle_bytes(
-            br#"{ "version": 2, "patches": [
+            br#"{ "version": 1, "patches": [
                 { "path": "a.ips", "basis": "base" },
                 { "path": "b.ips", "basis": "previous" },
                 { "path": "c.ips" }
             ] }"#,
         )
-        .expect("v2 bundle parses");
-        assert_eq!(bundle.version, 2);
+        .expect("v1 bundle parses");
+        assert_eq!(bundle.version, BUNDLE_VERSION);
         assert_eq!(bundle.patches[0].basis, Some(PatchInputBasis::Base));
         assert_eq!(bundle.patches[1].basis, Some(PatchInputBasis::Previous));
         assert_eq!(bundle.patches[2].basis, None);
     }
 
     #[test]
-    fn parses_v3_patch_slot_metadata() {
+    fn parses_v1_patch_slot_metadata() {
         let bundle = parse_bundle_bytes(
-            br#"{ "version": 3, "patches": [ { "id": "main", "version": "1.4.0", "author": "Weaver", "path": "main.bps" } ] }"#,
+            br#"{ "version": 1, "patches": [ { "id": "main", "version": "1.4.0", "author": "Weaver", "path": "main.bps" } ] }"#,
         )
-        .expect("v3 bundle parses");
+        .expect("v1 bundle parses");
         assert_eq!(bundle.version, BUNDLE_VERSION);
         assert_eq!(bundle.patches[0].id.as_deref(), Some("main"));
         assert_eq!(bundle.patches[0].version.as_deref(), Some("1.4.0"));
@@ -270,9 +270,9 @@ mod tests {
     #[test]
     fn basis_round_trips_and_omits_previous_default() {
         let bundle = parse_bundle_bytes(
-            br#"{ "version": 2, "patches": [ { "path": "a.ips", "basis": "base" } ] }"#,
+            br#"{ "version": 1, "patches": [ { "path": "a.ips", "basis": "base" } ] }"#,
         )
-        .expect("v2 bundle parses");
+        .expect("v1 bundle parses");
         let rendered = serde_json::to_string(&bundle).expect("serializes");
         assert!(rendered.contains(r#""basis":"base""#));
         let reparsed = parse_bundle_bytes(rendered.as_bytes()).expect("round trip");
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn rejects_invalid_basis_value() {
         assert_eq!(
-            parse_err(r#"{ "version": 2, "patches": [ { "path": "x.ips", "basis": "root" } ] }"#),
+            parse_err(r#"{ "version": 1, "patches": [ { "path": "x.ips", "basis": "root" } ] }"#),
             "bundle.parse"
         );
     }
@@ -311,10 +311,14 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_version() {
-        assert_eq!(
-            parse_err(r#"{ "version": 4, "patches": [ { "path": "x.ips" } ] }"#),
-            "bundle.version.unsupported"
-        );
+        for version in [2, 3, 4] {
+            assert_eq!(
+                parse_err(&format!(
+                    r#"{{ "version": {version}, "patches": [ {{ "path": "x.ips" }} ] }}"#
+                )),
+                "bundle.version.unsupported"
+            );
+        }
     }
 
     #[test]

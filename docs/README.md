@@ -19,7 +19,7 @@ Choose the guide that matches what you are trying to do.
 - [Man pages](cli.md#man-pages): generate `rom-weaver(1)` and one page per
   visible CLI command directly from Clap.
 - [Screenshots](screenshots.md): desktop and mobile views of the main workflows.
-- [`rom-weaver-bundle.json` schema](rom-weaver-bundle.schema.json): machine-readable
+- [`rom-weaver-bundle.json` schema](rom-weaver-bundle-v1.schema.json): machine-readable
   schema for distributable patch workflows.
 
 ## Deploy

@@ -1201,8 +1201,8 @@ use patch_filename_checksum::{embed_checksum_in_filename, parse_filename_require
 
 mod bundle_schema;
 pub use bundle_schema::{
-    BUNDLE_JSON_SCHEMA, BUNDLE_JSON_SCHEMA_URL, BUNDLE_MIN_VERSION, BUNDLE_VERSION, BundleChecks,
-    BundleOutput, BundlePatchEntry, BundleRom, RomWeaverBundle,
+    BUNDLE_JSON_SCHEMA, BUNDLE_JSON_SCHEMA_URL, BUNDLE_VERSION, BundleChecks, BundleOutput,
+    BundlePatchEntry, BundleRom, RomWeaverBundle,
 };
 
 mod patch_plan;

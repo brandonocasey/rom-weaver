@@ -28,11 +28,11 @@ type ParsedBundleRom = {
 };
 
 type ParsedBundlePatchEntry = {
-  /** Stable patch-slot identity retained across source replacements (schema v3). */
+  /** Stable patch-slot identity retained across source replacements. */
   id?: string;
-  /** Author-controlled release version; distinct from the bundle schema version (schema v3). */
+  /** Author-controlled release version; distinct from the bundle schema version. */
   version?: string;
-  /** Patch author credit (schema v3). */
+  /** Patch author credit. */
   author?: string;
   name?: string;
   description?: string;
@@ -48,7 +48,7 @@ type ParsedBundlePatchEntry = {
   header?: BundleHeaderMode;
   /** What this patch's input checks were authored against: the bundle's rom (`base`, verified
    * once up front) or the previous selected patch's output (`previous`, the default). Absent
-   * means previous/inferred. (schema v2) */
+   * means previous/inferred. */
   basis?: "base" | "previous";
 };
 
