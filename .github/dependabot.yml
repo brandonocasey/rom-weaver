@@ -19,6 +19,16 @@ updates:
       rust-dependencies:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # bincode 3.0.0 is not a release. Its entire crate body is
+      # `compile_error!("https://xkcd.com/2347/")` - the bincode maintainers
+      # burned the 3.x major to stop drive-by "upgrades" off the 1.x line.
+      # 2.x is the real successor but drops `Options`/`DefaultOptions` for a
+      # config+derive API, and our only consumer is the XDVDFS on-disk layout
+      # codec, where a re-encode is a byte-parity risk. Stay on 1.3.3 until
+      # that migration is done deliberately.
+      - dependency-name: bincode
+        versions: ["3.x"]
 
   # Two npm manifests: the root wrapper (CLI shim + commitlint/lefthook) and
   # the webapp itself. Dependabot needs one entry per lockfile.
