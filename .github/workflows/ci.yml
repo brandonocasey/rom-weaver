@@ -776,7 +776,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
-      issues: write
+      pull-requests: write
       statuses: write
     # An empty or missing list would be a hard "matrix contains no values"
     # error, so guard rather than trusting the planner to always emit one.
