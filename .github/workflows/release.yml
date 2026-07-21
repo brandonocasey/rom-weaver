@@ -102,43 +102,14 @@ jobs:
         id: ci
         env:
           GH_TOKEN: ${{ github.token }}
-          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
-        run: |
-          target_sha=$(git rev-parse HEAD)
-          run_id="$TRIGGER_RUN_ID"
-          if [ -n "$run_id" ]; then
-            run_sha=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq .head_sha)
-            if [ "$run_sha" != "$target_sha" ]; then
-              run_id=""
-            fi
-          fi
-          if [ -z "$run_id" ]; then
-            run_id=$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow ci.yml \
-              --commit "$target_sha" \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId')
-          fi
-          available=false
-          if [ -n "$run_id" ]; then
-            count=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
-              --jq '[.artifacts[] | select(.name == "wasm-prod" and .expired == false)] | length')
-            if [ "$count" -gt 0 ]; then
-              available=true
-            fi
-          fi
-          echo "available=$available" >> "$GITHUB_OUTPUT"
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          PREFERRED_RUN_ID: ${{ github.event.workflow_run.id }}
+        # The checkout above is at the release tag, not at github.sha (main).
+        run: TARGET_SHA=$(git rev-parse HEAD) scripts/ci/resolve-wasm-run.sh
 
       - name: Set up static webapp build
         uses: ./.github/actions/setup-build-env
-        env:
-          MISE_DISABLE_TOOLS: >-
-            rust,aqua:WebAssembly/binaryen,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
         with:
+          tools: node ripgrep
           cargo-cache: "false"
           webapp-deps: "true"
 
@@ -156,10 +127,8 @@ jobs:
       - name: Set up fallback WASM build
         if: steps.ci.outputs.available != 'true'
         uses: ./.github/actions/setup-build-env
-        env:
-          MISE_DISABLE_TOOLS: >-
-            aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
         with:
+          tools: node rust binaryen
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
           rust-targets: wasm32-wasip1-threads
           wasi-sdk: "true"

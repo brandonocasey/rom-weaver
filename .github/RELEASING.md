@@ -1,5 +1,9 @@
 # Releases
 
+This is the release *decision* and its one-time setup. For the pipeline that
+executes it - workflows, jobs, caching, and the publish fan-out - see
+[`docs/ci.md`](../docs/ci.md).
+
 `release.yml` runs Release Please after CI succeeds on `main`, or when started
 manually. Conventional `feat`, `fix`, and breaking-change commits update a
 release pull request and `CHANGELOG.md`. Merging that pull request creates the

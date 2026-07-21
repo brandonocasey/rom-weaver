@@ -61,7 +61,7 @@
     "hooks:run": "lefthook run pre-commit --force",
     "hooks:validate": "lefthook validate",
     "prepack": "mise run manpages",
-    "test": "node --test scripts/*.test.mjs scripts/wasm/*.test.mjs",
+    "test": "node --test scripts/*.test.mjs scripts/ci/*.test.mjs scripts/wasm/*.test.mjs",
     "audit:deps": "npm audit --audit-level=high",
     "typegen": "mise run typegen",
     "typegen:check": "mise run typegen-check",

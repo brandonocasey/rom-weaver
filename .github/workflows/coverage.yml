@@ -33,8 +33,6 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       ROM_WEAVER_COVERAGE: "1"
-      MISE_DISABLE_TOOLS: >-
-        aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout tested commit
         uses: actions/checkout@v7
@@ -42,32 +40,20 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           submodules: recursive
 
+      # Coverage must measure the module CI actually tested, so an expired or
+      # missing artifact is fatal here rather than a reason to build a new one.
       - name: Resolve CI artifact
         id: ci
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUESTED_RUN_ID: ${{ github.event.workflow_run.id || inputs.ci_run_id }}
+          PREFERRED_RUN_ID: ${{ github.event.workflow_run.id || inputs.ci_run_id }}
           TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-        run: |
-          run_id="$REQUESTED_RUN_ID"
-          if [ -z "$run_id" ]; then
-            run_id=$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow ci.yml \
-              --commit "$TARGET_SHA" \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId')
-          fi
-          test -n "$run_id"
-          count=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
-            --jq '[.artifacts[] | select(.name == "wasm-prod" and .expired == false)] | length')
-          test "$count" -gt 0
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          REQUIRE_ARTIFACT: "1"
+        run: scripts/ci/resolve-wasm-run.sh
 
       - uses: ./.github/actions/setup-build-env
         with:
+          tools: node rust
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
           # llvm-tools-preview backs cargo-llvm-cov's instrumentation.
           rust-components: llvm-tools-preview

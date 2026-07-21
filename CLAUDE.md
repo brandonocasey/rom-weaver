@@ -19,7 +19,8 @@ npm --prefix packages/rom-weaver-webapp run test:browser:wasm  # wasm-layer brow
 ```
 
 Pre-commit hooks (lefthook) run oxfmt/clippy/typegen/oxlint/biome/tsc scoped to changed
-paths; CI runs all of it unconditionally plus the full test suites.
+paths; CI runs all of it unconditionally plus the full test suites. `docs/ci.md`
+maps every workflow, the shared actions, caching, and the release fan-out.
 
 ## Hard rules
 

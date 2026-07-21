@@ -1,0 +1,79 @@
+name: Restore built WASM module
+description: >-
+  Compute a source-exact cache key for a built WASM module and restore it.
+  Building the module is the single most expensive step in the pipeline
+  (~6.5 min), and two workflows need it: CI builds the production module and
+  the nightly E2E suite builds a development one (no wasm-opt, no brotli).
+  They differ only in variant and artifact paths, so the keying rules -
+  the part that is dangerous to get wrong - live here once.
+
+inputs:
+  variant:
+    description: prod or dev. Part of the key, so the two builds can never collide.
+    required: true
+  path:
+    description: Newline-separated artifact paths to cache.
+    required: true
+  cache-epoch:
+    description: Bump to invalidate every cached module by hand.
+    default: "1"
+
+outputs:
+  cache-hit:
+    description: "'true' when the module was restored and the build can be skipped."
+    value: ${{ steps.cache.outputs.cache-hit }}
+  key:
+    description: The resolved cache key.
+    value: ${{ steps.key.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    # Hash every source, dependency, toolchain, and build-script input to the
+    # emitted module. git ls-tree includes submodule SHAs and the PR merge tree,
+    # unlike hashFiles. The key is deliberately broad: a miss costs one build;
+    # a false hit ships stale WASM.
+    - name: Compute wasm cache key
+      id: key
+      shell: bash
+      env:
+        VARIANT: ${{ inputs.variant }}
+        CACHE_EPOCH: ${{ inputs.cache-epoch }}
+      run: |
+        basis=$(git ls-tree HEAD -- \
+          crates vendor/libarchive Cargo.lock Cargo.toml .cargo scripts/wasm \
+          scripts/gen-third-party-licenses.mjs .mise.toml \
+          .github/actions/setup-build-env)
+        if [ -z "$basis" ]; then
+          echo "::error::wasm cache basis resolved to nothing - refusing to key a cache on an empty tree"
+          exit 1
+        fi
+        hash=$(printf '%s\n' "$basis" | sha256sum | cut -d' ' -f1)
+        echo "key=wasm-${VARIANT}-${RUNNER_OS}-e${CACHE_EPOCH}-${hash}" >> "$GITHUB_OUTPUT"
+        printf 'cache basis:\n%s\n' "$basis"
+
+    # No restore-keys: partial-prefix hits could serve different source. GitHub
+    # exposes default-branch caches to PRs; PR-written caches remain branch-local.
+    - name: Restore built wasm module
+      id: cache
+      uses: actions/cache@v6
+      with:
+        key: ${{ steps.key.outputs.key }}
+        path: ${{ inputs.path }}
+
+    # Without this the only evidence the cache works is an unexplained swing
+    # in job duration, which is a poor thing to debug from months later.
+    - name: Report cache status
+      shell: bash
+      env:
+        HIT: ${{ steps.cache.outputs.cache-hit }}
+        KEY: ${{ steps.key.outputs.key }}
+        VARIANT: ${{ inputs.variant }}
+      run: |
+        if [ "$HIT" = "true" ]; then
+          echo "**WASM cache hit** (${VARIANT}) - restored, skipping the ~6.5 min build." >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "**WASM cache miss** (${VARIANT}) - building from source." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "key: \`${KEY}\`" >> "$GITHUB_STEP_SUMMARY"

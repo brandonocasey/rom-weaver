@@ -16,8 +16,6 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
-      MISE_DISABLE_TOOLS: >-
-        aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -28,27 +26,11 @@ jobs:
       # The nightly suite uses a dev wasm module (no wasm-opt/brotli), so it
       # cannot consume CI's production artifact. Cache the exact dev build
       # separately; unchanged scheduled runs skip its ~6.5 minute compile.
-      - name: Compute dev wasm cache key
-        id: wasm-key
-        env:
-          CACHE_EPOCH: "1"
-        run: |
-          basis=$(git ls-tree HEAD -- \
-            crates vendor/libarchive Cargo.lock Cargo.toml .cargo scripts/wasm \
-            scripts/gen-third-party-licenses.mjs .mise.toml \
-            .github/actions/setup-build-env)
-          if [ -z "$basis" ]; then
-            echo "::error::wasm cache basis resolved to nothing - refusing to key a cache on an empty tree"
-            exit 1
-          fi
-          hash=$(printf '%s\n' "$basis" | sha256sum | cut -d' ' -f1)
-          echo "key=wasm-dev-${{ runner.os }}-e${CACHE_EPOCH}-${hash}" >> "$GITHUB_OUTPUT"
-
       - name: Restore development WASM module
         id: wasm-cache
-        uses: actions/cache@v6
+        uses: ./.github/actions/wasm-cache
         with:
-          key: ${{ steps.wasm-key.outputs.key }}
+          variant: dev
           path: |
             packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm
             packages/rom-weaver-webapp/src/wasm/NOTICE
@@ -57,6 +39,7 @@ jobs:
 
       - uses: ./.github/actions/setup-build-env
         with:
+          tools: node rust
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
           rust-targets: wasm32-wasip1-threads
           wasi-sdk: "true"

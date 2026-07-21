@@ -37,43 +37,17 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
-      # This job only needs Rust, Node, and Binaryen.
-      MISE_DISABLE_TOOLS: >-
-        aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      # Hash every source, dependency, toolchain, and build-script input to the
-      # emitted module. git ls-tree includes submodule SHAs and the PR merge tree,
-      # unlike hashFiles. The key is deliberately broad: a miss costs one build;
-      # a false hit ships stale WASM. Bump CACHE_EPOCH to invalidate manually.
-      - name: Compute wasm cache key
-        id: wasm-key
-        env:
-          CACHE_EPOCH: "1"
-        run: |
-          basis=$(git ls-tree HEAD -- \
-            crates vendor/libarchive Cargo.lock Cargo.toml .cargo scripts/wasm \
-            scripts/gen-third-party-licenses.mjs .mise.toml \
-            .github/actions/setup-build-env)
-          if [ -z "$basis" ]; then
-            echo "::error::wasm cache basis resolved to nothing - refusing to key a cache on an empty tree"
-            exit 1
-          fi
-          hash=$(printf '%s\n' "$basis" | sha256sum | cut -d' ' -f1)
-          echo "key=wasm-prod-${{ runner.os }}-e${CACHE_EPOCH}-${hash}" >> "$GITHUB_OUTPUT"
-          printf 'cache basis:\n%s\n' "$basis"
-
-      # No restore-keys: partial-prefix hits could serve different source. GitHub
-      # exposes default-branch caches to PRs; PR-written caches remain branch-local.
       - name: Restore built wasm module
         id: wasm-cache
-        uses: actions/cache@v6
+        uses: ./.github/actions/wasm-cache
         with:
-          key: ${{ steps.wasm-key.outputs.key }}
+          variant: prod
           path: |
             packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm
             packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm.br
@@ -82,25 +56,11 @@ jobs:
             packages/rom-weaver-webapp/src/wasm/THIRD_PARTY_LICENSES.md
             packages/rom-weaver-webapp/src/wasm/third_party
 
-      # Without this the only evidence the cache works is an unexplained swing
-      # in job duration, which is a poor thing to debug from months later.
-      - name: Report cache status
-        env:
-          HIT: ${{ steps.wasm-cache.outputs.cache-hit }}
-          KEY: ${{ steps.wasm-key.outputs.key }}
-        run: |
-          if [ "$HIT" = "true" ]; then
-            echo "**WASM cache hit** - restored, skipping the ~6.5 min build." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "**WASM cache miss** - building from source." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "key: \`${KEY}\`" >> "$GITHUB_STEP_SUMMARY"
-
       # Skipped entirely on a hit - the toolchain exists only to compile.
       - uses: ./.github/actions/setup-build-env
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         with:
+          tools: node rust binaryen
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
           rust-targets: wasm32-wasip1-threads
           wasi-sdk: "true"
@@ -142,9 +102,6 @@ jobs:
     if: github.ref_type != 'tag'
     env:
       CARGO_TERM_COLOR: always
-      # Host checks need Rust, Node, ripgrep, cargo-deny, and cargo-machete.
-      MISE_DISABLE_TOOLS: >-
-        aqua:WebAssembly/binaryen,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -155,6 +112,7 @@ jobs:
 
       - uses: ./.github/actions/setup-build-env
         with:
+          tools: node rust ripgrep cargo-deny cargo-machete
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
           rust-components: clippy rustfmt
 
@@ -214,16 +172,15 @@ jobs:
     if: github.ref_type != 'tag'
     env:
       CARGO_TERM_COLOR: always
-      # Both scanners resolve from lockfiles and compile nothing, so this job
-      # needs only Rust (for `cargo deny`), node, and cargo-deny itself.
-      MISE_DISABLE_TOOLS: >-
-        aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # Both scanners resolve from lockfiles and compile nothing, so this job
+      # needs Rust only as the host for `cargo deny`.
       - uses: ./.github/actions/setup-build-env
         with:
+          tools: node rust cargo-deny
           cargo-cache: "false"
 
       - name: Rust advisories
@@ -246,8 +203,6 @@ jobs:
     if: github.ref_type != 'tag'
     env:
       CARGO_TERM_COLOR: always
-      MISE_DISABLE_TOOLS: >-
-        node,aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -256,6 +211,7 @@ jobs:
 
       - uses: ./.github/actions/setup-build-env
         with:
+          tools: rust
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
           # `cargo check` still runs the libarchive build script against WASI.
           rust-targets: wasm32-wasip1-threads
@@ -266,8 +222,9 @@ jobs:
       - name: WASM threaded check
         run: RUSTFLAGS="${RUSTFLAGS:-} -D warnings" mise run wasm-check
 
-  # Keep the existing required-check name stable while the independent host and
-  # threaded-target work runs in parallel.
+  # Presents one stable check name while the independent host and threaded-target
+  # work runs in parallel, so branch protection has a single thing to require.
+  # `main` is unprotected today, so this is currently only a reporting aid.
   rust:
     name: Rust
     runs-on: ubuntu-24.04
@@ -290,15 +247,13 @@ jobs:
     timeout-minutes: 60
     needs: wasm
     if: github.ref_type != 'tag'
-    env:
-      MISE_DISABLE_TOOLS: >-
-        rust,aqua:WebAssembly/binaryen,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup-build-env
         with:
+          tools: node ripgrep
           cargo-cache: "false"
           webapp-deps: "true"
           playwright: "true"
@@ -363,20 +318,17 @@ jobs:
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'))
-    env:
-      # This job compiles nothing - it runs vite and wrangler over a prebuilt
-      # module - so the Rust toolchain and the cargo-backed tools are dead
-      # weight here. node and ripgrep stay; the webapp build reaches for them.
-      MISE_DISABLE_TOOLS: >-
-        rust,aqua:WebAssembly/binaryen,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - uses: actions/checkout@v7
         with:
           # The deployed changelog is generated from the latest 50 commits.
           fetch-depth: 0
 
+      # This job compiles nothing - it runs vite and wrangler over a prebuilt
+      # module - so the Rust toolchain is dead weight here.
       - uses: ./.github/actions/setup-build-env
         with:
+          tools: node ripgrep
           cargo-cache: "false"
           webapp-deps: "true"
 

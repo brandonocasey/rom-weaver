@@ -19,8 +19,6 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
-      MISE_DISABLE_TOOLS: >-
-        aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,aqua:EmbarkStudios/cargo-deny,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -35,6 +33,7 @@ jobs:
       # parity is measured with the same rustc the rest of CI uses.
       - uses: ./.github/actions/setup-build-env
         with:
+          tools: node rust
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
 
       # The reference tools are cross-platform npm packages (chdman from

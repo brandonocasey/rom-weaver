@@ -54,6 +54,8 @@ Choose the guide that matches what you are trying to do.
   real-device checks for WebKit, OPFS, memory pressure, and PWA behavior.
 - [Vendored third-party code](vendor-code.md): what is vendored and why, the
   crates.io publishing constraint, and how to return each one to upstream.
+- [Continuous integration](ci.md): every workflow, the required gate, deploy
+  channels, shared actions, caching, secrets, and how to reproduce CI locally.
 - [Release guide](../.github/RELEASING.md): first-release setup, trusted
   publishing, deployment channels, and retry steps.
 - [References](references.md): format specifications and upstream reference
