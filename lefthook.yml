@@ -24,9 +24,11 @@ pre-commit:
     # Both are manifest/lockfile-scoped: cargo-deny reads Cargo.lock, machete
     # reads the Cargo.tomls. Neither compiles anything, so they cost little
     # next to the clippy run already gated on the same glob.
+    # Policy half only, matching CI: a fresh advisory against a dependency you
+    # did not touch should not block the commit in front of you.
     cargo-deny:
       glob: "*.{toml,lock}"
-      run: mise run deny
+      run: mise run deny-policy
     cargo-machete:
       glob: "*.toml"
       run: mise run machete

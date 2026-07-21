@@ -187,8 +187,10 @@ jobs:
       - name: Third-party attribution bundle
         run: mise run licenses-check
 
-      - name: Rust supply chain (advisories, licenses, sources)
-        run: mise run deny
+      # Advisories moved to the non-gating `security` job; what stays here is
+      # the half we author and can always fix in the same commit.
+      - name: Rust dependency policy (licenses, sources)
+        run: mise run deny-policy
 
       - name: Unused Rust dependencies
         run: mise run machete
@@ -200,13 +202,40 @@ jobs:
         # dependencies from crates.io, which may still contain the pre-change graph.
         run: cargo publish --workspace --locked --dry-run --no-verify
 
+  # Every scanner whose input is the outside world rather than this repository.
+  # Deliberately not gating: an advisory is published against a transitive
+  # dependency without any commit of ours, and letting that turn each open pull
+  # request red blocks unrelated work until someone lands an upgrade. Findings
+  # surface as annotations and a job summary instead, so this job stays green.
+  security:
+    name: Security advisories
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    if: github.ref_type != 'tag'
+    env:
+      CARGO_TERM_COLOR: always
+      # Both scanners resolve from lockfiles and compile nothing, so this job
+      # needs only Rust (for `cargo deny`), node, and cargo-deny itself.
+      MISE_DISABLE_TOOLS: >-
+        aqua:WebAssembly/binaryen,aqua:BurntSushi/ripgrep,ubi:bnjbvr/cargo-machete,ubi:obi1kenobi/cargo-semver-checks,aqua:rhysd/actionlint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-build-env
+        with:
+          cargo-cache: "false"
+
+      - name: Rust advisories
+        run: scripts/warn-only.sh "Rust advisories" mise run deny-advisories
+
       # `npm audit` resolves straight from the lockfiles, so this needs node but
-      # no install - which is why it sits in this job rather than behind the
-      # webapp's `npm ci` on the critical path.
+      # no install, keeping the webapp's `npm ci` off this job entirely.
       - name: npm advisories
         run: |
-          npm run audit:deps
-          npm --prefix packages/rom-weaver-webapp run audit:deps
+          scripts/warn-only.sh "npm advisories (root)" npm run audit:deps
+          scripts/warn-only.sh "npm advisories (webapp)" \
+            npm --prefix packages/rom-weaver-webapp run audit:deps
 
   # The threaded target has a separate Cargo fingerprint from the host checks,
   # so serializing it inside the host job only lengthens the required Rust gate.

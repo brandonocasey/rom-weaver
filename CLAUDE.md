@@ -30,10 +30,13 @@ paths; CI runs all of it unconditionally plus the full test suites.
   registry metadata needs `npm run typegen` and the regenerated files
   committed.
 - **Dependency policy is `deny.toml`.** New crates must land under an
-  already-allowed license, and vulnerabilities fail CI at any depth. Suppress
-  an advisory only via an `ignore` entry with a written reason - never by
-  loosening `unmaintained`/`yanked`. Unused-dep false positives go in the
-  owning crate's `[package.metadata.cargo-machete]`, also with a reason.
+  already-allowed license; disallowed licenses and unknown sources fail CI
+  (`mise run deny-policy`). Vulnerabilities do **not** fail CI - advisories run
+  in the non-gating `security` job and surface as warnings, so a fresh CVE
+  never blocks unrelated work. They are still expected to get fixed; suppress
+  one only via an `ignore` entry with a written reason - never by loosening
+  `unmaintained`/`yanked`. Unused-dep false positives go in the owning crate's
+  `[package.metadata.cargo-machete]`, also with a reason.
 - **One error type.** Add variants to `RomWeaverError`
   (`crates/rom-weaver-core/src/error.rs`); never introduce per-crate error
   enums.

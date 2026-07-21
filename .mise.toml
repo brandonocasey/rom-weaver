@@ -162,7 +162,19 @@ test -d "$output_dir/third_party/licenses"
 description = "Check Rust dependencies for advisories, licenses, and unknown sources"
 # Policy lives in deny.toml. This gates what enters the tree; `licenses-check`
 # above generates the attribution bundle for what already did.
-run = "cargo deny check"
+#
+# Split into two halves because CI treats them differently: policy violations
+# are authored by us and gate the build, advisories arrive on their own and
+# only warn. Locally you want both, which is what this task still runs.
+depends = ["deny-policy", "deny-advisories"]
+
+[tasks.deny-policy]
+description = "Check Rust dependencies for disallowed licenses and unknown sources"
+run = "cargo deny check licenses sources"
+
+[tasks.deny-advisories]
+description = "Check Rust dependencies for security advisories"
+run = "cargo deny check advisories"
 
 [tasks.machete]
 description = "Find unused Rust dependencies"
