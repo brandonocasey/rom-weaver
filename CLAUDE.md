@@ -69,10 +69,8 @@ instructions do **not** apply here.
 - `npm version` (→ `scripts/sync-version.mjs`) is the legacy manual path that
   cut v0.2.0-v0.5.0. It overlaps release-please and will fight it. Keep it only
   as a break-glass fallback.
-- Pre-1.0 bump behavior is **unpinned**: `bump-minor-pre-major` and
-  `bump-patch-for-minor-pre-major` are unset, so whether a breaking change
-  yields 0.6.0 or 1.0.0 is defaulted, not chosen. Settle this before landing
-  anything breaking.
+- Pre-1.0 breaking changes bump the minor version because
+  `bump-minor-pre-major` is enabled in `release-please-config.json`.
 
 ## Layout pointers
 

@@ -22,10 +22,11 @@ why, and the exact steps to go back to upstream.
 ## The publishing constraint
 
 `cargo publish` rewrites every path dependency into a registry dependency and
-then requires that crate to exist on crates.io. `rom-weaver-cli` is published so
-that `cargo install rom-weaver-cli` works, so every internal path dependency in
-its graph must also be published. There is no way to publish a crate while
-keeping one of its path dependencies private.
+then requires that crate to exist on crates.io. `rom-weaver-cli` is intended for
+publication so that `cargo install rom-weaver-cli` can work after the first
+release. Every internal path dependency in its graph must therefore also be
+published. There is no way to publish a crate while keeping one of its path
+dependencies private.
 
 To see the current list:
 
@@ -36,12 +37,12 @@ cargo tree -p rom-weaver-cli -e normal | grep -o 'rom-weaver-[a-z-]*' | sort -u
 That has one consequence worth stating plainly: vendoring someone else's crate
 as a workspace member means publishing a renamed fork of their work under the
 `rom-weaver-*` namespace, permanently. Where that is not acceptable, the source
-is inlined as a module inside a crate that is already published instead. See
-[`src/xdvdfs`](#xdvdfs-inlined-into-rom-weaver-containers) below.
+is inlined as a module inside a crate that will already be part of the release.
+See [`src/xdvdfs`](#xdvdfs-inlined-into-rom-weaver-containers) below.
 
 ## What is vendored
 
-| Code | Form | Published as | Reason |
+| Code | Form | Packaged as | Reason |
 | --- | --- | --- | --- |
 | `vendor/libarchive` | Git submodule | part of `rom-weaver-containers` | C sources built by `crates/rom-weaver-containers/libarchive/build.rs`; a tarball fallback ships in that package |
 | `crates/rom-weaver-containers/src/nod` | Inlined module | part of `rom-weaver-containers` | GameCube/Wii disc support without publishing a renamed `rom-weaver-nod` crate |
@@ -52,7 +53,7 @@ Everything else that was once vendored has gone back upstream: `qbsdiff` and
 is the preferred outcome whenever upstream can serve the need — inlining is the
 fallback for when it cannot, and a published fork is the last resort.
 
-No vendored dependency is republished as its own `rom-weaver-*` crate.
+No vendored dependency has its own `rom-weaver-*` package.
 
 ## `nod`, inlined into `rom-weaver-containers`
 
@@ -75,12 +76,13 @@ support, replace the copy with the registry crate:
 4. Remove `crates/rom-weaver-containers/src/nod/` and its copied license files,
    then remove any dependencies used only by the inlined implementation.
 5. Run `cargo test --workspace` and
-   `cargo publish --workspace --locked --dry-run` before deleting this section.
+   `cargo publish --workspace --locked --dry-run --no-verify` before deleting
+   this section.
 
 The inlined module drops nod's Python bindings and OpenSSL backend because
 rom-weaver only uses the Rust disc reader/writer API. Keeping the source inside
-the already-published containers crate avoids creating a publishable
-`rom-weaver-nod` package for upstream code.
+the containers crate avoids creating a `rom-weaver-nod` package for upstream
+code.
 
 ## `xdvdfs`, inlined into `rom-weaver-containers`
 
@@ -176,15 +178,20 @@ than a silent no-op — which is the safer failure, but it is new.
 
 ## Validate after any vendor change
 
+Run the publish check from a normal checkout with `vendor/libarchive`
+populated. Linked worktrees replace that directory with a symlink, and Cargo
+does not package through the symlink.
+
 ```bash
 cargo check -p rom-weaver-patches
 cargo check -p rom-weaver-cli
 cargo test --workspace
 mise run deny                                          # advisories, licenses, sources
 mise run machete                                       # unused dependencies
-cargo publish --workspace --exclude rom-weaver-typegen --locked --dry-run
+cargo publish --workspace --locked --dry-run --no-verify
 ```
 
-The publish dry-run is the one that catches vendoring mistakes the compiler
-cannot: it fails if a path dependency would need to exist on crates.io and does
-not. Check its crate list against what you intend to publish.
+The publish dry-run checks every package and its file list without uploading.
+Workspace tests compile the local dependency graph. `--no-verify` keeps Cargo
+from replacing same-version workspace dependencies with older copies from the
+registry while checking each tarball.
