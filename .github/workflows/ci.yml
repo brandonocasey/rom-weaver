@@ -404,6 +404,11 @@ jobs:
       # while skipping the bulk of it. Applies to the test profile via its
       # dev-profile inheritance; local builds are untouched.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # rust-lld (lld-link flavor, ships with the toolchain) links large test
+      # binaries markedly faster than MSVC link.exe, and this workspace
+      # produces many of them. Safe here (unlike the wasm job) because this
+      # target has no configured link flags to clobber.
+      RUSTFLAGS: -C linker=rust-lld
     steps:
       - name: Checkout
         uses: actions/checkout@v7
