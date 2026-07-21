@@ -1,12 +1,12 @@
 [package]
 name = "rom-weaver-patches"
 authors.workspace = true
-description.workspace = true
+description = "ROM hack patch formats for rom-weaver: apply, create, and validate IPS, BPS, UPS, xdelta/VCDIFF, PPF, RUP, BDF/BSDIFF40, APS, and more than twenty formats in total."
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 publish.workspace = true
-readme.workspace = true
+readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true

@@ -8,14 +8,15 @@ members = [
 ]
 resolver = "2"
 
+# `description` and `readme` are deliberately absent: every member sets its own.
+# crates.io renders one page per crate, and an inherited root README's relative
+# image paths would resolve against `crates/<name>/` there and 404.
 [workspace.package]
 authors = ["Brandon Casey"]
-description = "A local-first offline toolkit for ROMs and ROM hack patches. Inspect, extract, checksum, compress, trim, apply patches, create patches, or bundle shareable patch manifests at native speed. In your browser or terminal."
 edition = "2024"
 homepage = "https://rom-weaver.com"
 license = "AGPL-3.0-or-later"
 publish = ["crates-io"]
-readme = "README.md"
 repository = "https://github.com/brandonocasey/rom-weaver"
 rust-version = "1.95"
 version = "0.6.0"

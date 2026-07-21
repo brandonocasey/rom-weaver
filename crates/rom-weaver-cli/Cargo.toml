@@ -1,12 +1,12 @@
 [package]
 name = "rom-weaver-cli"
 authors.workspace = true
-description.workspace = true
+description = "A local-first offline toolkit for ROMs and ROM hack patches. Inspect, extract, checksum, compress, trim, apply patches, create patches, or bundle shareable patch manifests at native speed."
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 publish.workspace = true
-readme.workspace = true
+readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
