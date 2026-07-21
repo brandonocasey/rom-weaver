@@ -740,19 +740,19 @@ impl CliApp {
                 let PatchApplyLoopOutcome {
                     mut report,
                     applied_formats,
-                } = match self.run_patch_apply_loop(
-                    &resolved_patches,
+                } = match self.run_patch_apply_loop(RunPatchApplyLoopInputs {
+                    resolved_patches: &resolved_patches,
                     apply_input,
-                    &staged_output,
-                    &chain_header_modes,
-                    &step_verifications,
-                    &mut header_state,
-                    &chain_n64_modes,
-                    &mut n64_order,
-                    &probe_threads,
-                    &context,
-                    &mut temp_paths,
-                ) {
+                    staged_output: &staged_output,
+                    chain_header_modes: &chain_header_modes,
+                    step_verifications: &step_verifications,
+                    header_state: &mut header_state,
+                    chain_n64_modes: &chain_n64_modes,
+                    n64_order: &mut n64_order,
+                    probe_threads: &probe_threads,
+                    context: &context,
+                    temp_paths: &mut temp_paths,
+                }) {
                     Ok(outcome) => outcome,
                     Err(report) => return *report,
                 };
@@ -831,8 +831,10 @@ impl CliApp {
                         header_state.stripped_header.as_deref(),
                         strip_output_header,
                         repair_checksum,
-                        Some(&resolved_input),
-                        n64_order.filter(|order| order.from != order.to),
+                        crate::header_detection_and_finalize::PatchApplyFinalizeOptions {
+                            repair_hint_path: Some(&resolved_input),
+                            restore_n64_order: n64_order.filter(|order| order.from != order.to),
+                        },
                     ) {
                         Ok(finalized) => {
                             raw_ready_output = finalized_output_path;
@@ -1170,16 +1172,16 @@ impl CliApp {
             stripped_header_match,
             n64_order,
         } = self
-            .prepare_patch_apply_input(
+            .prepare_patch_apply_input(PreparePatchApplyInputInputs {
                 resolved_input,
                 strip_header,
-                chain_n64_modes.first().copied().unwrap_or_default(),
+                n64_byte_order: chain_n64_modes.first().copied().unwrap_or_default(),
                 first_patch,
-                expected_input_checksums.get("crc32").map(String::as_str),
+                expected_crc32: expected_input_checksums.get("crc32").map(String::as_str),
                 repair_checksum,
                 context,
                 temp_paths,
-            )
+            })
             .map_err(|error| {
                 Box::new(OperationReport::failed(
                     OperationFamily::Patch,
@@ -2051,24 +2053,51 @@ struct ChainHeaderState {
     stripped_header_match: Option<KnownRomHeaderMatch>,
 }
 
+struct RunPatchApplyLoopInputs<'a> {
+    resolved_patches: &'a [(PathBuf, PathBuf)],
+    apply_input: PathBuf,
+    staged_output: &'a Path,
+    chain_header_modes: &'a [PatchApplyHeaderMode],
+    step_verifications: &'a [patch_plan::PatchStepVerification],
+    header_state: &'a mut ChainHeaderState,
+    chain_n64_modes: &'a [PatchN64ByteOrderMode],
+    n64_order: &'a mut Option<N64ByteOrderTransform>,
+    probe_threads: &'a Option<ThreadExecution>,
+    context: &'a OperationContext,
+    temp_paths: &'a mut Vec<PathBuf>,
+}
+
+struct PreparePatchApplyInputInputs<'a> {
+    resolved_input: &'a Path,
+    strip_header: bool,
+    n64_byte_order: PatchN64ByteOrderMode,
+    first_patch: Option<&'a Path>,
+    expected_crc32: Option<&'a str>,
+    repair_checksum: bool,
+    context: &'a OperationContext,
+    temp_paths: &'a mut Vec<PathBuf>,
+}
+
 impl CliApp {
     /// Apply the resolved chain through temporary intermediates into
     /// `staged_output`. Errors carry the failing operation report.
-    #[expect(clippy::too_many_arguments)]
     fn run_patch_apply_loop(
         &self,
-        resolved_patches: &[(PathBuf, PathBuf)],
-        apply_input: PathBuf,
-        staged_output: &Path,
-        chain_header_modes: &[PatchApplyHeaderMode],
-        step_verifications: &[patch_plan::PatchStepVerification],
-        header_state: &mut ChainHeaderState,
-        chain_n64_modes: &[PatchN64ByteOrderMode],
-        n64_order: &mut Option<N64ByteOrderTransform>,
-        probe_threads: &Option<ThreadExecution>,
-        context: &OperationContext,
-        temp_paths: &mut Vec<PathBuf>,
+        inputs: RunPatchApplyLoopInputs<'_>,
     ) -> std::result::Result<PatchApplyLoopOutcome, Box<OperationReport>> {
+        let RunPatchApplyLoopInputs {
+            resolved_patches,
+            apply_input,
+            staged_output,
+            chain_header_modes,
+            step_verifications,
+            header_state,
+            chain_n64_modes,
+            n64_order,
+            probe_threads,
+            context,
+            temp_paths,
+        } = inputs;
         let patch_count = resolved_patches.len();
         let mut current_input = apply_input;
         let mut applied_formats = Vec::with_capacity(patch_count);
@@ -2600,18 +2629,20 @@ impl CliApp {
     /// the prepared input plus the state needed to finalize the output; failures
     /// surface as [`RomWeaverError`] for the caller to wrap into a `compat`
     /// report.
-    #[expect(clippy::too_many_arguments)]
     fn prepare_patch_apply_input(
         &self,
-        resolved_input: &Path,
-        strip_header: bool,
-        n64_byte_order: PatchN64ByteOrderMode,
-        first_patch: Option<&Path>,
-        expected_crc32: Option<&str>,
-        repair_checksum: bool,
-        context: &OperationContext,
-        temp_paths: &mut Vec<PathBuf>,
+        inputs: PreparePatchApplyInputInputs<'_>,
     ) -> Result<PreparedApplyInput> {
+        let PreparePatchApplyInputInputs {
+            resolved_input,
+            strip_header,
+            n64_byte_order,
+            first_patch,
+            expected_crc32,
+            repair_checksum,
+            context,
+            temp_paths,
+        } = inputs;
         let mut stripped_header = None;
         let mut stripped_header_match = None;
         let mut n64_order = None;

@@ -903,10 +903,6 @@ impl<'pool> BspVm<'pool> {
         Ok(args)
     }
 
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "the opcode dispatch table mirrors the BSP instruction set"
-    )]
     fn execute_opcode(&mut self, opcode: u8, args: &[u32]) -> VmResult<StepControl> {
         match opcode {
             0x00 => Ok(StepControl::Continue),
@@ -958,19 +954,7 @@ impl<'pool> BspVm<'pool> {
                 self.set_variable(args[0] as u8, self.get_patch_word(args[1])?);
                 Ok(StepControl::Continue)
             }
-            0x16 | 0x17 => {
-                self.update_hashes()?;
-                let mut result = 0u32;
-                for index in 0..20u32 {
-                    if self.get_patch_byte(args[1].wrapping_add(index))?
-                        != self.sha1[index as usize]
-                    {
-                        result |= 1 << index;
-                    }
-                }
-                self.set_variable(args[0] as u8, result);
-                Ok(StepControl::Continue)
-            }
+            0x16 | 0x17 => self.execute_hash_compare(args),
             0x18 | 0x19 => {
                 self.write_byte(args[0])?;
                 Ok(StepControl::Continue)
@@ -1025,76 +1009,7 @@ impl<'pool> BspVm<'pool> {
                 self.set_variable(args[0] as u8, args[1] ^ args[2]);
                 Ok(StepControl::Continue)
             }
-            0x40..=0x43 => {
-                if args[0] < args[1] {
-                    self.jump_opcode(args[2])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x44..=0x47 => {
-                if args[0] <= args[1] {
-                    self.jump_opcode(args[2])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x48..=0x4B => {
-                if args[0] > args[1] {
-                    self.jump_opcode(args[2])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x4C..=0x4F => {
-                if args[0] >= args[1] {
-                    self.jump_opcode(args[2])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x50..=0x53 => {
-                if args[0] == args[1] {
-                    self.jump_opcode(args[2])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x54..=0x57 => {
-                if args[0] != args[1] {
-                    self.jump_opcode(args[2])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x58 | 0x59 => {
-                if args[0] == 0 {
-                    self.jump_opcode(args[1])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x5A | 0x5B => {
-                if args[0] != 0 {
-                    self.jump_opcode(args[1])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x5C | 0x5D => {
-                if args[0] == 0 {
-                    self.call_opcode(args[1])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
-            0x5E | 0x5F => {
-                if args[0] != 0 {
-                    self.call_opcode(args[1])
-                } else {
-                    Ok(StepControl::Continue)
-                }
-            }
+            0x40..=0x5F => self.execute_conditional_opcode(opcode, args),
             0x60 | 0x61 => {
                 self.update_current_file_pointer(args[0]);
                 Ok(StepControl::Continue)
@@ -1511,6 +1426,94 @@ impl<'pool> BspVm<'pool> {
                 Ok(StepControl::Continue)
             }
             _ => Err("undefined opcode".to_string()),
+        }
+    }
+
+    fn execute_hash_compare(&mut self, args: &[u32]) -> VmResult<StepControl> {
+        self.update_hashes()?;
+        let mut result = 0u32;
+        for index in 0..20u32 {
+            if self.get_patch_byte(args[1].wrapping_add(index))? != self.sha1[index as usize] {
+                result |= 1 << index;
+            }
+        }
+        self.set_variable(args[0] as u8, result);
+        Ok(StepControl::Continue)
+    }
+
+    fn execute_conditional_opcode(&mut self, opcode: u8, args: &[u32]) -> VmResult<StepControl> {
+        match opcode {
+            0x40..=0x43 => {
+                if args[0] < args[1] {
+                    self.jump_opcode(args[2])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x44..=0x47 => {
+                if args[0] <= args[1] {
+                    self.jump_opcode(args[2])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x48..=0x4B => {
+                if args[0] > args[1] {
+                    self.jump_opcode(args[2])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x4C..=0x4F => {
+                if args[0] >= args[1] {
+                    self.jump_opcode(args[2])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x50..=0x53 => {
+                if args[0] == args[1] {
+                    self.jump_opcode(args[2])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x54..=0x57 => {
+                if args[0] != args[1] {
+                    self.jump_opcode(args[2])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x58 | 0x59 => {
+                if args[0] == 0 {
+                    self.jump_opcode(args[1])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x5A | 0x5B => {
+                if args[0] != 0 {
+                    self.jump_opcode(args[1])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x5C | 0x5D => {
+                if args[0] == 0 {
+                    self.call_opcode(args[1])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            0x5E | 0x5F => {
+                if args[0] != 0 {
+                    self.call_opcode(args[1])
+                } else {
+                    Ok(StepControl::Continue)
+                }
+            }
+            _ => unreachable!("conditional opcode outside range: {opcode:#x}"),
         }
     }
 

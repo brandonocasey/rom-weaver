@@ -180,6 +180,30 @@ struct IngestOutcome {
     patches: Vec<PatchDescriptor>,
 }
 
+struct IngestRequest<'a> {
+    source: &'a Path,
+    out_dir: &'a Path,
+    raw_selections: Vec<String>,
+    no_ignore: bool,
+    no_nested_extract: bool,
+    split_bin: Option<bool>,
+    algorithms: &'a [String],
+    context: &'a OperationContext,
+}
+
+struct IngestLeavesRequest<'a> {
+    source: &'a Path,
+    out_dir: &'a Path,
+    raw_selections: &'a [String],
+    kind_filter: ArchiveEntryKindFilter,
+    no_ignore: bool,
+    no_nested_extract: bool,
+    split_bin: bool,
+    interactive: bool,
+    source_label: &'static str,
+    context: &'a OperationContext,
+}
+
 const INGEST_DEFAULT_CHECKSUM_ALGORITHMS: [&str; 3] = ["crc32", "md5", "sha1"];
 
 impl CliApp {
@@ -268,16 +292,16 @@ impl CliApp {
             );
         }
 
-        let report = match self.run_ingest_inner(
-            &source,
-            &out_dir,
-            select,
+        let report = match self.run_ingest_inner(IngestRequest {
+            source: &source,
+            out_dir: &out_dir,
+            raw_selections: select,
             no_ignore,
             no_nested_extract,
             split_bin,
-            &algorithms,
-            &context,
-        ) {
+            algorithms: &algorithms,
+            context: &context,
+        }) {
             Ok(outcome) => self.ingest_success_report(&source, outcome, thread_execution.clone()),
             Err(error) => OperationReport::failed(
                 OperationFamily::Command,
@@ -290,18 +314,17 @@ impl CliApp {
         self.finish("ingest", report)
     }
 
-    #[expect(clippy::too_many_arguments)]
-    fn run_ingest_inner(
-        &self,
-        source: &Path,
-        out_dir: &Path,
-        raw_selections: Vec<String>,
-        no_ignore: bool,
-        no_nested_extract: bool,
-        split_bin: Option<bool>,
-        algorithms: &[String],
-        context: &OperationContext,
-    ) -> Result<IngestOutcome> {
+    fn run_ingest_inner(&self, request: IngestRequest<'_>) -> Result<IngestOutcome> {
+        let IngestRequest {
+            source,
+            out_dir,
+            raw_selections,
+            no_ignore,
+            no_nested_extract,
+            split_bin,
+            algorithms,
+            context,
+        } = request;
         if !source.exists() {
             return Err(RomWeaverError::Validation(format!(
                 "input path does not exist: `{}`",
@@ -326,32 +349,36 @@ impl CliApp {
         if let Some(handler) = self.containers.probe(source) {
             return self.ingest_container(
                 handler.as_ref(),
-                source,
-                out_dir,
-                raw_selections,
-                no_ignore,
-                no_nested_extract,
-                split_bin,
-                algorithms,
-                context,
+                IngestRequest {
+                    source,
+                    out_dir,
+                    raw_selections,
+                    no_ignore,
+                    no_nested_extract,
+                    split_bin,
+                    algorithms,
+                    context,
+                },
             );
         }
         self.ingest_bare_source(source, algorithms, context)
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn ingest_container(
         &self,
         handler: &dyn ContainerHandler,
-        source: &Path,
-        out_dir: &Path,
-        raw_selections: Vec<String>,
-        no_ignore: bool,
-        no_nested_extract: bool,
-        split_bin: Option<bool>,
-        algorithms: &[String],
-        context: &OperationContext,
+        request: IngestRequest<'_>,
     ) -> Result<IngestOutcome> {
+        let IngestRequest {
+            source,
+            out_dir,
+            raw_selections,
+            no_ignore,
+            no_nested_extract,
+            split_bin,
+            algorithms,
+            context,
+        } = request;
         // Stream the early identity/type manifest so the host can route the drop and render its card
         // immediately, exactly as `extract` does (best-effort, streaming-only).
         self.emit_probe_manifest(handler, source, false, !no_ignore, context);
@@ -378,14 +405,19 @@ impl CliApp {
             // still pins specific leaves; interactive resolution stays driven by the global flag.
             let patches = self.ingest_patch_leaves(
                 handler,
-                source,
-                out_dir,
-                &raw_selections,
-                no_ignore,
-                no_nested_extract,
-                true,
+                IngestLeavesRequest {
+                    source,
+                    out_dir,
+                    raw_selections: &raw_selections,
+                    kind_filter: Self::archive_entry_kind_filter(false, true),
+                    no_ignore,
+                    no_nested_extract,
+                    split_bin: false,
+                    interactive: true,
+                    source_label: "ingest patch input",
+                    context,
+                },
                 None,
-                context,
             )?;
             return Ok(IngestOutcome {
                 kind: IngestKind::Patch,
@@ -412,14 +444,19 @@ impl CliApp {
                 .map(|entry| Self::archive_entry_file_name(&entry.file_name).to_string());
             let patches = self.ingest_patch_leaves(
                 handler,
-                source,
-                out_dir,
-                &[],
-                no_ignore,
-                no_nested_extract,
-                false,
+                IngestLeavesRequest {
+                    source,
+                    out_dir,
+                    raw_selections: &[],
+                    kind_filter: Self::archive_entry_kind_filter(false, true),
+                    no_ignore,
+                    no_nested_extract,
+                    split_bin: false,
+                    interactive: false,
+                    source_label: "ingest patch input",
+                    context,
+                },
                 rom_hint.as_deref(),
-                context,
             )?;
             self.emit_patch_manifest(source, &patches);
             patches
@@ -428,14 +465,19 @@ impl CliApp {
         };
         let assets = match self.ingest_rom_leaves(
             handler,
-            source,
-            out_dir,
-            &raw_selections,
-            no_ignore,
-            no_nested_extract,
-            resolved_split_bin,
+            IngestLeavesRequest {
+                source,
+                out_dir,
+                raw_selections: &raw_selections,
+                kind_filter: Self::archive_entry_kind_filter(true, false),
+                no_ignore,
+                no_nested_extract,
+                split_bin: resolved_split_bin,
+                interactive: true,
+                source_label: "ingest input",
+                context,
+            },
             algorithms,
-            context,
         ) {
             Ok(assets) => assets,
             Err(rom_error) => {
@@ -446,14 +488,19 @@ impl CliApp {
                     patches = self
                         .ingest_patch_leaves(
                             handler,
-                            source,
-                            out_dir,
-                            &[],
-                            no_ignore,
-                            no_nested_extract,
-                            false,
+                            IngestLeavesRequest {
+                                source,
+                                out_dir,
+                                raw_selections: &[],
+                                kind_filter: Self::archive_entry_kind_filter(false, true),
+                                no_ignore,
+                                no_nested_extract,
+                                split_bin: false,
+                                interactive: false,
+                                source_label: "ingest patch input",
+                                context,
+                            },
                             None,
-                            context,
                         )
                         .unwrap_or_default();
                 }
@@ -529,22 +576,13 @@ impl CliApp {
         })
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn ingest_rom_leaves(
         &self,
         handler: &dyn ContainerHandler,
-        source: &Path,
-        out_dir: &Path,
-        raw_selections: &[String],
-        no_ignore: bool,
-        no_nested_extract: bool,
-        split_bin: bool,
+        request: IngestLeavesRequest<'_>,
         algorithms: &[String],
-        context: &OperationContext,
     ) -> Result<Vec<IngestRomAsset>> {
-        let kind_filter = Self::archive_entry_kind_filter(true, false);
-        let leaves = self.ingest_extract_leaves(
-            handler,
+        let IngestLeavesRequest {
             source,
             out_dir,
             raw_selections,
@@ -552,9 +590,24 @@ impl CliApp {
             no_ignore,
             no_nested_extract,
             split_bin,
-            true,
-            "ingest input",
+            interactive,
+            source_label,
             context,
+        } = request;
+        let leaves = self.ingest_extract_leaves(
+            handler,
+            IngestLeavesRequest {
+                source,
+                out_dir,
+                raw_selections,
+                kind_filter,
+                no_ignore,
+                no_nested_extract,
+                split_bin,
+                interactive,
+                source_label,
+                context,
+            },
         )?;
         let mut assets = Vec::with_capacity(leaves.len());
         for leaf in &leaves {
@@ -648,32 +701,38 @@ impl CliApp {
         Ok(assets)
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn ingest_patch_leaves(
         &self,
         handler: &dyn ContainerHandler,
-        source: &Path,
-        out_dir: &Path,
-        raw_selections: &[String],
-        no_ignore: bool,
-        no_nested_extract: bool,
-        interactive: bool,
+        request: IngestLeavesRequest<'_>,
         rom_hint: Option<&str>,
-        context: &OperationContext,
     ) -> Result<Vec<PatchDescriptor>> {
-        let kind_filter = Self::archive_entry_kind_filter(false, true);
-        let leaves = self.ingest_extract_leaves(
-            handler,
+        let IngestLeavesRequest {
             source,
             out_dir,
             raw_selections,
             kind_filter,
             no_ignore,
             no_nested_extract,
-            false,
+            split_bin,
             interactive,
-            "ingest patch input",
+            source_label,
             context,
+        } = request;
+        let leaves = self.ingest_extract_leaves(
+            handler,
+            IngestLeavesRequest {
+                source,
+                out_dir,
+                raw_selections,
+                kind_filter,
+                no_ignore,
+                no_nested_extract,
+                split_bin,
+                interactive,
+                source_label,
+                context,
+            },
         )?;
         let mut patches = Vec::new();
         for leaf in &leaves {
@@ -696,21 +755,23 @@ impl CliApp {
     /// Extract `source` (and any nested containers) to `out_dir`, returning the bottom/leaf
     /// `emitted_files` detail objects. Shares the exact selection-resolution and nested-leaf
     /// assembly the `extract` command uses.
-    #[expect(clippy::too_many_arguments)]
     fn ingest_extract_leaves(
         &self,
         handler: &dyn ContainerHandler,
-        source: &Path,
-        out_dir: &Path,
-        raw_selections: &[String],
-        kind_filter: ArchiveEntryKindFilter,
-        no_ignore: bool,
-        no_nested_extract: bool,
-        split_bin: bool,
-        interactive: bool,
-        source_label: &'static str,
-        context: &OperationContext,
+        request: IngestLeavesRequest<'_>,
     ) -> Result<Vec<Value>> {
+        let IngestLeavesRequest {
+            source,
+            out_dir,
+            raw_selections,
+            kind_filter,
+            no_ignore,
+            no_nested_extract,
+            split_bin,
+            interactive,
+            source_label,
+            context,
+        } = request;
         // The sidecar-patch sub-pass runs non-interactively: empty `raw_selections` then extract every
         // patch leaf rather than resolving/prompting a payload choice. The ROM pass keeps interactive
         // resolution (keep-one disambiguation).
@@ -762,16 +823,18 @@ impl CliApp {
         }
         let elapsed_ms = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
         let (leaves, _nested_count) = self.assemble_extracted_leaves(
-            handler.descriptor().name,
-            source,
-            out_dir,
-            &report,
-            elapsed_ms,
-            kind_filter,
-            !no_ignore,
-            true,
-            no_nested_extract,
-            context,
+            crate::extract_command::AssembleExtractedLeavesInputs {
+                format_name: handler.descriptor().name,
+                source,
+                out_dir,
+                primary_report: &report,
+                primary_extract_elapsed_ms: elapsed_ms,
+                kind_filter,
+                ignore_common_files: !no_ignore,
+                overwrite: true,
+                no_nested_extract,
+                context,
+            },
         )?;
         Ok(leaves)
     }

@@ -16,7 +16,6 @@ pub fn sha1_hash(buf: &[u8]) -> HashBytes {
 }
 
 /// Hashes a byte slice with XXH64.
-#[allow(unused_braces)] // https://github.com/rust-lang/rust/issues/116347
 #[instrument(skip_all)]
 pub fn xxh64_hash(buf: &[u8]) -> u64 {
     xxhash_rust::xxh64::xxh64(buf, 0)
@@ -204,7 +203,6 @@ impl Hasher for md5::Md5 {
         DigestResult::Md5(Digest::finalize_reset(self).into())
     }
 
-    #[allow(unused_braces)] // https://github.com/rust-lang/rust/issues/116347
     #[instrument(name = "md5::Md5::update", skip_all)]
     fn update(&mut self, data: &[u8]) {
         Digest::update(self, data)
@@ -224,7 +222,6 @@ impl Hasher for sha1::Sha1 {
         DigestResult::Sha1(Digest::finalize_reset(self).into())
     }
 
-    #[allow(unused_braces)] // https://github.com/rust-lang/rust/issues/116347
     #[instrument(name = "sha1::Sha1::update", skip_all)]
     fn update(&mut self, data: &[u8]) {
         Digest::update(self, data)
@@ -244,7 +241,6 @@ impl Hasher for crc32fast::Hasher {
         DigestResult::Crc32(crc32fast::Hasher::finalize(self.clone()))
     }
 
-    #[allow(unused_braces)] // https://github.com/rust-lang/rust/issues/116347
     #[instrument(name = "crc32fast::Hasher::update", skip_all)]
     fn update(&mut self, data: &[u8]) {
         crc32fast::Hasher::update(self, data)
@@ -264,7 +260,6 @@ impl Hasher for xxhash_rust::xxh64::Xxh64 {
         DigestResult::Xxh64(xxhash_rust::xxh64::Xxh64::digest(self))
     }
 
-    #[allow(unused_braces)] // https://github.com/rust-lang/rust/issues/116347
     #[instrument(name = "xxhash_rust::xxh64::Xxh64::update", skip_all)]
     fn update(&mut self, data: &[u8]) {
         xxhash_rust::xxh64::Xxh64::update(self, data)

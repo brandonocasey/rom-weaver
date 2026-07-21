@@ -15,8 +15,8 @@ use crate::nod::{
         SECTOR_SIZE,
         reader::DiscReader,
         writer::{
-            BlockProcessor, BlockResult, CheckBlockResult, DiscWriter, check_block, par_process,
-            read_block,
+            BlockProcessor, BlockResult, CheckBlockOptions, CheckBlockResult, DiscWriter,
+            check_block, par_process, read_block,
         },
     },
     io::{
@@ -221,9 +221,11 @@ impl BlockProcessor for BlockProcessorWBFS {
             input_position,
             self.inner.partitions(),
             &mut self.lfg,
-            self.disc_id,
-            self.disc_num,
-            self.scrub_update_partition,
+            CheckBlockOptions {
+                disc_id: self.disc_id,
+                disc_num: self.disc_num,
+                scrub_update_partition: self.scrub_update_partition,
+            },
         )? {
             CheckBlockResult::Normal => BlockResult {
                 block_idx,

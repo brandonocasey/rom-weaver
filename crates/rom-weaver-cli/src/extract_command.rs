@@ -1,6 +1,19 @@
 use super::selection_resolution::{SelectionExtract, SelectionResolutionOptions};
 use super::*;
 
+pub(crate) struct AssembleExtractedLeavesInputs<'a> {
+    pub format_name: &'a str,
+    pub source: &'a Path,
+    pub out_dir: &'a Path,
+    pub primary_report: &'a OperationReport,
+    pub primary_extract_elapsed_ms: u32,
+    pub kind_filter: ArchiveEntryKindFilter,
+    pub ignore_common_files: bool,
+    pub overwrite: bool,
+    pub no_nested_extract: bool,
+    pub context: &'a OperationContext,
+}
+
 impl CliApp {
     pub(super) fn run_extract(&self, args: ExtractCommand) -> AppRunOutcome {
         let rom_filter = args.rom_filter();
@@ -182,18 +195,18 @@ impl CliApp {
                 .elapsed()
                 .as_millis()
                 .min(u32::MAX as u128) as u32;
-            match self.assemble_extracted_leaves(
+            match self.assemble_extracted_leaves(AssembleExtractedLeavesInputs {
                 format_name,
-                &source,
-                &out_dir,
-                &report,
+                source: &source,
+                out_dir: &out_dir,
+                primary_report: &report,
                 primary_extract_elapsed_ms,
                 kind_filter,
-                !no_ignore,
-                force,
+                ignore_common_files: !no_ignore,
+                overwrite: force,
                 no_nested_extract,
-                &context,
-            ) {
+                context: &context,
+            }) {
                 Ok((leaves, nested_count)) => {
                     if nested_count > 0 {
                         report.label = format!(
@@ -262,20 +275,22 @@ impl CliApp {
     /// Shared by `extract` (which wraps the leaves into its report) and `ingest` (which checksums
     /// each leaf). Reuses [`Self::extract_nested_archives`] so nested provenance/read-on-main rules
     /// are preserved identically.
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn assemble_extracted_leaves(
         &self,
-        format_name: &str,
-        source: &Path,
-        out_dir: &Path,
-        primary_report: &OperationReport,
-        primary_extract_elapsed_ms: u32,
-        kind_filter: ArchiveEntryKindFilter,
-        ignore_common_files: bool,
-        overwrite: bool,
-        no_nested_extract: bool,
-        context: &OperationContext,
+        inputs: AssembleExtractedLeavesInputs<'_>,
     ) -> Result<(Vec<Value>, usize)> {
+        let AssembleExtractedLeavesInputs {
+            format_name,
+            source,
+            out_dir,
+            primary_report,
+            primary_extract_elapsed_ms,
+            kind_filter,
+            ignore_common_files,
+            overwrite,
+            no_nested_extract,
+            context,
+        } = inputs;
         // Container handlers report their COMPLETE output set in `report.details["emitted_files"]`, so
         // that report is authoritative: it is exactly what THIS extract wrote. There is deliberately no
         // out_dir filesystem scan - a scan can't tell this op's outputs from a concurrent sibling op's

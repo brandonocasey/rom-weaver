@@ -74,7 +74,6 @@ impl DecompressionKind {
             DecompressionKind::None => Ok(Some(buf.len())),
             #[cfg(feature = "compress-zstd")]
             DecompressionKind::Zstandard => zstd_api::get_content_size(buf),
-            #[allow(unreachable_patterns)] // if compression features are disabled
             _ => Ok(None),
         }
     }
@@ -126,7 +125,12 @@ impl Compressor {
             Compression::Lzma2(level) => lzma_api::compress_lzma2(level, buf, &mut self.buffer),
             #[cfg(feature = "compress-zstd")]
             Compression::Zstandard(level) => zstd_api::compress(buf, level, &mut self.buffer),
-            #[allow(unreachable_patterns)] // if compression is disabled
+            #[cfg(any(
+                not(feature = "compress-zlib"),
+                not(feature = "compress-bzip2"),
+                not(feature = "compress-lzma"),
+                not(feature = "compress-zstd")
+            ))]
             _ => Err(io::Error::other(format!(
                 "Unsupported compression: {:?}",
                 self.kind
@@ -142,9 +146,7 @@ use libz_sys as zlib_raw;
 mod zlib_raw {
     use core::ffi::{c_int, c_ulong};
 
-    #[allow(non_camel_case_types)]
     pub type uLong = c_ulong;
-    #[allow(non_camel_case_types)]
     pub type uLongf = c_ulong;
 
     pub const Z_OK: c_int = 0;

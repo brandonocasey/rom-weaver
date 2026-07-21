@@ -66,9 +66,14 @@ where
 
     /// Returns the length of the window.
     #[inline]
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> u64 {
         self.end - self.begin
+    }
+
+    #[inline]
+    /// Returns whether the window has no bytes.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

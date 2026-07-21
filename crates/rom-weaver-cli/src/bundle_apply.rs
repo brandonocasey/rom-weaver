@@ -44,6 +44,18 @@ struct BundleApplySourceContext {
     bundle_base_url: Option<String>,
 }
 
+struct ResolveBundleApplyEntryInputs<'a> {
+    url: Option<&'a str>,
+    path: Option<&'a str>,
+    loaded: &'a LoadedBundleSource,
+    archive_source: &'a Path,
+    bundle_dir: &'a Path,
+    bundle_base_url: Option<&'a str>,
+    extract_root: &'a mut Option<PathBuf>,
+    context: &'a OperationContext,
+    entry_label: &'a str,
+}
+
 impl CliApp {
     /// Route a `patch apply` through its bundle when one is present. Mutates
     /// `args` into a fully-resolved plain command (input/patches/output merged)
@@ -104,17 +116,17 @@ impl CliApp {
                 let entry = &bundle.patches[*index];
                 let entry_label = format!("patches[{index}]");
                 let resolved = self
-                    .resolve_bundle_apply_entry(
-                        entry.url.as_deref(),
-                        entry.path.as_deref(),
-                        &source.loaded,
-                        &source.archive_source,
-                        &source.bundle_dir,
-                        source.bundle_base_url.as_deref(),
-                        &mut extract_root,
+                    .resolve_bundle_apply_entry(ResolveBundleApplyEntryInputs {
+                        url: entry.url.as_deref(),
+                        path: entry.path.as_deref(),
+                        loaded: &source.loaded,
+                        archive_source: &source.archive_source,
+                        bundle_dir: &source.bundle_dir,
+                        bundle_base_url: source.bundle_base_url.as_deref(),
+                        extract_root: &mut extract_root,
                         context,
-                        &entry_label,
-                    )?
+                        entry_label: &entry_label,
+                    })?
                     .expect("patch entries always carry a source");
                 // Only the FIRST applied patch's input state describes the
                 // supplied ROM; without its own inputChecks it relies on
@@ -292,17 +304,19 @@ impl CliApp {
             return Ok(());
         }
         if rom.url.is_some() || rom.path.is_some() {
-            if let Some(resolved) = self.resolve_bundle_apply_entry(
-                rom.url.as_deref(),
-                rom.path.as_deref(),
-                &source.loaded,
-                &source.archive_source,
-                &source.bundle_dir,
-                source.bundle_base_url.as_deref(),
-                extract_root,
-                context,
-                "rom",
-            )? {
+            if let Some(resolved) =
+                self.resolve_bundle_apply_entry(ResolveBundleApplyEntryInputs {
+                    url: rom.url.as_deref(),
+                    path: rom.path.as_deref(),
+                    loaded: &source.loaded,
+                    archive_source: &source.archive_source,
+                    bundle_dir: &source.bundle_dir,
+                    bundle_base_url: source.bundle_base_url.as_deref(),
+                    extract_root,
+                    context,
+                    entry_label: "rom",
+                })?
+            {
                 args.input = resolved;
             }
             return Ok(());
@@ -471,19 +485,21 @@ impl CliApp {
     /// Resolve one bundle entry to a local file. Returns `Ok(None)` only for
     /// an entry with neither url nor path (the caller decides whether that is
     /// legal). URL entries are not downloadable here yet.
-    #[expect(clippy::too_many_arguments)]
     fn resolve_bundle_apply_entry(
         &self,
-        url: Option<&str>,
-        path: Option<&str>,
-        loaded: &LoadedBundleSource,
-        archive_source: &Path,
-        bundle_dir: &Path,
-        bundle_base_url: Option<&str>,
-        extract_root: &mut Option<PathBuf>,
-        context: &OperationContext,
-        entry_label: &str,
+        inputs: ResolveBundleApplyEntryInputs<'_>,
     ) -> Result<Option<PathBuf>> {
+        let ResolveBundleApplyEntryInputs {
+            url,
+            path,
+            loaded,
+            archive_source,
+            bundle_dir,
+            bundle_base_url,
+            extract_root,
+            context,
+            entry_label,
+        } = inputs;
         if let Some(url) = url.map(str::trim).filter(|value| !value.is_empty()) {
             #[cfg(target_arch = "wasm32")]
             {

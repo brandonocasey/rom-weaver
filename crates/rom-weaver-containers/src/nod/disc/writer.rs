@@ -201,17 +201,21 @@ pub enum CheckBlockResult {
     Junk,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct CheckBlockOptions {
+    pub disc_id: [u8; 4],
+    pub disc_num: u8,
+    pub scrub_update_partition: bool,
+}
+
 /// Check if a block is zeroed or junk data.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_block(
     buf: &[u8],
     decrypted_block: &mut [u8],
     input_position: u64,
     partition_info: &[PartitionInfo],
     lfg: &mut LaggedFibonacci,
-    disc_id: [u8; 4],
-    disc_num: u8,
-    scrub_update_partition: bool,
+    options: CheckBlockOptions,
 ) -> io::Result<CheckBlockResult> {
     let start_sector = (input_position / SECTOR_SIZE as u64) as u32;
     let end_sector = ((input_position + buf.len() as u64) / SECTOR_SIZE as u64) as u32;
@@ -219,7 +223,7 @@ pub(crate) fn check_block(
         p.has_hashes && start_sector >= p.data_start_sector && end_sector < p.data_end_sector
     }) {
         // Ignore update partition data
-        if scrub_update_partition && partition.kind == PartitionKind::Update {
+        if options.scrub_update_partition && partition.kind == PartitionKind::Update {
             return Ok(CheckBlockResult::Zeroed);
         }
 
@@ -271,7 +275,9 @@ pub(crate) fn check_block(
         if buf.iter().all(|&b| b == 0) {
             return Ok(CheckBlockResult::Zeroed);
         }
-        if lfg.check_sector_chunked(buf, disc_id, disc_num, input_position) == buf.len() {
+        if lfg.check_sector_chunked(buf, options.disc_id, options.disc_num, input_position)
+            == buf.len()
+        {
             return Ok(CheckBlockResult::Junk);
         }
     }
@@ -334,9 +340,11 @@ mod tests {
             0,
             std::slice::from_ref(partition),
             &mut LaggedFibonacci::default(),
-            OUTER_ID,
-            0,
-            false,
+            CheckBlockOptions {
+                disc_id: OUTER_ID,
+                disc_num: 0,
+                scrub_update_partition: false,
+            },
         )
         .unwrap()
     }

@@ -9,7 +9,6 @@ use crate::nod::{
     util::read::{read_at, read_from, read_u16_be, read_u32_be, read_u64_be, read_vec},
 };
 
-#[allow(unused)]
 #[repr(u16)]
 enum NKitHeaderFlags {
     Size = 0x1,
@@ -19,8 +18,6 @@ enum NKitHeaderFlags {
     Xxhash64 = 0x10,
     Key = 0x20,
     Encrypted = 0x40,
-    ExtraData = 0x80,
-    IndexFile = 0x100,
 }
 
 const NKIT_HEADER_V1_FLAGS: u16 = NKitHeaderFlags::Crc32 as u16

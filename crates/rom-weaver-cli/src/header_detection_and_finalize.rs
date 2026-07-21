@@ -1,4 +1,10 @@
 use super::*;
+
+pub(super) struct PatchApplyFinalizeOptions<'a> {
+    pub repair_hint_path: Option<&'a Path>,
+    pub restore_n64_order: Option<N64ByteOrderTransform>,
+}
+
 impl CliApp {
     pub(super) fn append_compress_recommendation_label(
         base: &str,
@@ -150,7 +156,6 @@ impl CliApp {
         })
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn finalize_patch_apply_output(
         staged_output: &Path,
         final_output: &Path,
@@ -158,9 +163,12 @@ impl CliApp {
         stripped_header: Option<&[u8]>,
         strip_output_header: bool,
         repair_checksum: bool,
-        repair_hint_path: Option<&Path>,
-        restore_n64_order: Option<N64ByteOrderTransform>,
+        options: PatchApplyFinalizeOptions<'_>,
     ) -> Result<PatchApplyFinalizeResult> {
+        let PatchApplyFinalizeOptions {
+            repair_hint_path,
+            restore_n64_order,
+        } = options;
         // A re-add always restores the real bytes captured at strip time; the
         // decision layer never sets `add_header` without a captured header.
         let header_bytes = if add_header { stripped_header } else { None };

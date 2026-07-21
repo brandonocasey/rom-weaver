@@ -26,9 +26,7 @@ use crate::nod::{
     IoResultContext,
     common::PartitionInfo,
     disc::{
-        DiscHeader, SECTOR_GROUP_SIZE, SECTOR_SIZE,
-        hashes::{GroupHashes, hash_sector_group},
-        wii::HASHES_SIZE,
+        DiscHeader, SECTOR_GROUP_SIZE, SECTOR_SIZE, hashes::hash_sector_group, wii::HASHES_SIZE,
     },
     io::{
         block::{Block, BlockKind, BlockReader},
@@ -64,10 +62,7 @@ pub struct SectorGroup {
     pub start_sector: u32,
     pub data: Bytes,
     pub sector_bitmap: u64,
-    #[allow(unused)]
     pub io_duration: Option<Duration>,
-    #[allow(unused)] // TODO WIA hash exceptions
-    pub group_hashes: Option<Arc<GroupHashes>>,
 }
 
 impl SectorGroup {
@@ -80,14 +75,9 @@ impl SectorGroup {
 
 pub type SectorGroupResult = io::Result<SectorGroup>;
 
-#[allow(unused)]
 pub struct Preloader {
     #[cfg(feature = "threading")]
     request_tx: Sender<SectorGroupRequest>,
-    #[cfg(feature = "threading")]
-    request_rx: Receiver<SectorGroupRequest>,
-    #[cfg(feature = "threading")]
-    stat_tx: Sender<PreloaderThreadStats>,
     #[cfg(feature = "threading")]
     stat_rx: Receiver<PreloaderThreadStats>,
     #[cfg(feature = "threading")]
@@ -97,11 +87,9 @@ pub struct Preloader {
     loader: Mutex<SectorGroupLoader>,
 }
 
-#[allow(unused)]
 #[cfg(feature = "threading")]
 struct PreloaderThreads {
     join_handles: Vec<JoinHandle<()>>,
-    last_adjust: Instant,
     num_samples: usize,
     wait_time_avg: SingleSumSMA<Duration, u32, 100>,
     req_time_avg: SingleSumSMA<Duration, u32, 100>,
@@ -113,7 +101,6 @@ impl PreloaderThreads {
     fn new(join_handles: Vec<JoinHandle<()>>) -> Self {
         Self {
             join_handles,
-            last_adjust: Instant::now(),
             num_samples: 0,
             wait_time_avg: SingleSumSMA::<_, _, 100>::from_zero(Duration::default()),
             req_time_avg: SingleSumSMA::<_, _, 100>::from_zero(Duration::default()),
@@ -141,26 +128,6 @@ impl PreloaderThreads {
                 utilization * 100.0,
                 io_time * 100.0
             );
-            // if self.last_adjust.elapsed() > Duration::from_secs(2) {
-            //     if utilization > 0.9 && io_time < 0.1 {
-            //         println!("Preloader is CPU-bound, increasing thread count");
-            //         let id = self.join_handles.len();
-            //         self.join_handles.push(preloader_thread(
-            //             id,
-            //             outer.request_rx.clone(),
-            //             outer.cache.clone(),
-            //             outer.loader.lock().unwrap().clone(),
-            //             outer.stat_tx.clone(),
-            //         ));
-            //         self.last_adjust = Instant::now();
-            //     } /*else if io_time > 0.9 {
-            //         println!("Preloader is I/O-bound, decreasing thread count");
-            //         if self.join_handles.len() > 1 {
-            //             let handle = self.join_handles.pop().unwrap();
-            //
-            //         }
-            //     }*/
-            // }
         }
     }
 }
@@ -199,10 +166,8 @@ impl PreloaderCache {
     }
 }
 
-#[allow(unused)]
 #[cfg(feature = "threading")]
 struct PreloaderThreadStats {
-    thread_id: usize,
     wait_time: Duration,
     req_time: Duration,
     io_time: Duration,
@@ -249,7 +214,6 @@ fn preloader_thread(
                 let req_time = end - start;
                 if stat_tx
                     .send(PreloaderThreadStats {
-                        thread_id,
                         wait_time,
                         req_time,
                         io_time,
@@ -285,8 +249,6 @@ impl Preloader {
         let loader = Mutex::new(loader);
         Arc::new(Self {
             request_tx,
-            request_rx,
-            stat_tx,
             stat_rx,
             threads,
             cache,
@@ -300,17 +262,6 @@ impl Preloader {
         let cache = Arc::new(Mutex::new(PreloaderCache::default()));
         let loader = Mutex::new(loader);
         Arc::new(Self { cache, loader })
-    }
-
-    #[allow(unused)]
-    pub fn shutdown(self) {
-        #[cfg(feature = "threading")]
-        {
-            let guard = self.threads.into_inner().unwrap();
-            for handle in guard.join_handles {
-                handle.join().unwrap();
-            }
-        }
     }
 
     #[instrument(name = "Preloader::fetch", skip_all)]
@@ -414,8 +365,6 @@ struct LoadedSectorGroup {
     sector_bitmap: u64,
     /// Total duration of I/O operations
     io_duration: Option<Duration>,
-    /// Calculated sector group hashes
-    group_hashes: Option<Arc<GroupHashes>>,
 }
 
 impl SectorGroupLoader {
@@ -443,7 +392,6 @@ impl SectorGroupLoader {
             start_sector,
             sector_bitmap,
             io_duration,
-            group_hashes,
         } = if request.partition_idx.is_some() {
             self.load_partition_group(request, out)?
         } else {
@@ -456,7 +404,6 @@ impl SectorGroupLoader {
             data: sector_group_buf.freeze(),
             sector_bitmap,
             io_duration,
-            group_hashes,
         })
     }
 
@@ -490,8 +437,6 @@ impl SectorGroupLoader {
         let mut hash_exceptions = Vec::<WIAException>::new();
         // Total duration of I/O operations
         let mut io_duration = None;
-        // Calculated sector group hashes
-        let mut group_hashes = None;
 
         // Read sector group
         for sector in 0..64 {
@@ -573,9 +518,6 @@ impl SectorGroupLoader {
                     hashes.apply(sector_data, sector);
                 }
             }
-
-            // Persist hashes
-            group_hashes = Some(Arc::from(hashes));
         }
 
         // Apply hash exceptions
@@ -635,7 +577,6 @@ impl SectorGroupLoader {
             start_sector: abs_group_sector,
             sector_bitmap,
             io_duration,
-            group_hashes,
         })
     }
 
@@ -695,7 +636,6 @@ impl SectorGroupLoader {
             start_sector: abs_group_sector,
             sector_bitmap,
             io_duration,
-            group_hashes: None,
         })
     }
 }

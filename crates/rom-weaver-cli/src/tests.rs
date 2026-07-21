@@ -1010,11 +1010,13 @@ fn header_repair_finalize_restores_original_n64_order() {
         None,
         false,
         false,
-        None,
-        Some(N64ByteOrderTransform {
-            from: N64ByteOrder::BigEndian,
-            to: N64ByteOrder::ByteSwapped,
-        }),
+        crate::header_detection_and_finalize::PatchApplyFinalizeOptions {
+            repair_hint_path: None,
+            restore_n64_order: Some(N64ByteOrderTransform {
+                from: N64ByteOrder::BigEndian,
+                to: N64ByteOrder::ByteSwapped,
+            }),
+        },
     )
     .expect("restore N64 byte order");
 

@@ -11,6 +11,17 @@ use crate::gdrom::{GD_HIGH_DENSITY_START_LBA, GdRomFs, IsoTimestamp};
 
 use super::*;
 
+struct CompressDcpDiscInputs<'a> {
+    output: &'a Path,
+    extension_source: &'a Path,
+    sheet: &'a Path,
+    overrides: &'a [CreateInputOverride],
+    compression_options: &'a PatchApplyCompressionOptions,
+    context: &'a OperationContext,
+    label: &'a mut String,
+    single: Option<ThreadExecution>,
+}
+
 impl CliApp {
     /// Run `patch apply` for a `.dcp` patch. Invoked from
     /// [`Self::run_patch_apply`] when the patch list is a single `.dcp`.
@@ -231,16 +242,16 @@ impl CliApp {
                         return fail("prepare", error.to_string());
                     }
                 };
-            self.compress_dcp_disc(
+            self.compress_dcp_disc(CompressDcpDiscInputs {
                 output,
-                &args.input,
-                self.primary_disc_sheet(disc),
-                std::slice::from_ref(&track_override),
+                extension_source: &args.input,
+                sheet: self.primary_disc_sheet(disc),
+                overrides: std::slice::from_ref(&track_override),
                 compression_options,
                 context,
-                &mut label,
-                single.clone(),
-            )
+                label: &mut label,
+                single: single.clone(),
+            })
         } else {
             let staged_sheet =
                 match self.stage_disc_directory(disc, &rebuilt_path, context, &mut temp_paths) {
@@ -271,18 +282,17 @@ impl CliApp {
     }
 
     /// Compress the staged disc to the requested container (CHD by default).
-    #[expect(clippy::too_many_arguments)]
-    fn compress_dcp_disc(
-        &self,
-        output: &Path,
-        extension_source: &Path,
-        sheet: &Path,
-        overrides: &[CreateInputOverride],
-        compression_options: &PatchApplyCompressionOptions,
-        context: &OperationContext,
-        label: &mut String,
-        single: Option<ThreadExecution>,
-    ) -> OperationReport {
+    fn compress_dcp_disc(&self, inputs: CompressDcpDiscInputs<'_>) -> OperationReport {
+        let CompressDcpDiscInputs {
+            output,
+            extension_source,
+            sheet,
+            overrides,
+            compression_options,
+            context,
+            label,
+            single,
+        } = inputs;
         let fail = |stage: &str, message: String| {
             OperationReport::failed(OperationFamily::Patch, None, stage, message, single.clone())
         };
