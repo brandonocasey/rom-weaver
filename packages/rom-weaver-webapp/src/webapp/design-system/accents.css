@@ -18,6 +18,7 @@
 :root[data-accent="woad"] {
   --thread: #6d7ce8;
   --thread-ink: #0b1030;
+  --thread-hi: #c5cbf6;
 }
 :root[data-accent="woad"][data-theme="dark"] { --thread-text: #9aa6ff; }
 :root[data-accent="woad"][data-theme="light"] { --thread-text: #4149c4; }
@@ -26,6 +27,7 @@
 :root[data-accent="violet"] {
   --thread: #9a6ae0;
   --thread-ink: #16092c;
+  --thread-hi: #d7c3f3;
 }
 :root[data-accent="violet"][data-theme="dark"] { --thread-text: #c3a4ff; }
 :root[data-accent="violet"][data-theme="light"] { --thread-text: #6b3fb5; }
@@ -34,6 +36,7 @@
 :root[data-accent="verdigris"] {
   --thread: #3faa72;
   --thread-ink: #04180e;
+  --thread-hi: #aee1c6;
 }
 :root[data-accent="verdigris"][data-theme="dark"] { --thread-text: #58c795; }
 :root[data-accent="verdigris"][data-theme="light"] { --thread-text: #0b6b46; }
@@ -42,6 +45,7 @@
 :root[data-accent="teal"] {
   --thread: #2aa0a8;
   --thread-ink: #03181a;
+  --thread-hi: #9fe2e7;
 }
 :root[data-accent="teal"][data-theme="dark"] { --thread-text: #45c3cb; }
 :root[data-accent="teal"][data-theme="light"] { --thread-text: #06696f; }
@@ -50,6 +54,7 @@
 :root[data-accent="plum"] {
   --thread: #cb63a5;
   --thread-ink: #2a0620;
+  --thread-hi: #eac1db;
 }
 :root[data-accent="plum"][data-theme="dark"] { --thread-text: #e58ac0; }
 :root[data-accent="plum"][data-theme="light"] { --thread-text: #a3266f; }

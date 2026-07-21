@@ -403,7 +403,6 @@ const Shell = (currentTab, panelView, formNode, mastheadProps = {}) =>
           currentTab,
           donateHref: "https://example.invalid/donate",
           githubHref: "https://example.invalid/repo",
-          logoSrc: "./logo.svg",
           onOpenLog: noop,
           onOpenSettings: noop,
           onReset: noop,
@@ -916,7 +915,6 @@ describe("webapp keyboard navigation", () => {
           { className: "rw-app" },
           createElement(Masthead, {
             currentTab: "patcher",
-            logoSrc: "./logo.svg",
             onOpenLog: noop,
             onOpenSettings: noop,
             onReset: noop,
@@ -1015,7 +1013,19 @@ describe("accent dye-lot accessibility", () => {
             const expected = accent.value === "madder" ? null : accent.value;
             expect(document.documentElement.getAttribute("data-accent")).toBe(expected);
             // …and the badge surface really rendered a badge, so it isn't scanning nothing
-            if (badge) expect(host.querySelector(".channel-badge")?.textContent).toBe("nightly");
+            if (badge) {
+              expect(host.querySelector(".channel-badge")?.textContent).toBe("nightly");
+              // The logo is an <img> of an inlined, re-dyed SVG. If the ?raw import ever
+              // resolved to a URL or an empty string instead of the file's text, the mark
+              // would silently render blank and every scan above would pass on nothing.
+              const markSrc = host.querySelector("img.brand-mark")?.getAttribute("src") || "";
+              expect(markSrc.startsWith("data:image/svg+xml,")).toBe(true);
+              expect(markSrc).toContain(encodeURIComponent("<svg"));
+              expect(markSrc).toContain(encodeURIComponent(accent.swatch));
+              expect(markSrc).toContain(encodeURIComponent(accent.highlight));
+              // No madder left anywhere once a different dye is selected.
+              if (accent.value !== "madder") expect(markSrc).not.toContain(encodeURIComponent("#d9690f"));
+            }
 
             expect(await scanViolations(host, { bestPractice: true, region: isPage })).toEqual([]);
           });
@@ -1037,7 +1047,6 @@ describe("webapp responsive navigation", () => {
           { className: "rw-app" },
           createElement(Masthead, {
             currentTab: "patcher",
-            logoSrc: "./logo.svg",
             onOpenLog: noop,
             onOpenSettings: noop,
             onReset: noop,

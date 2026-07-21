@@ -2,6 +2,7 @@ import { createLucideIcon, Heart, Moon, RotateCcw, ScrollText, Settings, SunMedi
 import type { IconNode } from "lucide-react";
 import type { ReactNode } from "react";
 import { useLayoutEffect, useRef } from "react";
+import { BrandMark } from "./brand-mark.tsx";
 import type { Localizer } from "../../presentation/localization/index.ts";
 import { viewTransitionsUnavailable } from "../../public/react/components/ds/flat-transition.ts";
 import { useUiLocalizer } from "../../public/react/settings-context.tsx";
@@ -151,7 +152,6 @@ const ThemeToggle = ({ localizer }: { localizer: Localizer }) => {
 };
 
 const Masthead = ({
-  logoSrc,
   channelBadge,
   tabs,
   currentTab,
@@ -167,7 +167,6 @@ const Masthead = ({
   version,
   versionTitle,
 }: {
-  logoSrc?: string;
   /** Deploy channel marker; empty on production, which wears the plain brand. */
   channelBadge?: string;
   tabs: WorkflowTab[];
@@ -197,7 +196,7 @@ const Masthead = ({
   return (
     <header className="masthead">
       <span className="brand">
-        {logoSrc ? <img alt="" className="brand-mark" height={44} src={logoSrc} width={44} /> : null}
+        <BrandMark />
         <span className="brand-copy">
           <span className="brand-line">
             <h1 className="brand-word">

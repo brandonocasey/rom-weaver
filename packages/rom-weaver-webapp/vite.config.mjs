@@ -14,16 +14,28 @@ const repoRoot = path.resolve(rootDir, "../..");
 const rootManifestSourcePath = path.join(rootDir, "src", "assets", "app", "root", "manifest.json");
 const packagedWasmPath = path.join(rootDir, "src", "wasm", "rom-weaver-app.wasm");
 const packagedWasmBrotliPath = `${packagedWasmPath}.br`;
-const rootStaticAssetSources = {
-  "/_redirects": path.join(rootDir, "src", "assets", "app", "root", "_redirects"),
-  "/apple-touch-icon.png": path.join(rootDir, "src", "assets", "app", "root", "apple-touch-icon.png"),
-  "/favicon.ico": path.join(rootDir, "src", "assets", "app", "root", "favicon.ico"),
-  "/first-weave.zip": path.join(rootDir, "src", "assets", "app", "root", "first-weave.zip"),
-  "/icon-maskable-192.png": path.join(rootDir, "src", "assets", "app", "root", "icon-maskable-192.png"),
-  "/icon-maskable-512.png": path.join(rootDir, "src", "assets", "app", "root", "icon-maskable-512.png"),
-  "/logo.svg": path.join(rootDir, "src", "assets", "app", "root", "logo.svg"),
-  "/manifest.json": rootManifestSourcePath,
+const rootAssetDir = path.join(rootDir, "src", "assets", "app", "root");
+
+// A manifest's icons are read at install time, so an installed PWA's icon can
+// only follow the build channel - unlike the in-app mark, which follows the
+// user's accent. scripts/generate-channel-icons.mjs pre-renders (and commits) a
+// tinted set per channel; channels defaulting to madder have no directory and
+// fall through to the stock icons.
+const channelAssetPath = (channel, name) => {
+  const override = path.join(rootAssetDir, "channels", channel, name);
+  return fs.existsSync(override) ? override : path.join(rootAssetDir, name);
 };
+
+const rootStaticAssetSourcesForChannel = (channel) => ({
+  "/_redirects": path.join(rootAssetDir, "_redirects"),
+  "/apple-touch-icon.png": channelAssetPath(channel, "apple-touch-icon.png"),
+  "/favicon.ico": channelAssetPath(channel, "favicon.ico"),
+  "/first-weave.zip": path.join(rootAssetDir, "first-weave.zip"),
+  "/icon-maskable-192.png": channelAssetPath(channel, "icon-maskable-192.png"),
+  "/icon-maskable-512.png": channelAssetPath(channel, "icon-maskable-512.png"),
+  "/logo.svg": channelAssetPath(channel, "logo.svg"),
+  "/manifest.json": rootManifestSourcePath,
+});
 const generatedLicenseAssetSources = {
   "/NOTICE": path.join(rootDir, "src", "wasm", "NOTICE"),
   "/THIRD_PARTY_LICENSES.md": path.join(rootDir, "src", "wasm", "THIRD_PARTY_LICENSES.md"),
@@ -96,6 +108,7 @@ const setRootStaticAssetContentType = (requestPath, res) => {
 };
 
 const applyRootStaticAssetMiddleware = (middlewares, channel, channelLabel) => {
+  const rootStaticAssetSources = rootStaticAssetSourcesForChannel(channel);
   middlewares.use((req, res, next) => {
     const requestPath = req.url ? req.url.split("?")[0] : "";
     const sourcePath = rootStaticAssetSources[requestPath] ?? generatedLicenseAssetSources[requestPath];
@@ -241,6 +254,7 @@ const writeWebappStaticAssets = (channel, channelLabel) => {
     apply: "build",
     closeBundle() {
       const distDir = path.resolve(rootDir, outDir);
+      const rootStaticAssetSources = rootStaticAssetSourcesForChannel(channel);
       for (const assetPath of Object.keys(rootStaticAssetSources)) {
         const outputPath = path.join(distDir, assetPath);
         if (assetPath === "/manifest.json") {

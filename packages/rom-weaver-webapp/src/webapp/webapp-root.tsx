@@ -36,7 +36,6 @@ const WORKFLOW_TABS = [
   { icon: <Scissors aria-hidden="true" />, id: "trim", label: "Trim" },
   { icon: <Wrench aria-hidden="true" />, id: "tools", label: "Tools" },
 ];
-const ROOT_LOGO_URL = "./logo.svg";
 
 const logger = createLogger("webapp-root");
 
@@ -306,7 +305,6 @@ function WebappRoot({ state, pageUpdate, confirmationDialog, actions, urlSession
             currentTab={state.currentView}
             donateHref={DONATE_URL}
             githubHref={GITHUB_URL}
-            logoSrc={ROOT_LOGO_URL}
             onOpenLog={() => setLogOpen(true)}
             onOpenSettings={actions.onOpenSettings}
             onReset={actions.onReset}

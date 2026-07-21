@@ -303,6 +303,13 @@ jobs:
       - name: Lint
         run: npm --prefix packages/rom-weaver-webapp run lint
 
+      # The per-channel app icons are committed, not built, so nothing else would
+      # notice them going stale against logo.svg / the icon masters / an accent's
+      # colours. Re-renders them in memory and diffs. Needs the playwright
+      # chromium this job already installs.
+      - name: Channel icons up to date
+        run: npm --prefix packages/rom-weaver-webapp run icons:channels:check
+
       - name: Unit tests
         run: npm --prefix packages/rom-weaver-webapp run test:unit
 
