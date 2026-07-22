@@ -13,6 +13,7 @@ release pull request and `CHANGELOG.md`. Merging that pull request creates the
 - six npm packages: `@rom-weaver/cli`, its four `@rom-weaver/<platform>`
   binaries, and the unscoped `rom-weaver` alias that depends on the launcher;
 - the `rom-weaver` formula in `brandonocasey/homebrew-tap` for stable releases;
+- the `rom-weaver` manifest in `brandonocasey/scoop-bucket` for stable releases;
 - `ghcr.io/<owner>/rom-weaver-cli`;
 - `ghcr.io/<owner>/rom-weaver-webapp`.
 
@@ -62,6 +63,10 @@ as available.
    then add a fine-grained `HOMEBREW_TAP_TOKEN` Actions secret with Contents
    read/write access to that repository. Stable releases update
    `Formula/rom-weaver.rb`; prereleases leave the tap unchanged.
+8. Create the public `brandonocasey/scoop-bucket` repository with a README and
+   an empty `bucket/` directory, then add a fine-grained `SCOOP_BUCKET_TOKEN`
+   Actions secret with Contents read/write access to it. Stable releases update
+   `bucket/rom-weaver.json`; prereleases leave the bucket unchanged.
 
 Push the baseline tag and current branch to start Release Please:
 

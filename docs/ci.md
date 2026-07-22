@@ -293,6 +293,7 @@ spec would tag every platform package as a prerelease.
 | `static-webapp` | `rom-weaver-webapp.tar.gz` + checksum on the GitHub release |
 | `publish-npm` | 4 platform packages → launcher → unscoped alias, in that order |
 | `publish-homebrew` | formula commit to `brandonocasey/homebrew-tap` (stable only) |
+| `publish-scoop` | manifest commit to `brandonocasey/scoop-bucket` (stable only) |
 | `publish-containers` | `ghcr.io/.../rom-weaver-cli` and `-webapp`, signed provenance |
 | `publish-release` | flips the draft release to published, creating the tag |
 
@@ -419,6 +420,7 @@ compile for the layer that runs the build.
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | `ci.yml` deploy | Pages Direct Upload |
 | `RELEASE_PLEASE_TOKEN` | `release.yml` | Opening the release pull request |
 | `HOMEBREW_TAP_TOKEN` | `release.yml` | Pushing to the tap repository |
+| `SCOOP_BUCKET_TOKEN` | `release.yml` | Pushing to the Scoop bucket repository |
 | `GITHUB_TOKEN` | everywhere | ghcr.io, releases, statuses, cache deletion |
 
 crates.io needs no stored secret - `rust-lang/crates-io-auth-action` mints a

@@ -277,6 +277,63 @@ jobs:
           git commit -m "rom-weaver $VERSION"
           git push
 
+  # Windows counterpart to publish-homebrew, and skipped for prereleases for the
+  # same reason: a bucket has one manifest per package, so publishing a beta
+  # there would hand it to every stable user.
+  publish-scoop:
+    needs: [release, publish-npm]
+    if: >-
+      needs.release.outputs.release_created == 'true' &&
+      !contains(needs.release.outputs.version, '-')
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+
+      - name: Download win32 x64 package
+        uses: actions/download-artifact@v5
+        with:
+          name: npm-platform-win32-x64-msvc
+          path: platform-artifacts/win32-x64-msvc
+
+      - name: Calculate release checksum
+        run: |
+          set -euo pipefail
+          mkdir checksums
+          asset=rom-weaver-win32-x64-msvc.exe
+          binary=platform-artifacts/win32-x64-msvc/bin/rom-weaver.exe
+          test -f "$binary"
+          printf '%s  %s\n' "$(sha256sum "$binary" | cut -d ' ' -f 1)" "$asset" > \
+            "checksums/$asset.sha256"
+
+      - name: Checkout Scoop bucket
+        uses: actions/checkout@v7
+        with:
+          repository: brandonocasey/scoop-bucket
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          path: scoop-bucket
+
+      - name: Update manifest
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: node scripts/generate-scoop-manifest.mjs "$VERSION" checksums scoop-bucket/bucket/rom-weaver.json
+
+      - name: Publish manifest
+        working-directory: scoop-bucket
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add bucket/rom-weaver.json
+          git diff --cached --quiet && exit 0
+          git commit -m "rom-weaver $VERSION"
+          git push
+
   # Both images are assembled from artifacts these two jobs produce, so this now
   # runs after them instead of beside them. The serialization is bought back
   # several times over: the webapp image no longer builds a toolchain and a wasm
@@ -312,14 +369,16 @@ jobs:
   # Creating the tag here is also what triggers cargo-publish.yml.
   publish-release:
     name: Publish draft release
-    needs: [release, static-webapp, publish-npm, publish-homebrew, publish-containers]
+    needs:
+      [release, static-webapp, publish-npm, publish-homebrew, publish-scoop, publish-containers]
     if: >-
       always() &&
       needs.release.outputs.release_created == 'true' &&
       needs.static-webapp.result == 'success' &&
       needs.publish-npm.result == 'success' &&
       needs.publish-containers.result == 'success' &&
-      (needs.publish-homebrew.result == 'success' || needs.publish-homebrew.result == 'skipped')
+      (needs.publish-homebrew.result == 'success' || needs.publish-homebrew.result == 'skipped') &&
+      (needs.publish-scoop.result == 'success' || needs.publish-scoop.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
