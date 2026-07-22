@@ -18,7 +18,6 @@
 // would tag every platform package as a prerelease.
 //
 // Usage: npm-publish-package.mjs [package-dir]   (default: repository root)
-import { spawnSync } from "node:child_process";
 import { chmodSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -28,15 +27,16 @@ const restoreExecutableMode = (dir, manifest) => {
   if (binary && !binary.endsWith(".exe")) chmodSync(join(dir, binary), 0o755);
 };
 
-const main = () => {
+const main = async () => {
   const dir = resolve(process.argv[2] ?? ".");
   const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   const spec = `${manifest.name}@${manifest.version}`;
   const tag = manifest.version.includes("-") ? "beta" : "latest";
   restoreExecutableMode(dir, manifest);
+  const { default: spawn } = await import("cross-spawn");
 
   const runNpm = (args, options) => {
-    const result = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", args, options);
+    const result = spawn.sync("npm", args, options);
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`npm exited with status ${result.status}`);
   };
@@ -78,6 +78,6 @@ const main = () => {
   }
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
 
 export { restoreExecutableMode };
