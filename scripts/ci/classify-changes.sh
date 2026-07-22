@@ -2,16 +2,18 @@
 set -euo pipefail
 
 rust=false
-wasm=false
 webapp=false
 security=false
+docker_cli=false
+docker_webapp=false
 full=false
 
 if [[ "${1:-}" == "--all" ]]; then
   rust=true
-  wasm=true
   webapp=true
   security=true
+  docker_cli=true
+  docker_webapp=true
   full=true
 else
   while IFS= read -r path; do
@@ -31,16 +33,29 @@ else
         scripts/check-thread-guards.sh | scripts/gen-third-party-licenses.mjs | \
         scripts/vendored-pathspecs.sh | scripts/wasm/*)
         rust=true
-        wasm=true
         webapp=true
         ;;
     esac
 
     case "$path" in
       packages/rom-weaver-webapp/* | package.json | package-lock.json | \
-        scripts/*.mjs | scripts/wasm/* | Dockerfile | .dockerignore | \
+        scripts/*.mjs | scripts/wasm/* | .dockerignore | \
         docker-compose.yml | .github/workflows/docker-publish.yml)
         webapp=true
+        ;;
+    esac
+
+    case "$path" in
+      Dockerfile)
+        docker_cli=true
+        ;;
+      packages/rom-weaver-webapp/Dockerfile | packages/rom-weaver-webapp/sws.toml | \
+        packages/rom-weaver-webapp/scripts/compress-static-assets.mjs)
+        docker_webapp=true
+        ;;
+      .dockerignore | docker-compose.yml | .github/workflows/docker-publish.yml)
+        docker_cli=true
+        docker_webapp=true
         ;;
     esac
 
@@ -55,10 +70,11 @@ fi
 
 if [[ "$full" == true ]]; then
   rust=true
-  wasm=true
   webapp=true
   security=true
+  docker_cli=true
+  docker_webapp=true
 fi
 
-printf 'rust=%s\nwasm=%s\nwebapp=%s\nsecurity=%s\nfull=%s\n' \
-  "$rust" "$wasm" "$webapp" "$security" "$full"
+printf 'rust=%s\nwebapp=%s\nsecurity=%s\ndocker_cli=%s\ndocker_webapp=%s\nfull=%s\n' \
+  "$rust" "$webapp" "$security" "$docker_cli" "$docker_webapp" "$full"

@@ -2,8 +2,8 @@ name: Restore built WASM module
 description: >-
   Compute a source-exact cache key for a built WASM module and restore it.
   Building the module is the single most expensive step in the pipeline
-  (~6.5 min), and two workflows need it: CI builds the production module and
-  the nightly E2E suite builds a development one (no wasm-opt, no brotli).
+  (~6.5 min). CI and weekly coverage share the production module; the nightly
+  E2E suite builds a development one (no wasm-opt, no brotli).
   They differ only in variant and artifact paths, so the keying rules -
   the part that is dangerous to get wrong - live here once.
 

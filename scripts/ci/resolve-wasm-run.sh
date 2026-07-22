@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 # Find the CI run that built the `wasm-prod` artifact for a given commit.
 #
-# Coverage and the release packaging job both want the exact module CI tested
-# rather than a fresh ~6.5 min build of their own. Both need the same three
-# steps - prefer the run that triggered us, confirm it is actually for this
-# commit, otherwise search by commit - and getting the middle one wrong means
-# silently measuring or shipping a module built from different source.
+# Release packaging wants the exact module CI tested rather than a fresh ~6.5
+# min build of its own. Prefer the run that triggered us, confirm it is actually
+# for this commit, otherwise search by commit; getting that wrong means silently
+# shipping a module built from different source.
 #
-# Writes `run_id=` and `available=` to $GITHUB_OUTPUT. Callers decide what an
-# unavailable artifact means: automatic coverage skips unchanged commits,
-# manual coverage sets REQUIRE_ARTIFACT, and release falls back to source.
+# Writes `run_id=` and `available=` to $GITHUB_OUTPUT. Release falls back to
+# source when the artifact is unavailable.
 #
-# Env: GH_TOKEN, GITHUB_REPOSITORY, TARGET_SHA, PREFERRED_RUN_ID (optional),
-#      REQUIRE_ARTIFACT (optional).
+# Env: GH_TOKEN, GITHUB_REPOSITORY, TARGET_SHA, PREFERRED_RUN_ID (optional).
 set -euo pipefail
 
 : "${GITHUB_REPOSITORY:?}"
@@ -55,8 +52,3 @@ echo "run_id=${run_id} available=${available} (sha ${TARGET_SHA})"
   echo "run_id=$run_id"
   echo "available=$available"
 } >> "${GITHUB_OUTPUT:-/dev/stdout}"
-
-if [ "$available" != true ] && [ -n "${REQUIRE_ARTIFACT:-}" ]; then
-  echo "::error::no unexpired wasm-prod artifact for ${TARGET_SHA}"
-  exit 1
-fi

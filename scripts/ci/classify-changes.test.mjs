@@ -16,32 +16,60 @@ const classify = (...paths) =>
 test("documentation changes skip compiled stacks", () => {
   assert.deepEqual(classify("README.md", "docs/ci.md"), {
     rust: "false",
-    wasm: "false",
     webapp: "false",
     security: "false",
+    docker_cli: "false",
+    docker_webapp: "false",
     full: "false",
   });
 });
 
 test("webapp changes reuse wasm and skip Rust", () => {
-  for (const path of ["packages/rom-weaver-webapp/src/index.tsx", ".dockerignore"]) {
-    assert.deepEqual(classify(path), {
-      rust: "false",
-      wasm: "false",
-      webapp: "true",
-      security: "false",
-      full: "false",
-    });
-  }
+  assert.deepEqual(classify("packages/rom-weaver-webapp/src/index.tsx"), {
+    rust: "false",
+    webapp: "true",
+    security: "false",
+    docker_cli: "false",
+    docker_webapp: "false",
+    full: "false",
+  });
+});
+
+test("Docker changes select only the affected images", () => {
+  assert.deepEqual(classify("Dockerfile"), {
+    rust: "false",
+    webapp: "false",
+    security: "false",
+    docker_cli: "true",
+    docker_webapp: "false",
+    full: "false",
+  });
+  assert.deepEqual(classify("packages/rom-weaver-webapp/Dockerfile"), {
+    rust: "false",
+    webapp: "true",
+    security: "false",
+    docker_cli: "false",
+    docker_webapp: "true",
+    full: "false",
+  });
+  assert.deepEqual(classify(".dockerignore"), {
+    rust: "false",
+    webapp: "true",
+    security: "false",
+    docker_cli: "true",
+    docker_webapp: "true",
+    full: "false",
+  });
 });
 
 test("Rust and vendored C changes exercise every runtime layer", () => {
   for (const path of ["crates/rom-weaver-core/src/lib.rs", "crates/rom-weaver-containers/vendor/libarchive/archive_read.c"]) {
     assert.deepEqual(classify(path), {
       rust: "true",
-      wasm: "true",
       webapp: "true",
       security: "false",
+      docker_cli: "false",
+      docker_webapp: "false",
       full: "false",
     });
   }
@@ -56,9 +84,10 @@ test("dependency and CI changes select their broader checks", () => {
   ]) {
     assert.deepEqual(classify(path), {
       rust: "true",
-      wasm: "true",
       webapp: "true",
       security: "true",
+      docker_cli: "true",
+      docker_webapp: "true",
       full: "true",
     });
   }

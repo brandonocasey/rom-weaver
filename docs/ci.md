@@ -38,7 +38,7 @@ publishing, and retry procedures - see the [release guide](../.github/RELEASING.
 | `ci.yml` | PR, push to `main`, `v*` tags, manual | **Yes** | Build, lint, test, deploy the webapp |
 | `commitlint.yml` | PR (open/edit/sync) | **Yes** | Conventional-commit pull request title |
 | `codeql.yml` | source push to `main`, weekly, manual | No | Static analysis into the Security tab |
-| `coverage.yml` | after successful code-changing `CI` on `main` | No | Rust + React coverage reports |
+| `coverage.yml` | weekly Sunday 06:43 UTC, manual | No | Rust + React coverage reports |
 | `parity.yml` | nightly 07:13 UTC, manual | No | Byte parity against live chdman / dolphin-tool, with an exact cached CLI |
 | `e2e-nightly.yml` | manual | No | Exhaustive Chromium E2E matrix |
 | `cache-cleanup.yml` | daily 09:00 UTC, manual | No | Reap closed-PR Actions caches |
@@ -46,6 +46,11 @@ publishing, and retry procedures - see the [release guide](../.github/RELEASING.
 | `cargo-publish.yml` | `v*` tag push, manual | n/a | crates.io publish |
 | `npm-publish.yml` | called by `release.yml` | n/a | 4 platform packages, launcher, alias |
 | `docker-publish.yml` | called by `release.yml`, manual | n/a | CLI + webapp images to ghcr.io |
+
+Coverage is deliberately sampled weekly rather than repeated after every green
+`main` build. It restores the source-exact production WASM cache and builds on
+a miss, so the report still covers the current commit; manual runs use the same
+path.
 
 `commitlint.yml` lints the **pull request title only**. Merge commits are
 disabled and squash merges take `PR_TITLE` as the subject, so the title is the
@@ -64,12 +69,11 @@ that pull request is what sets `release_created` and unlocks the publish jobs.
 ## `ci.yml` - the required gate
 
 ```
-changes ── changed paths -> rust / wasm / webapp / security
+changes ── changed paths -> rust / webapp / security
 
-             ┌── rust-host ───────┐
-changes ─────┼── rust-macos ──────┼── rust (aggregate check name)
-             ├── rust-macos-wasm ─┤
-             └── rust-windows ────┘
+             ┌── rust-host ─────┐
+changes ─────┼── rust-macos ────┼── rust (aggregate check name)
+             └── rust-windows ──┘
 
          ┌── webapp-static ───┐
          ├── webapp-browser ──┼── webapp (aggregate check name)
@@ -80,7 +84,7 @@ wasm ────┤
                  ↑
            deploy-plan ── ref -> channel list
 
-webapp-static ── docker-prebuilt (CLI, webapp) - the images' release COPY path
+webapp-static ── docker-prebuilt (webapp) - the release COPY path
 
 security ── advisories (warn only, always green)
 ```
@@ -88,7 +92,7 @@ security ── advisories (warn only, always green)
 ### Jobs
 
 - **`changes`** classifies the pull request or push diff once. Rust and
-  vendored C changes select Rust, WASM, and webapp integration; webapp-only
+  vendored C changes select Rust and webapp integration; webapp-only
   changes select the webapp while restoring the exact cached WASM module;
   dependency manifests select the advisory scanners. Documentation changes
   select none of those expensive stacks. Manual runs and changes to CI,
@@ -107,7 +111,10 @@ security ── advisories (warn only, always green)
   `docker-publish.yml`), because such a change leaves the sources alone and the
   registry build cache restores every expensive layer; a source-only pull
   request would invalidate `COPY . .` and pay a cold cargo+wasm compile for no
-  signal about the Dockerfile. On `main` it also refreshes that cache.
+  signal about the Dockerfile. Each matrix leg has its own path gate, so a
+  webapp-only Docker change does not also start the CLI build or vice versa.
+  On `main` it also refreshes that cache. When CLI packaging changes, its leg
+  additionally smokes the `BINARY=prebuilt` release path with a stub binary.
 
   Handing this job CI's cached wasm to lift the gate does not work. The CLI
   image contains no wasm at all - it is `cargo build --release -p
@@ -115,44 +122,32 @@ security ── advisories (warn only, always green)
   the webapp, `DIST=prebuilt` skips the entire builder stage (rustup, the
   pinned WASI SDK and binaryen checksums, `npm ci`, the wasm compile), which is
   exactly the fragile half this job exists to test.
-- **`docker-prebuilt`** builds the other half of each image: the
-  `BINARY=prebuilt` / `DIST=prebuilt` path the release fan-out actually ships,
-  where the Dockerfile copies a bundle out of the build context instead of
-  compiling one. It runs whenever the webapp stack runs - a broken `COPY
-  prebuilt/...` used to surface during a
-  release fan-out, costing a draft release rather than a red check. The webapp
-  leg consumes the real `webapp-dist` artifact `webapp-static` uploads, so
-  `compress-static-assets.mjs` runs over the real bundle; that is what it
-  `needs`. The CLI leg gets a one-line stub (its runtime half is a single
-  `COPY`) and waits on the same job only because `needs` is per job, not per
-  matrix leg.
+- **`docker-prebuilt`** builds the webapp's `DIST=prebuilt` release path. It
+  consumes the real `webapp-dist` artifact `webapp-static` uploads, so
+  `compress-static-assets.mjs` runs over the real bundle. The CLI equivalent
+  stays in the image-gated `docker` leg instead of starting a separate runner
+  after every Rust or webapp change.
 - **`wasm`** builds the production WASM module. This is the single most
   expensive step in the pipeline (~6.5 min) and it used to run twice, so it is
   built once here and shared with `webapp` and `deploy` as an artifact, and
-  with `coverage` and `release` by artifact download. A webapp-only change
+  with `release` by artifact download. A webapp-only change
   restores it by its source-exact key; a change outside the webapp/runtime
   stack leaves the required job present but does no artifact work.
 - **`rust-host`** is everything needing a host-profile Rust build: fmt, clippy,
   typegen drift, whitespace, thread guards, the Rust test suite, license
   attribution, `cargo deny` licenses/sources, unused dependencies, and a
   `cargo publish --dry-run`.
-- There is **no Linux `wasm-check` job**. It ran `cargo check -p
+- There is **no separate `wasm-check` job**. It ran `cargo check -p
   rom-weaver-containers --lib` against `wasm32-wasip1-threads`, which `wasm`
   already compiles as a strict subset (the app build pulls `containers` in with
   default features), and whose cache key covers every input that could break
-  it - so a cache hit means nothing checkable changed. `-D warnings` on that
-  target is still enforced, by `rust-macos-wasm`.
+  it - so a cache hit means nothing checkable changed. The check remains part
+  of the broad local `mise run ci` gate.
 - **`rust-macos`** runs the Rust test suite on `macos-14` (arm64) - the
   platform the release fan-out ships CLI binaries for, but that nothing
   previously tested. It uses the same mise/setup-build-env path as the Linux
   jobs. fmt, clippy, typegen, and the policy checks are platform-independent
   and already gate in `rust-host`.
-- **`rust-macos-wasm`** is the macOS half of the threaded wasm check - macOS
-  is the platform contributors actually build the wasm module on, so the wasm
-  env wiring in `.mise.toml` (WASI SDK discovery, the bash compiler shims) is
-  what gets exercised, and `-D warnings` on that target is enforced nowhere
-  else. Split from `rust-macos` because the two targets have separate Cargo
-  fingerprints, and serializing them was the longest leg of the Rust gate.
 - **`rust-windows`** runs the Rust test suite on `windows-2025`. It installs
   the toolchain with `dtolnay/rust-toolchain` (pin read from `.mise.toml`)
   rather than mise, whose `[env]` exec templates assume a POSIX shell; the
@@ -282,9 +277,7 @@ Caching decisions that live here:
   `main`**. A branch run writes ~450 MB into a branch-local scope nothing else
   can read, which is pure ballast against the 10 GiB budget.
 - **WASI SDK**: keyed on version *and* checksum, so a version bump misses by
-  construction and can never serve a stale SDK. The archive is per-platform
-  (x86_64-linux for the Linux jobs, arm64-macos for `rust-macos-wasm`), each
-  pinned by its own checksum.
+  construction and can never serve a stale SDK.
 - **`node_modules`**: the installed tree is cached, not `~/.npm` - a hit skips
   `npm ci` outright instead of merely speeding up its download half.
 - **Playwright**: browser binaries only. The apt-level libraries they link
@@ -292,8 +285,9 @@ Caching decisions that live here:
 
 ### `.github/actions/wasm-cache`
 
-Restores a prebuilt WASM module (`variant: prod` for CI, `dev` for the nightly
-E2E suite, which needs an unoptimized module CI never builds). The key is a
+Restores a prebuilt WASM module (`variant: prod` for CI and weekly coverage,
+`dev` for the nightly E2E suite, which needs an unoptimized module CI never
+builds). The key is a
 SHA-256 over `git ls-tree` of every source, dependency, toolchain, and
 build-script input - `git ls-tree` rather than `hashFiles` because it resolves
 the pull request merge tree, and because the `crates` tree SHA covers the
@@ -305,25 +299,21 @@ from different source. A miss costs one build; a false hit ships stale WASM.
 
 ### `scripts/ci/classify-changes.sh`
 
-Maps changed paths to the Rust, WASM, webapp, and dependency-scanning stacks.
-Rust and vendored C imply WASM and webapp integration, while webapp-only
+Maps changed paths to the Rust, webapp, dependency-scanning, and per-image
+Docker stacks.
+Rust and vendored C imply webapp integration, while webapp-only
 changes do not imply Rust. Changes to CI, coverage, toolchain setup, or the
 classifier fail open by selecting every stack.
-`scripts/ci/classify-changes.test.mjs` pins these boundaries. Coverage needs
-the same Rust/C-or-webapp boundary and uses the resulting `wasm-prod` artifact
-as its source of truth: no selected stack means CI emits no artifact and the
-coverage job exits before toolchain setup.
+`scripts/ci/classify-changes.test.mjs` pins these boundaries.
 
 ### `scripts/ci/resolve-wasm-run.sh`
 
-Finds the CI run that built `wasm-prod` for a commit, so coverage and release
-packaging measure and ship the exact module CI tested. It prefers the
+Finds the CI run that built `wasm-prod` for a commit, so release packaging ships
+the exact module CI tested. It prefers the
 triggering run, **verifies that run is actually for this commit** (a
 `workflow_run` event can fire for a re-run or lose a race with a newer push),
 otherwise searches by commit, and finally confirms the artifact has not
-expired. `REQUIRE_ARTIFACT=1` makes a miss fatal for manual coverage; automatic
-coverage treats no artifact as an unchanged-stack skip, while release falls
-back to a source build.
+expired. Release falls back to a source build when it is unavailable.
 
 ### `scripts/ci/npm-publish-package.mjs`
 
@@ -546,7 +536,7 @@ node --test scripts/ci/classify-changes.test.mjs                 # change bounda
 mise run fmt ::: clippy ::: typegen-check ::: whitespace ::: thread-guards
 mise run test-rust ::: licenses-check ::: deny-policy ::: machete # rust-host
 cargo publish --workspace --locked --dry-run --no-verify     # rust-host
-mise run wasm-check                                          # rust-macos-wasm
+mise run wasm-check                                          # local threaded-target check
 mise run build-wasm-prod                                     # wasm
 npm test                                                     # webapp build-script tests
 npm --prefix packages/rom-weaver-webapp run lint             # webapp lint fan-out
@@ -562,8 +552,9 @@ npm --prefix packages/rom-weaver-webapp run build
 the separate `shellcheck` task covers tracked shell files. `docker` is
 conditional on image-plumbing changes and is most directly reproduced with the
 source-build commands in the [self-hosting guide](self-hosting.md);
-`docker-prebuilt` is `docker build --build-arg DIST=prebuilt .` (or
-`BINARY=prebuilt`) with the bundle staged under `prebuilt/`.
+`docker-prebuilt` is `docker build --build-arg DIST=prebuilt .` with the bundle
+staged under `prebuilt/`; the CLI job uses `BINARY=prebuilt` when its packaging
+inputs change.
 
 ## Gotchas
 
