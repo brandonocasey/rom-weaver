@@ -13,8 +13,14 @@ $installDir = if ($env:ROM_WEAVER_INSTALL_DIR) {
   Join-Path $env:LOCALAPPDATA 'rom-weaver\bin'
 }
 
+# Only an x64 build is released. Windows on ARM runs it under emulation, which
+# is slower but correct, so arm64 is allowed through rather than refused.
 $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-if ($architecture -ne [System.Runtime.InteropServices.Architecture]::X64) {
+$supported = @(
+  [System.Runtime.InteropServices.Architecture]::X64
+  [System.Runtime.InteropServices.Architecture]::Arm64
+)
+if ($supported -notcontains $architecture) {
   throw "rom-weaver does not support Windows/$architecture"
 }
 
@@ -26,8 +32,10 @@ $releaseUrl = if ($version -eq 'latest') {
 }
 
 # TLS 1.2 is not the Windows PowerShell 5.1 default and github.com refuses
-# anything older.
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# anything older. PowerShell 7 negotiates it already and ignores this setting.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $tempDir | Out-Null
@@ -60,8 +68,7 @@ try {
 }
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-$onPath = ($userPath -split ';' | Where-Object { $_ -eq $installDir }).Count -gt 0
-if ($onPath) {
+if (@($userPath -split ';') -contains $installDir) {
   Write-Host 'Run: rom-weaver --help'
 } else {
   Write-Host 'Add rom-weaver to PATH:'
