@@ -26,10 +26,11 @@ const dir = resolve(process.argv[2] ?? ".");
 const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
 const spec = `${manifest.name}@${manifest.version}`;
 const tag = manifest.version.includes("-") ? "beta" : "latest";
+const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
 
 const isPublished = () => {
   try {
-    execFileSync("npm", ["view", spec, "version"], { stdio: "ignore" });
+    execFileSync(npmExecutable, ["view", spec, "version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -44,7 +45,7 @@ if (isPublished()) {
 console.log(`publishing ${spec} with dist-tag ${tag}`);
 try {
   execFileSync(
-    "npm",
+    npmExecutable,
     ["publish", dir, "--ignore-scripts", "--access", "public", "--provenance", "--tag", tag],
     { stdio: "inherit" },
   );
