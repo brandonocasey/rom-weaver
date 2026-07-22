@@ -1,7 +1,8 @@
 [package]
 name = "rom-weaver-cli"
 authors.workspace = true
-description = "A local-first offline toolkit for ROMs and ROM hack patches. Inspect, extract, checksum, compress, trim, apply patches, create patches, or bundle shareable patch manifests at native speed."
+description = "Local-first toolkit for ROMs and disc images: inspect, extract, compress, and apply, create, or bundle patches. Offline via a browser service-worker PWA or CLI."
+keywords = ["rom", "rom-hack", "patch", "disc-image", "bundle", "cli"]
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
