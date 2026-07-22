@@ -39,18 +39,24 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      # Coverage must measure the module CI actually tested, so an expired or
-      # missing artifact is fatal here rather than a reason to build a new one.
+      # CI emits wasm-prod exactly when the classifier selected the Rust/C or
+      # webapp stack. Its presence is both the path gate and the tested module.
+      # A manual request stays strict so a mistyped/expired run id is visible.
       - name: Resolve CI artifact
         id: ci
         env:
           GH_TOKEN: ${{ github.token }}
           PREFERRED_RUN_ID: ${{ github.event.workflow_run.id || inputs.ci_run_id }}
           TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-          REQUIRE_ARTIFACT: "1"
+          REQUIRE_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
         run: scripts/ci/resolve-wasm-run.sh
 
-      - uses: ./.github/actions/setup-build-env
+      - name: Skip unchanged coverage
+        if: steps.ci.outputs.available != 'true'
+        run: echo 'No Rust, C, or webapp inputs changed; skipping coverage.' >> "$GITHUB_STEP_SUMMARY"
+
+      - if: steps.ci.outputs.available == 'true'
+        uses: ./.github/actions/setup-build-env
         with:
           tools: node rust
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
@@ -61,9 +67,11 @@ jobs:
           playwright: "true"
 
       - name: Install cargo-llvm-cov
+        if: steps.ci.outputs.available == 'true'
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Download tested WASM artifact
+        if: steps.ci.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.ci.outputs.run_id }}
@@ -74,24 +82,31 @@ jobs:
             --dir packages/rom-weaver-webapp/src/wasm
 
       - name: Verify WASM artifact
+        if: steps.ci.outputs.available == 'true'
         run: node scripts/wasm/verify-wasm-artifact.mjs packages/rom-weaver-webapp/src/wasm
 
       - name: Rust coverage
+        if: steps.ci.outputs.available == 'true'
         run: mise run coverage-rust
 
       - name: React unit coverage
+        if: steps.ci.outputs.available == 'true'
         run: npm --prefix packages/rom-weaver-webapp run test:unit:coverage
 
       - name: React UI coverage
+        if: steps.ci.outputs.available == 'true'
         run: npm --prefix packages/rom-weaver-webapp run test:browser:coverage
 
       - name: React wasm coverage
+        if: steps.ci.outputs.available == 'true'
         run: npm --prefix packages/rom-weaver-webapp run test:browser:wasm:coverage
 
       - name: Coverage summary
+        if: steps.ci.outputs.available == 'true'
         run: node scripts/coverage-summary.mjs
 
       - name: Upload coverage reports
+        if: steps.ci.outputs.available == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: coverage-reports

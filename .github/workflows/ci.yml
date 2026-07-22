@@ -29,6 +29,43 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+      wasm: ${{ steps.classify.outputs.wasm }}
+      webapp: ${{ steps.classify.outputs.webapp }}
+      security: ${{ steps.classify.outputs.security }}
+      full: ${{ steps.classify.outputs.full }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          HEAD_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch || -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]]; then
+            scripts/ci/classify-changes.sh --all | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! paths=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null); then
+            echo "base $BASE_SHA is unreachable; classifying everything"
+            scripts/ci/classify-changes.sh --all | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'changed paths:\n%s\n' "${paths:-(none)}"
+          printf '%s\n' "$paths" | scripts/ci/classify-changes.sh | tee -a "$GITHUB_OUTPUT"
+
   # Static analysis of the repository's own plumbing - workflows, shell
   # scripts, Dockerfiles. Compiles nothing and installs no language toolchain,
   # so it finishes in well under a minute and reports independently of the
@@ -62,11 +99,19 @@ jobs:
   # that no longer builds surfaced at the moment it blocked a publish. hadolint
   # above reads the Dockerfile; it does not run it.
   #
-  # Gated on the files that define the images rather than run unconditionally.
-  # Such a change leaves the sources alone, so the registry build cache written
-  # by the publish job restores every expensive layer and this costs minutes; a
-  # source-only pull request would instead invalidate `COPY . .` and pay a cold
-  # cargo+wasm compile to tell us nothing about the Dockerfile.
+  # This job builds the images from source, and is gated on the files that
+  # define them rather than run unconditionally. Such a change leaves the
+  # sources alone, so the registry build cache written by the publish job
+  # restores every expensive layer and this costs minutes; a source-only pull
+  # request would instead invalidate `COPY . .` and pay a cold cargo+wasm
+  # compile to tell us nothing about the Dockerfile.
+  #
+  # Reusing CI's cached wasm here is not an option: the CLI image contains no
+  # wasm at all (it is `cargo build --release -p rom-weaver-cli`), and for the
+  # webapp `DIST=prebuilt` skips the whole builder stage - rustup, the WASI SDK
+  # pins, binaryen - which is precisely the fragile half this job exists to
+  # test. That path is covered instead, unconditionally and for free, by
+  # `docker-prebuilt` below.
   docker:
     name: Docker build (${{ matrix.name }})
     runs-on: ubuntu-24.04
@@ -85,13 +130,9 @@ jobs:
           - name: CLI
             image: rom-weaver-cli
             file: Dockerfile
-            build_arg: BINARY
-            stub: prebuilt/rom-weaver
           - name: webapp
             image: rom-weaver-webapp
             file: packages/rom-weaver-webapp/Dockerfile
-            build_arg: DIST
-            stub: prebuilt/index.html
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -126,7 +167,12 @@ jobs:
             exit 0
           fi
 
-          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | { grep -E "$paths" || true; })
+          if ! diff=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null); then
+            echo "base $BASE_SHA is unreachable; building"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(printf '%s\n' "$diff" | { grep -E "$paths" || true; })
           if [[ -n "$changed" ]]; then
             echo "image plumbing changed:"
             echo "$changed"
@@ -161,24 +207,70 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:buildcache
           cache-to: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max', github.repository_owner, matrix.image) || '' }}
 
-      # The build above exercises only the source half of each image. Without
-      # this the prebuilt half would first execute during a release fan-out,
-      # where a broken `COPY prebuilt/...` costs a draft release rather than a
-      # red pull request. Against a stub it is a COPY onto runtime layers the
-      # step above already built, so it takes seconds.
-      - name: Build the prebuilt path against a stub
-        if: steps.gate.outputs.build == 'true'
+  # The gated job above exercises only the source half of each image. The
+  # prebuilt half - what the release fan-out actually ships - compiles nothing:
+  # it is a COPY onto runtime layers plus, for the webapp, the static-asset
+  # compression pass. That costs seconds, so it runs whenever webapp/runtime
+  # inputs change rather than hiding behind the gate; a broken `COPY
+  # prebuilt/...` used to surface during a release fan-out, where it costs a
+  # draft release instead of a red check.
+  #
+  # The webapp leg feeds it the real bundle `webapp-static` already built, so
+  # compress-static-assets.mjs runs over real files instead of a one-line stub.
+  # That is what `needs` is for; the CLI leg waits on it only because `needs` is
+  # per job, not per matrix leg, and CI publishes no Linux release binary to
+  # hand it. A stub is enough there - the CLI image's runtime half is one COPY.
+  docker-prebuilt:
+    name: Docker prebuilt path (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: webapp-static
+    if: github.ref_type != 'tag'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: CLI
+            file: Dockerfile
+            build_arg: BINARY
+            artifact: ""
+            stub: rom-weaver
+          - name: webapp
+            file: packages/rom-weaver-webapp/Dockerfile
+            build_arg: DIST
+            artifact: webapp-dist
+            stub: index.html
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # `.dockerignore` drops `**/dist`, which is why both this and the release
+      # fan-out stage the bundle under `prebuilt/` instead.
+      - name: Download prebuilt bundle
+        if: matrix.artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: prebuilt
+
+      - name: Stage a stub
+        if: matrix.artifact == ''
+        env:
+          STUB: ${{ matrix.stub }}
+        run: |
+          set -euo pipefail
+          mkdir -p prebuilt
+          printf 'stub\n' > "prebuilt/$STUB"
+
+      - name: Build the prebuilt path
         env:
           BUILD_ARG: ${{ matrix.build_arg }}
           FILE: ${{ matrix.file }}
           STUB: ${{ matrix.stub }}
         run: |
           set -euo pipefail
-          rm -rf prebuilt
-          mkdir -p "$(dirname "$STUB")"
-          printf 'stub\n' > "$STUB"
+          test -f "prebuilt/$STUB"
           docker build --file "$FILE" --build-arg "${BUILD_ARG}=prebuilt" --tag prebuilt-smoke .
-          rm -rf prebuilt
 
   # Built once and shared. This is the single most expensive step in the
   # pipeline (~6.5 min), and it used to run identically in two jobs.
@@ -186,13 +278,16 @@ jobs:
     name: Build WASM module
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    needs: changes
     env:
       CARGO_TERM_COLOR: always
     steps:
       - name: Checkout
+        if: needs.changes.outputs.webapp == 'true'
         uses: actions/checkout@v7
 
       - name: Restore built wasm module
+        if: needs.changes.outputs.webapp == 'true'
         id: wasm-cache
         uses: ./.github/actions/wasm-cache
         with:
@@ -207,7 +302,7 @@ jobs:
 
       # Skipped entirely on a hit - the toolchain exists only to compile.
       - uses: ./.github/actions/setup-build-env
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.webapp == 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
         with:
           tools: node rust binaryen
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
@@ -218,17 +313,19 @@ jobs:
       # of extending them, silently dropping shared-memory, LTO, and exports.
       # The separate non-linking Rust check denies warnings.
       - name: Build production WASM
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.webapp == 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
         run: mise run build-wasm-prod
 
       # Validate completeness and the 4 GiB memory ceiling on both cache paths.
       # Use runner Node because toolchain setup is skipped on hits.
       - name: Verify wasm artifact
+        if: needs.changes.outputs.webapp == 'true'
         run: node scripts/wasm/verify-wasm-artifact.mjs packages/rom-weaver-webapp/src/wasm
 
       # The wasm module and its brotli sibling are already compressed, so
       # re-compressing them into the artifact only burns time.
       - name: Upload WASM artifact
+        if: needs.changes.outputs.webapp == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: wasm-prod
@@ -248,7 +345,8 @@ jobs:
     name: Rust lint + tests (Linux)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    if: github.ref_type != 'tag'
+    needs: changes
+    if: github.ref_type != 'tag' && needs.changes.outputs.rust == 'true'
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -314,7 +412,8 @@ jobs:
     name: Security advisories (non-gating)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    if: github.ref_type != 'tag'
+    needs: changes
+    if: github.ref_type != 'tag' && needs.changes.outputs.security == 'true'
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -339,31 +438,12 @@ jobs:
           scripts/warn-only.sh "npm advisories (webapp)" \
             npm --prefix packages/rom-weaver-webapp run audit:deps
 
-  # The threaded target has a separate Cargo fingerprint from the host checks,
-  # so serializing it inside the host job only lengthens the required Rust gate.
-  wasm-check:
-    name: Rust check (WASM target)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    if: github.ref_type != 'tag'
-    env:
-      CARGO_TERM_COLOR: always
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - uses: ./.github/actions/setup-build-env
-        with:
-          tools: rust
-          apt-packages: cmake ninja-build pkg-config clang libclang-dev
-          # `cargo check` still runs the libarchive build script against WASI.
-          rust-targets: wasm32-wasip1-threads
-          wasi-sdk: "true"
-
-      # Safe to override RUSTFLAGS for a check: nothing is linked, so losing the
-      # target config's link args is inconsequential.
-      - name: WASM threaded check
-        run: RUSTFLAGS="${RUSTFLAGS:-} -D warnings" mise run wasm-check
+  # No Linux `wasm-check` job. It ran `cargo check -p rom-weaver-containers
+  # --lib` for the threaded target, which the `wasm` job above already compiles
+  # as a strict subset - the app build pulls containers in with default
+  # features - and whose cache key covers every input that could break it, so a
+  # cache hit means nothing checkable changed. Denying warnings on that target
+  # is still covered, by `rust-macos-wasm` below running the same command.
 
   # The release fan-out builds the CLI for macOS, but until here nothing ever
   # *tested* on it - a platform-specific regression surfaced at publish time or
@@ -381,7 +461,8 @@ jobs:
     name: Rust tests (macOS)
     runs-on: macos-14
     timeout-minutes: 90
-    if: github.ref_type != 'tag'
+    needs: changes
+    if: github.ref_type != 'tag' && needs.changes.outputs.rust == 'true'
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -397,15 +478,17 @@ jobs:
       - name: Rust tests
         run: mise run test-rust
 
-  # The macOS half of the threaded wasm check: macOS is the platform
-  # contributors actually build the wasm module on, and its toolchain wiring
-  # (WASI SDK discovery, the bash compiler shims in .mise.toml) was otherwise
-  # only ever verified on Linux.
+  # The only threaded wasm *check*: macOS is the platform contributors actually
+  # build the wasm module on, and its toolchain wiring (WASI SDK discovery, the
+  # bash compiler shims in .mise.toml) is verified nowhere else - the `wasm`
+  # build job is Linux-only. This is also what keeps `-D warnings` enforced on
+  # that target now that the Linux check is gone.
   rust-macos-wasm:
     name: Rust WASM check (macOS)
     runs-on: macos-14
     timeout-minutes: 90
-    if: github.ref_type != 'tag'
+    needs: changes
+    if: github.ref_type != 'tag' && needs.changes.outputs.wasm == 'true'
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -418,8 +501,9 @@ jobs:
           rust-targets: wasm32-wasip1-threads
           wasi-sdk: "true"
 
-      # Same rationale as the Linux `wasm-check` job: RUSTFLAGS is safe to
-      # override for a check because nothing is linked.
+      # RUSTFLAGS is safe to override for a check - nothing is linked, so losing
+      # the target config's link args is inconsequential. It would NOT be safe
+      # in the `wasm` build job; see the warning there.
       - name: WASM threaded check
         run: RUSTFLAGS="${RUSTFLAGS:-} -D warnings" mise run wasm-check
 
@@ -435,7 +519,8 @@ jobs:
     name: Rust tests (Windows)
     runs-on: windows-2025
     timeout-minutes: 90
-    if: github.ref_type != 'tag'
+    needs: changes
+    if: github.ref_type != 'tag' && needs.changes.outputs.rust == 'true'
     env:
       CARGO_TERM_COLOR: always
       # The mise legs get this from .mise.toml's [env]; this leg bypasses mise.
@@ -528,25 +613,28 @@ jobs:
     name: Rust
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [rust-host, wasm-check, rust-macos, rust-macos-wasm, rust-windows]
+    needs: [changes, rust-host, rust-macos, rust-macos-wasm, rust-windows]
     if: ${{ !cancelled() && github.ref_type != 'tag' }}
     steps:
       - name: Verify Rust jobs
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUST_SELECTED: ${{ needs.changes.outputs.rust }}
+          WASM_SELECTED: ${{ needs.changes.outputs.wasm }}
           HOST_RESULT: ${{ needs.rust-host.result }}
-          WASM_RESULT: ${{ needs.wasm-check.result }}
           MACOS_RESULT: ${{ needs.rust-macos.result }}
           MACOS_WASM_RESULT: ${{ needs.rust-macos-wasm.result }}
           WINDOWS_RESULT: ${{ needs.rust-windows.result }}
         run: |
-          test "$HOST_RESULT" = success
-          test "$WASM_RESULT" = success
-          test "$MACOS_RESULT" = success
-          test "$MACOS_WASM_RESULT" = success
-          test "$WINDOWS_RESULT" = success
+          [[ "$CHANGES_RESULT" == success ]]
+          check() { [[ "$1" == success || ( "$1" == skipped && "$2" != true ) ]]; }
+          check "$HOST_RESULT" "$RUST_SELECTED"
+          check "$MACOS_RESULT" "$RUST_SELECTED"
+          check "$MACOS_WASM_RESULT" "$WASM_SELECTED"
+          check "$WINDOWS_RESULT" "$RUST_SELECTED"
 
   # The webapp work consumes the prebuilt wasm module and compiles no Rust of
-  # its own. It is split into three jobs so the slow parallel browser suite is
+  # its own. It is split into four jobs so the slow parallel browser suite is
   # never serialized behind lint or the other suites, and the node-only work
   # skips the Playwright install entirely; the `webapp` aggregate below gives
   # branch protection one stable name for all of it.
@@ -554,8 +642,8 @@ jobs:
     name: Webapp lint + unit + build
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    needs: wasm
-    if: github.ref_type != 'tag'
+    needs: [changes, wasm]
+    if: github.ref_type != 'tag' && needs.changes.outputs.webapp == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -588,14 +676,28 @@ jobs:
       - name: Build
         run: npm --prefix packages/rom-weaver-webapp run build
 
+      # Consumed by `docker-prebuilt`, so the image's release path is smoked
+      # against a real bundle. Deliberately the same name, path and options as
+      # the release fan-out's upload (release.yml) - the point is for CI to
+      # exercise the artifact the publish job will hand the image, so any
+      # divergence here defeats it. `include-hidden-files` included: see the
+      # reasoning there.
+      - name: Upload webapp bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: webapp-dist
+          path: packages/rom-weaver-webapp/dist
+          if-no-files-found: error
+          include-hidden-files: true
+
   # The single longest webapp suite (~4 min) rides alone so it defines this
   # group's wall clock instead of adding to it.
   webapp-browser:
     name: Webapp browser tests (parallel)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    needs: wasm
-    if: github.ref_type != 'tag'
+    needs: [changes, wasm]
+    if: github.ref_type != 'tag' && needs.changes.outputs.webapp == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -622,8 +724,8 @@ jobs:
     name: Webapp browser tests (wasm) + E2E
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    needs: wasm
-    if: github.ref_type != 'tag'
+    needs: [changes, wasm]
+    if: github.ref_type != 'tag' && needs.changes.outputs.webapp == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -661,8 +763,8 @@ jobs:
     # macOS WebKit exercises the supported Safari-family implementation.
     runs-on: macos-14
     timeout-minutes: 60
-    needs: wasm
-    if: github.ref_type != 'tag'
+    needs: [changes, wasm]
+    if: github.ref_type != 'tag' && needs.changes.outputs.webapp == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -692,20 +794,24 @@ jobs:
     name: Webapp
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [webapp-static, webapp-browser, webapp-wasm-e2e, webapp-webkit-e2e]
+    needs: [changes, webapp-static, webapp-browser, webapp-wasm-e2e, webapp-webkit-e2e]
     if: ${{ !cancelled() && github.ref_type != 'tag' }}
     steps:
       - name: Verify webapp jobs
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          WEBAPP_SELECTED: ${{ needs.changes.outputs.webapp }}
           STATIC_RESULT: ${{ needs.webapp-static.result }}
           BROWSER_RESULT: ${{ needs.webapp-browser.result }}
           WASM_E2E_RESULT: ${{ needs.webapp-wasm-e2e.result }}
           WEBKIT_E2E_RESULT: ${{ needs.webapp-webkit-e2e.result }}
         run: |
-          test "$STATIC_RESULT" = success
-          test "$BROWSER_RESULT" = success
-          test "$WASM_E2E_RESULT" = success
-          test "$WEBKIT_E2E_RESULT" = success
+          [[ "$CHANGES_RESULT" == success ]]
+          check() { [[ "$1" == success || ( "$1" == skipped && "$2" != true ) ]]; }
+          check "$STATIC_RESULT" "$WEBAPP_SELECTED"
+          check "$BROWSER_RESULT" "$WEBAPP_SELECTED"
+          check "$WASM_E2E_RESULT" "$WEBAPP_SELECTED"
+          check "$WEBKIT_E2E_RESULT" "$WEBAPP_SELECTED"
 
   # Decide which channels this ref publishes to. Channels are ordered
   # prod -> beta -> nightly, and a deploy refreshes its own channel plus every
@@ -723,6 +829,7 @@ jobs:
     name: Plan webapp deploy
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    needs: changes
     # Same non-gating boundary as `deploy` below: a failure here must skip
     # deployment, not fail the build that release automation waits on.
     continue-on-error: true
@@ -730,6 +837,9 @@ jobs:
     # previews could only ever fail. Skip them instead of creating red checks.
     # A manual run deploys nothing unless a channel is picked explicitly.
     if: >-
+      (github.ref_type == 'tag' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_channel != 'none') ||
+      needs.changes.outputs.webapp == 'true') &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_channel != 'none') &&
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&

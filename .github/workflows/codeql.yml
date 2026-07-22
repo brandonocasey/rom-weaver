@@ -8,6 +8,21 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "**/*.cjs"
+      - "**/*.js"
+      - "**/*.mjs"
+      - "**/*.rs"
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "package-lock.json"
+      - "package.json"
+      - "packages/rom-weaver-webapp/package-lock.json"
+      - "packages/rom-weaver-webapp/package.json"
+      - ".github/codeql/**"
+      - ".github/workflows/codeql.yml"
   schedule:
     # 05:27 UTC weekly, off the hour to dodge scheduler congestion.
     - cron: "27 5 * * 1"

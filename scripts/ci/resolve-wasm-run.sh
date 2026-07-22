@@ -8,8 +8,8 @@
 # silently measuring or shipping a module built from different source.
 #
 # Writes `run_id=` and `available=` to $GITHUB_OUTPUT. Callers decide what an
-# unavailable artifact means: coverage sets REQUIRE_ARTIFACT and fails, release
-# leaves it unset and falls back to building from source.
+# unavailable artifact means: automatic coverage skips unchanged commits,
+# manual coverage sets REQUIRE_ARTIFACT, and release falls back to source.
 #
 # Env: GH_TOKEN, GITHUB_REPOSITORY, TARGET_SHA, PREFERRED_RUN_ID (optional),
 #      REQUIRE_ARTIFACT (optional).

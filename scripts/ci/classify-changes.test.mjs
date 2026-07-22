@@ -1,0 +1,65 @@
+import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+const script = join(dirname(fileURLToPath(import.meta.url)), "classify-changes.sh");
+const classify = (...paths) =>
+  Object.fromEntries(
+    execFileSync(script, { encoding: "utf8", input: `${paths.join("\n")}\n` })
+      .trim()
+      .split("\n")
+      .map((line) => line.split("=")),
+  );
+
+test("documentation changes skip compiled stacks", () => {
+  assert.deepEqual(classify("README.md", "docs/ci.md"), {
+    rust: "false",
+    wasm: "false",
+    webapp: "false",
+    security: "false",
+    full: "false",
+  });
+});
+
+test("webapp changes reuse wasm and skip Rust", () => {
+  for (const path of ["packages/rom-weaver-webapp/src/index.tsx", ".dockerignore"]) {
+    assert.deepEqual(classify(path), {
+      rust: "false",
+      wasm: "false",
+      webapp: "true",
+      security: "false",
+      full: "false",
+    });
+  }
+});
+
+test("Rust and vendored C changes exercise every runtime layer", () => {
+  for (const path of ["crates/rom-weaver-core/src/lib.rs", "crates/rom-weaver-containers/vendor/libarchive/archive_read.c"]) {
+    assert.deepEqual(classify(path), {
+      rust: "true",
+      wasm: "true",
+      webapp: "true",
+      security: "false",
+      full: "false",
+    });
+  }
+});
+
+test("dependency and CI changes select their broader checks", () => {
+  assert.equal(classify("Cargo.lock").security, "true");
+  for (const path of [
+    ".github/workflows/ci.yml",
+    "scripts/ci/mise-disable-tools.sh",
+    "scripts/ci/resolve-wasm-run.sh",
+  ]) {
+    assert.deepEqual(classify(path), {
+      rust: "true",
+      wasm: "true",
+      webapp: "true",
+      security: "true",
+      full: "true",
+    });
+  }
+});
