@@ -77,11 +77,12 @@ libraries elsewhere is not supported.
 
 ### First public release
 
-v0.6.2 is the first release available to install. The changelog and the git
-history go back further, but nothing before v0.6.2 was ever published: v0.6.0
-and v0.6.1 failed partway through the release pipeline, so no artifacts reached
-npm, Homebrew, or the container registry. Earlier version numbers describe
-development history only.
+v0.6.3 is the first public release available to install. The changelog and the
+git history go back further, but v0.6.0 and v0.6.1 failed partway through the
+release pipeline, while v0.6.2 was only partially published. v0.6.3 is the
+first release with a complete set of artifacts across npm, Homebrew, and the
+container registry. Earlier version numbers describe development history or
+incomplete releases only.
 
 ### LLM-assisted development
 
