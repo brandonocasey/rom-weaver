@@ -656,7 +656,10 @@ jobs:
 
   webapp-webkit-e2e:
     name: Webapp E2E (WebKit)
-    runs-on: ubuntu-24.04
+    # The full WASM path requires WebKit OPFS. Playwright's Linux WebKit exposes
+    # the API surface but hangs when the first real OPFS-backed operation starts;
+    # macOS WebKit exercises the supported Safari-family implementation.
+    runs-on: macos-14
     timeout-minutes: 60
     needs: wasm
     if: github.ref_type != 'tag'
@@ -678,11 +681,8 @@ jobs:
           name: wasm-prod
           path: packages/rom-weaver-webapp/src/wasm
 
-      # Playwright WebKit exposes OPFS on the page but not from dedicated workers,
-      # while the WASM apply runtime requires worker OPFS. Keep WebKit coverage to
-      # the supported UI/accessibility smoke; Chromium covers the full WASM E2E.
-      - name: Webapp UI smoke (WebKit)
-        run: npm --prefix packages/rom-weaver-webapp run test:e2e:webapp:webkit -- --a11y
+      - name: Webapp E2E (WebKit)
+        run: npm --prefix packages/rom-weaver-webapp run test:e2e:webapp:webkit
 
   # Same shape as the `rust` aggregate above: one stable check name (`Webapp`)
   # for branch protection while the four webapp jobs run in parallel. Must

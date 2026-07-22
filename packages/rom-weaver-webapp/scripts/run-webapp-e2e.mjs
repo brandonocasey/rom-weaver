@@ -89,8 +89,8 @@ const scanLiveApp = async (page, label) => {
   process.stdout.write(`PASS accessibility ${label}\n`);
 };
 
-const runAccessibilityAudit = async (browser, baseUrl) => {
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+const runAccessibilityAudit = async (createContext, baseUrl) => {
+  const context = await createContext({ ignoreHTTPSErrors: true });
   const page = await context.newPage();
   const failures = [];
   page.on("pageerror", (error) => failures.push(error.stack || error.message));
@@ -149,8 +149,8 @@ const configureUncompressedOutput = async (page) => {
   await page.getByRole("button", { name: "Save" }).click();
 };
 
-const runApplyJourney = async (browser, baseUrl, name, fixtureNames) => {
-  const context = await browser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: true });
+const runApplyJourney = async (createContext, baseUrl, name, fixtureNames) => {
+  const context = await createContext({ acceptDownloads: true, ignoreHTTPSErrors: true });
   const page = await context.newPage();
   const failures = [];
   page.on("pageerror", (error) => failures.push(error.stack || error.message));
@@ -191,8 +191,8 @@ const runApplyJourney = async (browser, baseUrl, name, fixtureNames) => {
   }
 };
 
-const runArchiveStressSmoke = async (browser, baseUrl) => {
-  const context = await browser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: true });
+const runArchiveStressSmoke = async (createContext, baseUrl) => {
+  const context = await createContext({ acceptDownloads: true, ignoreHTTPSErrors: true });
   await context.addInitScript(() => {
     const calls = { releases: 0, requests: 0 };
     Object.defineProperty(window, "__romWeaverWakeLockTest", { value: calls });
@@ -233,7 +233,7 @@ const runArchiveStressSmoke = async (browser, baseUrl) => {
 
 const main = async () => {
   const port = await reservePort();
-  const baseUrl = `https://127.0.0.1:${port}/`;
+  const baseUrl = `https://${browserName === "webkit" ? "localhost" : "127.0.0.1"}:${port}/`;
   const server = childProcess.spawn(process.execPath, ["scripts/dev-server.mjs", "--port", String(port)], {
     cwd: PACKAGE_DIR,
     env: process.env,
@@ -255,21 +255,31 @@ const main = async () => {
       const unlistedStatus = await requestStatus(`${baseUrl}__rom_weaver_corpus__/files/not-listed.zip`);
       if (unlistedStatus !== 404) throw new Error(`unlisted corpus file returned ${unlistedStatus}, expected 404`);
     }
-    const browser = await browserType.launch({ headless: true });
+    const persistentContextDirs = [];
+    const browser = browserName === "webkit" ? null : await browserType.launch({ headless: true });
+    const createContext =
+      browserName === "webkit"
+        ? async (options) => {
+            const userDataDir = fs.mkdtempSync(path.join(process.env.TMPDIR || "/tmp", "rom-weaver-webkit-e2e-"));
+            persistentContextDirs.push(userDataDir);
+            return browserType.launchPersistentContext(userDataDir, { ...options, headless: true });
+          }
+        : (options) => browser.newContext(options);
     try {
-      await runAccessibilityAudit(browser, baseUrl);
+      await runAccessibilityAudit(createContext, baseUrl);
       if (A11Y_ONLY) return;
-      await runApplyJourney(browser, baseUrl, "raw apply/download", [
+      await runApplyJourney(createContext, baseUrl, "raw apply/download", [
         "archive_sources/game.bin",
         "archive_sources/change.ips",
       ]);
-      await runApplyJourney(browser, baseUrl, "archive routing/apply/download", [
+      await runApplyJourney(createContext, baseUrl, "archive routing/apply/download", [
         "archives/one-rom.zip",
         "archives/one-patch.7z",
       ]);
-      if (process.env.ROM_WEAVER_E2E_CORPUS_DIR) await runArchiveStressSmoke(browser, baseUrl);
+      if (process.env.ROM_WEAVER_E2E_CORPUS_DIR) await runArchiveStressSmoke(createContext, baseUrl);
     } finally {
-      await browser.close();
+      await browser?.close();
+      for (const userDataDir of persistentContextDirs) fs.rmSync(userDataDir, { force: true, recursive: true });
     }
   } catch (error) {
     if (serverOutput.trim()) process.stderr.write(`${serverOutput.trim()}\n`);
