@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Publish one package idempotently, choosing its dist-tag from its version.
 //
-// The release publishes six packages (four platform binaries, the launcher,
+// The release publishes eleven packages (nine platform binaries, the launcher,
 // and the unscoped alias) through three jobs that all need the same three
 // rules, and a copy of them that drifts either double-publishes or tags a
 // prerelease as `latest`:

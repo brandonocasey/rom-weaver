@@ -144,11 +144,11 @@ set `HTTPS_PORT` instead.
 ### CLI
 
 Every method below installs the same prebuilt binary from the GitHub release.
-macOS arm64 and x86-64, Linux x86-64, and Windows x86-64 are covered; other
-targets need the [source build](#build-from-source).
+The release covers macOS arm64 and x86-64; Linux x86-64 GNU plus x86-64,
+arm64, and i686 musl; and Windows arm64, x86-64, and x86.
 
 <details>
-<summary>Homebrew (macOS arm64, macOS Intel, Linux x86-64)</summary>
+<summary>Homebrew (macOS arm64/Intel, Linux arm64/x86-64)</summary>
 
 ```bash
 brew install brandonocasey/tap/rom-weaver

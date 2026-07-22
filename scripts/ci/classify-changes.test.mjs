@@ -63,12 +63,31 @@ test("Docker changes select only the affected images", () => {
 });
 
 test("Rust and vendored C changes build the CLI image", () => {
-  for (const path of ["crates/rom-weaver-core/src/lib.rs", "crates/rom-weaver-containers/vendor/libarchive/archive_read.c"]) {
+  for (const path of [
+    "crates/rom-weaver-core/src/lib.rs",
+    "crates/rom-weaver-containers/vendor/libarchive/archive_read.c",
+  ]) {
     assert.deepEqual(classify(path), {
       rust: "true",
       webapp: "true",
       security: "false",
       docker_cli: "true",
+      docker_webapp: "false",
+      full: "false",
+    });
+  }
+});
+
+test("native package changes build every CLI platform", () => {
+  for (const path of [
+    "packages/rom-weaver-cli-platforms/linux-arm64-musl/package.json",
+    "scripts/verify-cli-platform.mjs",
+  ]) {
+    assert.deepEqual(classify(path), {
+      rust: "true",
+      webapp: "true",
+      security: "false",
+      docker_cli: "false",
       docker_webapp: "false",
       full: "false",
     });

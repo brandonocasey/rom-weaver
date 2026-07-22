@@ -6,12 +6,24 @@ repo="brandonocasey/rom-weaver"
 version="${ROM_WEAVER_VERSION:-latest}"
 install_dir="${ROM_WEAVER_INSTALL_DIR:-$HOME/.local/bin}"
 
-case "$(uname -s):$(uname -m)" in
+system=$(uname -s)
+machine=$(uname -m)
+case "$system:$machine" in
   Darwin:arm64) platform="darwin-arm64" ;;
   Darwin:x86_64) platform="darwin-x64" ;;
-  Linux:x86_64) platform="linux-x64-gnu" ;;
+  Linux:x86_64)
+    libc=musl
+    if command -v getconf >/dev/null 2>&1 && getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+      libc=gnu
+    elif command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -Eqi 'glibc|gnu libc'; then
+      libc=gnu
+    fi
+    platform="linux-x64-$libc"
+    ;;
+  Linux:aarch64 | Linux:arm64) platform="linux-arm64-musl" ;;
+  Linux:i386 | Linux:i486 | Linux:i586 | Linux:i686) platform="linux-ia32-musl" ;;
   *)
-    echo "rom-weaver does not support $(uname -s)/$(uname -m)" >&2
+    echo "rom-weaver does not support $system/$machine" >&2
     exit 1
     ;;
 esac

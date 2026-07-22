@@ -9,7 +9,7 @@ automation.
 
 - [Install](#install)
   - [Prebuilt install](#prebuilt-install)
-    - [Homebrew (macOS arm64, macOS Intel, Linux x86-64)](#homebrew-macos-arm64-macos-intel-linux-x86-64)
+    - [Homebrew (macOS arm64/Intel, Linux arm64/x86-64)](#homebrew-macos-arm64intel-linux-arm64x86-64)
     - [Scoop (Windows)](#scoop-windows)
     - [Install script (macOS, Linux)](#install-script-macos-linux)
     - [Install script (Windows)](#install-script-windows)
@@ -45,11 +45,11 @@ automation.
 
 ### Prebuilt install
 
-Every method here installs the same binary built for the release: macOS arm64
-and x86-64, Linux x86-64, and Windows x86-64. Anything else needs the
-[source install](#source-install).
+Every method here installs a binary built for the release: macOS arm64 and
+x86-64; Linux x86-64 GNU plus x86-64, arm64, and i686 musl; and Windows
+arm64, x86-64, and x86.
 
-#### Homebrew (macOS arm64, macOS Intel, Linux x86-64)
+#### Homebrew (macOS arm64/Intel, Linux arm64/x86-64)
 
 ```bash
 brew install brandonocasey/tap/rom-weaver

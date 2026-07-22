@@ -1,0 +1,36 @@
+{
+  "name": "@rom-weaver/linux-ia32-musl",
+  "version": "0.7.0",
+  "description": "Linux ia32 musl binary for rom-weaver",
+  "author": "Brandon Casey",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brandonocasey/rom-weaver.git",
+    "directory": "packages/rom-weaver-cli-platforms/linux-ia32-musl"
+  },
+  "license": "AGPL-3.0-or-later",
+  "funding": "https://ko-fi.com/brandonocasey",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "ia32"
+  ],
+  "libc": [
+    "musl"
+  ],
+  "bin": {
+    "rom-weaver": "bin/rom-weaver"
+  },
+  "files": [
+    "bin/rom-weaver",
+    "LICENSE.md",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.md",
+    "third_party/licenses/**"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

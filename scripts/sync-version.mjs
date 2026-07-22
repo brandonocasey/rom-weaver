@@ -11,7 +11,12 @@ const syncedPackageJsonPaths = [
   "packages/rom-weaver-alias/package.json",
   "packages/rom-weaver-cli-platforms/darwin-arm64/package.json",
   "packages/rom-weaver-cli-platforms/darwin-x64/package.json",
+  "packages/rom-weaver-cli-platforms/linux-arm64-musl/package.json",
+  "packages/rom-weaver-cli-platforms/linux-ia32-musl/package.json",
   "packages/rom-weaver-cli-platforms/linux-x64-gnu/package.json",
+  "packages/rom-weaver-cli-platforms/linux-x64-musl/package.json",
+  "packages/rom-weaver-cli-platforms/win32-arm64-msvc/package.json",
+  "packages/rom-weaver-cli-platforms/win32-ia32-msvc/package.json",
   "packages/rom-weaver-cli-platforms/win32-x64-msvc/package.json",
 ];
 // Manifests carrying exact-pinned @rom-weaver/* deps. These pins are separate

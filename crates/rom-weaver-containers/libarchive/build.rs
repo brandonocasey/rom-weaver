@@ -188,9 +188,25 @@ pub fn build() {
     emit_wasm_patch_rerun_if_changed(&manifest_dir);
 
     let source_dir = prepare_source_tree(&manifest_dir, &libarchive_dir, &out_dir);
+    let target_sysroot = target_compiler_sysroot();
 
-    build_libarchive(&source_dir);
-    generate_bindings(&source_dir);
+    build_libarchive(&source_dir, target_sysroot.as_deref());
+    generate_bindings(&source_dir, target_sysroot.as_deref());
+}
+
+fn target_compiler_sysroot() -> Option<PathBuf> {
+    if env::var("CARGO_CFG_TARGET_ENV").ok().as_deref() != Some("musl") {
+        return None;
+    }
+
+    let compiler = cc::Build::new().get_compiler();
+    let output = compiler.to_command().arg("--print-sysroot").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let sysroot = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
+    sysroot.is_dir().then_some(sysroot)
 }
 
 fn is_wasm32_target() -> bool {
@@ -510,7 +526,7 @@ fn should_drop_cmakelists_line(trimmed: &str, drop_entries: &HashSet<String>) ->
         && drop_entries.iter().any(|entry| trimmed.contains(entry))
 }
 
-fn build_libarchive(libarchive_dir: &Path) {
+fn build_libarchive(libarchive_dir: &Path, target_sysroot: Option<&Path>) {
     let mut cmake_config = cmake::Config::new(libarchive_dir);
     cmake_config
         .build_target("archive_static")
@@ -530,6 +546,10 @@ fn build_libarchive(libarchive_dir: &Path) {
         .define("ENABLE_CAT", "OFF")
         .define("ENABLE_UNZIP", "OFF")
         .define("ENABLE_WERROR", "OFF");
+
+    if let Some(sysroot) = target_sysroot {
+        cmake_config.define("ICONV_INCLUDE_DIR", sysroot.join("include"));
+    }
 
     if is_wasm32_target() {
         let target = env::var("TARGET").unwrap_or_else(|_| "wasm32-wasip1".to_string());
@@ -636,7 +656,7 @@ fn build_libarchive(libarchive_dir: &Path) {
     }
 }
 
-fn generate_bindings(libarchive_dir: &Path) {
+fn generate_bindings(libarchive_dir: &Path, target_sysroot: Option<&Path>) {
     println!("cargo:rerun-if-changed={WRAPPER_HEADER}");
     println!(
         "cargo:rerun-if-changed={}",
@@ -697,6 +717,10 @@ fn generate_bindings(libarchive_dir: &Path) {
         if let Ok(target) = env::var("TARGET") {
             bindgen_builder = bindgen_builder.clang_arg(format!("--target={target}"));
         }
+    }
+
+    if let Some(sysroot) = target_sysroot {
+        bindgen_builder = bindgen_builder.clang_arg(format!("--sysroot={}", sysroot.display()));
     }
 
     // WASI-only: the sysroot must not reach a host build. .mise.toml exports

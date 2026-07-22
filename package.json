@@ -62,7 +62,12 @@
   "optionalDependencies": {
     "@rom-weaver/darwin-arm64": "0.7.0",
     "@rom-weaver/darwin-x64": "0.7.0",
+    "@rom-weaver/linux-arm64-musl": "0.7.0",
+    "@rom-weaver/linux-ia32-musl": "0.7.0",
     "@rom-weaver/linux-x64-gnu": "0.7.0",
+    "@rom-weaver/linux-x64-musl": "0.7.0",
+    "@rom-weaver/win32-arm64-msvc": "0.7.0",
+    "@rom-weaver/win32-ia32-msvc": "0.7.0",
     "@rom-weaver/win32-x64-msvc": "0.7.0"
   },
   "scripts": {

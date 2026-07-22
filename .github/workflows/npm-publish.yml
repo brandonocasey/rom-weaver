@@ -19,6 +19,10 @@ on:
         required: false
         default: false
         type: boolean
+    secrets:
+      NPM_BOOTSTRAP_TOKEN:
+        description: One-time token for packages that cannot use trusted publishing yet.
+        required: false
 concurrency:
   group: npm-publish-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
@@ -38,12 +42,55 @@ jobs:
         include:
           - package: darwin-arm64
             runner: macos-14
+            target: aarch64-apple-darwin
+            build: build
+            binary: rom-weaver
           - package: darwin-x64
             runner: macos-15-intel
+            target: x86_64-apple-darwin
+            build: build
+            binary: rom-weaver
+          - package: linux-arm64-musl
+            runner: ubuntu-24.04
+            target: aarch64-unknown-linux-musl
+            build: cross
+            binary: rom-weaver
+          - package: linux-ia32-musl
+            runner: ubuntu-24.04
+            target: i686-unknown-linux-musl
+            build: cross
+            binary: rom-weaver
           - package: linux-x64-gnu
             runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            build: build
+            binary: rom-weaver
+          - package: linux-x64-musl
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            build: cross
+            binary: rom-weaver
+          - package: win32-arm64-msvc
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            build: build
+            binary: rom-weaver.exe
+            msvc_arch: arm64
+            msvc_host: arm64
+          - package: win32-ia32-msvc
+            runner: windows-2025
+            target: i686-pc-windows-msvc
+            build: build
+            binary: rom-weaver.exe
+            msvc_arch: x86
+            msvc_host: amd64
           - package: win32-x64-msvc
             runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            build: build
+            binary: rom-weaver.exe
+            msvc_arch: amd64
+            msvc_host: amd64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -51,11 +98,13 @@ jobs:
           ref: ${{ inputs.sha || format('v{0}', inputs.version) }}
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       # Nothing on main builds --release, and CI is Linux-only, so there is no
       # upstream cache to seed from: this pays off from the second release
       # onward, when a tag run restores what the previous tag run saved.
-      # Keyed per matrix entry - the four platforms share no artifacts.
+      # Keyed per matrix entry - the nine platforms share no artifacts.
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -67,6 +116,11 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes cmake ninja-build pkg-config
 
+      - uses: taiki-e/install-action@v2
+        if: matrix.build == 'cross'
+        with:
+          tool: cross@0.2.5
+
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -74,10 +128,25 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Build native CLI
-        run: cargo build --locked --release --package rom-weaver-cli
+        if: runner.os != 'Windows' && matrix.build != 'cross'
+        run: cargo build --locked --release --package rom-weaver-cli --target ${{ matrix.target }}
+
+      - name: Build native CLI
+        if: matrix.build == 'cross'
+        run: cross build --locked --release --package rom-weaver-cli --target ${{ matrix.target }}
+
+      - name: Build native CLI
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSINSTALL=%%i"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=${{ matrix.msvc_arch }} -host_arch=${{ matrix.msvc_host }}
+          cargo build --locked --release --package rom-weaver-cli --target ${{ matrix.target }}
 
       - name: Prepare platform package
-        run: node scripts/prepare-npm-platform-package.mjs ${{ matrix.package }}
+        run: >-
+          node scripts/prepare-npm-platform-package.mjs ${{ matrix.package }}
+          target/${{ matrix.target }}/release/${{ matrix.binary }}
 
       # Keep the compiled package outside the publish job. A failed npm or
       # release-asset step can then rerun without rebuilding Rust.
@@ -122,8 +191,18 @@ jobs:
             runner: macos-14
           - package: darwin-x64
             runner: macos-15-intel
+          - package: linux-arm64-musl
+            runner: ubuntu-24.04-arm
+          - package: linux-ia32-musl
+            runner: ubuntu-24.04
           - package: linux-x64-gnu
             runner: ubuntu-24.04
+          - package: linux-x64-musl
+            runner: ubuntu-24.04
+          - package: win32-arm64-msvc
+            runner: windows-11-arm
+          - package: win32-ia32-msvc
+            runner: windows-2025
           - package: win32-x64-msvc
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
@@ -152,7 +231,7 @@ jobs:
         run: node scripts/ci/npm-publish-package.mjs --dry-run packages/rom-weaver-cli-platforms/${{ matrix.package }}
 
   # A matrix dependency is a barrier over every matrix entry. No registry
-  # publish starts unless all four downloaded platform artifacts passed the
+  # publish starts unless all nine downloaded platform artifacts passed the
   # same publish helper in dry-run mode on their target operating systems.
   platform:
     name: Publish ${{ matrix.package }}
@@ -167,12 +246,33 @@ jobs:
         include:
           - package: darwin-arm64
             runner: macos-14
+            bootstrap: false
           - package: darwin-x64
             runner: macos-15-intel
+            bootstrap: false
+          # ponytail: Remove this first-publish bridge after configuring trusted
+          # publishers for the five new packages.
+          - package: linux-arm64-musl
+            runner: ubuntu-24.04-arm
+            bootstrap: true
+          - package: linux-ia32-musl
+            runner: ubuntu-24.04
+            bootstrap: true
           - package: linux-x64-gnu
             runner: ubuntu-24.04
+            bootstrap: false
+          - package: linux-x64-musl
+            runner: ubuntu-24.04
+            bootstrap: true
+          - package: win32-arm64-msvc
+            runner: windows-11-arm
+            bootstrap: true
+          - package: win32-ia32-msvc
+            runner: windows-2025
+            bootstrap: true
           - package: win32-x64-msvc
             runner: windows-2025
+            bootstrap: false
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -196,7 +296,14 @@ jobs:
 
       - name: Publish platform package
         shell: bash
-        run: node scripts/ci/npm-publish-package.mjs packages/rom-weaver-cli-platforms/${{ matrix.package }}
+        env:
+          NODE_AUTH_TOKEN: ${{ matrix.bootstrap && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
+        run: |
+          if [[ "${{ matrix.bootstrap }}" == true && -z "$NODE_AUTH_TOKEN" ]]; then
+            echo "::error::NPM_BOOTSTRAP_TOKEN is required for first publication"
+            exit 1
+          fi
+          node scripts/ci/npm-publish-package.mjs packages/rom-weaver-cli-platforms/${{ matrix.package }}
 
       # After the npm publish, not before: npm is the irreversible half, so a
       # release-asset failure must not be able to skip it.

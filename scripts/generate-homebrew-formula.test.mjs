@@ -13,7 +13,8 @@ test("generates a formula from release checksums", () => {
     for (const [platform, digit] of [
       ["darwin-arm64", "a"],
       ["darwin-x64", "b"],
-      ["linux-x64-gnu", "c"],
+      ["linux-arm64-musl", "c"],
+      ["linux-x64-gnu", "d"],
     ]) {
       writeFileSync(
         join(checksums, `rom-weaver-${platform}.sha256`),
@@ -32,10 +33,12 @@ test("generates a formula from release checksums", () => {
     assert.match(formula, /version "1\.2\.3"/);
     assert.match(formula, /releases\/download\/v1\.2\.3\/rom-weaver-darwin-arm64/);
     assert.match(formula, /releases\/download\/v1\.2\.3\/rom-weaver-darwin-x64/);
+    assert.match(formula, /releases\/download\/v1\.2\.3\/rom-weaver-linux-arm64-musl/);
     assert.match(formula, /releases\/download\/v1\.2\.3\/rom-weaver-linux-x64-gnu/);
     assert.match(formula, new RegExp(`sha256 "${"a".repeat(64)}"`));
     assert.match(formula, new RegExp(`sha256 "${"b".repeat(64)}"`));
     assert.match(formula, new RegExp(`sha256 "${"c".repeat(64)}"`));
+    assert.match(formula, new RegExp(`sha256 "${"d".repeat(64)}"`));
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -8,7 +8,7 @@ if (!version || !checksumDirectory) {
   throw new Error("usage: generate-homebrew-formula.mjs <version> <checksum-directory> [output]");
 }
 
-const platforms = ["darwin-arm64", "darwin-x64", "linux-x64-gnu"];
+const platforms = ["darwin-arm64", "darwin-x64", "linux-arm64-musl", "linux-x64-gnu"];
 const checksums = Object.fromEntries(
   platforms.map((platform) => {
     const asset = `rom-weaver-${platform}`;
@@ -39,7 +39,10 @@ const source = `class RomWeaver < Formula
   end
 
   on_linux do
-    depends_on arch: :x86_64
+    on_arm do
+      url "${releaseUrl}/rom-weaver-linux-arm64-musl"
+      sha256 "${checksums["linux-arm64-musl"]}"
+    end
     on_intel do
       url "${releaseUrl}/rom-weaver-linux-x64-gnu"
       sha256 "${checksums["linux-x64-gnu"]}"

@@ -25,6 +25,11 @@ sha1.workspace = true
 sha2.workspace = true
 tracing.workspace = true
 
+[target.'cfg(target_arch = "x86")'.dependencies]
+# BLAKE3's 32-bit C AVX-512 probe is accepted by Clang but its intrinsics fail
+# to compile. The pure implementation keeps both i686 release targets portable.
+blake3 = { workspace = true, features = ["pure"] }
+
 [dev-dependencies]
 proptest = "1.6.0"
 
