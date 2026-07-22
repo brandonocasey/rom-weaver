@@ -38,12 +38,18 @@ automation.
 
 ### Prebuilt install
 
-Prebuilt installers will become available with the first GitHub Release.
+The first public release, v0.6.7, includes prebuilt installers.
 
-Install with Homebrew on macOS or x86-64 Linux:
+Install with Homebrew on macOS arm64, macOS Intel, or x86-64 Linux:
 
 ```bash
 brew install brandonocasey/tap/rom-weaver
+```
+
+Or install the cross-platform npm package with Node.js 22+:
+
+```bash
+npm install --global rom-weaver
 ```
 
 Or download the latest release to `~/.local/bin`:

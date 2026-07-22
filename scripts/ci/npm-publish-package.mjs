@@ -19,13 +19,16 @@
 //
 // Usage: npm-publish-package.mjs [package-dir]   (default: repository root)
 import spawn from "cross-spawn";
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const dir = resolve(process.argv[2] ?? ".");
 const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
 const spec = `${manifest.name}@${manifest.version}`;
 const tag = manifest.version.includes("-") ? "beta" : "latest";
+const binary = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.["rom-weaver"];
+
+if (binary && !binary.endsWith(".exe")) chmodSync(join(dir, binary), 0o755);
 
 const runNpm = (args, options) => {
   const result = spawn.sync("npm", args, options);
