@@ -322,10 +322,12 @@ to `source` when there is none, and so still works standalone under
 
 Two consequences worth knowing:
 
-- The CLI runtime is `debian:trixie-slim`, not bookworm. The reused binary is
+- The CLI runtime is `gcr.io/distroless/cc-debian13`, and the `debian13`
+  (trixie) half of that is load-bearing, not bookworm. The reused binary is
   linked against the glibc of the `ubuntu-24.04` runner `publish-npm` builds on
   (2.39), which bookworm's 2.36 cannot load; trixie ships 2.41 and accepts both
-  halves of the switch.
+  halves of the switch. `-cc` rather than `-base` supplies the
+  libgcc/libstdc++ the vendored C deps expect. There is no shell in the image.
 - `static-webapp` packages a raw webapp tarball. The webapp Dockerfile adds the
   `.br`/`.gz` siblings that its static-web-server expects
   (`compression-static` in `sws.toml`) after the shared raw artifact is copied.
