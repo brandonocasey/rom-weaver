@@ -1,7 +1,8 @@
 # Self-hosting the webapp
 
-rom-weaver is a static webapp. Host it on its own HTTPS subdomain or under a
-dedicated path such as `https://example.com/rom-weaver/`. A subdomain is the
+rom-weaver is a static webapp. The browser-facing URL must use HTTPS (except
+for localhost). Host it on its own HTTPS subdomain or under a dedicated path
+such as `https://example.com/rom-weaver/`. A subdomain is the
 safest choice; a subpath is also supported because the build uses relative
 asset URLs and registers its service worker with a relative scope.
 
@@ -45,7 +46,10 @@ To use another host port:
 PORT=3000 docker compose up --build --detach
 ```
 
-The container listens on port 8080 over plain HTTP. For an Nginx subpath route:
+The container listens on port 8080 over plain HTTP. This is suitable when an
+HTTPS reverse proxy terminates TLS. The proxy must present a certificate that
+the browser trusts and forward the request to the container. For an Nginx
+subpath route:
 
 ```nginx
 location = /rom-weaver {
@@ -63,6 +67,24 @@ the required COOP/COEP headers, serves SPA fallbacks, and serves the build's
 precompressed Brotli files.
 
 For a dedicated subdomain, route its `/` location to the same container.
+
+If you do not have a reverse proxy, Compose can terminate HTTPS in the
+container. Put a certificate and matching private key in a directory, using
+`fullchain.pem` and `privkey.pem` as the default filenames:
+
+```bash
+mkdir -p certs
+cp /path/to/fullchain.pem certs/fullchain.pem
+cp /path/to/privkey.pem certs/privkey.pem
+HTTPS_PORT=8443 docker compose up --build --detach
+```
+
+Open `https://your-host:8443/`. `HTTPS_PORT` is the host port and enables the
+container's TLS listener; it is not used together with `PORT`. To use different
+filenames, set `HTTPS_CERT` and `HTTPS_KEY` to paths inside the mounted
+certificate directory. Use a certificate trusted by the browser. A
+self-signed certificate is suitable only when every client explicitly trusts
+it; dismissing a browser warning is not a production certificate setup.
 
 Useful lifecycle commands:
 

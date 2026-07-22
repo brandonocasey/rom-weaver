@@ -170,7 +170,8 @@ webapp builds, and tests.
 The Docker source build serves the full webapp — WASM build, cross-origin
 isolation headers, SPA fallback, and precompressed assets included. The
 [self-hosting guide](docs/self-hosting.md) covers reverse proxies, subpath
-routing, service-worker scope, and the required COOP/COEP headers.
+routing, HTTPS certificates, service-worker scope, and the required COOP/COEP
+headers.
 
 Build and start it with Docker Compose:
 
@@ -184,6 +185,8 @@ curl --fail --silent --show-error http://localhost:8080/health
 Only Docker with Compose is required; the image installs its own build
 toolchains. Set `PORT` to change the host port, for example
 `PORT=3000 docker compose up --build --detach`.
+For standalone TLS, mount a trusted certificate as described in the guide and
+set `HTTPS_PORT` instead.
 
 ## Screenshots
 

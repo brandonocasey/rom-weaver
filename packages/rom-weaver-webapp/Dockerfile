@@ -139,12 +139,12 @@ COPY --from=dist / /dist
 COPY packages/rom-weaver-webapp/scripts/compress-static-assets.mjs /usr/local/bin/
 RUN node /usr/local/bin/compress-static-assets.mjs /dist
 
-# static-web-server serves the generated SPA as a non-root user. HTTPS is
-# terminated by the reverse proxy described in docs/self-hosting.md.
+# static-web-server serves the generated SPA as a non-root user. HTTPS can be
+# terminated by a reverse proxy or by static-web-server itself.
 FROM ghcr.io/static-web-server/static-web-server:2-alpine AS runtime
 COPY packages/rom-weaver-webapp/sws.toml /etc/sws.toml
 COPY --from=compressed /dist /srv
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:8080/health || exit 1
+    CMD if [ -n "$${HTTPS_PORT}" ]; then test -s "$${HTTPS_CERT}" && test -s "$${HTTPS_KEY}"; else wget -qO- http://127.0.0.1:8080/health; fi
 CMD ["--config-file", "/etc/sws.toml"]
