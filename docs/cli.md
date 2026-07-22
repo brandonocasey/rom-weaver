@@ -38,7 +38,7 @@ automation.
 
 ### Prebuilt install
 
-The first public release, v0.6.7, includes prebuilt installers.
+The first public release, v0.6.8, includes prebuilt installers.
 
 Install with Homebrew on macOS arm64, macOS Intel, or x86-64 Linux:
 

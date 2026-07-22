@@ -77,9 +77,9 @@ libraries elsewhere is not supported.
 
 ### First public release
 
-v0.6.7 is the first public release available to install. The changelog and the
-git history go back further, but v0.6.0 through v0.6.6 failed partway through
-the release pipeline or were only partially published. v0.6.7 is the first
+v0.6.8 is the first public release available to install. The changelog and the
+git history go back further, but v0.6.0 through v0.6.7 failed partway through
+the release pipeline or were only partially published. v0.6.8 is the first
 release with a complete set of artifacts across npm, Homebrew, and the
 container registry. Earlier version numbers describe development history or
 incomplete releases only.
@@ -110,7 +110,7 @@ To run the webapp on your own infrastructure, see
 
 ### CLI
 
-The first public release, v0.6.7, includes prebuilt installers.
+The first public release, v0.6.8, includes prebuilt installers.
 
 Install with Homebrew on macOS arm64, macOS Intel, or x86-64 Linux:
 
