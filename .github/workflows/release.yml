@@ -96,6 +96,84 @@ jobs:
           RELEASE_PR_BRANCH: ${{ steps.release-pr.outputs.branch }}
         run: node scripts/aggregate-release-changelog.mjs
 
+  # Lives here rather than in cargo-publish.yml, where it used to run, because
+  # there it was too late to act on: cargo-publish.yml is triggered by the
+  # release tag, which only exists once the draft has been published and made
+  # immutable. A break found at that point left the release out, the crates
+  # unpublished, and the version unrepeatable. Here it gates publish-release, so
+  # a failure leaves a deletable draft and the version free to be cut again.
+  #
+  # Safe to run alongside the publishing jobs: it publishes nothing, so it needs
+  # no registry credentials and cannot half-release anything on failure.
+  semver-check:
+    name: Check for breaking API changes
+    needs: release
+    if: needs.release.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes clang cmake libclang-dev ninja-build pkg-config
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo-publish
+          cache-on-failure: true
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@cargo-semver-checks
+
+      # semver-checks builds rustdoc for each crate's published baseline before
+      # it can diff. Baselines only change when a version is released, so this
+      # survives across releases even though the current-tree half does not.
+      - name: Cache cargo-semver-checks baselines
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/cargo-semver-checks
+          key: semver-checks-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            semver-checks-${{ runner.os }}-
+
+      - name: Check for accidental breaking API changes
+        shell: bash
+        # Runs per-crate rather than --workspace so a crate with no published
+        # baseline (first release, or a newly added crate) is skipped instead of
+        # failing the whole job. cargo-semver-checks compares the working tree
+        # against the latest release on crates.io; a major-version bump is the
+        # intended way to land a genuine break.
+        run: |
+          mapfile -t names < <(
+            cargo metadata --no-deps --format-version 1 |
+              jq --raw-output '
+                .workspace_members as $members
+                | .packages[]
+                | select(.id as $id | $members | index($id))
+                | select(.publish != [])
+                | .name
+              '
+          )
+
+          for name in "${names[@]}"; do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --user-agent "$CRATES_IO_USER_AGENT" \
+              "https://crates.io/api/v1/crates/$name")
+            if [[ "$status" != 200 ]]; then
+              echo "::notice::$name has no published baseline yet - skipping semver check"
+              continue
+            fi
+            cargo semver-checks check-release --package "$name"
+          done
+        env:
+          CRATES_IO_USER_AGENT: rom-weaver-release-workflow (https://github.com/${{ github.repository }})
+
   # Package the static site beside the registry publishes rather than making all
   # of them wait for another production WASM build. The release PR head's CI
   # artifact is reused; manual releases fall back to a source build when no
@@ -213,8 +291,15 @@ jobs:
       sha: ${{ needs.release.outputs.sha }}
       cache-save: false
 
+  # After publish-release, not before: the formula points at
+  # releases/download/vX.Y.Z/... and a draft's assets are not publicly
+  # downloadable, so pushing it earlier put a live formula in the tap whose URLs
+  # 404 until the draft is published. This is also the safer half of the
+  # tradeoff it costs - a failed formula push no longer holds the draft, and it
+  # is the one publish in the fan-out that is trivially retryable, being a git
+  # push to a repository we own rather than an irreversible registry write.
   publish-homebrew:
-    needs: [release, publish-npm]
+    needs: [release, publish-release]
     if: >-
       needs.release.outputs.release_created == 'true' &&
       !contains(needs.release.outputs.version, '-')
@@ -281,6 +366,63 @@ jobs:
           git commit -m "rom-weaver $VERSION"
           git push
 
+  # Windows counterpart to publish-homebrew, with the same ordering and the same
+  # prerelease skip: a bucket has one manifest per package, so publishing a beta
+  # there would hand it to every stable user.
+  publish-scoop:
+    needs: [release, publish-release]
+    if: >-
+      needs.release.outputs.release_created == 'true' &&
+      !contains(needs.release.outputs.version, '-')
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+
+      - name: Download win32 x64 package
+        uses: actions/download-artifact@v5
+        with:
+          name: npm-platform-win32-x64-msvc
+          path: platform-artifacts/win32-x64-msvc
+
+      - name: Calculate release checksum
+        run: |
+          set -euo pipefail
+          mkdir checksums
+          asset=rom-weaver-win32-x64-msvc.exe
+          binary=platform-artifacts/win32-x64-msvc/bin/rom-weaver.exe
+          test -f "$binary"
+          printf '%s  %s\n' "$(sha256sum "$binary" | cut -d ' ' -f 1)" "$asset" > \
+            "checksums/$asset.sha256"
+
+      - name: Checkout Scoop bucket
+        uses: actions/checkout@v7
+        with:
+          repository: brandonocasey/scoop-bucket
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          path: scoop-bucket
+
+      - name: Update manifest
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: node scripts/generate-scoop-manifest.mjs "$VERSION" checksums scoop-bucket/bucket/rom-weaver.json
+
+      - name: Publish manifest
+        working-directory: scoop-bucket
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add bucket/rom-weaver.json
+          git diff --cached --quiet && exit 0
+          git commit -m "rom-weaver $VERSION"
+          git push
+
   # Both images are assembled from artifacts these two jobs produce, so this now
   # runs after them instead of beside them. The serialization is bought back
   # several times over: the webapp image no longer builds a toolchain and a wasm
@@ -309,21 +451,24 @@ jobs:
       sha: ${{ needs.release.outputs.sha }}
 
   # Publishing the draft is what creates the tag and stamps the release
-  # immutable, so it has to come last: assets can only be attached while the
-  # release is still a draft. A failure anywhere above leaves the draft in
-  # place, which is deletable and frees the version to be cut again - a
-  # published immutable release permanently reserves its tag name.
-  # Creating the tag here is also what triggers cargo-publish.yml.
+  # immutable, so every job that attaches an asset has to come first: assets can
+  # only be attached while the release is still a draft. A failure in any of
+  # them leaves the draft in place, which is deletable and frees the version to
+  # be cut again - a published immutable release permanently reserves its tag
+  # name. Creating the tag here is also what triggers cargo-publish.yml.
+  #
+  # publish-homebrew and publish-scoop deliberately run *after* this rather than
+  # gating it; see the comment on publish-homebrew.
   publish-release:
     name: Publish draft release
-    needs: [release, static-webapp, publish-npm, publish-homebrew, publish-containers]
+    needs: [release, semver-check, static-webapp, publish-npm, publish-containers]
     if: >-
       always() &&
       needs.release.outputs.release_created == 'true' &&
+      needs.semver-check.result == 'success' &&
       needs.static-webapp.result == 'success' &&
       needs.publish-npm.result == 'success' &&
-      needs.publish-containers.result == 'success' &&
-      (needs.publish-homebrew.result == 'success' || needs.publish-homebrew.result == 'skipped')
+      needs.publish-containers.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

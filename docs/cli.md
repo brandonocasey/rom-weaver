@@ -9,6 +9,13 @@ automation.
 
 - [Install](#install)
   - [Prebuilt install](#prebuilt-install)
+    - [Homebrew (macOS arm64, macOS Intel, Linux x86-64)](#homebrew-macos-arm64-macos-intel-linux-x86-64)
+    - [Scoop (Windows)](#scoop-windows)
+    - [Install script (macOS, Linux)](#install-script-macos-linux)
+    - [Install script (Windows)](#install-script-windows)
+    - [npm](#npm)
+    - [cargo-binstall](#cargo-binstall)
+    - [mise](#mise)
   - [Source install](#source-install)
   - [Run in Docker](#run-in-docker)
   - [Development checkout](#development-checkout)
@@ -38,23 +45,80 @@ automation.
 
 ### Prebuilt install
 
-Prebuilt installers will become available with the first GitHub Release.
+Every method here installs the same binary built for the release: macOS arm64
+and x86-64, Linux x86-64, and Windows x86-64. Anything else needs the
+[source install](#source-install).
 
-Install with Homebrew on macOS or x86-64 Linux:
+#### Homebrew (macOS arm64, macOS Intel, Linux x86-64)
 
 ```bash
 brew install brandonocasey/tap/rom-weaver
 ```
 
-Or download the latest release to `~/.local/bin`:
+#### Scoop (Windows)
+
+```powershell
+scoop bucket add brandonocasey https://github.com/brandonocasey/scoop-bucket
+scoop install rom-weaver
+```
+
+#### Install script (macOS, Linux)
+
+Downloads the latest release to `~/.local/bin` and checks it against the
+published checksum. Set `ROM_WEAVER_INSTALL_DIR` to choose another directory, or
+`ROM_WEAVER_VERSION` to install a specific release.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/install.sh | sh
 ```
 
-Set `ROM_WEAVER_INSTALL_DIR` to choose another directory, or
-`ROM_WEAVER_VERSION` to install a specific release.
+#### Install script (Windows)
+
+The PowerShell equivalent, installing to `%LOCALAPPDATA%\rom-weaver\bin`. It
+honors the same two environment variables.
+
+```powershell
+irm https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/install.ps1 | iex
+```
+
+#### npm
+
+The only channel covering every supported target at once. Needs Node.js 22+.
+The unscoped `rom-weaver` package points at the `@rom-weaver/cli` launcher,
+whose binary arrives through a platform-specific optional dependency, so only
+your platform's binary is downloaded.
+
+```bash
+npm install --global rom-weaver
+```
+
+Use the scoped launcher directly for a one-off run, or as a dev dependency to
+pin the version a repository's scripts expect:
+
+```bash
+npx @rom-weaver/cli probe --input game.iso
+npm install --save-dev @rom-weaver/cli
+```
+
+#### cargo-binstall
+
+Fetches the released binary instead of compiling the workspace, which
+`cargo install rom-weaver-cli` would otherwise do.
+
+```bash
+cargo binstall rom-weaver-cli
+```
+
+#### mise
+
+Pins the CLI per project in `mise.toml` and verifies the release's GitHub
+artifact attestations on install. Pass an explicit version - mise cannot resolve
+`@latest` for this repository.
+
+```bash
+mise use github:brandonocasey/rom-weaver@0.6.7
+```
 
 ### Source install
 

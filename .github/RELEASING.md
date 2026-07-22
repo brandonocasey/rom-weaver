@@ -13,6 +13,7 @@ release pull request and `CHANGELOG.md`. Merging that pull request creates the
 - six npm packages: `@rom-weaver/cli`, its four `@rom-weaver/<platform>`
   binaries, and the unscoped `rom-weaver` alias that depends on the launcher;
 - the `rom-weaver` formula in `brandonocasey/homebrew-tap` for stable releases;
+- the `rom-weaver` manifest in `brandonocasey/scoop-bucket` for stable releases;
 - `ghcr.io/<owner>/rom-weaver-cli`;
 - `ghcr.io/<owner>/rom-weaver-webapp`.
 
@@ -62,6 +63,10 @@ as available.
    then add a fine-grained `HOMEBREW_TAP_TOKEN` Actions secret with Contents
    read/write access to that repository. Stable releases update
    `Formula/rom-weaver.rb`; prereleases leave the tap unchanged.
+8. Create the public `brandonocasey/scoop-bucket` repository with a README and
+   an empty `bucket/` directory, then add a fine-grained `SCOOP_BUCKET_TOKEN`
+   Actions secret with Contents read/write access to it. Stable releases update
+   `bucket/rom-weaver.json`; prereleases leave the bucket unchanged.
 
 Push the baseline tag and current branch to start Release Please:
 
@@ -199,10 +204,12 @@ Use `feat(scope): ...` for a minor release, `fix(scope): ...` for a patch, and
 allowed types do not trigger a release by themselves.
 
 Release Please opens or updates a release pull request. Merging it creates a
-**draft** GitHub Release and runs every publisher against that draft. The final
-`publish-release` job publishes it, which is what creates the `vX.Y.Z` tag and
-in turn triggers the crates.io publish. Follow progress under GitHub's
-**Actions → Release** page.
+**draft** GitHub Release and runs every asset-producing publisher against that
+draft. The `publish-release` job publishes it, which is what creates the
+`vX.Y.Z` tag and in turn triggers the crates.io publish. The Homebrew and Scoop
+pushes run after that, because the manifests they write point at release
+download URLs that do not resolve while the release is a draft. Follow progress
+under GitHub's **Actions → Release** page.
 
 > **Never publish a draft release by hand, and never re-cut a version whose
 > release was published.** Immutable releases are enabled, so publishing is a
@@ -259,8 +266,10 @@ dependents while preserving successful jobs and the artifacts they produced.
 Do not choose **Re-run all jobs**: that needlessly repeats the native builds.
 
 Because the release is still a draft, `publish-release` will not have run, so
-nothing is stamped immutable and the retry can still attach assets. From the
-CLI, the same recovery is:
+nothing is stamped immutable and the retry can still attach assets. A
+`publish-homebrew` or `publish-scoop` failure is the exception: those run after
+the release is published, so the release itself is fine and rerunning the one
+job is the whole fix. From the CLI, the same recovery is:
 
 ```bash
 gh workflow run release-retry.yml -f run_id=29885072562

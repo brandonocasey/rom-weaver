@@ -20,6 +20,7 @@ publishing, and retry procedures - see the [release guide](../.github/RELEASING.
 - [Release fan-out](#release-fan-out)
   - [Containers reuse what the fan-out already built](#containers-reuse-what-the-fan-out-already-built)
   - [Draft-first releases](#draft-first-releases)
+  - [Package managers publish last](#package-managers-publish-last)
   - [Prerelease routing](#prerelease-routing)
 - [Actions cache budget](#actions-cache-budget)
   - [Why the Docker build cache is not in this budget](#why-the-docker-build-cache-is-not-in-this-budget)
@@ -41,7 +42,7 @@ publishing, and retry procedures - see the [release guide](../.github/RELEASING.
 | `e2e-nightly.yml` | nightly 07:41 UTC, manual | No | Exhaustive Chromium + WebKit E2E matrix |
 | `cache-cleanup.yml` | daily 09:00 UTC, manual | No | Reap closed-PR Actions caches |
 | `release.yml` | after a successful `CI` on `main`, manual | n/a | Release Please, then the publish fan-out |
-| `cargo-publish.yml` | `v*` tag push, manual | n/a | crates.io publish + semver check |
+| `cargo-publish.yml` | `v*` tag push, manual | n/a | crates.io publish |
 | `npm-publish.yml` | called by `release.yml` | n/a | 4 platform packages, launcher, alias |
 | `docker-publish.yml` | called by `release.yml`, manual | n/a | CLI + webapp images to ghcr.io |
 
@@ -290,11 +291,17 @@ spec would tag every platform package as a prerelease.
 
 | Job | Produces |
 | --- | --- |
+| `semver-check` | nothing - gates the publish on no accidental breaking API change |
 | `static-webapp` | `rom-weaver-webapp.tar.gz` + checksum on the GitHub release |
 | `publish-npm` | 4 platform packages → launcher → unscoped alias, in that order |
-| `publish-homebrew` | formula commit to `brandonocasey/homebrew-tap` (stable only) |
 | `publish-containers` | `ghcr.io/.../rom-weaver-cli` and `-webapp`, signed provenance |
 | `publish-release` | flips the draft release to published, creating the tag |
+| `publish-homebrew` | formula commit to `brandonocasey/homebrew-tap` (stable only) |
+| `publish-scoop` | manifest commit to `brandonocasey/scoop-bucket` (stable only) |
+
+The table is in dependency order. Everything above `publish-release` attaches an
+asset to the draft or gates it; the two package-manager pushes come after it, and
+[Package managers publish last](#package-managers-publish-last) explains why.
 
 Ordering inside `publish-npm` is load-bearing: the unscoped `rom-weaver` alias
 is a dependency-only pointer at `@rom-weaver/cli`, so publishing it first would
@@ -355,14 +362,39 @@ The standalone Cargo and Docker dispatches fall back to `v${version}`, which by
 then exists.
 
 `cargo-publish.yml` is triggered by the resulting `v*` tag push instead of being
-called by `release.yml`. crates.io Trusted Publishing rejects the `workflow_run`
-event that gates `release.yml`, and a reusable workflow inherits its caller's
-event, so OIDC could never authenticate from inside the fan-out. Keying off the
-tag also orders it naturally last.
+called by `release.yml`. `release.yml` never runs on an event crates.io Trusted
+Publishing accepts: ordinary commits reach it through `workflow_run`, which
+Trusted Publishing rejects outright, and the runs that actually set
+`release_created` arrive through `pull_request` (the release pull request
+closing), which it will not accept either. A job inherits its workflow's event,
+so OIDC could never authenticate from inside the fan-out. Keying off the tag
+also orders it naturally last.
 
-`cargo-semver-checks` runs per-crate rather than `--workspace` so a crate with
-no published baseline (a first release, or a newly added crate) is skipped
-instead of failing the whole job.
+`cargo-semver-checks` runs in `release.yml` as the `semver-check` job, not in
+`cargo-publish.yml` where it used to live. By the time the tag exists the
+release is published and immutable and the version can never be re-cut, so a
+break found there could not be acted on; as a gate on `publish-release` a
+failure leaves a deletable draft instead. It publishes nothing, so it needs no
+registry credentials and runs alongside the publishing jobs.
+
+It runs per-crate rather than `--workspace` so a crate with no published
+baseline (a first release, or a newly added crate) is skipped instead of
+failing the whole job.
+
+### Package managers publish last
+
+`publish-homebrew` and `publish-scoop` run **after** `publish-release`, not as
+gates on it. Both write a manifest whose download URL is
+`releases/download/vX.Y.Z/...`, and a draft release's assets are not publicly
+downloadable - pushing them earlier put a live formula in the tap and a live
+manifest in the bucket whose URLs 404 until the draft was published.
+
+The ordering costs the property that a tap failure holds the draft, and that is
+the better half of the trade. These two are the only publishes in the fan-out
+that are trivially retryable: a git push to a repository we own, with no
+registry state to reconcile. Rerunning the job fixes it. Everything that *is*
+irreversible - npm, the container registry, the release itself - still gates
+`publish-release`, and crates.io still runs after the tag for the same reason.
 
 ### Prerelease routing
 
@@ -419,6 +451,7 @@ compile for the layer that runs the build.
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | `ci.yml` deploy | Pages Direct Upload |
 | `RELEASE_PLEASE_TOKEN` | `release.yml` | Opening the release pull request |
 | `HOMEBREW_TAP_TOKEN` | `release.yml` | Pushing to the tap repository |
+| `SCOOP_BUCKET_TOKEN` | `release.yml` | Pushing to the Scoop bucket repository |
 | `GITHUB_TOKEN` | everywhere | ghcr.io, releases, statuses, cache deletion |
 
 crates.io needs no stored secret - `rust-lang/crates-io-auth-action` mints a
