@@ -4,7 +4,7 @@
 </h1>
 
 <p align="center">
-  The <code>rom-weaver</code> command-line tool: a local-first offline toolkit for ROMs and ROM hack patches.
+  The <code>rom-weaver</code> command-line tool: Local-first toolkit for ROMs and disc images: inspect, extract, compress, and apply, create, or bundle patches. Offline via a browser service-worker PWA or CLI.
 </p>
 
 <p align="center">

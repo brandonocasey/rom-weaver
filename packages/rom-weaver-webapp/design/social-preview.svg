@@ -41,10 +41,10 @@
     <rect x="522" y="186" width="98" height="7" rx="3.5" fill="#d9690f"/>
     <rect x="632" y="186" width="58" height="7" rx="3.5" fill="#4a6d63"/>
 
-    <text x="520" y="260" fill="#edf0f5" font-size="24" font-weight="700">A local-first offline toolkit for ROMs and ROM hack patches.</text>
-    <text x="520" y="318" fill="#b3bbc8" font-size="20" font-weight="600">Inspect, extract, checksum, compress, trim, apply patches,</text>
-    <text x="520" y="350" fill="#b3bbc8" font-size="20" font-weight="600">create patches, or bundle shareable patch manifests at native speed.</text>
-    <text x="520" y="382" fill="#ef8534" font-size="20" font-weight="650">In your browser or terminal.</text>
+    <text x="520" y="260" fill="#edf0f5" font-size="24" font-weight="700">Local-first toolkit for ROMs and disc images:</text>
+    <text x="520" y="318" fill="#b3bbc8" font-size="20" font-weight="600">inspect, extract, compress, and apply,</text>
+    <text x="520" y="350" fill="#b3bbc8" font-size="20" font-weight="600">create, or bundle patches.</text>
+    <text x="520" y="382" fill="#ef8534" font-size="20" font-weight="650">Offline via a browser service-worker PWA or CLI.</text>
 
     <g font-family="monospace" font-size="14" text-anchor="middle">
       <rect x="520" y="515" width="140" height="38" rx="19" fill="#0f1318" stroke="#39414e"/>

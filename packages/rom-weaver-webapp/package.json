@@ -1,7 +1,20 @@
 {
   "name": "@rom-weaver/webapp",
   "version": "0.6.7",
-  "description": "A local-first offline toolkit for ROMs and ROM hack patches. Inspect, extract, checksum, compress, trim, apply patches, create patches, or bundle shareable patch manifests at native speed. In your browser or terminal.",
+  "description": "Local-first toolkit for ROMs and disc images: inspect, extract, compress, and apply, create, or bundle patches. Offline via a browser service-worker PWA or CLI.",
+  "keywords": [
+    "rom",
+    "rom-hack",
+    "patch",
+    "ips",
+    "bps",
+    "chd",
+    "rvz",
+    "z3ds",
+    "disc-image",
+    "pwa",
+    "browser"
+  ],
   "author": "Brandon Casey",
   "homepage": "https://rom-weaver.com",
   "repository": {
