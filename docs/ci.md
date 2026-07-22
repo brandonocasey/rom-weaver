@@ -340,6 +340,14 @@ Two consequences worth knowing:
   `sws.toml`) after the shared raw artifact is copied. No `.gz` siblings: sws
   gzips on demand for the rare client without brotli, which keeps ~2.8 MB out
   of the image.
+- `static-webapp` also owns the **build channel** for everything that is not a
+  Cloudflare deploy. Its bundle becomes both `rom-weaver-webapp.tar.gz` and the
+  container image, so it passes `ROM_WEAVER_CHANNEL` explicitly: `beta` for a
+  prerelease, `prod` otherwise, on the same hyphen test as the rest of the
+  prerelease routing. Without it a prerelease image would claim production
+  while the deploy ladder put the same commit on `beta.rom-weaver.com`. The
+  `deploy` job passes its own channel per target; an unset channel builds as
+  `prod`, which is what a plain `npm run build` by a self-hoster should be.
 
 A prebuilt build deliberately does **not** write the `buildcache` tag: it has
 nothing expensive to cache, and exporting its handful of `COPY` layers would

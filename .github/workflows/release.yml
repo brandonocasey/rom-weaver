@@ -239,7 +239,15 @@ jobs:
       - name: Verify WASM artifact
         run: node scripts/wasm/verify-wasm-artifact.mjs packages/rom-weaver-webapp/src/wasm
 
+      # An unset channel builds as prod, which is right for a bare vX.Y.Z. A
+      # prerelease has to be marked, though: its image and tarball would
+      # otherwise claim production while the deploy ladder is putting the same
+      # commit on beta.rom-weaver.com. Keyed off the hyphen, like the rest of
+      # the prerelease routing (the GitHub prerelease flag, the npm dist-tag,
+      # and the docker series tags). The label follows the channel on its own.
       - name: Package static webapp release asset
+        env:
+          ROM_WEAVER_CHANNEL: ${{ contains(needs.release.outputs.version, '-') && 'beta' || 'prod' }}
         run: |
           npm --prefix packages/rom-weaver-webapp run build
           if rg --files --no-ignore packages/rom-weaver-webapp/dist | rg -q '\.(br|gz)$'; then
