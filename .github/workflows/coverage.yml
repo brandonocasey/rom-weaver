@@ -2,60 +2,50 @@ name: Coverage
 
 on:
   workflow_dispatch:
-    inputs:
-      ci_run_id:
-        description: Successful CI run containing the wasm-prod artifact (auto-detected when omitted)
-        required: false
-        type: string
-  # Coverage is informational. Run it after CI so its duration or failure cannot
-  # delay Release Please or suppress publishing from a green required gate.
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+  schedule:
+    # Informational and expensive: sample the current main branch weekly instead
+    # of repeating the full test corpus after every successful CI run.
+    - cron: "43 6 * * 0"
 
 permissions:
-  actions: read
   contents: read
 
 concurrency:
-  group: coverage-${{ github.event.workflow_run.head_sha || github.sha }}
+  group: coverage-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   coverage:
     name: Coverage
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
       ROM_WEAVER_COVERAGE: "1"
     steps:
-      - name: Checkout tested commit
+      - name: Checkout
         uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      # Coverage must measure the module CI actually tested, so an expired or
-      # missing artifact is fatal here rather than a reason to build a new one.
-      - name: Resolve CI artifact
-        id: ci
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREFERRED_RUN_ID: ${{ github.event.workflow_run.id || inputs.ci_run_id }}
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-          REQUIRE_ARTIFACT: "1"
-        run: scripts/ci/resolve-wasm-run.sh
+      - name: Restore production WASM
+        id: wasm-cache
+        uses: ./.github/actions/wasm-cache
+        with:
+          variant: prod
+          path: |
+            packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm
+            packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm.br
+            packages/rom-weaver-webapp/src/wasm/rom-weaver-app.wasm.prod.sha256
+            packages/rom-weaver-webapp/src/wasm/NOTICE
+            packages/rom-weaver-webapp/src/wasm/THIRD_PARTY_LICENSES.md
+            packages/rom-weaver-webapp/src/wasm/third_party
 
       - uses: ./.github/actions/setup-build-env
         with:
-          tools: node rust
+          tools: node rust binaryen
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
-          # llvm-tools-preview backs cargo-llvm-cov's instrumentation.
           rust-components: llvm-tools-preview
+          rust-targets: wasm32-wasip1-threads
+          wasi-sdk: "true"
           cache-save: "false"
           webapp-deps: "true"
           playwright: "true"
@@ -63,15 +53,9 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Download tested WASM artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.ci.outputs.run_id }}
-        run: |
-          gh run download "$RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name wasm-prod \
-            --dir packages/rom-weaver-webapp/src/wasm
+      - name: Build production WASM
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: mise run build-wasm-prod
 
       - name: Verify WASM artifact
         run: node scripts/wasm/verify-wasm-artifact.mjs packages/rom-weaver-webapp/src/wasm

@@ -25,15 +25,42 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Compute native CLI cache key
+        id: cli-key
+        run: |
+          set -euo pipefail
+          basis=$(git ls-tree HEAD -- \
+            crates Cargo.lock Cargo.toml .cargo .mise.toml \
+            .github/actions/setup-build-env .github/workflows/parity.yml)
+          [[ -n "$basis" ]]
+          hash=$(printf '%s\n' "$basis" | sha256sum | cut -d' ' -f1)
+          echo "key=parity-cli-${RUNNER_OS}-e1-${hash}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore native CLI
+        id: cli-cache
+        uses: actions/cache/restore@v6
+        with:
+          key: ${{ steps.cli-key.outputs.key }}
+          path: target/release/rom-weaver
+
       # This job builds only the native CLI - scripts/parity-check.sh never
       # touches wasm - so the WASI SDK download and the wasm32-wasip1-threads
       # target that used to live here were dead setup and have been dropped.
       # The mise-pinned toolchain replaces dtolnay/rust-toolchain@stable so
       # parity is measured with the same rustc the rest of CI uses.
-      - uses: ./.github/actions/setup-build-env
+      - name: Set up parity tools
+        if: steps.cli-cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-build-env
         with:
           tools: node rust
           apt-packages: cmake ninja-build pkg-config clang libclang-dev
+
+      - name: Set up parity tools from cached CLI
+        if: steps.cli-cache.outputs.cache-hit == 'true'
+        uses: ./.github/actions/setup-build-env
+        with:
+          tools: node
+          cargo-cache: "false"
 
       # The reference tools are cross-platform npm packages (chdman from
       # emmercm/chdman-js, dolphin-tool). Each exposes a binary of the same name
@@ -45,7 +72,18 @@ jobs:
           dolphin-tool --version || true
 
       - name: Build rom-weaver CLI
+        if: steps.cli-cache.outputs.cache-hit != 'true'
         run: cargo build --release -p rom-weaver-cli
+
+      - name: Verify rom-weaver CLI
+        run: target/release/rom-weaver --version
+
+      - name: Save native CLI
+        if: steps.cli-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          key: ${{ steps.cli-key.outputs.key }}
+          path: target/release/rom-weaver
 
       - name: Run parity check
         # FAILS the job on any byte mismatch -- this is the regression signal.
