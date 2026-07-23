@@ -97,9 +97,19 @@ ENV PATH="/root/.cargo/bin:/opt/binaryen/bin:${PATH}" \
     CARGO_INCREMENTAL=0 \
     ROM_WEAVER_COMMIT_HASH=docker
 
-WORKDIR /app/packages/rom-weaver-webapp
-COPY packages/rom-weaver-webapp/package.json packages/rom-weaver-webapp/package-lock.json ./
-RUN npm ci
+# Install the npm workspace (@rom-weaver/wasm + @rom-weaver/webapp) from the
+# shared lock. Only the manifests (and @rom-weaver/wasm's build script) are
+# copied here so this layer caches across source-only changes. `--ignore-scripts`
+# skips dependency install hooks; npm still runs @rom-weaver/wasm's `prepare`, so
+# its build.mjs is present but src/ is not copied yet, and it bails cleanly
+# (nothing to bundle). The webapp `prebuild` re-bundles the package from the real
+# src right before `vite build` below.
+WORKDIR /app/packages
+COPY packages/package.json packages/package-lock.json ./
+COPY packages/rom-weaver-wasm/package.json ./rom-weaver-wasm/
+COPY packages/rom-weaver-wasm/scripts ./rom-weaver-wasm/scripts
+COPY packages/rom-weaver-webapp/package.json ./rom-weaver-webapp/
+RUN npm ci --ignore-scripts
 
 WORKDIR /app
 COPY . .
