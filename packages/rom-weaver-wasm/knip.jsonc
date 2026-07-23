@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // The package publishes its whole module surface through the package.json
+  // `./*` export - the webapp imports ~two dozen subpaths directly, plus the
+  // three worker entrypoints are spawned by URL - so every source module is a
+  // public entry point. A per-package run cannot see the cross-package
+  // consumers, so all of `src` is entry and knip validates dependency and
+  // import integrity here rather than dead code across the package boundary.
+  "entry": ["src/**/*.{ts,mts,cts}"],
+  "project": ["src/**/*.{ts,mts,cts}", "scripts/**/*.mjs"],
+  // Shared dev tooling hoisted from the workspace (declared by @rom-weaver/webapp).
+  "ignoreBinaries": ["oxfmt", "oxlint", "biome", "knip", "run-s"],
+}
