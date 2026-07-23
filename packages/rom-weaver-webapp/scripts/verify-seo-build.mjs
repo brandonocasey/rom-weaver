@@ -36,7 +36,7 @@ assertIncludes(applyHtml, WORKFLOW_SEO_ROUTES.patcher.description, "apply descri
 assertIncludes(createHtml, `href="https://rom-weaver.com/${WORKFLOW_SEO_ROUTES.creator.slug}"`, "create canonical");
 assertIncludes(createHtml, WORKFLOW_SEO_ROUTES.creator.description, "create description");
 assertIncludes(read("create/index.html"), WORKFLOW_SEO_ROUTES.creator.description, "static-host create description");
-assertIncludes(weaveHtml, 'aria-selected="true" class="mode" data-mode="patcher"', "weave prerendered workflow");
+assertIncludes(applyHtml, 'aria-selected="true" class="mode" data-mode="patcher"', "apply prerendered workflow");
 assertIncludes(createHtml, 'aria-selected="true" class="mode" data-mode="creator"', "create prerendered workflow");
 assertIncludes(
   read("create/index.html"),
@@ -50,7 +50,7 @@ assertIncludes(
 );
 
 if (production) {
-  if (weaveHtml.includes("<html data-accent=")) throw new Error("production must use the default madder accent");
+  if (applyHtml.includes("<html data-accent=")) throw new Error("production must use the default madder accent");
   assertIncludes(robots, "Allow: /", "production robots.txt");
   assertIncludes(robots, "Sitemap: https://rom-weaver.com/sitemap.xml", "production robots.txt");
   assertIncludes(read("sitemap.xml"), "https://rom-weaver.com/create", "sitemap");
@@ -63,7 +63,7 @@ if (production) {
     preview: "plum",
   }[channel];
   if (expectedAccent && expectedAccent !== "madder")
-    assertIncludes(weaveHtml, `<html data-accent="${expectedAccent}"`, `${channel} channel accent`);
+    assertIncludes(applyHtml, `<html data-accent="${expectedAccent}"`, `${channel} channel accent`);
   assertIncludes(robots, "Disallow: /", `${channel} robots.txt`);
   assertIncludes(headers, "X-Robots-Tag: noindex, nofollow", `${channel} headers`);
   if (fs.existsSync(path.join(distDir, "sitemap.xml"))) throw new Error(`${channel} must not publish a sitemap`);
