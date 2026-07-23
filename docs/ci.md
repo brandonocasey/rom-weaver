@@ -245,6 +245,17 @@ the Cloudflare secrets and could only ever fail. The preview URL is published
 as a commit status (`preview/webapp`) and in one marker-backed PR comment.
 Repeated deployments update that comment instead of accreting comments.
 
+Each leg also declares a GitHub `environment` (`webapp-<channel>`), so wrangler's
+Direct Upload is mirrored into GitHub's Deployments API - PRs get a native "View
+deployment" button, and every commit carries its deployed URL and
+pending/success/failure state. The channel is one of `prod`/`beta`/`nightly`/`preview`,
+so this resolves to exactly four stable environments; all previews share
+`webapp-preview` rather than minting a `webapp-preview-pr-<n>` per PR. They are
+informational only - no protection rules or approvals, and `continue-on-error`
+still keeps a Cloudflare outage from reddening the build - but leave room to
+later add allowed branches/tags, approvals, wait timers, or environment-scoped
+secrets.
+
 Projects are created on demand through the Cloudflare REST API rather than
 `wrangler pages project create`: wrangler enumerates accounts internally, which
 a token scoped to specific account resources cannot do, and reports the failure

@@ -828,6 +828,9 @@ jobs:
     # An empty or missing list would be a hard "matrix contains no values"
     # error, so guard rather than trusting the planner to always emit one.
     if: needs.deploy-plan.outputs.targets != '' && needs.deploy-plan.outputs.targets != '[]'
+    environment:
+      name: webapp-${{ matrix.target.channel }}
+      url: ${{ steps.deploy.outputs.url }}
     strategy:
       # Separate Pages projects with no shared state, so they upload in
       # parallel; a release's three channels land in the time of one. The
