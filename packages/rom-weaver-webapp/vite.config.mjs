@@ -221,9 +221,22 @@ const writeWebappStaticAssets = (channel, channelLabel) => {
         }
         copyFile(rootStaticAssetSources[assetPath], outputPath);
       }
+      // The prod bundle is what ships to rom-weaver.com and the release tarball,
+      // so a missing third-party attribution there is an AGPL compliance failure
+      // and must fail the build; dev/preview/nightly builds only warn (a
+      // self-hoster or local build may not have run the wasm build yet).
+      const missingAttribution = (description) => {
+        const message = `[static-assets] missing wasm third-party attribution ${description}; run the wasm build to regenerate it`;
+        if (channel === "prod") {
+          throw new Error(
+            `${message}. The prod webapp bundle must ship NOTICE, THIRD_PARTY_LICENSES.md, and third_party/ for AGPL compliance.`,
+          );
+        }
+        console.warn(message);
+      };
       for (const [assetPath, sourcePath] of Object.entries(generatedLicenseAssetSources)) {
         if (!fs.existsSync(sourcePath)) {
-          console.warn(`[static-assets] missing wasm attribution ${sourcePath}; run the wasm build to regenerate it`);
+          missingAttribution(sourcePath);
           continue;
         }
         copyFile(sourcePath, path.join(distDir, assetPath));
@@ -231,6 +244,8 @@ const writeWebappStaticAssets = (channel, channelLabel) => {
       const wasmThirdPartyDir = path.join(wasmPackageSrcDir, "third_party");
       if (fs.existsSync(wasmThirdPartyDir)) {
         fs.cpSync(wasmThirdPartyDir, path.join(distDir, "third_party"), { recursive: true });
+      } else {
+        missingAttribution(`${wasmThirdPartyDir} (third_party directory)`);
       }
     },
     configResolved(config) {

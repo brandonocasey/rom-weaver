@@ -34,6 +34,7 @@
     },
     "./webapp": "./src/webapp/main.tsx"
   },
+  "//vite": "Keep this vite pin identical to packages/package.json (the workspace root). The `$vite` override below resolves to this package's own pin, and the root override resolves to the root's; both must match so the workspace installs a single vite.",
   "overrides": {
     "vite-plugin-pwa": {
       "vite": "$vite"

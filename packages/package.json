@@ -7,6 +7,10 @@
     "rom-weaver-wasm",
     "rom-weaver-webapp"
   ],
+  "scripts": {
+    "audit:deps": "npm audit --audit-level=high"
+  },
+  "//vite": "Keep this vite pin identical to packages/rom-weaver-webapp/package.json. The `$vite` override below resolves to this workspace-root pin, and the workspace shares a single vite; a mismatch would install two copies and break the override reference.",
   "devDependencies": {
     "vite": "8.1.5"
   },

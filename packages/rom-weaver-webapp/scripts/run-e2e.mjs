@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = path.resolve(PACKAGE_DIR, "..", "..");
+const WASM_PACKAGE_BUILD = path.resolve(PACKAGE_DIR, "..", "rom-weaver-wasm", "scripts", "build.mjs");
 
 const PROFILES = {
   fast: {
@@ -45,6 +46,13 @@ const main = async () => {
     const build = await run(profile.buildName, "mise", ["run", "build-wasm"], REPO_ROOT);
     if (build.code !== 0) process.exit(build.code);
   }
+
+  // The suites resolve @rom-weaver/wasm through its built dist/, so bundle the
+  // package after the wasm binary is in place (just built above, or restored
+  // from the cache when ROM_WEAVER_E2E_SKIP_WASM_BUILD=1). The wasm binary build
+  // only writes the module into the package src; the dev server serves dist.
+  const bundle = await run("bundle @rom-weaver/wasm", process.execPath, [WASM_PACKAGE_BUILD], REPO_ROOT);
+  if (bundle.code !== 0) process.exit(bundle.code);
 
   const startedAt = Date.now();
   const results = await Promise.all(profile.suites.map(([name, command, args, cwd]) => run(name, command, args, cwd)));

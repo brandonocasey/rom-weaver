@@ -6,6 +6,15 @@ import { defineConfig } from "vitest/config";
 import { coverageBase } from "./vitest.config.base.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+// The runtime under test lives in the sibling @rom-weaver/wasm package, outside
+// this config's root, so its coverage `include` is an absolute glob (a
+// `../`-relative one escapes root and enumerates nothing). NOTE: the suite
+// consumes the package's *built* dist, which is served raw (see the
+// optimizeDeps.exclude below - inlining it would rewrite the worker/wasm URLs
+// and break the runtime), so v8 cannot remap that execution back to this src and
+// the report stays empty. Capturing package coverage needs its own harness (a
+// follow-up), but the include is kept correct for when that lands.
+const WASM_PACKAGE_SRC = fileURLToPath(new URL("../rom-weaver-wasm/src", import.meta.url));
 // In a git worktree, node_modules entries are symlinks into the main checkout
 // (scripts/setup-worktree.sh); vite resolves their real paths, which fall
 // outside the worktree's REPO_ROOT and get 403'd unless also allowed.
@@ -85,7 +94,7 @@ export default defineConfig({
     },
     coverage: {
       ...coverageBase,
-      include: ["../rom-weaver-wasm/src/**/*.{ts,tsx}"],
+      include: [`${WASM_PACKAGE_SRC}/**/*.{ts,tsx}`],
       reportsDirectory: fileURLToPath(new URL("../../dist/coverage/react-wasm", import.meta.url)),
     },
     include: ["tests/wasm/*.test.mjs"],
