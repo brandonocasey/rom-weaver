@@ -43,9 +43,7 @@ jobs:
       # release-please reports the commit the release targets. For merged
       # release PRs this is the merge commit, not necessarily the PR head.
       sha: ${{ steps.release.outputs.sha }}
-      # The merged release PR has the same tree as its head, whose CI artifact
-      # is available now. The merge commit's CI is deliberately not required.
-      artifact_sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || steps.release.outputs.sha }}
+      artifact_sha: ${{ steps.artifact-sha.outputs.sha }}
     steps:
       - id: release
         uses: googleapis/release-please-action@v5
@@ -53,6 +51,26 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           target-branch: main
           skip-github-pull-request: ${{ github.event_name == 'pull_request' }}
+
+      - name: Resolve reusable artifact commit
+        id: artifact-sha
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          artifact_sha="$RELEASE_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && -n "$PR_HEAD_SHA" ]]; then
+            release_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$RELEASE_SHA" --jq .tree.sha)
+            head_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$PR_HEAD_SHA" --jq .tree.sha)
+            if [[ "$release_tree" == "$head_tree" ]]; then
+              artifact_sha="$PR_HEAD_SHA"
+            else
+              echo "Release and pull request trees differ; requiring a release-commit artifact"
+            fi
+          fi
+          echo "sha=$artifact_sha" >> "$GITHUB_OUTPUT"
 
       - name: Mark GitHub prerelease
         if: >-
@@ -322,8 +340,7 @@ jobs:
 
   # Package the static site beside the registry publishes rather than making all
   # of them wait for another production WASM build. The release PR head's CI
-  # artifact is reused; manual releases fall back to a source build when no
-  # matching, unexpired artifact exists.
+  # artifact is reused when its tree matches; otherwise build from release source.
   static-webapp:
     name: Package static webapp
     needs: release
@@ -347,8 +364,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ needs.release.outputs.artifact_sha }}
           PREFERRED_RUN_ID: ${{ github.event.workflow_run.id }}
-        # The checkout above is at the release commit; the reusable CI artifact
-        # may be from the release PR head, which has the same tree.
+        # A release PR artifact is reused only when its tree exactly matches the
+        # released commit; otherwise resolution falls back to a source build.
         run: scripts/ci/resolve-wasm-run.sh
 
       - name: Set up static webapp build
