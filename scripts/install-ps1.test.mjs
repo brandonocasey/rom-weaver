@@ -54,8 +54,8 @@ test("installs the checksummed binary", { skip: hasPowerShell ? false : "pwsh no
     assert.equal(readFileSync(target, "utf8"), "binary");
     assert.ok(output.includes(`Installed rom-weaver to ${target}`));
     assert.deepEqual(readFileSync(urlLog, "utf8").trim().split("\n"), [
-      `https://github.com/brandonocasey/rom-weaver/releases/latest/download/${asset}`,
-      `https://github.com/brandonocasey/rom-weaver/releases/latest/download/${asset}.sha256`,
+      `https://github.com/rom-weaver/rom-weaver/releases/latest/download/${asset}`,
+      `https://github.com/rom-weaver/rom-weaver/releases/latest/download/${asset}.sha256`,
     ]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -91,8 +91,8 @@ function Invoke-WebRequest {
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /checksum mismatch/);
       assert.deepEqual(readFileSync(urlLog, "utf8").trim().split("\n"), [
-        `https://github.com/brandonocasey/rom-weaver/releases/download/v9.9.9/${asset}`,
-        `https://github.com/brandonocasey/rom-weaver/releases/download/v9.9.9/${asset}.sha256`,
+        `https://github.com/rom-weaver/rom-weaver/releases/download/v9.9.9/${asset}`,
+        `https://github.com/rom-weaver/rom-weaver/releases/download/v9.9.9/${asset}.sha256`,
       ]);
     } finally {
       rmSync(directory, { recursive: true, force: true });

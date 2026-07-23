@@ -35,7 +35,7 @@ const manifest = {
     Object.entries(checksums).map(([architecture, { asset, checksum }]) => [
       architecture,
       {
-        url: `https://github.com/brandonocasey/rom-weaver/releases/download/v${version}/${asset}#/rom-weaver.exe`,
+        url: `https://github.com/rom-weaver/rom-weaver/releases/download/v${version}/${asset}#/rom-weaver.exe`,
         hash: checksum,
       },
     ]),

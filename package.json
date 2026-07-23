@@ -20,7 +20,7 @@
   "funding": "https://ko-fi.com/brandonocasey",
   "repository": {
     "type": "git",
-    "url": "https://github.com/brandonocasey/rom-weaver.git"
+    "url": "https://github.com/rom-weaver/rom-weaver.git"
   },
   "type": "module",
   "bin": {

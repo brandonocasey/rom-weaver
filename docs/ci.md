@@ -369,10 +369,10 @@ spec would tag every platform package as a prerelease.
 | `cargo-publish-dry-run` | nothing - gates npm and draft publication on crates.io accepting Cargo metadata |
 | `static-webapp` | `rom-weaver-webapp.tar.gz` + checksum on the GitHub release |
 | `publish-npm` | 9 platform packages → launcher → unscoped alias, in that order |
-| `publish-containers` | `ghcr.io/.../rom-weaver-cli` and `-webapp`, signed provenance |
+| `publish-containers` | `ghcr.io/rom-weaver/rom-weaver-cli` and `-webapp`, signed provenance |
 | `publish-release` | flips the draft release to published, creating the tag |
-| `publish-homebrew` | formula commit to `brandonocasey/homebrew-tap` (stable only) |
-| `publish-scoop` | manifest commit to `brandonocasey/scoop-bucket` (stable only) |
+| `publish-homebrew` | formula commit to `rom-weaver/homebrew-tap` (stable only) |
+| `publish-scoop` | manifest commit to `rom-weaver/scoop-bucket` (stable only) |
 
 The table is in dependency order. Everything above `publish-release` attaches an
 asset to the draft or gates it; the two package-manager pushes come after it, and
@@ -526,7 +526,8 @@ produces most of the garbage.
 
 ### Why the Docker build cache is not in this budget
 
-The image builds cache to `ghcr.io/<owner>/<image>:buildcache`, not `type=gha`.
+The image builds cache to `ghcr.io/rom-weaver/<image>:buildcache`, not
+`type=gha`.
 Publishing runs only when a release pull request merges, and Actions entries are
 evicted after seven days without a read, so a gha cache was reliably cold by the
 next release while `mode=max` still wrote the whole layer graph - Rust builder

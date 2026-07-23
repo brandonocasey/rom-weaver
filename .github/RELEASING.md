@@ -10,12 +10,18 @@ release pull request and `CHANGELOG.md`. Merging that pull request creates the
 `vX.Y.Z` tag and GitHub Release, then publishes:
 
 - the Cargo workspace to crates.io;
-- six npm packages: `@rom-weaver/cli`, its four `@rom-weaver/<platform>`
-  binaries, and the unscoped `rom-weaver` alias that depends on the launcher;
-- the `rom-weaver` formula in `brandonocasey/homebrew-tap` for stable releases;
-- the `rom-weaver` manifest in `brandonocasey/scoop-bucket` for stable releases;
-- `ghcr.io/<owner>/rom-weaver-cli`;
-- `ghcr.io/<owner>/rom-weaver-webapp`.
+- 11 npm packages: `@rom-weaver/cli`, its nine
+  `@rom-weaver/<platform>` binaries, and the unscoped `rom-weaver` alias
+  that depends on the launcher;
+- the `rom-weaver` formula in `rom-weaver/homebrew-tap` for stable releases;
+- the `rom-weaver` manifest in `rom-weaver/scoop-bucket` for stable releases;
+- `ghcr.io/rom-weaver/rom-weaver-cli`;
+- `ghcr.io/rom-weaver/rom-weaver-webapp`.
+
+The existing v0.7.2 container images predate the organization transfer and
+remain under `ghcr.io/brandonocasey`. User-facing Docker examples keep that
+verified path until the first post-transfer release publishes the organization
+images above.
 
 The npm packages include npm provenance, Cargo authenticates with crates.io's
 GitHub OIDC trusted publisher, and both container images include an SBOM plus
@@ -23,15 +29,13 @@ signed SLSA build provenance. Publishers check the registry before writing, so
 reruns skip versions that already exist instead of failing halfway through a
 release.
 
-No GitHub Release, registry package, or tap formula has been published yet.
-Complete the one-time setup below before treating the public package commands
-as available.
+v0.7.2 is the first release with every public installation channel completed.
 
 <!-- START doctoc -->
 ## Table of contents
 
 - [One-time repository setup](#one-time-repository-setup)
-- [First Cargo release](#first-cargo-release)
+- [Cargo trusted publishing](#cargo-trusted-publishing)
 - [npm trusted publishing](#npm-trusted-publishing)
 - [Webapp hosting and the channel domains](#webapp-hosting-and-the-channel-domains)
 - [Normal release flow](#normal-release-flow)
@@ -45,65 +49,62 @@ as available.
 
 1. In GitHub Actions settings, allow workflows to read and write the repository
    and to create pull requests.
-2. Add a fine-grained `RELEASE_PLEASE_TOKEN` Actions secret with Contents,
-   Issues, and Pull requests read/write access to this repository. Release
-   Please needs a non-`GITHUB_TOKEN` credential so its release pull requests
-   trigger the required CI checks.
-3. Sign in to crates.io and create an API token for the first-release bootstrap
-   described below.
-4. Require the `Conventional commits` and normal CI checks in the `main` branch
+2. Add a fine-grained `RELEASE_PLEASE_TOKEN` Actions secret owned by the
+   `rom-weaver` organization, limited to `rom-weaver/rom-weaver`, with Contents,
+   Issues, and Pull requests read/write access. Release Please needs a
+   non-`GITHUB_TOKEN` credential so its release pull requests trigger the
+   required CI checks.
+3. Require the `Conventional commits` and normal CI checks in the `main` branch
    protection rules. Use squash merges so the validated pull request title is
    the commit subject that lands on `main`.
-5. Ensure the existing `v0.5.0` tag is present on GitHub before the first run.
-6. Enable **Immutable releases** in Settings → General. The fan-out is built
+4. Enable **Immutable releases** in Settings → General. The fan-out is built
    for it: releases are created as drafts and published only after every asset
    is attached. Read the warning under [normal release flow](#normal-release-flow)
    before touching a draft by hand.
-7. Create the public `brandonocasey/homebrew-tap` repository with a README,
-   then add a fine-grained `HOMEBREW_TAP_TOKEN` Actions secret with Contents
-   read/write access to that repository. Stable releases update
-   `Formula/rom-weaver.rb`; prereleases leave the tap unchanged.
-8. Create the public `brandonocasey/scoop-bucket` repository with a README and
-   an empty `bucket/` directory, then add a fine-grained `SCOOP_BUCKET_TOKEN`
-   Actions secret with Contents read/write access to it. Stable releases update
-   `bucket/rom-weaver.json`; prereleases leave the bucket unchanged.
+5. Create a fine-grained token owned by the `rom-weaver` organization, limited
+   to `rom-weaver/homebrew-tap` and `rom-weaver/scoop-bucket`, with Contents
+   read/write access. Store it as the `PACKAGE_MANAGER_TOKEN` Actions secret.
+   Stable releases update `Formula/rom-weaver.rb` and
+   `bucket/rom-weaver.json`; prereleases leave both repositories unchanged.
 
-Push the baseline tag and current branch to start Release Please:
+The tap and bucket repositories are public. The token must target the
+organization-owned repositories; a fine-grained token limited to the former
+personal repositories cannot push after the transfer.
 
-```bash
-git push origin v0.5.0
-git push origin main
-```
+## Cargo trusted publishing
 
-## First Cargo release
+The workspace's five crates are published and configured for trusted
+publishing: `rom-weaver-core`, `rom-weaver-checksum`,
+`rom-weaver-containers`, `rom-weaver-patches`, and `rom-weaver-cli`. Each
+crates.io publisher uses:
 
-crates.io requires each crate to be published manually once before trusted
-publishing can be configured. Wait for Release Please to open its release pull
-request and for that pull request to pass CI. The workspace publishes five
-packages: `rom-weaver-core`, `rom-weaver-checksum`, `rom-weaver-containers`,
-`rom-weaver-patches`, and `rom-weaver-cli`. From a clean checkout of the release
-pull request's final commit, publish them together:
-
-```bash
-cargo login
-cargo publish --workspace --locked
-```
-
-Do not change the release pull request after this publish. Configure a trusted
-publisher for every new crate on crates.io using:
-
-- repository: `brandonocasey/rom-weaver`;
+- repository: `rom-weaver/rom-weaver`;
 - workflow: `cargo-publish.yml`;
 - environment: empty.
 
-Merge the release pull request. The automated Cargo job will see that the
-bootstrap versions already exist and skip them. Later releases use short-lived
-OIDC credentials and do not need a stored Cargo token.
+crates.io requires a crate to be published once before its trusted publisher
+can be configured. If a new crate is added, publish its first version from the
+release pull request's final commit:
+
+```bash
+cargo login
+cargo publish --locked --package <crate>
+```
+
+Do not change the release pull request after this bootstrap publish. Configure
+the trusted publisher above, then merge. The automated Cargo job sees that the
+version already exists and skips it; later releases use short-lived OIDC
+credentials and do not need a stored Cargo token.
 
 ## npm trusted publishing
 
-Trusted publishing (OIDC) is enabled for all six npm packages, so publishing
+Trusted publishing (OIDC) is enabled for all 11 npm packages, so publishing
 uses short-lived GitHub Actions credentials and no stored npm token.
+
+The optional `NPM_BOOTSTRAP_TOKEN` secret remains available for a new package's
+first publication. Set `bootstrap: true` on only that package's publish matrix
+entry, publish it once, configure its trusted publisher, then remove the flag.
+Existing packages must continue through OIDC.
 
 The publish jobs already meet the mechanical requirements - `id-token: write`
 is set, and the Node 24 toolchain ships npm 11.16.0, above the 11.5.1 minimum.
@@ -113,7 +114,7 @@ One caveat decides the configuration. npm validates the OIDC claim against the
 `workflow_call`, so npm sees `release.yml` rather than `npm-publish.yml`. Only
 one trusted publisher may be configured per package, so register:
 
-- repository: `brandonocasey/rom-weaver`;
+- repository: `rom-weaver/rom-weaver`;
 - workflow: `release.yml` (filename only, no path);
 - environment: empty.
 
@@ -178,11 +179,13 @@ it works unchanged at an apex domain, a project subpath, or the Forgejo mirror.
 One value is **not** relative: the bundle schema's `$id` in
 `docs/rom-weaver-bundle-v1.schema.json`, mirrored by `BUNDLE_JSON_SCHEMA_URL` in
 `crates/rom-weaver-cli/src/bundle_schema.rs` (a unit test asserts they match).
-It points at the public GitHub raw-content URL. The published schema revision and
-bundle version are both v1; other bundle versions are rejected. Treat any future
-edit as a change of the schema's identity rather than a URL update: `$schema`
-values are carried through bundles verbatim and never matched against this
-constant.
+It points at the public GitHub raw-content URL. The organization transfer
+intentionally moved that URL from `brandonocasey/rom-weaver` to
+`rom-weaver/rom-weaver`; the old URL still resolves, and existing bundles remain
+valid because `$schema` values are carried through verbatim and never matched
+against this constant. The published schema revision and bundle version are both
+v1; other bundle versions are rejected. Treat any later edit as a change of the
+schema's identity rather than a routine URL update.
 
 Cloudflare Pages reads the generated `dist/_headers` file. It applies the
 COOP/COEP headers on the first response, blocks indexing outside production,
@@ -249,7 +252,8 @@ individual prerelease GitHub Releases retain their own notes.
 
 The rule exists because a prerelease that takes `latest` is effectively a
 shipped regression: `npm i @rom-weaver/cli` and
-`docker pull ghcr.io/<owner>/rom-weaver-cli` both resolve `latest` by default.
+`docker pull ghcr.io/rom-weaver/rom-weaver-cli` both resolve `latest` by
+default.
 Cargo needs no equivalent guard - crates.io has no
 dist-tags and Cargo will not resolve a prerelease unless a version request
 explicitly asks for one.

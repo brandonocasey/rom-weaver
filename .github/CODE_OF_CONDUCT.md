@@ -26,7 +26,7 @@ acceptable in project spaces or when representing the project elsewhere.
 
 ## Reporting and enforcement
 
-[Open an issue](https://github.com/brandonocasey/rom-weaver/issues/new/choose)
+[Open an issue](https://github.com/rom-weaver/rom-weaver/issues/new/choose)
 to report conduct concerns. Include links, screenshots, or other context that
 can help review the report, but do not include personal or sensitive information.
 

@@ -249,26 +249,24 @@ jobs:
           - package: darwin-x64
             runner: macos-15-intel
             bootstrap: false
-          # ponytail: Remove this first-publish bridge after configuring trusted
-          # publishers for the five new packages.
           - package: linux-arm64-musl
             runner: ubuntu-24.04-arm
-            bootstrap: true
+            bootstrap: false
           - package: linux-ia32-musl
             runner: ubuntu-24.04
-            bootstrap: true
+            bootstrap: false
           - package: linux-x64-gnu
             runner: ubuntu-24.04
             bootstrap: false
           - package: linux-x64-musl
             runner: ubuntu-24.04
-            bootstrap: true
+            bootstrap: false
           - package: win32-arm64-msvc
             runner: windows-11-arm
-            bootstrap: true
+            bootstrap: false
           - package: win32-ia32-msvc
             runner: windows-2025
-            bootstrap: true
+            bootstrap: false
           - package: win32-x64-msvc
             runner: windows-2025
             bootstrap: false
@@ -298,6 +296,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ matrix.bootstrap && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
         run: |
+          # ponytail: Set bootstrap: true only for an unpublished package, then
+          # remove it after configuring that package's trusted publisher.
           if [[ "${{ matrix.bootstrap }}" == true && -z "$NODE_AUTH_TOKEN" ]]; then
             echo "::error::NPM_BOOTSTRAP_TOKEN is required for first publication"
             exit 1

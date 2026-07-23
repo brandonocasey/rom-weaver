@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="https://raw.githubusercontent.com/brandonocasey/rom-weaver/0c950a5f3b44cfd597d9798357cae0d273264d13/packages/rom-weaver-webapp/src/assets/app/root/logo.svg" alt="" width="64" height="64"><br>
+  <img src="https://raw.githubusercontent.com/rom-weaver/rom-weaver/0c950a5f3b44cfd597d9798357cae0d273264d13/packages/rom-weaver-webapp/src/assets/app/root/logo.svg" alt="" width="64" height="64"><br>
   rom-weaver-cli
 </h1>
 
@@ -10,7 +10,7 @@
 <p align="center">
   <a href="https://crates.io/crates/rom-weaver-cli"><img alt="crates.io" src="https://img.shields.io/crates/v/rom-weaver-cli?color=d9690f"></a>
   <a href="https://docs.rs/rom-weaver-cli"><img alt="docs.rs" src="https://img.shields.io/docsrs/rom-weaver-cli?color=4a6d63"></a>
-  <a href="https://github.com/brandonocasey/rom-weaver/blob/main/LICENSE.md"><img alt="AGPL-3.0-or-later license" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-4a6d63"></a>
+  <a href="https://github.com/rom-weaver/rom-weaver/blob/main/LICENSE.md"><img alt="AGPL-3.0-or-later license" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-4a6d63"></a>
 </p>
 
 > **Beta software.** The `rom-weaver` command is the supported interface, and
@@ -69,7 +69,7 @@ bind-mounted files keep their host ownership, so without it the container
 cannot read files it does not own.
 
 Prebuilt binaries and a Homebrew tap will land with the first GitHub Release;
-see the [project README](https://github.com/brandonocasey/rom-weaver#install)
+see the [project README](https://github.com/rom-weaver/rom-weaver#install)
 for the current state.
 
 ## Usage
@@ -95,7 +95,7 @@ rom-weaver checksum --input game.sfc --algo crc32,sha1
 rom-weaver probe --input game.chd --json
 ```
 
-The [CLI guide](https://github.com/brandonocasey/rom-weaver/blob/main/docs/cli.md)
+The [CLI guide](https://github.com/rom-weaver/rom-weaver/blob/main/docs/cli.md)
 covers every command, the supported-format tables, compression settings, JSON
 output, man pages, Docker usage, and file permissions.
 
@@ -120,14 +120,14 @@ supported API.
 
 ## Documentation
 
-- [CLI guide](https://github.com/brandonocasey/rom-weaver/blob/main/docs/cli.md)
-- [Documentation index](https://github.com/brandonocasey/rom-weaver/blob/main/docs/README.md)
-- [Project README](https://github.com/brandonocasey/rom-weaver#readme)
+- [CLI guide](https://github.com/rom-weaver/rom-weaver/blob/main/docs/cli.md)
+- [Documentation index](https://github.com/rom-weaver/rom-weaver/blob/main/docs/README.md)
+- [Project README](https://github.com/rom-weaver/rom-weaver#readme)
 
 ## License
 
 Copyright (C) Brandon Casey. Licensed under
-[AGPL-3.0-or-later](https://github.com/brandonocasey/rom-weaver/blob/main/LICENSE.md).
+[AGPL-3.0-or-later](https://github.com/rom-weaver/rom-weaver/blob/main/LICENSE.md).
 Bundled third-party components retain their own licenses; release builds ship a
 generated [attribution notice](https://rom-weaver.com/NOTICE) and
 [third-party license inventory](https://rom-weaver.com/THIRD_PARTY_LICENSES.md).

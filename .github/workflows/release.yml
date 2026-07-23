@@ -528,8 +528,8 @@ jobs:
       - name: Checkout Homebrew tap
         uses: actions/checkout@v7
         with:
-          repository: brandonocasey/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: rom-weaver/homebrew-tap
+          token: ${{ secrets.PACKAGE_MANAGER_TOKEN }}
           path: homebrew-tap
 
       - name: Update formula
@@ -599,8 +599,8 @@ jobs:
       - name: Checkout Scoop bucket
         uses: actions/checkout@v7
         with:
-          repository: brandonocasey/scoop-bucket
-          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          repository: rom-weaver/scoop-bucket
+          token: ${{ secrets.PACKAGE_MANAGER_TOKEN }}
           path: scoop-bucket
 
       - name: Update manifest
