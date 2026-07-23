@@ -14,6 +14,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { dedupeTree } from "./dedupe-tree.mjs";
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index";
@@ -292,6 +294,10 @@ function main() {
   fs.writeFileSync(NOTICE_FILE, renderNotice(rows));
   fs.rmSync(path.join(OUTPUT_DIR, "THIRD_PARTY_LICENSES.md"), { force: true });
 
+  // Most crates ship the same handful of license texts verbatim, so the tree is
+  // ~4x larger than the set of distinct documents it contains.
+  const deduped = dedupeTree(LICENSES_DIR);
+
   pruned.sort();
   missingLicense.sort();
   process.stdout.write(
@@ -299,6 +305,7 @@ function main() {
       `Inventory crates: ${rows.length}`,
       `Omitted no-attribution crates: ${omittedCount}`,
       `License dirs written: ${copiedDirCount}`,
+      `Deduplicated license files: ${deduped.linked} (${deduped.saved} bytes)`,
       `Crates without a findable license file: ${missingLicense.length}`,
       missingLicense.length > 0 ? `  ${missingLicense.join(", ")}` : "",
       `Pruned stale dirs: ${pruned.length}`,
