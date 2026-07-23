@@ -11,12 +11,17 @@ release pull request and `CHANGELOG.md`. Merging that pull request creates the
 
 - the Cargo workspace to crates.io;
 - 11 npm packages: `@rom-weaver/cli`, its nine
-  `@rom-weaver/cli-<platform>` binaries, and the unscoped `rom-weaver` alias
+  `@rom-weaver/<platform>` binaries, and the unscoped `rom-weaver` alias
   that depends on the launcher;
 - the `rom-weaver` formula in `rom-weaver/homebrew-tap` for stable releases;
 - the `rom-weaver` manifest in `rom-weaver/scoop-bucket` for stable releases;
 - `ghcr.io/rom-weaver/rom-weaver-cli`;
 - `ghcr.io/rom-weaver/rom-weaver-webapp`.
+
+The existing v0.7.2 container images predate the organization transfer and
+remain under `ghcr.io/brandonocasey`. User-facing Docker examples keep that
+verified path until the first post-transfer release publishes the organization
+images above.
 
 The npm packages include npm provenance, Cargo authenticates with crates.io's
 GitHub OIDC trusted publisher, and both container images include an SBOM plus
@@ -174,11 +179,13 @@ it works unchanged at an apex domain, a project subpath, or the Forgejo mirror.
 One value is **not** relative: the bundle schema's `$id` in
 `docs/rom-weaver-bundle-v1.schema.json`, mirrored by `BUNDLE_JSON_SCHEMA_URL` in
 `crates/rom-weaver-cli/src/bundle_schema.rs` (a unit test asserts they match).
-It points at the public GitHub raw-content URL. The published schema revision and
-bundle version are both v1; other bundle versions are rejected. Treat any future
-edit as a change of the schema's identity rather than a URL update: `$schema`
-values are carried through bundles verbatim and never matched against this
-constant.
+It points at the public GitHub raw-content URL. The organization transfer
+intentionally moved that URL from `brandonocasey/rom-weaver` to
+`rom-weaver/rom-weaver`; the old URL still resolves, and existing bundles remain
+valid because `$schema` values are carried through verbatim and never matched
+against this constant. The published schema revision and bundle version are both
+v1; other bundle versions are rejected. Treat any later edit as a change of the
+schema's identity rather than a routine URL update.
 
 Cloudflare Pages reads the generated `dist/_headers` file. It applies the
 COOP/COEP headers on the first response, blocks indexing outside production,

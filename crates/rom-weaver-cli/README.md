@@ -61,7 +61,7 @@ To skip the toolchain entirely, run the published Linux image:
 
 ```bash
 docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/work" \
-  ghcr.io/rom-weaver/rom-weaver-cli:latest probe --input /work/game.iso
+  ghcr.io/brandonocasey/rom-weaver-cli:latest probe --input /work/game.iso
 ```
 
 Mount your ROM directory at `/work` and pass paths under it. `--user` matters:

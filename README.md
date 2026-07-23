@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/rom-weaver"><img alt="npm version" src="https://img.shields.io/npm/v/rom-weaver?logo=npm&amp;logoColor=white&amp;label=npm&amp;color=d9690f"></a>
   <a href="https://crates.io/crates/rom-weaver-cli"><img alt="crates.io version" src="https://img.shields.io/crates/v/rom-weaver-cli?logo=rust&amp;logoColor=white&amp;label=crates.io&amp;color=d9690f"></a>
-  <a href="https://github.com/rom-weaver/rom-weaver/pkgs/container/rom-weaver-cli"><img alt="Container images on GitHub Container Registry" src="https://img.shields.io/badge/ghcr.io-rom--weaver-d9690f?logo=docker&amp;logoColor=white"></a>
+  <a href="https://github.com/users/brandonocasey/packages/container/package/rom-weaver-cli"><img alt="Container images on GitHub Container Registry" src="https://img.shields.io/badge/ghcr.io-rom--weaver-d9690f?logo=docker&amp;logoColor=white"></a>
   <a href="https://github.com/rom-weaver/homebrew-tap"><img alt="Homebrew tap" src="https://img.shields.io/badge/homebrew-rom--weaver%2Ftap-d9690f?logo=homebrew&amp;logoColor=white"></a>
 </p>
 
@@ -248,7 +248,7 @@ Runs from the published Linux image without installing anything:
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   --volume "$PWD:/work" \
-  ghcr.io/rom-weaver/rom-weaver-cli:latest \
+  ghcr.io/brandonocasey/rom-weaver-cli:latest \
   probe --input /work/game.iso
 ```
 
