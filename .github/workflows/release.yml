@@ -311,6 +311,9 @@ jobs:
 
       - name: Dry-run publish workspace crates
         # Package each crate exactly as cargo publish would, without uploading.
+        # This intentionally does not authenticate with crates.io: release.yml
+        # is not an accepted Trusted Publishing workflow for real Cargo
+        # publishes, but dry-run validation does not need a registry token.
         # The CI Rust jobs already compile the local dependency graph. Skip
         # cargo's per-package verification here because it resolves same-version
         # workspace dependencies from crates.io, which may still contain the
