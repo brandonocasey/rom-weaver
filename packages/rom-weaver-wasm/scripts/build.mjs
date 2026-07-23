@@ -14,8 +14,11 @@
 // The wasm binary and its Brotli sibling are copied beside the output; the
 // runtime resolves them via `new URL('./rom-weaver-app.wasm', import.meta.url)`.
 
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
@@ -43,11 +46,16 @@ const EXTERNAL_DEPS = ["@bjorn3/browser_wasi_shim"];
 // still statically resolves every such literal, so a stale one aborts the module
 // transform and the worker fails to load. Rewrite each asset reference to the
 // correct relative path to its real built sibling, per the file's own location.
+//
+// Each pattern is anchored to the end of the specifier so a future
+// `./rom-weaver-app.wasm.br` reference can never be rewritten to the `.wasm`
+// path (`\.wasm$` does not match `...wasm.br`), and a worker basename is matched
+// exactly rather than as a substring.
 const ASSET_TARGETS = [
-  { re: /browser-opfs-proxy-worker\.(?:ts|js)/, rel: "workers/browser-opfs-proxy-worker.js" },
-  { re: /browser-wasi-thread-worker\.(?:ts|js)/, rel: "workers/browser-wasi-thread-worker.js" },
-  { re: /browser-runner-worker\.(?:ts|js)/, rel: "workers/browser-runner-worker.js" },
-  { re: /rom-weaver-app\.wasm/, rel: "rom-weaver-app.wasm" },
+  { re: /browser-opfs-proxy-worker\.(?:ts|js)$/, rel: "workers/browser-opfs-proxy-worker.js" },
+  { re: /browser-wasi-thread-worker\.(?:ts|js)$/, rel: "workers/browser-wasi-thread-worker.js" },
+  { re: /browser-runner-worker\.(?:ts|js)$/, rel: "workers/browser-runner-worker.js" },
+  { re: /rom-weaver-app\.wasm$/, rel: "rom-weaver-app.wasm" },
 ];
 const NEW_URL_RE = /new URL\(\s*(["'])((?:\.\.?\/)[^"']+)\1\s*,\s*import\.meta\.url\s*\)/g;
 
@@ -98,6 +106,77 @@ const walkTsFiles = (dir) => {
   return out;
 };
 
+// Emit `.d.ts` declarations beside the bundled `.js` so consumers resolve real
+// types from `dist` rather than the `.ts` source (which needs
+// `allowImportingTsExtensions`). Runs the emit-only tsconfig through the
+// workspace's TypeScript.
+const emitDeclarations = () => {
+  const require = createRequire(import.meta.url);
+  const tscBin = path.join(path.dirname(require.resolve("typescript/package.json")), "bin", "tsc");
+  const result = spawnSync(process.execPath, [tscBin, "-p", "tsconfig.build.json"], {
+    cwd: packageRoot,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    throw new Error(`tsc declaration emit failed with exit code ${result.status ?? "signal"}`);
+  }
+};
+
+// Hand-authored/generated `.d.ts` source files (rom-weaver-types.d.ts and the
+// typegen output under generated/) are declaration-only, so tsc's
+// emitDeclarationOnly pass never copies them to the output. Copy them verbatim,
+// preserving their relative path, so the emitted declarations that reference
+// them resolve.
+const copyDeclarationSources = () => {
+  let copied = 0;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.name.endsWith(".d.ts")) continue;
+      const rel = path.relative(srcDir, full);
+      const dest = path.join(distDir, rel);
+      mkdirSync(path.dirname(dest), { recursive: true });
+      cpSync(full, dest);
+      copied += 1;
+    }
+  };
+  walk(srcDir);
+  return copied;
+};
+
+// tsc (tsgo) emits declarations that keep the source's explicit `.ts`/`.d.ts`
+// import specifiers, which only resolve for a consumer that enables
+// `allowImportingTsExtensions`. Normalize every relative specifier to `.js`
+// (its sibling `.d.ts` resolves by the standard rule), so the published types
+// work under a stock consumer config too.
+const REL_SPECIFIER_RE = /(["'])(\.\.?\/[^"']*?)(?:\.d)?\.ts\1/g;
+
+const rewriteDeclarationExtensions = (dir) => {
+  let rewritten = 0;
+  const walk = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.name.endsWith(".d.ts")) continue;
+      const original = readFileSync(full, "utf8");
+      const next = original.replace(REL_SPECIFIER_RE, (_match, quote, spec) => `${quote}${spec}.js${quote}`);
+      if (next !== original) {
+        writeFileSync(full, next);
+        rewritten += 1;
+      }
+    }
+  };
+  walk(dir);
+  return rewritten;
+};
+
 const sharedOptions = {
   absWorkingDir: packageRoot,
   bundle: true,
@@ -111,6 +190,16 @@ const sharedOptions = {
 };
 
 const run = async () => {
+  // `prepare` runs on every install, including the webapp Dockerfile's
+  // manifest-only layer where only package.json/lock are copied and src/ does
+  // not exist yet (npm runs a workspace `prepare` even under --ignore-scripts).
+  // No src means nothing to bundle; the later webapp `prebuild` rebuilds once
+  // the full tree is copied. Bail cleanly so the install never breaks.
+  if (!existsSync(srcDir)) {
+    log("src/ is not present (manifest-only install); skipping bundle");
+    return;
+  }
+
   if (existsSync(distDir)) rmSync(distDir, { recursive: true, force: true });
   mkdirSync(distDir, { recursive: true });
 
@@ -134,6 +223,12 @@ const run = async () => {
 
   const rewritten = rewriteAssetUrls(distDir);
   log(`rewrote import.meta.url asset refs in ${rewritten} files`);
+
+  log("emitting type declarations");
+  emitDeclarations();
+  const copiedDecls = copyDeclarationSources();
+  const rewrittenDecls = rewriteDeclarationExtensions(distDir);
+  log(`copied ${copiedDecls} declaration sources; normalized specifiers in ${rewrittenDecls} declarations`);
 
   for (const asset of ["rom-weaver-app.wasm", "rom-weaver-app.wasm.br"]) {
     const from = path.join(srcDir, asset);

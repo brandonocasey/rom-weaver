@@ -27,21 +27,21 @@
     "node": ">=22"
   },
   "main": "./dist/index.js",
-  "types": "./src/index.ts",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
     "./package.json": "./package.json",
     "./rom-weaver-types": {
-      "types": "./src/rom-weaver-types.d.ts"
+      "types": "./dist/rom-weaver-types.d.ts"
     },
     "./generated/rom-weaver-rust-types": {
-      "types": "./src/generated/rom-weaver-rust-types.d.ts"
+      "types": "./dist/generated/rom-weaver-rust-types.d.ts"
     },
     "./*": {
-      "types": "./src/*.ts",
+      "types": "./dist/*.d.ts",
       "import": "./dist/*.js"
     }
   },
@@ -52,13 +52,23 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "prepack": "node scripts/build.mjs"
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "run-s lint:types lint:code lint:knip format:check",
+    "lint:code": "run-s lint:code:oxlint lint:code:biome",
+    "lint:code:biome": "biome lint . --diagnostic-level=error",
+    "lint:code:oxlint": "oxlint . --deny-warnings",
+    "lint:knip": "knip --no-progress",
+    "lint:types": "tsc -p tsconfig.json --noEmit",
+    "prepack": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs"
   },
   "dependencies": {
     "@bjorn3/browser_wasi_shim": "0.4.2"
   },
   "devDependencies": {
-    "esbuild": "0.25.12"
+    "esbuild": "0.25.12",
+    "typescript": "^7.0.2"
   },
   "publishConfig": {
     "access": "public",

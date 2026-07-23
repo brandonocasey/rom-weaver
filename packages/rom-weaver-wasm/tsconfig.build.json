@@ -1,0 +1,16 @@
+{
+  // Emit-only config for the published type declarations. `tsconfig.json` keeps
+  // `noEmit` for the `lint:types` check; this one turns emit on for `.d.ts`
+  // only. scripts/build.mjs runs it and then rewrites the `.ts`/`.d.ts` import
+  // specifiers in the emitted declarations to `.js` so consumers without
+  // `allowImportingTsExtensions` resolve them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  }
+}
