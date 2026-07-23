@@ -79,11 +79,11 @@ without warranties or conditions of any kind.
 
 ## 6. Electronic signature and records
 
-You sign this Agreement through the CLA Assistant link on a pull request using
-your authenticated GitHub account. By completing that signing flow, you intend
-it to be your electronic signature on version 1.0 of this Agreement, confirm
-that the GitHub account belongs to you, and consent to the Agreement and its
-signature record being kept electronically.
+You sign this Agreement through the project's designated electronic signing
+process using your authenticated GitHub account. By completing that signing
+process, you intend it to be your electronic signature on version 1.0 of this
+Agreement, confirm that the GitHub account belongs to you, and consent to the
+Agreement and its signature record being kept electronically.
 
 The signature record associates the Agreement version with your authenticated
 GitHub account. Version 1.0 is immutable: any amendment must be published as a
