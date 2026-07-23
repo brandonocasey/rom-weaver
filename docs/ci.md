@@ -50,7 +50,28 @@ publishing, and retry procedures - see the [release guide](../.github/RELEASING.
 
 The hosted CLA Assistant GitHub App checks outside contributors against
 [CLA version 1.0](../CLA.md). It is configured in GitHub rather than as a
-repository workflow.
+repository workflow, so there is no workflow file to read and no re-run button
+in the Actions tab - it posts the `license/cla` commit status straight onto the
+head commit.
+
+That status is required, and the app only posts it in response to a
+`pull_request` event. A **force-push can leave the check permanently missing**:
+the new head commit never receives a status, so the pull request sits on
+"Expected - waiting for status to be reported" with every other check green and
+no bypass actor to merge past it. Rebasing a branch onto `main` is the usual way
+to hit this.
+
+**Close and reopen the pull request to recover.** The `reopened` event makes the
+app post `license/cla` against the current head, and it lands within seconds.
+
+The widely cited fix - commenting `recheck` - **does not work on this repo's own
+pull requests.** That trigger belongs to the bot's signature-request comment,
+and no such comment exists when the author has already signed or is the repo
+owner: the check passes silently, so there is no thread for `recheck` to act on
+and the comment is ignored. Verified on
+[#129](https://github.com/rom-weaver/rom-weaver/pull/129), where `recheck` did
+nothing and close/reopen fixed it immediately. Expect `recheck` to be useful
+only on an outside contributor's pull request that the bot has commented on.
 
 Coverage is deliberately sampled weekly rather than repeated after every green
 `main` build. It restores the source-exact production WASM cache and builds on
@@ -69,7 +90,8 @@ that pull request is what sets `release_created` and unlocks the publish jobs.
 > **`main` is protected by the active `main protection` ruleset.** Pull requests
 > must use squash merge and pass `Rust`, `Conventional commits`, `Build WASM
 > module`, `Lint workflows + scripts + Dockerfiles`, `Webapp`, `Docker build
-> (CLI)`, and `Docker build (webapp)`.
+> (CLI)`, `Docker build (webapp)`, and `license/cla`. The ruleset has no bypass
+> actors, so a status that is never reported blocks the merge outright.
 
 ## `ci.yml` - the required gate
 
@@ -622,6 +644,10 @@ inputs change.
   linked.
 - **`cargo publish --dry-run` exits 0 when a package sets `publish = false`**,
   so that CI gate becomes a silent no-op rather than an error.
+- **A force-push can drop the required `license/cla` status.** CLA Assistant is
+  an external app with no re-run button, and commenting `recheck` does nothing
+  on a pull request the bot never commented on. Close and reopen the pull
+  request instead. See the workflow table above.
 - **The root `package-lock.json` needs generated `@rom-weaver/*` optional
   entries.** The scope is not fully published when Release Please opens a new
   release PR, so `scripts/sync-version.mjs` writes local platform-package lock
