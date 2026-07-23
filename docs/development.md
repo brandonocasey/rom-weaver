@@ -95,7 +95,7 @@ are newer. Run `mise run build-wasm` directly when changing the WASM toolchain
 or when you need to see the complete build output.
 
 By default, build artifacts are written to
-`packages/rom-weaver-webapp/src/wasm/`, which is gitignored. To keep a separate
+`packages/rom-weaver-wasm/src/`, which is gitignored. To keep a separate
 artifact directory:
 
 ```bash
@@ -111,7 +111,7 @@ for ad hoc target commands:
 mise exec -- cargo check -p rom-weaver-containers --target wasm32-wasip1-threads
 ```
 
-See the [WASM runtime notes](../packages/rom-weaver-webapp/src/wasm/README.md)
+See the [WASM runtime notes](../packages/rom-weaver-wasm/src/README.md)
 for the browser OPFS and worker API.
 
 ## Build and run the native CLI
@@ -196,7 +196,7 @@ mise run manpages
 ```
 
 Do not edit files under
-`packages/rom-weaver-webapp/src/wasm/generated/` or `docs/man/` manually.
+`packages/rom-weaver-wasm/src/generated/` or `docs/man/` manually.
 
 ## Dependencies
 

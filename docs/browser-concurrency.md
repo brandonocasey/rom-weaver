@@ -24,7 +24,7 @@ the source of truth.
 ## WASI thread-start barrier
 
 The wire constants and small `Atomics` helpers live in
-`packages/rom-weaver-webapp/src/wasm/browser-wasi-thread-protocol.ts`.
+`packages/rom-weaver-wasm/src/browser-wasi-thread-protocol.ts`.
 `browser-wasi-thread-pool.ts` manages the worker pool, and
 `workers/browser-wasi-thread-worker.ts` runs `wasi_thread_start`.
 

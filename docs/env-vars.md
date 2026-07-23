@@ -4,7 +4,7 @@ This page lists the supported runtime variables and the main developer
 overrides. Most runtime numbers and booleans are parsed by
 `rom_weaver_core::env`; the table notes exceptions.
 
-> **Not an env var:** the generated `packages/rom-weaver-webapp/src/wasm/generated/rom-weaver-format-metadata.ts`
+> **Not an env var:** the generated `packages/rom-weaver-wasm/src/generated/rom-weaver-format-metadata.ts`
 > exports compile-time data tables named `ROM_WEAVER_CONTAINER_FORMATS`,
 > `ROM_WEAVER_FORMAT_METADATA`, etc. Despite the `ROM_WEAVER_` prefix these are
 > TypeScript `export const`s, **not** environment variables.

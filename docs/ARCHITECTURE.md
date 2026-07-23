@@ -17,8 +17,8 @@ the WASM build over a JSON event protocol.
                  │ CLI binary   │  └──────────┬───────────┘
                  └──────────────┘             │
                                   ┌───────────▼───────────┐
-                                  │ react src/wasm layer │ OPFS WASI runner,
-                                  │    (browser-only)    │ thread pool, worker client
+                                  │   @rom-weaver/wasm    │ OPFS WASI runner,
+                                  │    (browser-only)     │ thread pool, worker client
                                   └───────────┬───────────┘
                                   ┌───────────▼───────────┐
                                   │ rom-weaver-webapp     │ workflows, forms, PWA
@@ -54,7 +54,7 @@ the WASM build over a JSON event protocol.
 | `crates/rom-weaver-cli/src/gdrom` | Dreamcast GD-ROM / CD data-track filesystem: read (`sector` cooking of `MODE1/2352`, `iso9660` parse, `GdRomFs` tree view with the +45000 LBA bias) and write (`iso_writer` authors a cooked ISO9660 image, `mode1` re-encodes EDC/ECC into raw `MODE1/2352`). Pure Rust, wasm-safe. |
 | `crates/rom-weaver-cli/src/dcp` | Universal Dreamcast Patcher (`.dcp`) format: ZIP central-directory reader + entry inflate (`zip`), entry classification (`manifest`), per-file apply (`apply`), and full data-track rebuild (`rebuild`). Builds on the app's `gdrom` module + `rom-weaver-patches`'s `xdelta` module. |
 | `crates/rom-weaver-cli` | The installable package: the `rom_weaver_app` command library, native `rom-weaver` CLI, `rom-weaver-app` WASM entrypoint, type generator, argument parsing, and reporters. |
-| `packages/rom-weaver-webapp/src/wasm` | Browser WASM layer in the webapp package: OPFS WASI runner (`run`/`runJson`), mounts, thread pool, worker client, generated types. |
+| `packages/rom-weaver-wasm/src` | Browser WASM layer, published as the `@rom-weaver/wasm` npm package: OPFS WASI runner (`run`/`runJson`), mounts, thread pool, worker client, generated types. |
 | `packages/rom-weaver-webapp` | Webapp: workflow controllers, runtime adapters, React forms, workers, PWA shell. |
 | `scripts/` | Benches, worktree setup, and WASM toolchain helpers (`scripts/wasm/`); build orchestration moved to `.mise.toml` (`mise run build-wasm`). |
 
@@ -118,7 +118,7 @@ Patterns that matter when touching this code:
   read-on-main: RVZ *create* in the inlined `nod` source.) See **Browser I/O
   paths** below for the full picture.
 - **Browser thread budgets.** "auto" is resolved on the JS side
-  (`packages/rom-weaver-webapp/src/wasm/workers/browser-thread-budget.ts` and the
+  (`packages/rom-weaver-wasm/src/workers/browser-thread-budget.ts` and the
   React `toThreadBudget` path) before it reaches wasm - the wasm fallback is a
   fixed 4 threads, so passing "auto" through literally caps throughput.
 - **Byte-identical parity.** Compression outputs are validated against
@@ -179,14 +179,14 @@ cleanup, not the per-op wasm output.
 bytes stay OPFS-backed instead of round-tripping the JS heap.
 
 **OPFS proxy topology** - one **dedicated** proxy worker per runner
-(`packages/rom-weaver-webapp/src/wasm/browser-opfs-proxy-runtime.ts` spawns
-`packages/rom-weaver-webapp/src/wasm/workers/browser-opfs-proxy-worker.ts`).
+(`packages/rom-weaver-wasm/src/browser-opfs-proxy-runtime.ts` spawns
+`packages/rom-weaver-wasm/src/workers/browser-opfs-proxy-worker.ts`).
 It is the single owner of every `SyncAccessHandle` (and Blob input handle); its
 loop is async (`Atomics.waitAsync` doorbell) while **consumers block
 synchronously** (`Atomics.wait`) - that free event loop is what makes the
 Blob-handle reads deadlock-free. The SAB channel is forwarded into every spawned
 WASI thread so they share the one proxy; the mount
-(`packages/rom-weaver-webapp/src/wasm/browser-opfs-mount.ts`) builds proxy vs virtual inodes and caches inode
+(`packages/rom-weaver-wasm/src/browser-opfs-mount.ts`) builds proxy vs virtual inodes and caches inode
 trees across runs.
 
 **Native (CLI)** - plain `std::fs::File` + `BufReader`/`BufWriter`,
@@ -364,7 +364,7 @@ entry checks-only. Create re-parses before writing, so it can never emit
 - **Type generation.** `mise run typegen` (or
   `npm run typegen`) emits `rom-weaver-rust-types.d.ts`,
   `rom-weaver-format-metadata.ts`, and `rom-weaver-command-types.ts` into
-  `packages/rom-weaver-webapp/src/wasm/generated/`. CI runs `--check`; any change to
+  `packages/rom-weaver-wasm/src/generated/`. CI runs `--check`; any change to
   a `#[derive(TS)]` type or format registry metadata requires regenerating and
   committing. The generated format metadata is the single source for codec
   pickers and format tables in the webapp - do not hand-maintain duplicates.
@@ -396,13 +396,13 @@ entry checks-only. Create re-parses before writing, so it can never emit
 cargo build (workspace)                     # native CLI
 mise run typegen                            # regen TS types when Rust types change
 mise run build-wasm-prod                    # WASI SDK build → wasm-opt → brotli
-                                            #   → sync into packages/rom-weaver-webapp/src/wasm
+                                            #   → sync into packages/rom-weaver-wasm/src
 npm --prefix packages/rom-weaver-webapp run dev|build
 ```
 
 The WASM build needs a WASI SDK (v33+, auto-detected; see
 `scripts/wasm/detect-wasi-sdk.sh` and the `build-wasm` task in `.mise.toml`). Generated wasm artifacts in
-`packages/rom-weaver-webapp/src/wasm` are gitignored; the generated *TypeScript*
+`packages/rom-weaver-wasm/src` are gitignored; the generated *TypeScript*
 files are
 committed and drift-checked.
 

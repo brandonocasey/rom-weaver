@@ -88,8 +88,8 @@ instructions do **not** apply here.
 - CLI command orchestration: `crates/rom-weaver-cli` (shared library + native + wasm)
 - Format handler registries: `crates/rom-weaver-containers`,
   `crates/rom-weaver-patches`
-- Browser wasm runtime (OPFS, thread pool, worker client):
-  `packages/rom-weaver-webapp/src/wasm`
+- Browser wasm runtime (OPFS, thread pool, worker client): the `@rom-weaver/wasm`
+  package (`packages/rom-weaver-wasm`)
 - Webapp workflows/forms: `packages/rom-weaver-webapp/src`
 - Vendored source is all in-tree under `crates/rom-weaver-containers`: the
   libarchive C sources at `libarchive/vendor/libarchive` (refresh with
