@@ -100,24 +100,24 @@ jobs:
   # that no longer builds surfaced at the moment it blocked a publish. hadolint
   # above reads the Dockerfile; it does not run it.
   #
-  # This job builds the images from source, and each build is gated on its actual
-  # inputs rather than running for unrelated changes. The CLI build includes its
-  # Cargo workspace sources, so it always exercises the image when the binary
-  # changes. The webapp's source build remains image-plumbing only because its
-  # release path is exercised by the prebuilt smoke below.
+  # These source builds run in parallel and each is gated on its actual inputs
+  # rather than running for unrelated changes. The CLI build includes its Cargo
+  # workspace sources, so it always exercises the image when the binary changes.
+  # The webapp's source build remains image-plumbing only because its release
+  # path is exercised by the prebuilt smoke below.
   #
   # Reusing CI's cached wasm here is not an option: the CLI image contains no
   # wasm at all (it is `cargo build --release -p rom-weaver-cli`), and for the
   # webapp `DIST=prebuilt` skips the whole builder stage - rustup, the WASI SDK
-  # pins, binaryen - which is precisely the fragile half this job exists to
+  # pins, binaryen - which is precisely the fragile half these jobs exist to
   # test. That path is covered instead, unconditionally and for free, by
   # the webapp prebuilt smoke below.
-  docker:
-    name: Docker builds
+  docker_cli_build:
+    name: Docker CLI
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     needs: changes
-    if: github.ref_type != 'tag'
+    if: github.ref_type != 'tag' && needs.changes.outputs.docker_cli == 'true'
     permissions:
       contents: read
       # Read to restore the cache; write so a merge to main can refresh it. A
@@ -129,10 +129,8 @@ jobs:
         uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
-        if: needs.changes.outputs.docker_cli == 'true' || needs.changes.outputs.docker_webapp == 'true'
 
       - name: Log in to GitHub Container Registry
-        if: needs.changes.outputs.docker_cli == 'true' || needs.changes.outputs.docker_webapp == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -143,7 +141,6 @@ jobs:
       # release starts warm; on a pull request it only reads, because a fork's
       # token cannot write to the registry.
       - name: Build CLI image
-        if: needs.changes.outputs.docker_cli == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -154,15 +151,38 @@ jobs:
           cache-to: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && format('type=registry,ref=ghcr.io/{0}/rom-weaver-cli:buildcache,mode=max', github.repository_owner) || '' }}
 
       - name: Build CLI prebuilt path
-        if: needs.changes.outputs.docker_cli == 'true'
         run: |
           set -euo pipefail
           mkdir -p prebuilt
           printf 'stub\n' > prebuilt/rom-weaver
           docker build --file Dockerfile --build-arg BINARY=prebuilt --tag prebuilt-smoke .
 
+  docker_webapp_build:
+    name: Docker webapp
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: changes
+    if: github.ref_type != 'tag' && needs.changes.outputs.docker_webapp == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Never pushes an image. On main it refreshes the build cache so the next
+      # release starts warm; on a pull request it only reads, because a fork's
+      # token cannot write to the registry.
       - name: Build webapp image
-        if: needs.changes.outputs.docker_webapp == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -171,6 +191,30 @@ jobs:
           push: false
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rom-weaver-webapp:buildcache
           cache-to: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && format('type=registry,ref=ghcr.io/{0}/rom-weaver-webapp:buildcache,mode=max', github.repository_owner) || '' }}
+
+  # Keep one stable required context while the two source builds run in
+  # parallel. Unselected builders are skipped intentionally; a selected
+  # builder must succeed.
+  docker:
+    name: Docker builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [changes, docker_cli_build, docker_webapp_build]
+    if: ${{ !cancelled() && github.ref_type != 'tag' }}
+    steps:
+      - name: Verify Docker builds
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CLI_SELECTED: ${{ needs.changes.outputs.docker_cli }}
+          WEBAPP_SELECTED: ${{ needs.changes.outputs.docker_webapp }}
+          CLI_RESULT: ${{ needs.docker_cli_build.result }}
+          WEBAPP_RESULT: ${{ needs.docker_webapp_build.result }}
+        run: |
+          set -euo pipefail
+          [[ "$CHANGES_RESULT" == success ]]
+          check() { [[ "$1" == success || ( "$1" == skipped && "$2" != true ) ]]; }
+          check "$CLI_RESULT" "$CLI_SELECTED"
+          check "$WEBAPP_RESULT" "$WEBAPP_SELECTED"
 
   # Temporary compatibility contexts for the current main protection ruleset.
   # Remove these after the ruleset requires `Docker builds` instead.

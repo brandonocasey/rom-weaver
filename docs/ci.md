@@ -69,13 +69,18 @@ that pull request is what sets `release_created` and unlocks the publish jobs.
 
 The two Docker contexts are temporary compatibility checks while the protected
 ruleset moves to the single `Docker builds` context. The source CLI and webapp
-images are built once by that job; the compatibility checks only forward its
-result and are removed after the ruleset is updated.
+images build in parallel; `Docker builds` aggregates their result. The
+compatibility checks only forward that result and are removed after the ruleset
+is updated.
 
 ## `ci.yml` - the required gate
 
 ```
 changes ── changed paths -> rust / webapp / security
+
+          ┌── docker_cli_build ────┐
+changes ──┤                       ├── docker (aggregate check name)
+          └── docker_webapp_build ─┘
 
              ┌── rust-host ─────┐
 changes ─────┼── rust-macos ────┼── rust (aggregate check name)
@@ -110,29 +115,32 @@ security ── advisories (warn only, always green)
   compiles nothing, so it reports in well under a minute instead of hiding
   behind a build job. `actionlint` shells out to `shellcheck` for `run:`
   blocks, which is why both are in its `tools:` list.
-- **`docker`** builds the CLI and webapp images **from source** without
-  pushing, so a broken Dockerfile fails here rather than at the moment it
-  blocks a release publish. Its conditional CLI build runs for Cargo workspace
-  sources and manifests as well as its image plumbing, so the required check
-  builds the image whenever its binary changes. The webapp source build runs
-  only when its image plumbing changes (the Dockerfile, `.dockerignore`,
-  `docker-compose.yml`, `sws.toml`, the Docker compression script, `ci.yml`, or
-  `docker-publish.yml`); ordinary webapp changes use the release-equivalent
-  prebuilt smoke below. On `main`, source builds also refresh their registry
-  cache. The CLI leg additionally smokes the `BINARY=prebuilt` release path
-  with a stub binary whenever it is selected.
+- **`docker_cli_build`** builds the CLI image **from source** without pushing,
+  so a broken Dockerfile fails here rather than at the moment it blocks a
+  release publish. It runs for Cargo workspace sources and manifests as well
+  as its image plumbing, and additionally smokes the `BINARY=prebuilt` release
+  path with a stub binary. On `main`, it refreshes the registry cache.
+- **`docker_webapp_build`** builds the webapp image **from source** without
+  pushing. It runs only when its image plumbing changes (the Dockerfile,
+  `.dockerignore`, `docker-compose.yml`, `sws.toml`, the Docker compression
+  script, `ci.yml`, or `docker-publish.yml`); ordinary webapp changes use the
+  release-equivalent prebuilt smoke below. On `main`, it refreshes the registry
+  cache. The two source jobs run in parallel.
+- **`docker`** aggregates the two source-build results under the stable
+  `Docker builds` check name. A selected source build must succeed; an
+  unselected one is intentionally skipped.
 
-  Handing this job CI's cached wasm to lift the gate does not work. The CLI
-  image contains no wasm at all - it is `cargo build --release -p
+  Handing these source-build jobs CI's cached wasm to lift the gate does not
+  work. The CLI image contains no wasm at all - it is `cargo build --release -p
   rom-weaver-cli`, and CI publishes no Linux release binary to reuse - and for
   the webapp, `DIST=prebuilt` skips the entire builder stage (rustup, the
   pinned WASI SDK and binaryen checksums, `npm ci`, the wasm compile), which is
-  exactly the fragile half this job exists to test.
+  exactly the fragile half these jobs exist to test.
 - **`docker-prebuilt`** builds the webapp's `DIST=prebuilt` release path. It
   consumes the real `webapp-dist` artifact `webapp-static` uploads, so
   `compress-static-assets.mjs` runs over the real bundle. The CLI equivalent
-  stays in the image-gated `docker` leg instead of starting a separate runner
-  after every Rust or webapp change.
+  stays in the image-gated `docker_cli_build` leg instead of starting a
+  separate runner after every Rust or webapp change.
 - **`wasm`** builds the production WASM module. This is the single most
   expensive step in the pipeline (~6.5 min) and it used to run twice, so it is
   built once here and shared with `webapp` and `deploy` as an artifact, and
