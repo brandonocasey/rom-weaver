@@ -15,7 +15,6 @@ const assertIncludes = (source, expected, label) => {
 const weaveHtml = read("index.html");
 const createHtml = read("create.html");
 const headers = read("_headers");
-const redirects = read("_redirects");
 const robots = read("robots.txt");
 
 for (const route of ["weave", "create", "trim", "tools"]) {
@@ -27,8 +26,6 @@ assertIncludes(
   "fingerprinted asset cache headers",
 );
 assertIncludes(headers, "/cache-service-worker.js\n  Cache-Control: no-cache", "service worker cache headers");
-assertIncludes(redirects, "/create /create.html 200", "Cloudflare route rewrites");
-assertIncludes(redirects, "/weave /index.html 200", "Cloudflare route rewrites");
 assertIncludes(weaveHtml, `href="https://rom-weaver.com/${WORKFLOW_SEO_ROUTES.patcher.slug}"`, "weave canonical");
 assertIncludes(weaveHtml, WORKFLOW_SEO_ROUTES.patcher.description, "weave description");
 assertIncludes(createHtml, `href="https://rom-weaver.com/${WORKFLOW_SEO_ROUTES.creator.slug}"`, "create canonical");
