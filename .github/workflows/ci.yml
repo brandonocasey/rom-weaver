@@ -1062,22 +1062,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ matrix.target.project }}
-        run: |
-          set -o pipefail
-          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects"
-          body=$(curl -sS -X POST "$api" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data "{\"name\":\"${PROJECT}\",\"production_branch\":\"main\"}")
-          if [ "$(printf '%s' "$body" | jq -r '.success')" = "true" ]; then
-            echo "created Pages project '$PROJECT'"
-          elif printf '%s' "$body" | jq -e '.errors[]? | select(.code == 8000002 or (.message | test("already exists"; "i")))' >/dev/null; then
-            echo "Pages project '$PROJECT' already exists"
-          else
-            echo "unexpected response creating '$PROJECT':" >&2
-            printf '%s\n' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
-            exit 1
-          fi
+        run: scripts/ci/ensure-cloudflare-pages-project.sh
 
       - name: Deploy to Cloudflare Pages
         id: deploy
@@ -1086,19 +1071,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ matrix.target.project }}
           BRANCH: ${{ matrix.target.branch }}
-        run: |
-          set -o pipefail
-          # Run from the webapp directory: wrangler resolves the Pages
-          # `functions/` directory relative to the cwd, and the wasm-brotli
-          # function must ship with every channel.
-          cd packages/rom-weaver-webapp
-          npx --yes wrangler@4 pages deploy dist \
-            --project-name="$PROJECT" \
-            --branch="$BRANCH" \
-            --commit-hash="${GITHUB_SHA}" 2>&1 | tee /tmp/deploy.log
-          url=$(grep -oE 'https://[a-z0-9.-]+\.pages\.dev' /tmp/deploy.log | tail -1)
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "deployed to $url"
+        run: scripts/ci/deploy-pages.sh
 
       # Every sidecar-backed /assets/* request invokes the Pages Function, so
       # a zone Cache Rule makes the edge cache those responses and the
@@ -1117,45 +1090,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-        run: |
-          set -o pipefail
-          if [ -z "$CLOUDFLARE_ZONE_ID" ]; then
-            echo "::notice::CLOUDFLARE_ZONE_ID not set; skipping zone cache rule"
-            exit 0
-          fi
-          api="https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/rulesets"
-          desc="rom-weaver: cache immutable /assets (managed by ci.yml)"
-          expr='(http.host in {"rom-weaver.com" "beta.rom-weaver.com" "nightly.rom-weaver.com"}) and starts_with(http.request.uri.path, "/assets/")'
-          rule=$(jq -cn --arg desc "$desc" --arg expr "$expr" '{
-            description: $desc,
-            expression: $expr,
-            action: "set_cache_settings",
-            action_parameters: { cache: true, edge_ttl: { mode: "respect_origin" } },
-            enabled: true
-          }')
-          entry=$(curl -sS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            "$api/phases/http_request_cache_settings/entrypoint")
-          # A zone with no cache rules yet has no entrypoint ruleset; treat
-          # that as an empty rule list rather than a failure.
-          rules=$(printf '%s' "$entry" | jq -c '.result.rules // []')
-          if printf '%s' "$rules" | jq -e --arg desc "$desc" --arg expr "$expr" \
-            'any(.[]; .description == $desc and .expression == $expr)' >/dev/null; then
-            echo "zone cache rule already present"
-            exit 0
-          fi
-          merged=$(printf '%s' "$rules" | jq -c --argjson rule "$rule" --arg desc "$desc" \
-            '[.[] | select(.description != $desc)] + [$rule]')
-          body=$(curl -sS -X PUT "$api/phases/http_request_cache_settings/entrypoint" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data "{\"rules\":${merged}}")
-          if [ "$(printf '%s' "$body" | jq -r '.success')" = "true" ]; then
-            echo "zone cache rule installed"
-          else
-            echo "unexpected response installing zone cache rule:" >&2
-            printf '%s\n' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
-            exit 1
-          fi
+        run: scripts/ci/ensure-cloudflare-assets-cache-rule.sh
 
       # The GitHub environment above already surfaces the deployment on the PR;
       # this status just carries the stable branch alias (pr-<n>...pages.dev)
