@@ -44,7 +44,7 @@ publishing, and retry procedures - see the [release guide](../.github/RELEASING.
 | `cache-cleanup.yml` | daily 09:00 UTC, manual | No | Reap closed-PR Actions caches |
 | `release.yml` | after a successful `CI` on `main`, manual | n/a | Release Please, then the publish fan-out |
 | `cargo-publish.yml` | `v*` tag push, manual | n/a | crates.io publish |
-| `npm-publish.yml` | called by `release.yml` | n/a | 4 platform packages, launcher, alias |
+| `npm-publish.yml` | called by `release.yml` | n/a | 9 platform packages, launcher, alias |
 | `docker-publish.yml` | called by `release.yml`, manual | n/a | CLI + webapp images to ghcr.io |
 
 Coverage is deliberately sampled weekly rather than repeated after every green
@@ -73,7 +73,8 @@ changes ── changed paths -> rust / webapp / security
 
              ┌── rust-host ─────┐
 changes ─────┼── rust-macos ────┼── rust (aggregate check name)
-             └── rust-windows ──┘
+             ├── rust-windows ──┤
+             └── cli-platforms ─┘ (9 release targets)
 
          ┌── webapp-static ───┐
          ├── webapp-browser ──┼── webapp (aggregate check name)
@@ -136,6 +137,13 @@ security ── advisories (warn only, always green)
   typegen drift, whitespace, thread guards, the Rust test suite, license
   attribution, `cargo deny` licenses/sources, unused dependencies, and a
   `cargo publish --dry-run`.
+- **`cli-platforms`** builds and packages every native release target before
+  release day: macOS arm64/x86-64; Linux x86-64 GNU plus arm64/i686/x86-64
+  musl; and Windows arm64/x86/x86-64 MSVC. Every binary verifies a SHA-256;
+  round-trips ZIP, 7z, and Z3DS; extracts fixed CHD, RVZ, TAR, and RAR fixtures;
+  and creates/applies fourteen patch formats on its target architecture. Native
+  arm64 runners and OS emulation cover the 32-bit x86 targets. The matrix runs
+  only when Rust or native-package inputs change.
 - There is **no separate `wasm-check` job**. It ran `cargo check -p
   rom-weaver-containers --lib` against `wasm32-wasip1-threads`, which `wasm`
   already compiles as a strict subset (the app build pulls `containers` in with
@@ -318,7 +326,7 @@ expired. Release falls back to a source build when it is unavailable.
 
 ### `scripts/ci/npm-publish-package.mjs`
 
-Publishes one package idempotently. Six packages go out per release through
+Publishes one package idempotently. Eleven packages go out per release through
 three jobs that all need the same three rules: never fail because the version
 is already on the registry, route prereleases to the `beta` dist-tag, and treat
 "publish failed but the version is now present" as a concurrent run winning the
@@ -336,7 +344,7 @@ spec would tag every platform package as a prerelease.
 | --- | --- |
 | `semver-check` | nothing - gates the publish on no accidental breaking API change |
 | `static-webapp` | `rom-weaver-webapp.tar.gz` + checksum on the GitHub release |
-| `publish-npm` | 4 platform packages → launcher → unscoped alias, in that order |
+| `publish-npm` | 9 platform packages → launcher → unscoped alias, in that order |
 | `publish-containers` | `ghcr.io/.../rom-weaver-cli` and `-webapp`, signed provenance |
 | `publish-release` | flips the draft release to published, creating the tag |
 | `publish-homebrew` | formula commit to `brandonocasey/homebrew-tap` (stable only) |

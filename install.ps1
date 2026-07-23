@@ -13,18 +13,15 @@ $installDir = if ($env:ROM_WEAVER_INSTALL_DIR) {
   Join-Path $env:LOCALAPPDATA 'rom-weaver\bin'
 }
 
-# Only an x64 build is released. Windows on ARM runs it under emulation, which
-# is slower but correct, so arm64 is allowed through rather than refused.
 $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-$supported = @(
-  [System.Runtime.InteropServices.Architecture]::X64
-  [System.Runtime.InteropServices.Architecture]::Arm64
-)
-if ($supported -notcontains $architecture) {
-  throw "rom-weaver does not support Windows/$architecture"
+$platformArchitecture = switch ($architecture) {
+  ([System.Runtime.InteropServices.Architecture]::Arm64) { 'arm64'; break }
+  ([System.Runtime.InteropServices.Architecture]::X64) { 'x64'; break }
+  ([System.Runtime.InteropServices.Architecture]::X86) { 'ia32'; break }
+  default { throw "rom-weaver does not support Windows/$architecture" }
 }
 
-$asset = 'rom-weaver-win32-x64-msvc.exe'
+$asset = "rom-weaver-win32-$platformArchitecture-msvc.exe"
 $releaseUrl = if ($version -eq 'latest') {
   "https://github.com/$repo/releases/latest/download"
 } else {

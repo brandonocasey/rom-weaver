@@ -397,6 +397,8 @@ jobs:
       version: ${{ needs.release.outputs.version }}
       sha: ${{ needs.release.outputs.sha }}
       cache-save: false
+    secrets:
+      NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
 
   # After publish-release, not before: the formula points at
   # releases/download/vX.Y.Z/... and a draft's assets are not publicly
@@ -437,11 +439,17 @@ jobs:
           name: npm-platform-linux-x64-gnu
           path: platform-artifacts/linux-x64-gnu
 
+      - name: Download linux arm64 package
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-platform-linux-arm64-musl
+          path: platform-artifacts/linux-arm64-musl
+
       - name: Calculate release checksums
         run: |
           set -euo pipefail
           mkdir checksums
-          for platform in darwin-arm64 darwin-x64 linux-x64-gnu; do
+          for platform in darwin-arm64 darwin-x64 linux-arm64-musl linux-x64-gnu; do
             binary="platform-artifacts/$platform/bin/rom-weaver"
             test -f "$binary"
             checksum="$(sha256sum "$binary" | cut -d ' ' -f 1)"
@@ -490,21 +498,35 @@ jobs:
         with:
           ref: ${{ needs.release.outputs.sha }}
 
+      - name: Download win32 arm64 package
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-platform-win32-arm64-msvc
+          path: platform-artifacts/win32-arm64-msvc
+
+      - name: Download win32 ia32 package
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-platform-win32-ia32-msvc
+          path: platform-artifacts/win32-ia32-msvc
+
       - name: Download win32 x64 package
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: npm-platform-win32-x64-msvc
           path: platform-artifacts/win32-x64-msvc
 
-      - name: Calculate release checksum
+      - name: Calculate release checksums
         run: |
           set -euo pipefail
           mkdir checksums
-          asset=rom-weaver-win32-x64-msvc.exe
-          binary=platform-artifacts/win32-x64-msvc/bin/rom-weaver.exe
-          test -f "$binary"
-          printf '%s  %s\n' "$(sha256sum "$binary" | cut -d ' ' -f 1)" "$asset" > \
-            "checksums/$asset.sha256"
+          for platform in win32-arm64-msvc win32-ia32-msvc win32-x64-msvc; do
+            asset="rom-weaver-$platform.exe"
+            binary="platform-artifacts/$platform/bin/rom-weaver.exe"
+            test -f "$binary"
+            printf '%s  %s\n' "$(sha256sum "$binary" | cut -d ' ' -f 1)" "$asset" > \
+              "checksums/$asset.sha256"
+          done
 
       - name: Checkout Scoop bucket
         uses: actions/checkout@v7

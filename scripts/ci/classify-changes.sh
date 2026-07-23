@@ -29,9 +29,12 @@ else
     esac
 
     case "$path" in
-      crates/* | Cargo.toml | Cargo.lock | deny.toml | \
+      crates/* | Cargo.toml | Cargo.lock | deny.toml | package.json | package-lock.json | \
+        .github/workflows/npm-publish.yml | .github/workflows/release.yml | \
+        packages/rom-weaver-cli-platforms/* | bin/rom-weaver.mjs | install.sh | install.ps1 | \
         scripts/check-thread-guards.sh | scripts/gen-third-party-licenses.mjs | \
-        scripts/vendored-pathspecs.sh | scripts/wasm/*)
+        scripts/prepare-npm-platform-package.mjs | scripts/sync-version.mjs | \
+        scripts/vendored-pathspecs.sh | scripts/verify-cli-platform.mjs | scripts/wasm/*)
         rust=true
         webapp=true
         ;;

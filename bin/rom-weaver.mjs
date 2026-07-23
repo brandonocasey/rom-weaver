@@ -17,8 +17,10 @@ const linuxLibc = () => {
 const platformPackage = (() => {
   if (process.platform === "darwin") return `@rom-weaver/darwin-${process.arch}`;
   if (process.platform === "win32") return `@rom-weaver/win32-${process.arch}-msvc`;
-  if (process.platform === "linux" && process.arch === "x64" && linuxLibc() === "gnu")
-    return "@rom-weaver/linux-x64-gnu";
+  if (process.platform === "linux" && ["arm64", "ia32", "x64"].includes(process.arch)) {
+    const libc = process.arch === "x64" ? linuxLibc() : "musl";
+    return `@rom-weaver/linux-${process.arch}-${libc}`;
+  }
   return null;
 })();
 

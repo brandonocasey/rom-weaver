@@ -6,6 +6,17 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 const hasPowerShell = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"]).status === 0;
+const runtimeArchitecture = hasPowerShell
+  ? execFileSync("pwsh", [
+      "-NoProfile",
+      "-Command",
+      "[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()",
+    ])
+      .toString()
+      .trim()
+  : "x64";
+const packageArchitecture = runtimeArchitecture === "x86" ? "ia32" : runtimeArchitecture;
+const asset = `rom-weaver-win32-${packageArchitecture}-msvc.exe`;
 
 // Invoke-WebRequest is stubbed by declaring a function of the same name in the
 // caller's scope: PowerShell resolves functions before cmdlets, and install.ps1
@@ -20,7 +31,7 @@ function Invoke-WebRequest {
   if ($Uri.EndsWith('.sha256')) {
     $binary = $OutFile -replace '\\.sha256$', ''
     $hash = (Get-FileHash -Path $binary -Algorithm SHA256).Hash
-    Set-Content -Path $OutFile -Value "$hash  rom-weaver-win32-x64-msvc.exe"
+    Set-Content -Path $OutFile -Value "$hash  ${asset}"
   } else {
     Set-Content -Path $OutFile -Value 'binary' -NoNewline
   }
@@ -43,8 +54,8 @@ test("installs the checksummed binary", { skip: hasPowerShell ? false : "pwsh no
     assert.equal(readFileSync(target, "utf8"), "binary");
     assert.ok(output.includes(`Installed rom-weaver to ${target}`));
     assert.deepEqual(readFileSync(urlLog, "utf8").trim().split("\n"), [
-      "https://github.com/brandonocasey/rom-weaver/releases/latest/download/rom-weaver-win32-x64-msvc.exe",
-      "https://github.com/brandonocasey/rom-weaver/releases/latest/download/rom-weaver-win32-x64-msvc.exe.sha256",
+      `https://github.com/brandonocasey/rom-weaver/releases/latest/download/${asset}`,
+      `https://github.com/brandonocasey/rom-weaver/releases/latest/download/${asset}.sha256`,
     ]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -64,7 +75,7 @@ function Invoke-WebRequest {
   param([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
   Add-Content -Path '${urlLog}' -Value $Uri
   if ($Uri.EndsWith('.sha256')) {
-    Set-Content -Path $OutFile -Value "${"a".repeat(64)}  rom-weaver-win32-x64-msvc.exe"
+    Set-Content -Path $OutFile -Value "${"a".repeat(64)}  ${asset}"
   } else {
     Set-Content -Path $OutFile -Value 'binary' -NoNewline
   }
@@ -80,8 +91,8 @@ function Invoke-WebRequest {
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /checksum mismatch/);
       assert.deepEqual(readFileSync(urlLog, "utf8").trim().split("\n"), [
-        "https://github.com/brandonocasey/rom-weaver/releases/download/v9.9.9/rom-weaver-win32-x64-msvc.exe",
-        "https://github.com/brandonocasey/rom-weaver/releases/download/v9.9.9/rom-weaver-win32-x64-msvc.exe.sha256",
+        `https://github.com/brandonocasey/rom-weaver/releases/download/v9.9.9/${asset}`,
+        `https://github.com/brandonocasey/rom-weaver/releases/download/v9.9.9/${asset}.sha256`,
       ]);
     } finally {
       rmSync(directory, { recursive: true, force: true });

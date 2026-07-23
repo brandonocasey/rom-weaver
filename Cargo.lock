@@ -1717,6 +1717,7 @@ dependencies = [
  "bytes",
  "bzip2-sys",
  "cbc",
+ "cc",
  "chd",
  "ciso",
  "claxon",

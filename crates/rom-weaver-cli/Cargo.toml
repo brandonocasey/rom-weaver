@@ -89,6 +89,21 @@ pkg-url = "{ repo }/releases/download/v{ version }/rom-weaver-darwin-x64"
 [package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
 pkg-url = "{ repo }/releases/download/v{ version }/rom-weaver-linux-x64-gnu"
 
+[package.metadata.binstall.overrides.aarch64-unknown-linux-musl]
+pkg-url = "{ repo }/releases/download/v{ version }/rom-weaver-linux-arm64-musl"
+
+[package.metadata.binstall.overrides.i686-unknown-linux-musl]
+pkg-url = "{ repo }/releases/download/v{ version }/rom-weaver-linux-ia32-musl"
+
+[package.metadata.binstall.overrides.x86_64-unknown-linux-musl]
+pkg-url = "{ repo }/releases/download/v{ version }/rom-weaver-linux-x64-musl"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/rom-weaver-win32-arm64-msvc.exe"
+
+[package.metadata.binstall.overrides.i686-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/rom-weaver-win32-ia32-msvc.exe"
+
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-url = "{ repo }/releases/download/v{ version }/rom-weaver-win32-x64-msvc.exe"
 

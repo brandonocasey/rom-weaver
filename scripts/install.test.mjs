@@ -73,3 +73,63 @@ esac
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("selects Linux musl assets by architecture", () => {
+  for (const [machine, platform] of [
+    ["aarch64", "linux-arm64-musl"],
+    ["i686", "linux-ia32-musl"],
+    ["x86_64", "linux-x64-musl"],
+  ]) {
+    const directory = mkdtempSync(join(tmpdir(), "rom-weaver-install-linux-"));
+    try {
+      const bin = join(directory, "bin");
+      const curlLog = join(directory, "curl.log");
+      mkdirSync(bin);
+      writeExecutable(
+        join(bin, "uname"),
+        `#!/bin/sh
+case "$1" in
+  -s) echo Linux ;;
+  -m) echo ${machine} ;;
+esac
+`,
+      );
+      writeExecutable(join(bin, "getconf"), "#!/bin/sh\nexit 1\n");
+      writeExecutable(join(bin, "ldd"), "#!/bin/sh\necho 'musl libc' >&2\n");
+      writeExecutable(
+        join(bin, "curl"),
+        `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output=$2; shift 2 ;;
+    *) url=$1; shift ;;
+  esac
+done
+echo "$url" >> "$CURL_LOG"
+case "$url" in
+  *.sha256) echo "${"a".repeat(64)}  rom-weaver-${platform}" > "$output" ;;
+  *) echo binary > "$output" ;;
+esac
+`,
+      );
+      writeExecutable(join(bin, "sha256sum"), "#!/bin/sh\nexit 0\n");
+
+      execFileSync("/bin/sh", [resolve("install.sh")], {
+        env: {
+          ...process.env,
+          CURL_LOG: curlLog,
+          HOME: directory,
+          PATH: `${bin}:/usr/bin:/bin`,
+          ROM_WEAVER_INSTALL_DIR: join(directory, "install"),
+        },
+      });
+
+      assert.equal(
+        readFileSync(curlLog, "utf8").trim().split("\n")[0],
+        `https://github.com/brandonocasey/rom-weaver/releases/latest/download/rom-weaver-${platform}`,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});

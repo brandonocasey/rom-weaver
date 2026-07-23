@@ -10,8 +10,15 @@ test("generates a manifest from the release checksum", () => {
   try {
     const checksums = join(directory, "checksums");
     mkdirSync(checksums);
-    const asset = "rom-weaver-win32-x64-msvc.exe";
-    writeFileSync(join(checksums, `${asset}.sha256`), `${"a".repeat(64)}  ${asset}\n`);
+    const platforms = [
+      ["64bit", "win32-x64-msvc", "a"],
+      ["32bit", "win32-ia32-msvc", "b"],
+      ["arm64", "win32-arm64-msvc", "c"],
+    ];
+    for (const [, platform, digit] of platforms) {
+      const asset = `rom-weaver-${platform}.exe`;
+      writeFileSync(join(checksums, `${asset}.sha256`), `${digit.repeat(64)}  ${asset}\n`);
+    }
 
     const output = join(directory, "bucket", "rom-weaver.json");
     execFileSync(process.execPath, [
@@ -23,12 +30,15 @@ test("generates a manifest from the release checksum", () => {
     const manifest = JSON.parse(readFileSync(output, "utf8"));
     assert.equal(manifest.version, "1.2.3");
     assert.equal(manifest.bin, "rom-weaver.exe");
-    assert.equal(manifest.architecture["64bit"].hash, "a".repeat(64));
-    // The `#/rom-weaver.exe` fragment is what makes `bin` a stable name.
-    assert.equal(
-      manifest.architecture["64bit"].url,
-      `https://github.com/brandonocasey/rom-weaver/releases/download/v1.2.3/${asset}#/rom-weaver.exe`,
-    );
+    for (const [architecture, platform, digit] of platforms) {
+      const asset = `rom-weaver-${platform}.exe`;
+      assert.equal(manifest.architecture[architecture].hash, digit.repeat(64));
+      // The `#/rom-weaver.exe` fragment is what makes `bin` a stable name.
+      assert.equal(
+        manifest.architecture[architecture].url,
+        `https://github.com/brandonocasey/rom-weaver/releases/download/v1.2.3/${asset}#/rom-weaver.exe`,
+      );
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
