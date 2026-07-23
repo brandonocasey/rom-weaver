@@ -5,6 +5,7 @@ import process from "node:process";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
+import { dedupeTree } from "../../scripts/dedupe-tree.mjs";
 import { getBuildInfo, getChangelog } from "./scripts/version.mjs";
 import { WORKFLOW_SEO_ROUTES } from "./src/webapp/workflow-seo.mjs";
 
@@ -272,9 +273,13 @@ const writeWebappStaticAssets = (channel, channelLabel) => {
       }
       fs.writeFileSync(path.join(distDir, "robots.txt"), createRobotsSource(channel));
       if (channel === "prod") fs.writeFileSync(path.join(distDir, "sitemap.xml"), createSitemapSource());
-      fs.cpSync(path.join(rootDir, "src", "wasm", "third_party"), path.join(distDir, "third_party"), {
+      const thirdPartyDir = path.join(distDir, "third_party");
+      fs.cpSync(path.join(rootDir, "src", "wasm", "third_party"), thirdPartyDir, {
         recursive: true,
       });
+      // cpSync expands the generator's hardlinks back into full copies, so the
+      // shipped tree has to be collapsed again.
+      dedupeTree(thirdPartyDir);
     },
     configResolved(config) {
       outDir = config.build.outDir;
@@ -300,9 +305,15 @@ const writeCloudflareHeadersAsset = (channel) => {
         .map(([name, value]) => `  ${name}: ${value}`)
         .join("\n");
       const outputPath = path.join(path.resolve(rootDir, outDir), "_headers");
+      // The attribution files are named `LICENSE-APACHE`, `COPYING`, `NOTICE`
+      // and so on. With no extension Cloudflare types them as a binary
+      // download, which both skips its on-the-fly compression (2.1 MB of text
+      // over the wire) and makes a browser download rather than display them.
+      const licenseContentType =
+        "/third_party/licenses/*\n  Content-Type: text/plain; charset=utf-8\n\n/NOTICE\n  Content-Type: text/plain; charset=utf-8\n";
       fs.writeFileSync(
         outputPath,
-        `/*\n${headerLines}\n\n/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n\n/cache-service-worker.js\n  Cache-Control: no-cache\n`,
+        `/*\n${headerLines}\n\n/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n\n/cache-service-worker.js\n  Cache-Control: no-cache\n\n${licenseContentType}`,
       );
     },
     configResolved(config) {

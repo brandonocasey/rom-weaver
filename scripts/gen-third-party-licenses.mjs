@@ -292,6 +292,11 @@ function main() {
   fs.writeFileSync(NOTICE_FILE, renderNotice(rows));
   fs.rmSync(path.join(OUTPUT_DIR, "THIRD_PARTY_LICENSES.md"), { force: true });
 
+  // Deliberately NOT deduped here: this bundle also lands inside the npm
+  // platform packages, and `npm pack` deadlocks on a hardlinked tree. Callers
+  // that ship the bundle to a browser collapse it themselves - see
+  // scripts/dedupe-tree.mjs.
+
   pruned.sort();
   missingLicense.sort();
   process.stdout.write(
