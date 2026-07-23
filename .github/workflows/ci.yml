@@ -955,14 +955,18 @@ jobs:
             branch=main
             # `label` is what the bundle shows in its masthead badge and PWA name.
             label="$channel"
+            # `env` is the GitHub Deployments environment name - the public
+            # hostname the channel serves, so the Deployments UI reads as the
+            # site rather than an internal job label.
             case "$channel" in
-              prod)    project=rom-weaver ;;
-              beta)    project=rom-weaver-beta ;;
-              nightly) project=rom-weaver-nightly ;;
+              prod)    project=rom-weaver;         env=rom-weaver.com ;;
+              beta)    project=rom-weaver-beta;    env=beta.rom-weaver.com ;;
+              nightly) project=rom-weaver-nightly; env=nightly.rom-weaver.com ;;
               preview)
                 project=rom-weaver-preview
                 branch="pr-${PR_NUMBER}"
                 label="pr-${PR_NUMBER}"
+                env=rom-weaver-preview.pages.dev
                 ;;
               *) echo "::error::unknown channel '$channel'"; exit 1 ;;
             esac
@@ -971,7 +975,8 @@ jobs:
               --arg branch "$branch" \
               --arg label "$label" \
               --arg project "$project" \
-              '{$channel, $branch, $label, $project}')"$'\n'
+              --arg env "$env" \
+              '{$channel, $branch, $label, $project, $env}')"$'\n'
           done
           matrix=$(printf '%s' "$targets" | jq -cs .)
           echo "targets=$matrix" >> "$GITHUB_OUTPUT"
@@ -1000,7 +1005,7 @@ jobs:
     # error, so guard rather than trusting the planner to always emit one.
     if: needs.deploy-plan.outputs.targets != '' && needs.deploy-plan.outputs.targets != '[]'
     environment:
-      name: webapp-${{ matrix.target.channel }}
+      name: ${{ matrix.target.env }}
       url: ${{ steps.deploy.outputs.url }}
     strategy:
       # Separate Pages projects with no shared state, so they upload in
