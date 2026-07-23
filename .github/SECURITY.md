@@ -16,11 +16,11 @@ release, and only the latest release will be supported.
 
 ## Report a vulnerability
 
-[Report the vulnerability privately through GitHub](https://github.com/brandonocasey/rom-weaver/security/advisories/new).
+[Report the vulnerability privately through GitHub](https://github.com/rom-weaver/rom-weaver/security/advisories/new).
 Include the affected version, impact, safe reproduction details, and any
 suggested mitigation. GitHub keeps this report private while it is reviewed.
 
-If the private form is unavailable, [open a public issue](https://github.com/brandonocasey/rom-weaver/issues/new/choose)
+If the private form is unavailable, [open a public issue](https://github.com/rom-weaver/rom-weaver/issues/new/choose)
 without exploit details, credentials, personal information, or other sensitive
 material.
 

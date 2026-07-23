@@ -36,7 +36,7 @@ test("generates a manifest from the release checksum", () => {
       // The `#/rom-weaver.exe` fragment is what makes `bin` a stable name.
       assert.equal(
         manifest.architecture[architecture].url,
-        `https://github.com/brandonocasey/rom-weaver/releases/download/v1.2.3/${asset}#/rom-weaver.exe`,
+        `https://github.com/rom-weaver/rom-weaver/releases/download/v1.2.3/${asset}#/rom-weaver.exe`,
       );
     }
   } finally {

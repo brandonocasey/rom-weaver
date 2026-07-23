@@ -17,7 +17,7 @@ edition = "2024"
 homepage = "https://rom-weaver.com"
 license = "AGPL-3.0-or-later"
 publish = ["crates-io"]
-repository = "https://github.com/brandonocasey/rom-weaver"
+repository = "https://github.com/rom-weaver/rom-weaver"
 rust-version = "1.95"
 version = "0.7.2"
 

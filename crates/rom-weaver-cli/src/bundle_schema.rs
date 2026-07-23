@@ -12,7 +12,7 @@ pub const BUNDLE_VERSION: u32 = 1;
 pub const BUNDLE_JSON_SCHEMA: &str = include_str!("../rom-weaver-bundle-v1.schema.json");
 
 /// Published, resolvable location of [`BUNDLE_JSON_SCHEMA`] (matches its `$id`).
-pub const BUNDLE_JSON_SCHEMA_URL: &str = "https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json";
+pub const BUNDLE_JSON_SCHEMA_URL: &str = "https://raw.githubusercontent.com/rom-weaver/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json";
 
 /// A distributable ordered patch workflow with optional ROM, selection seed,
 /// endpoint checks, sources, and output defaults. Sources are URLs or

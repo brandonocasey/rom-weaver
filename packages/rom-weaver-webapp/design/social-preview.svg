@@ -52,7 +52,7 @@
       <rect x="890" y="515" width="318" height="38" rx="19" fill="#0f1318" stroke="#39414e"/>
       <text x="590" y="540" fill="#edf0f5">rom-weaver.com</text>
       <text x="775" y="540" fill="#ef8534">npx rom-weaver --help</text>
-      <text x="1049" y="540" fill="#b3bbc8">github.com/brandonocasey/rom-weaver</text>
+      <text x="1049" y="540" fill="#b3bbc8">github.com/rom-weaver/rom-weaver</text>
     </g>
   </g>
 </svg>

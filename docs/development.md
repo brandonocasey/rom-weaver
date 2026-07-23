@@ -46,7 +46,7 @@ installed elsewhere.
 All vendored source is committed in-tree, so a plain clone is complete:
 
 ```bash
-git clone https://github.com/brandonocasey/rom-weaver.git
+git clone https://github.com/rom-weaver/rom-weaver.git
 cd rom-weaver
 ```
 

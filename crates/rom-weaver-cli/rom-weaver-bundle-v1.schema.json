@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/rom-weaver/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json",
   "title": "rom-weaver bundle",
   "description": "Schema revision v1 for the distributable patching-workflow definition. Canonically named rom-weaver-bundle.json (plain, stream-codec compressed as rom-weaver-bundle.json.<gz|bz2|xz|zst>, or carried at the root of an archive alongside its patch/ROM members). rom-weaver also content-probes any *.json against this schema, so a differently named file that validates here is still recognized as a bundle. This schema mirrors the RomWeaverBundle Rust type; unknown fields are rejected.",
   "type": "object",

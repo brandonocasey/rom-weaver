@@ -2,7 +2,7 @@
 
 set -eu
 
-repo="brandonocasey/rom-weaver"
+repo="rom-weaver/rom-weaver"
 version="${ROM_WEAVER_VERSION:-latest}"
 install_dir="${ROM_WEAVER_INSTALL_DIR:-$HOME/.local/bin}"
 

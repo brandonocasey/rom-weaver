@@ -52,13 +52,13 @@ arm64, x86-64, and x86.
 #### Homebrew (macOS arm64/Intel, Linux arm64/x86-64)
 
 ```bash
-brew install brandonocasey/tap/rom-weaver
+brew install rom-weaver/tap/rom-weaver
 ```
 
 #### Scoop (Windows)
 
 ```powershell
-scoop bucket add brandonocasey https://github.com/brandonocasey/scoop-bucket
+scoop bucket add rom-weaver https://github.com/rom-weaver/scoop-bucket
 scoop install rom-weaver
 ```
 
@@ -70,7 +70,7 @@ published checksum. Set `ROM_WEAVER_INSTALL_DIR` to choose another directory, or
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/install.sh | sh
+  https://raw.githubusercontent.com/rom-weaver/rom-weaver/main/install.sh | sh
 ```
 
 #### Install script (Windows)
@@ -79,7 +79,7 @@ The PowerShell equivalent, installing to `%LOCALAPPDATA%\rom-weaver\bin`. It
 honors the same two environment variables.
 
 ```powershell
-irm https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/rom-weaver/rom-weaver/main/install.ps1 | iex
 ```
 
 #### npm
@@ -118,7 +118,7 @@ new releases resolve immediately on release day; omit it if you prefer mise's
 default release-age delay.
 
 ```bash
-mise use 'github:brandonocasey/rom-weaver[minimum_release_age=0s]'
+mise use 'github:rom-weaver/rom-weaver[minimum_release_age=0s]'
 ```
 
 ### Source install
@@ -127,7 +127,7 @@ Install the current source build. This requires Rust 1.95, CMake, Clang, and a
 native compiler toolchain.
 
 ```bash
-git clone https://github.com/brandonocasey/rom-weaver.git
+git clone https://github.com/rom-weaver/rom-weaver.git
 cd rom-weaver
 cargo install --path crates/rom-weaver-cli --locked
 rom-weaver --version
@@ -142,7 +142,7 @@ nothing but Docker is required:
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   --volume "$PWD:/work" \
-  ghcr.io/brandonocasey/rom-weaver-cli:latest \
+  ghcr.io/rom-weaver/rom-weaver-cli:latest \
   probe --input /work/game.iso
 ```
 
@@ -168,7 +168,7 @@ docker run --rm \
   --user "$(id -u):$(id -g)" \
   --volume "$HOME/roms:/work/in:ro" \
   --volume "$PWD/out:/work/out" \
-  ghcr.io/brandonocasey/rom-weaver-cli:latest \
+  ghcr.io/rom-weaver/rom-weaver-cli:latest \
   weave --input /work/in/game.sfc --patch /work/in/hack.bps --output /work/out/patched.sfc
 ```
 
@@ -403,7 +403,7 @@ workflow: ordered patches, expected input and output checksums, and output
 naming. The machine-readable schema is
 [`rom-weaver-bundle-v1.schema.json`](rom-weaver-bundle-v1.schema.json); its `$id`
 resolves to the public GitHub copy at
-`https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json`.
+`https://raw.githubusercontent.com/rom-weaver/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json`.
 Print the current schema to stdout with `bundle schema`, then redirect it to a
 file or point an editor at it:
 
@@ -446,7 +446,7 @@ and bake the canonical checksummed bundle:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json",
+  "$schema": "https://raw.githubusercontent.com/rom-weaver/rom-weaver/main/docs/rom-weaver-bundle-v1.schema.json",
   "version": 1,
   "rom": { "path": "original.sfc" },
   "patches": [

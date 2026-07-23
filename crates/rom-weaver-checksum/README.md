@@ -1,16 +1,16 @@
 <h1 align="center">
-  <img src="https://raw.githubusercontent.com/brandonocasey/rom-weaver/0c950a5f3b44cfd597d9798357cae0d273264d13/packages/rom-weaver-webapp/src/assets/app/root/logo.svg" alt="" width="64" height="64"><br>
+  <img src="https://raw.githubusercontent.com/rom-weaver/rom-weaver/0c950a5f3b44cfd597d9798357cae0d273264d13/packages/rom-weaver-webapp/src/assets/app/root/logo.svg" alt="" width="64" height="64"><br>
   rom-weaver-checksum
 </h1>
 
 <p align="center">
-  Checksum engines and header-aware checksum variants for <a href="https://github.com/brandonocasey/rom-weaver">rom-weaver</a>.
+  Checksum engines and header-aware checksum variants for <a href="https://github.com/rom-weaver/rom-weaver">rom-weaver</a>.
 </p>
 
 <p align="center">
   <a href="https://crates.io/crates/rom-weaver-checksum"><img alt="crates.io" src="https://img.shields.io/crates/v/rom-weaver-checksum?color=d9690f"></a>
   <a href="https://docs.rs/rom-weaver-checksum"><img alt="docs.rs" src="https://img.shields.io/docsrs/rom-weaver-checksum?color=4a6d63"></a>
-  <a href="https://github.com/brandonocasey/rom-weaver/blob/main/LICENSE.md"><img alt="AGPL-3.0-or-later license" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-4a6d63"></a>
+  <a href="https://github.com/rom-weaver/rom-weaver/blob/main/LICENSE.md"><img alt="AGPL-3.0-or-later license" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-4a6d63"></a>
 </p>
 
 > **Beta software, published so the CLI can be.** This crate exists to build
@@ -69,11 +69,11 @@ yourself.
 
 ## Documentation
 
-- [Supported formats](https://github.com/brandonocasey/rom-weaver/blob/main/docs/cli.md#supported-formats) — the full algorithm and variant tables.
-- [Documentation index](https://github.com/brandonocasey/rom-weaver/blob/main/docs/README.md)
+- [Supported formats](https://github.com/rom-weaver/rom-weaver/blob/main/docs/cli.md#supported-formats) — the full algorithm and variant tables.
+- [Documentation index](https://github.com/rom-weaver/rom-weaver/blob/main/docs/README.md)
 
 ## License
 
 Copyright (C) Brandon Casey. Licensed under
-[AGPL-3.0-or-later](https://github.com/brandonocasey/rom-weaver/blob/main/LICENSE.md).
+[AGPL-3.0-or-later](https://github.com/rom-weaver/rom-weaver/blob/main/LICENSE.md).
 Bundled third-party components retain their own licenses.

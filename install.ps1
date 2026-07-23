@@ -5,7 +5,7 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$repo = 'brandonocasey/rom-weaver'
+$repo = 'rom-weaver/rom-weaver'
 $version = if ($env:ROM_WEAVER_VERSION) { $env:ROM_WEAVER_VERSION } else { 'latest' }
 $installDir = if ($env:ROM_WEAVER_INSTALL_DIR) {
   $env:ROM_WEAVER_INSTALL_DIR

@@ -7,12 +7,12 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/rom-weaver"><img alt="npm version" src="https://img.shields.io/npm/v/rom-weaver?logo=npm&amp;logoColor=white&amp;label=npm&amp;color=d9690f"></a>
   <a href="https://crates.io/crates/rom-weaver-cli"><img alt="crates.io version" src="https://img.shields.io/crates/v/rom-weaver-cli?logo=rust&amp;logoColor=white&amp;label=crates.io&amp;color=d9690f"></a>
-  <a href="https://github.com/brandonocasey/rom-weaver/pkgs/container/rom-weaver-cli"><img alt="Container images on GitHub Container Registry" src="https://img.shields.io/badge/ghcr.io-rom--weaver-d9690f?logo=docker&amp;logoColor=white"></a>
-  <a href="https://github.com/brandonocasey/homebrew-tap"><img alt="Homebrew tap" src="https://img.shields.io/badge/homebrew-brandonocasey%2Ftap-d9690f?logo=homebrew&amp;logoColor=white"></a>
+  <a href="https://github.com/rom-weaver/rom-weaver/pkgs/container/rom-weaver-cli"><img alt="Container images on GitHub Container Registry" src="https://img.shields.io/badge/ghcr.io-rom--weaver-d9690f?logo=docker&amp;logoColor=white"></a>
+  <a href="https://github.com/rom-weaver/homebrew-tap"><img alt="Homebrew tap" src="https://img.shields.io/badge/homebrew-rom--weaver%2Ftap-d9690f?logo=homebrew&amp;logoColor=white"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/brandonocasey/rom-weaver/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/brandonocasey/rom-weaver/ci.yml?branch=main&amp;logo=githubactions&amp;logoColor=white&amp;label=CI&amp;color=4a6d63"></a>
+  <a href="https://github.com/rom-weaver/rom-weaver/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/rom-weaver/rom-weaver/ci.yml?branch=main&amp;logo=githubactions&amp;logoColor=white&amp;label=CI&amp;color=4a6d63"></a>
   <a href="package.json"><img alt="Node.js 22 or newer" src="https://img.shields.io/badge/Node.js-22%2B-4a6d63?logo=nodedotjs&logoColor=white"></a>
   <a href=".mise.toml"><img alt="Rust 1.95" src="https://img.shields.io/badge/Rust-1.95-2c323b?logo=rust&logoColor=white"></a>
   <a href="LICENSE.md"><img alt="AGPL-3.0-or-later license" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-4a6d63"></a>
@@ -128,7 +128,7 @@ headers.
 Build and start it with Docker Compose:
 
 ```bash
-git clone https://github.com/brandonocasey/rom-weaver.git
+git clone https://github.com/rom-weaver/rom-weaver.git
 cd rom-weaver
 docker compose up --build --detach
 curl --fail --silent --show-error http://localhost:8080/health
@@ -152,7 +152,7 @@ arm64, and i686 musl; and Windows arm64, x86-64, and x86.
 <summary>Homebrew (macOS arm64/Intel, Linux arm64/x86-64)</summary>
 
 ```bash
-brew install brandonocasey/tap/rom-weaver
+brew install rom-weaver/tap/rom-weaver
 ```
 
 </details>
@@ -161,7 +161,7 @@ brew install brandonocasey/tap/rom-weaver
 <summary>Scoop (Windows)</summary>
 
 ```powershell
-scoop bucket add brandonocasey https://github.com/brandonocasey/scoop-bucket
+scoop bucket add rom-weaver https://github.com/rom-weaver/scoop-bucket
 scoop install rom-weaver
 ```
 
@@ -175,7 +175,7 @@ Override with `ROM_WEAVER_INSTALL_DIR` or pin with `ROM_WEAVER_VERSION`.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/install.sh | sh
+  https://raw.githubusercontent.com/rom-weaver/rom-weaver/main/install.sh | sh
 ```
 
 </details>
@@ -186,7 +186,7 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 The same thing for PowerShell, installing to `%LOCALAPPDATA%\rom-weaver\bin`.
 
 ```powershell
-irm https://raw.githubusercontent.com/brandonocasey/rom-weaver/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/rom-weaver/rom-weaver/main/install.ps1 | iex
 ```
 
 </details>
@@ -234,7 +234,7 @@ the release's GitHub artifact attestations on install. The
 day; omit it if you prefer mise's default release-age delay.
 
 ```bash
-mise use 'github:brandonocasey/rom-weaver[minimum_release_age=0s]'
+mise use 'github:rom-weaver/rom-weaver[minimum_release_age=0s]'
 ```
 
 </details>
@@ -248,7 +248,7 @@ Runs from the published Linux image without installing anything:
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   --volume "$PWD:/work" \
-  ghcr.io/brandonocasey/rom-weaver-cli:latest \
+  ghcr.io/rom-weaver/rom-weaver-cli:latest \
   probe --input /work/game.iso
 ```
 
@@ -265,7 +265,7 @@ See [Run in Docker](docs/cli.md#run-in-docker).
 <summary>Build from source</summary>
 
 ```bash
-git clone https://github.com/brandonocasey/rom-weaver.git
+git clone https://github.com/rom-weaver/rom-weaver.git
 cd rom-weaver
 cargo install --path crates/rom-weaver-cli --locked
 rom-weaver --help

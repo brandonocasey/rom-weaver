@@ -66,8 +66,8 @@ esac
     assert.ok(output.includes(`source "${directory}/.zshrc"`));
     assert.ok(output.includes("Then run: rom-weaver --help"));
     assert.deepEqual(readFileSync(curlLog, "utf8").trim().split("\n"), [
-      "https://github.com/brandonocasey/rom-weaver/releases/latest/download/rom-weaver-darwin-arm64",
-      "https://github.com/brandonocasey/rom-weaver/releases/latest/download/rom-weaver-darwin-arm64.sha256",
+      "https://github.com/rom-weaver/rom-weaver/releases/latest/download/rom-weaver-darwin-arm64",
+      "https://github.com/rom-weaver/rom-weaver/releases/latest/download/rom-weaver-darwin-arm64.sha256",
     ]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -126,7 +126,7 @@ esac
 
       assert.equal(
         readFileSync(curlLog, "utf8").trim().split("\n")[0],
-        `https://github.com/brandonocasey/rom-weaver/releases/latest/download/rom-weaver-${platform}`,
+        `https://github.com/rom-weaver/rom-weaver/releases/latest/download/rom-weaver-${platform}`,
       );
     } finally {
       rmSync(directory, { recursive: true, force: true });

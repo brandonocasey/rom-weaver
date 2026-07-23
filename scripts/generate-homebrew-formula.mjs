@@ -20,7 +20,7 @@ const checksums = Object.fromEntries(
   }),
 );
 
-const releaseUrl = `https://github.com/brandonocasey/rom-weaver/releases/download/v${version}`;
+const releaseUrl = `https://github.com/rom-weaver/rom-weaver/releases/download/v${version}`;
 const source = `class RomWeaver < Formula
   desc "Local-first toolkit for ROMs and disc images: inspect, extract, compress, and apply, create, or bundle patches. Offline via a browser service-worker PWA or CLI."
   homepage "https://rom-weaver.com"
