@@ -112,12 +112,13 @@ cargo binstall rom-weaver-cli
 
 #### mise
 
-Pins the CLI per project in `mise.toml` and verifies the release's GitHub
-artifact attestations on install. Pass an explicit version - mise cannot resolve
-`@latest` for this repository.
+Manages the CLI per project in `mise.toml` and verifies the release's GitHub
+artifact attestations on install. The `minimum_release_age=0s` option lets
+`@latest` resolve immediately on release day; omit it if you prefer mise's
+default release-age delay.
 
 ```bash
-mise use github:brandonocasey/rom-weaver@0.7.2
+mise use 'github:brandonocasey/rom-weaver[minimum_release_age=0s]@latest'
 ```
 
 ### Source install
