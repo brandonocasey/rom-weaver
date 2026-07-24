@@ -9,9 +9,7 @@ import { createOpfsProxyChannel, type OpfsProxyChannelTransfer } from "./browser
 import { OpfsProxyClient } from "./browser-opfs-proxy-client.ts";
 import type { OpfsProxyMountBootstrap } from "./browser-opfs-proxy-server.ts";
 import type { RomWeaverBrowserSyncAccessMode, TraceLine } from "./browser-opfs-runtime-types.ts";
-// `?worker&url` (not `new URL(..., import.meta.url)`) is what makes Vite emit the *built* worker and
-// hand back its URL. A bare `new URL()` inside a `??` chain is invisible to Vite's worker detection,
-// so it degrades to a plain asset copy and ships the raw TypeScript source.
+// `?worker&url`, never `new URL(..., import.meta.url)` - see "Worker URLs" in docs/ARCHITECTURE.md.
 import DEFAULT_OPFS_PROXY_WORKER_URL from "./workers/browser-opfs-proxy-worker.ts?worker&url";
 
 const PROXY_READY_TIMEOUT_MS = 30_000;
