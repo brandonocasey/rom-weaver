@@ -56,6 +56,33 @@ function PatcherPrimaryAction({
     wasRunningRef.current = running;
     wasDownloadReadyRef.current = downloadReady;
   }, [running, downloadReady, progress]);
+  // iOS: tapping the download button opens a native download/share sheet. When
+  // it dismisses, Safari's toolbar and visual viewport reflow, leaving the
+  // (previously centered) button half-covered - and no React state changes, so
+  // the effect above never re-fires. Re-center it whenever the page regains
+  // focus/visibility while a download is ready, but only if it has actually
+  // drifted out of view so a deliberate scroll isn't undone.
+  useEffect(() => {
+    if (!downloadReady) return;
+    const reveal = () => {
+      if (document.visibilityState === "hidden") return;
+      const target = document.getElementById("rom-weaver-button-apply");
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      if (rect.bottom > viewportHeight || rect.top < 0) {
+        target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+      }
+    };
+    window.addEventListener("focus", reveal);
+    window.addEventListener("pageshow", reveal);
+    document.addEventListener("visibilitychange", reveal);
+    return () => {
+      window.removeEventListener("focus", reveal);
+      window.removeEventListener("pageshow", reveal);
+      document.removeEventListener("visibilitychange", reveal);
+    };
+  }, [downloadReady]);
   if (state.pendingDownloadFileName && !state.applyButton.progress && !state.applyButton.loading) {
     // The button shows the output FORMAT (the loom dl-kind), not the filename -
     // the name already fills the output field above; the full name stays on
