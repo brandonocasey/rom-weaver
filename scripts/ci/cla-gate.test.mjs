@@ -14,18 +14,21 @@ const repoRoot = join(here, "..", "..");
 // write, so the gate's decisions can be asserted without touching GitHub.
 const FAKE_GH = `#!/usr/bin/env bash
 set -euo pipefail
-endpoint=""; jq_expr=""; method=GET; content=""
+endpoint=""; jq_expr=""; method=GET; content=""; state=""
 shift # 'api'
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --jq) jq_expr=$2; shift 2 ;;
     --method) method=$2; shift 2 ;;
-    --field) [[ $2 == content=* ]] && content=\${2#content=}; shift 2 ;;
+    --field)
+      [[ $2 == content=* ]] && content=\${2#content=}
+      [[ $2 == state=* ]] && state=\${2#state=}
+      shift 2 ;;
     --paginate|--silent) shift ;;
     *) endpoint=$1; shift ;;
   esac
 done
-printf '%s %s\\n' "$method" "$endpoint" >>"$GH_LOG"
+printf '%s %s %s\\n' "$method" "$endpoint" "$state" >>"$GH_LOG"
 fixture() { printf '%s/%s' "$GH_FIXTURES" "$(printf '%s' "$1" | tr '/?=' '___')"; }
 # A signature write must be visible to the re-read that follows it.
 if [[ $method == PUT && $endpoint == *contents/signatures.json ]]; then
@@ -108,6 +111,11 @@ function run({ prAuthor, commitAuthors = [], signatures = [], comment } = {}) {
 const wrote = (calls, method, fragment) =>
   calls.some((call) => call.startsWith(`${method} `) && call.includes(fragment));
 
+// The `license/cla` status is the verdict; the job's exit code only reports
+// whether the gate itself ran. Assert the status, never the exit code alone.
+const statusState = (calls) =>
+  calls.find((call) => call.startsWith("POST ") && call.includes(`statuses/${HEAD_SHA}`))?.split(" ").pop();
+
 test("the signing phrase matches the one CLA.md tells contributors to post", () => {
   const phrase = readFileSync(script, "utf8").match(/^SIGN_PHRASE="(.+)"$/m)[1];
   assert.ok(
@@ -119,35 +127,36 @@ test("the signing phrase matches the one CLA.md tells contributors to post", () 
 test("a signed contributor passes", () => {
   const { status, calls } = run({ prAuthor: "outsider", signatures: [{ login: "outsider" }] });
   assert.equal(status, 0);
-  assert.ok(wrote(calls, "POST", `statuses/${HEAD_SHA}`));
+  assert.equal(statusState(calls), "success");
   // Nothing to say when the check already passes.
   assert.ok(!wrote(calls, "POST", "issues/7/comments"));
 });
 
-test("an unsigned contributor fails and is asked to sign", () => {
+test("an unsigned contributor gets a failing status and is asked to sign", () => {
   const { status, calls } = run({ prAuthor: "outsider", signatures: [] });
-  assert.equal(status, 1);
-  assert.ok(wrote(calls, "POST", `statuses/${HEAD_SHA}`));
+  assert.equal(statusState(calls), "failure");
   assert.ok(wrote(calls, "POST", "issues/7/comments"));
-});
-
-test("bots are exempt without any signature", () => {
-  const { status } = run({ prAuthor: "dependabot[bot]", signatures: [] });
+  // Green job, red status: a red job is reserved for the gate itself breaking.
   assert.equal(status, 0);
 });
 
+test("bots are exempt without any signature", () => {
+  const { calls } = run({ prAuthor: "dependabot[bot]", signatures: [] });
+  assert.equal(statusState(calls), "success");
+});
+
 test("a bot pull request carrying a human's commit still needs that human", () => {
-  const { status } = run({
+  const { calls } = run({
     prAuthor: "dependabot[bot]",
     commitAuthors: ["outsider"],
     signatures: [],
   });
-  assert.equal(status, 1);
+  assert.equal(statusState(calls), "failure");
 });
 
-test("the maintainer is exempt", () => {
-  const { status } = run({ prAuthor: "brandonocasey", signatures: [] });
-  assert.equal(status, 0);
+test("the maintainer is no longer exempt and must sign like anyone else", () => {
+  const { calls } = run({ prAuthor: "brandonocasey", signatures: [] });
+  assert.equal(statusState(calls), "failure");
 });
 
 test("the signing phrase records a signature and passes", () => {
@@ -160,6 +169,7 @@ test("the signing phrase records a signature and passes", () => {
     },
   });
   assert.ok(wrote(calls, "PUT", "contents/signatures.json"));
+  assert.equal(statusState(calls), "success");
   assert.equal(status, 0);
 });
 
@@ -191,10 +201,10 @@ test("the phrase from a bystander records nothing", () => {
 });
 
 test("a commit author with no linked account is reported, not skipped", () => {
-  const { status } = run({
-    prAuthor: "brandonocasey",
+  const { calls } = run({
+    prAuthor: "dependabot[bot]",
     commitAuthors: [null],
     signatures: [],
   });
-  assert.equal(status, 1);
+  assert.equal(statusState(calls), "failure");
 });

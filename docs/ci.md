@@ -68,6 +68,20 @@ That reply is what appends their record. Anyone can comment `recheck` to re-run
 the gate. Commits whose author email matches no GitHub account are reported as
 `unlinked:<name>` rather than skipped.
 
+The two signals mean different things, and the job deliberately exits 0 on an
+unsigned verdict:
+
+| Signal | Meaning |
+| --- | --- |
+| `license/cla` status | The verdict. Everyone has signed, or somebody has not. This is the one the ruleset can require, and the only one a signing comment can flip - see below. |
+| `CLA` job red | The gate itself broke: an API call failed, or the signature file would not parse. Never "somebody has not signed". |
+
+Requiring the **status** rather than the job name is load-bearing. A run
+triggered by `issue_comment` attaches its check run to the default branch rather
+than the pull request head, so a required `CLA` job would never be cleared by a
+contributor's signing comment - only by pushing a commit. The script posts
+`license/cla` against the head SHA explicitly, which works on both paths.
+
 The job runs on `pull_request_target`, so a fork's pull request still receives a
 status and a comment; nothing from the pull request head is checked out or
 executed, and both the script and the allowlist come from the base commit.

@@ -191,4 +191,11 @@ Commits listed as \`unlinked:<name>\` have an author email that matches no
 GitHub account - fix the commit author or say so in the thread."
 
 echo "license/cla failure on ${head_sha}; unsigned: $(tr '\n' ' ' <<<"$unsigned")" >&2
-exit 1
+
+# Exit 0 on an unsigned verdict, deliberately. The `license/cla` status is the
+# single signal for CLA compliance and the one the ruleset can require; a red
+# job on top of it says the same thing twice. Keeping the job green here means
+# a red `CLA` job says something the status cannot: the gate itself broke - a
+# missing API response, a malformed signature file - rather than someone simply
+# not having signed. Every other failure path still exits non-zero via `set -e`.
+exit 0
