@@ -764,14 +764,27 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
 
-  # The single longest webapp suite (~4 min) rides alone so it defines this
-  # group's wall clock instead of adding to it.
+  # The longest webapp suite, split across two runners. The runner script gives
+  # each test file its own Vitest process and caps in-process concurrency at
+  # `min(4, cores)`; a 4-core ubuntu runner is already saturated, so the only
+  # way left to shorten this leg is a second machine. `--shard=<i>/2` packs the
+  # files largest-first onto the lighter half, which matters because their sizes
+  # (and runtimes) are very uneven - a naive alphabetical split would leave one
+  # leg minutes behind and buy nothing. Two shards roughly halve this group's
+  # wall clock; the aggregate below sees a matrix dependency as one combined
+  # result, so a single failing shard still fails `Webapp`.
   webapp-browser:
-    name: Webapp (browser)
+    name: Webapp (browser ${{ matrix.shard }}/2)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     needs: [changes, wasm]
     if: github.ref_type != 'tag' && needs.changes.outputs.webapp == 'true'
+    strategy:
+      # One shard's failure must not cancel the other: both logs are wanted, and
+      # the retry-in-isolation pass makes a half-reported run hard to read.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -793,6 +806,7 @@ jobs:
           # ubuntu-24.04 already ships Chrome, so this job does not need to
           # download Playwright's Chromium or install its system dependencies.
           ROM_WEAVER_SYSTEM_CHROME: "1"
+          BROWSER_TEST_SHARD: ${{ matrix.shard }}/2
         run: npm --prefix packages/rom-weaver-webapp run test:browser:parallel
 
   # Everything else that needs Playwright chromium: the wasm-layer browser
