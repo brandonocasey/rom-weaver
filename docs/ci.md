@@ -43,7 +43,7 @@ publishing, and retry procedures - see the [release guide](../.github/RELEASING.
 | `e2e-nightly.yml` | manual | No | Exhaustive browser E2E, service-worker checks, and published-install smoke tests |
 | `cache-cleanup.yml` | every 6 h, manual | No | Reap closed-PR and superseded Actions caches |
 | `cloudflare-preview-cleanup.yml` | every 6 h, manual | No | Reap stale Cloudflare Pages preview deployments |
-| `release.yml` | after a successful `CI` on `main`, manual | n/a | Release Please, then the publish fan-out |
+| `release.yml` | push to `main`, after a successful `CI` on `main`, release PR merge, manual | n/a | Release Please, then the publish fan-out |
 | `cargo-publish.yml` | `v*` tag push, manual | n/a | crates.io publish |
 | `npm-publish.yml` | called by `release.yml` | n/a | 9 platform packages, launcher, alias |
 | `docker-publish.yml` | called by `release.yml`, manual | n/a | CLI + webapp images to ghcr.io |
@@ -85,9 +85,13 @@ disabled and squash merges take `PR_TITLE` as the subject, so the title is the
 only text that reaches `main` and the only text Release Please reads. Branch
 commits are squashed away, so they are not linted.
 
-Nothing publishes on a push. `release.yml` runs on `workflow_run` gated on a
-**successful** CI, and even then only opens a release pull request; merging
-that pull request is what sets `release_created` and unlocks the publish jobs.
+Nothing publishes on a push. `release.yml` does run on every push to `main`,
+but that path passes `skip-github-release` and can only create or refresh the
+release pull request - it exists so the pull request reflects the merge
+immediately instead of trailing a full CI run. The `workflow_run` path, gated on
+a **successful** CI, adds the half that needs a tested artifact: the release
+screenshots. Merging the release pull request is what sets `release_created` and
+unlocks the publish jobs.
 
 > **`main` is protected by the active `main protection` ruleset.** Pull requests
 > must use squash merge and pass `Rust`, `Conventional commits`, `Build WASM
@@ -538,13 +542,14 @@ The standalone Cargo and Docker dispatches fall back to `v${version}`, which by
 then exists.
 
 `cargo-publish.yml` is triggered by the resulting `v*` tag push instead of being
-called by `release.yml`. `release.yml` never runs on an event crates.io Trusted
-Publishing accepts: ordinary commits reach it through `workflow_run`, which
-Trusted Publishing rejects outright, and the runs that actually set
-`release_created` arrive through `pull_request` (the release pull request
-closing), which it will not accept either. A job inherits its workflow's event,
-so OIDC could never authenticate from inside the fan-out. Keying off the tag
-also orders it naturally last.
+called by `release.yml`. No `release.yml` run that could publish ever carries an
+event crates.io Trusted Publishing accepts: the runs that set `release_created`
+arrive through `pull_request` (the release pull request closing), which it will
+not accept, or through `workflow_run`, which it rejects outright. The `push`
+runs it *would* accept are exactly the ones barred from creating a release, so
+the fan-out never starts under them. A job inherits its workflow's event, so
+OIDC could never authenticate from inside the fan-out. Keying off the tag also
+orders it naturally last.
 
 `cargo-semver-checks` runs in `release.yml` as the `semver-check` job, not in
 `cargo-publish.yml` where it used to live. By the time the tag exists the
