@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import os from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { resolveWasiSdk } from "./detect-wasi-sdk.mjs";
+
+test("prefers an explicit SDK path, then the newest local toolchain", () => {
+  const home = mkdtempSync(join(os.tmpdir(), "wasi-sdk-test-"));
+  const toolchains = join(home, ".local", "toolchains");
+  mkdirSync(join(toolchains, "wasi-sdk-22"), { recursive: true });
+  mkdirSync(join(toolchains, "wasi-sdk-24"), { recursive: true });
+  assert.equal(resolveWasiSdk({ home, env: { WASI_SDK_PATH: "" }, candidates: [] }), join(toolchains, "wasi-sdk-24"));
+  const explicit = join(home, "explicit");
+  mkdirSync(explicit);
+  assert.equal(resolveWasiSdk({ home, env: { WASI_SDK_PATH: explicit }, candidates: [] }), explicit);
+});
