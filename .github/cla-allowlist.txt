@@ -1,5 +1,5 @@
 # Logins exempt from the Contributor License Agreement gate, one glob per line.
-# Read by scripts/ci/cla-gate.sh. Living on the default branch means every
+# Read by scripts/ci/cla-gate.mjs. Living on the default branch means every
 # addition goes through a reviewed pull request. `*` and `?` are wildcards;
 # brackets are literal.
 
