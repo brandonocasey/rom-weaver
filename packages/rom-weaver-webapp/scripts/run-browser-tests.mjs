@@ -6,7 +6,10 @@
 //
 // Usage:
 //   node scripts/run-browser-tests.mjs [file ...] [summary-preserving vitest flags ...]
+//   node scripts/run-browser-tests.mjs --shard=1/2        # run one half of the files
+//   node scripts/run-browser-tests.mjs --shard=1/2 --list # print that half, run nothing
 //   BROWSER_TEST_CONCURRENCY=3 node scripts/run-browser-tests.mjs
+//   BROWSER_TEST_SHARD=2/2 node scripts/run-browser-tests.mjs
 //   ROM_WEAVER_BROWSER=webkit node scripts/run-browser-tests.mjs
 
 import childProcess from "node:child_process";
@@ -39,6 +42,68 @@ const resolveConcurrency = () => {
   }
   const cores = typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length;
   return Math.max(2, Math.min(4, cores));
+};
+
+// Runner-owned flags, pulled out before the vitest passthrough split so they
+// are never mistaken for a vitest flag (vitest has its own `--shard`, which
+// splits differently and would silently double-shard if it ever saw ours).
+const extractRunnerFlags = (argv) => {
+  let shardSpec = process.env.BROWSER_TEST_SHARD || "";
+  let shardSource = shardSpec ? "BROWSER_TEST_SHARD" : "";
+  let listOnly = false;
+  const rest = [];
+  const queue = [...argv];
+  while (queue.length) {
+    const entry = queue.shift();
+    if (entry === "--list") {
+      listOnly = true;
+    } else if (entry.startsWith("--shard=")) {
+      shardSpec = entry.slice("--shard=".length);
+      shardSource = "--shard";
+    } else if (entry === "--shard") {
+      shardSpec = queue.shift() ?? "";
+      shardSource = "--shard";
+    } else {
+      rest.push(entry);
+    }
+  }
+  return { listOnly, shard: parseShard(shardSpec, shardSource), rest };
+};
+
+// "<index>/<total>", 1-based. Anything else is a typo that would otherwise run
+// the wrong subset - or the whole suite twice - so it has to be fatal.
+const parseShard = (spec, source) => {
+  if (!spec) {
+    if (source) throw new Error(`Missing ${source} value: expected <index>/<total> (e.g. 1/2)`);
+    return null;
+  }
+  const match = /^(\d+)\/(\d+)$/.exec(spec.trim());
+  const index = match ? Number(match[1]) : 0;
+  const total = match ? Number(match[2]) : 0;
+  if (!match || total < 1 || index < 1 || index > total) {
+    throw new Error(`Invalid ${source} value "${spec}": expected <index>/<total> with 1 <= index <= total (e.g. 1/2)`);
+  }
+  return { index, total };
+};
+
+// Greedy longest-processing-time: hand each file, largest first, to whichever
+// shard is currently lightest. File size is the only cheap proxy for runtime we
+// have, and it is a decent one - these files are dominated by per-test setup -
+// whereas an alphabetical or round-robin split leaves one runner minutes behind.
+const selectShard = (files, shard) => {
+  if (!shard) return files;
+  const weighed = files
+    // A path that does not exist is left for Vitest to report; weigh it as 0
+    // rather than turning a typo'd filename into a stat stack trace.
+    .map((file) => ({ file, weight: fs.statSync(file, { throwIfNoEntry: false })?.size ?? 0 }))
+    .sort((left, right) => right.weight - left.weight || left.file.localeCompare(right.file));
+  const buckets = Array.from({ length: shard.total }, () => ({ files: [], weight: 0 }));
+  for (const { file, weight } of weighed) {
+    const target = buckets.reduce((lightest, bucket) => (bucket.weight < lightest.weight ? bucket : lightest));
+    target.files.push(file);
+    target.weight += weight;
+  }
+  return buckets[shard.index - 1].files.sort();
 };
 
 const partitionRunnerArgs = (argv) => {
@@ -139,9 +204,16 @@ const runPool = async (files, vitestArgs, concurrency, onResult) => {
 };
 
 const main = async () => {
-  const { files: requestedFiles, vitestArgs } = partitionRunnerArgs(process.argv.slice(2));
+  const { listOnly, shard, rest } = extractRunnerFlags(process.argv.slice(2));
+  const { files: requestedFiles, vitestArgs } = partitionRunnerArgs(rest);
   assertSummaryPreservingArgs(vitestArgs);
-  const files = discoverTestFiles(requestedFiles);
+  // Sharding applies to whatever set was selected, explicit list included, so
+  // `--shard` composes with a hand-picked subset instead of overriding it.
+  const files = selectShard(discoverTestFiles(requestedFiles), shard);
+  if (listOnly) {
+    for (const file of files) process.stdout.write(`${path.basename(file)}\n`);
+    return;
+  }
   if (!files.length) {
     process.stdout.write("No browser test files found.\n");
     return;
@@ -152,7 +224,10 @@ const main = async () => {
   const concurrency = resolveConcurrency();
   const browser = process.env.ROM_WEAVER_BROWSER || "chromium";
   const startedAt = Date.now();
-  process.stdout.write(`Running ${files.length} browser test files (${browser}, concurrency ${concurrency})\n\n`);
+  const shardLabel = shard ? `, shard ${shard.index}/${shard.total}` : "";
+  process.stdout.write(
+    `Running ${files.length} browser test files (${browser}, concurrency ${concurrency}${shardLabel})\n\n`,
+  );
 
   const results = new Map();
   const recordResult = (file, result) => {

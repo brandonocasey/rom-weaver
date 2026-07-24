@@ -111,6 +111,7 @@ changes ─────┼── rust-macos ────┼── rust (aggregat
 
          ┌── webapp-static ───┐
          ├── webapp-browser ──┼── webapp (aggregate check name)
+         │   (2 shards)       │
          ├── webapp-wasm-e2e ─┤
          ├── webapp-webkit-e2e┘
 wasm ────┤
@@ -223,6 +224,14 @@ security ── advisories (warn only, always green)
   Ubuntu runner image, while `webapp-wasm-e2e` is the remaining Playwright work
   (icon check, wasm browser suite, webapp E2E); the WebKit leg runs the
   supported Safari-family implementation on macOS.
+  `webapp-browser` is itself a two-shard matrix
+  (`BROWSER_TEST_SHARD=<i>/2`). The runner script already gives every test file
+  its own Vitest process and caps concurrency at `min(4, cores)`, which
+  saturates a 4-core runner, so halving that leg required a second machine
+  rather than more local parallelism. Files are packed largest-first onto the
+  lighter shard - their sizes, and runtimes, are very uneven. A matrix
+  dependency reports one combined result, so the `webapp` aggregate needs no
+  change: any failing shard fails the check.
 - **`webapp`** is the aggregator for those four, mirroring `rust`: one stable
   check name (`Webapp`) while the suites run in parallel.
 - **`deploy-plan`** turns the ref into the list of channels to publish (below).
