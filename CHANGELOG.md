@@ -48,7 +48,9 @@
 * **readme:** explain why rom-weaver exists ([#138](https://github.com/rom-weaver/rom-weaver/issues/138)) ([e7c01e5](https://github.com/rom-weaver/rom-weaver/commit/e7c01e577d716fe85e26a4ff96636fca6ef44e37))
 
 
-### Internal
+<details>
+<summary>Internal</summary>
+
 
 * **cla:** rewrite the gate in node, rename the check to CLA Status, drop the maintainer exemption ([#167](https://github.com/rom-weaver/rom-weaver/issues/167)) ([2e497f6](https://github.com/rom-weaver/rom-weaver/commit/2e497f68201d4372ea4b957f3902d999e755336a))
 * clean up stale Pages previews ([#119](https://github.com/rom-weaver/rom-weaver/issues/119)) ([83174b6](https://github.com/rom-weaver/rom-weaver/commit/83174b67a10c42005fe74d0b497a314591c779d2))
@@ -75,7 +77,8 @@
 * **tooling:** copy the attribution bundle into worktrees and drop a dead vite plugin ([#156](https://github.com/rom-weaver/rom-weaver/issues/156)) ([57847fe](https://github.com/rom-weaver/rom-weaver/commit/57847fe40707cee4fc6ee575255e19e095d4ac00))
 * **webapp:** shard the browser test suite across two runners ([#152](https://github.com/rom-weaver/rom-weaver/issues/152)) ([7867473](https://github.com/rom-weaver/rom-weaver/commit/7867473c427979ea7b5c9cb3d0c2a271dbcfabfb))
 
-## [0.7.2](https://github.com/brandonocasey/rom-weaver/compare/v0.7.1...v0.7.2) (2026-07-23)
+
+</details>## [0.7.2](https://github.com/brandonocasey/rom-weaver/compare/v0.7.1...v0.7.2) (2026-07-23)
 
 
 ### Bug Fixes
