@@ -51,9 +51,10 @@ test("a true BPS chain defers the dependent patch instead of failing it", async 
   expect(document.getElementById("rom-weaver-patch-order-note")).toBeNull();
 
   // An exact statically-proven chain makes the last patch's embedded target
-  // enforceable: the output line reassures instead of warning.
-  await expect.poll(() => document.getElementById("rom-weaver-output-verified"), { timeout: 60000 }).not.toBeNull();
-  expect(document.getElementById("rom-weaver-bundle-output-unverified")).toBeNull();
+  // enforceable: the output line stands down with no "won't be verified" warning.
+  await expect
+    .poll(() => document.getElementById("rom-weaver-bundle-output-unverified"), { timeout: 60000 })
+    .toBeNull();
 });
 
 test("same-base patches all match the ROM and feed the Expected group without conflict", async () => {
@@ -134,7 +135,8 @@ test("an out-of-order chain names its predecessor and Fix order repairs it", asy
   await expect.poll(() => chipText(1), { timeout: 90000 }).toBe("applies after patch 1");
   await expect.poll(() => chipText(2), { timeout: 90000 }).toBe("applies after patch 2");
   await expect.poll(() => document.getElementById("rom-weaver-patch-order-note"), { timeout: 60000 }).toBeNull();
-  // ...and the output line flips to the verified reassurance.
-  await expect.poll(() => document.getElementById("rom-weaver-output-verified"), { timeout: 60000 }).not.toBeNull();
-  expect(document.getElementById("rom-weaver-bundle-output-unverified")).toBeNull();
+  // ...and the output line stands down: no "won't be verified" warning remains.
+  await expect
+    .poll(() => document.getElementById("rom-weaver-bundle-output-unverified"), { timeout: 60000 })
+    .toBeNull();
 }, 180000);
