@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "login": "brandonocasey",
+    "id": 2381475,
+    "pullRequest": 169,
+    "signedAt": "2026-07-24T22:26:27Z",
+    "cla": "https://github.com/rom-weaver/rom-weaver/blob/main/CLA.md"
+  }
+]
