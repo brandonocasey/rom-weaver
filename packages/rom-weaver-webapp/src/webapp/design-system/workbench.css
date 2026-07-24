@@ -3,7 +3,10 @@
 
 /* Form sections */
 .rw-app .panel { overflow: clip; }
-.rw-app .workflow-body { min-width: 0; animation: panel-in .3s var(--ease); }
+/* Breathing room below the form so the bottom action (run/progress/download)
+   isn't hugging the edge. Mobile adds much more (phone-dock.css) so the last
+   card can scroll clear of the browser's collapsing bottom toolbar. */
+.rw-app .workflow-body { min-width: 0; padding-block-end: clamp(16px, 3vw, 28px); animation: panel-in .3s var(--ease); }
 /* Reveal form sections after identification finishes. */
 .rw-app .form-ready > .step:not(.unified-drop-step) { animation: form-ready-in .22s var(--ease) both; }
 

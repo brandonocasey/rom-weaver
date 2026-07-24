@@ -115,7 +115,7 @@ describe("apply workflow view - empty bench", () => {
     expect(container.querySelector("#rom-weaver-input-file-unified")).toBeTruthy();
     expect(container.querySelector(".drop.hero .formats .fmt")).toBeTruthy();
     const sample = container.querySelector(".first-weave-demo button") as HTMLButtonElement;
-    expect(sample.textContent).toContain("Try a sample weave");
+    expect(sample.textContent).toContain("Try a sample apply");
     // The remaining workflow is progressively disclosed after staging begins.
     const numbers = Array.from(container.querySelectorAll(".step-num")).map((el) => el.textContent);
     expect(numbers).toEqual(["0x01"]);

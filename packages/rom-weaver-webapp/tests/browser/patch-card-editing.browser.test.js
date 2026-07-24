@@ -183,19 +183,21 @@ test("bundle output verification stands down for partial selections and diverged
   mount(createElement(ApplyPatchForm, { pageDrop: { files: [bundleArchive, romFile], id: 1 } }));
 
   // The optional patch seeds OFF, so the selection starts partial: the
-  // bundle's expected output can't gate it and the calm notice says so.
+  // bundle's expected output can't gate it, and it stands down silently
+  // (a partial selection raises no notice).
   await expect.poll(() => getPatchToggles().length, { timeout: 30000 }).toBe(2);
-  const notice = await waitForState(() => document.getElementById("rom-weaver-bundle-output-unverified"), 30000);
-  expect(notice.textContent).toContain("full patch chain");
+  await expect
+    .poll(() => document.getElementById("rom-weaver-bundle-output-unverified"), { timeout: 30000 })
+    .toBeNull();
 
-  // Enabling the full authored chain re-engages verification: notice gone.
+  // Enabling the full authored chain keeps it quiet: still no notice.
   getPatchToggles()[1]?.click();
   await expect
     .poll(() => document.getElementById("rom-weaver-bundle-output-unverified"), { timeout: 30000 })
     .toBeNull();
 
-  // Appending a foreign patch diverges the chain: verification stands down
-  // again, and the notice names the divergence instead of the selection.
+  // Appending a foreign patch diverges the chain: now the notice appears and
+  // names the divergence.
   const foreignPatch = new File([await extraPatch.arrayBuffer()], "extra.ips", {
     type: "application/octet-stream",
   });
