@@ -66,8 +66,10 @@ instructions do **not** apply here.
   root + webapp + alias + 4 platform `package.json`s and their locks, the
   `optionalDependencies` pins, `workspace.package.version`, ~43 path-dependency
   pins across `crates/*`, `vendor/*`, and `Cargo.lock`.
-- **Flow:** merge conventional commits to `main` → CI goes green → release-please
-  opens/updates a `chore(main): release X.Y.Z` PR → merging that PR creates a
+- **Flow:** merge conventional commits to `main` → release-please immediately
+  opens/updates a `chore(main): release X.Y.Z` PR (on the `push` event, so it
+  never trails CI; that path cannot cut a release) → CI goes green and the
+  `workflow_run` path refreshes the release screenshots → merging that PR creates a
   **draft** GitHub release and sets `release_created=true`, which unlocks the
   npm/docker/homebrew publish jobs. Each attaches its assets to the draft; the
   final `publish-release` job publishes it, which creates the `vX.Y.Z` tag,
